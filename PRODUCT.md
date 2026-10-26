@@ -48,7 +48,7 @@ The pinned Codecast source, owned integration source, PLAN.md and local acceptan
 - Make experimental content explicit and compare equal information and actions.
 - Select a proven sample before standardizing and migrating other pages.
 
-## Open Decisions
+## Historical decisions (superseded where noted below)
 
 Google Sans and the supplied peanut graphic are confirmed. The newest instruction requests one implemented original version, superseding three parallel sample directions for this iteration. The current isolated sample uses a light workbench, compact member/activity index and wider reading area. Broader product migration still waits for the user's evaluation of this sample; its styling is not a global approved design system.
 
@@ -59,3 +59,9 @@ The user authorized rebuilding the core sample. The replacement uses one project
 ## Current design request (2026-10-26)
 
 The user explicitly rejected the existing visual scheme and requested research of OpenDesign and the complete Codecast frontend, a rebuilt information architecture and at least two genuinely different browser-previewable workspace layouts. This supersedes the earlier one-sample exploration count and the old activity-index layout as visual authority. Complete stages A/B/C in isolation, show evidence and both candidates, then wait for the user's visual direction selection before stage D. Working business logic, APIs, data, state management, desktop delivery and the confirmed font/mark remain intact. The new preview is not a production migration.
+
+## Current revision after public baseline 5f34787
+
+The latest user brief supersedes the A/B selection premise and asks for one operable core workspace grounded in current source. It preserves independent desktop delivery, Google Sans, the supplied peanut mark and Phosphor. It rejects the mixed state field, stacked headers, whole-file fake diff and static-only motion certification. Activities and captured sessions may exist without tasks. Own-directory history must remain reachable even without a task or activity association.
+
+Use a stable project context, a scannable team activity index and one primary surface; switch between reading and code review, with evidence available on demand. The result remains an isolated candidate, not approved production style. Do not apply any local skills. Prior palettes, metaphors and blanket prohibitions on animation libraries are historical preferences, not binding requirements. Current decisions, source verification and actual evidence are consolidated in `docs/workbench-revision/WORKLOG.md`.

@@ -24,20 +24,21 @@ npm start
 
 桌面窗口自动完成本机配对，Browse 打开系统文件夹选择器；选好目录后仍需明确确认共享。每位成员保留独立目录，活动同步不会覆盖其他人的文件。用于联调的浏览器入口为 `npm run codecast:app -- --built`，地址 `http://127.0.0.1:3407`；直接访问普通地址只能登录查看活动，管理本机文件还需要配对。桌面附着到已经运行的调试服务时，退出窗口不会替调试进程关闭服务。
 
-## 界面研究与两套候选预览（2026-10-26 暂时收尾）
+## 新核心工作区预览（2026-10-26，等待视觉选择）
 
-当前视觉方案已被否定。本轮完成 OpenDesign 官网/源码与 Codecast 源码研究、现状审计、信息架构及两套可操作候选：A 先浏览完整待处理队列再读详情，B 通过横向任务带切换专注阅读面。研究与预览已保留，正式前端迁移暂停，等待用户后续选择；两套候选都未获得视觉批准。
+此前 DesignLab 与 A/B 均未获得视觉批准。当前候选使用独立滚动的团队活动索引、一个主阅读/代码工作面，以及按需展开的来源与保存信息；支持长会话、真实 Diff、评论、交接草稿和自己的目录历史。正式工作台尚未迁移。
 
 在完成上方首次依赖准备后，执行：
 
 ```powershell
-npm run codecast:setup
-node node_modules/vite/bin/vite.js --config design-explorations/workbench-20261026/vite.config.ts
+npm run workbench:preview
 ```
 
-打开本机 `http://127.0.0.1:3417` 比较 A/B。预览使用明确标注的演示数据，评论和交接草稿只保留在本次页面中，恢复演练不写入文件。这是浏览器设计验证，不是新版桌面客户端已完成的证明。产品仍以 `npm start` 打开独立桌面窗口；`npm run design` 保留的是前一轮历史样板。
+该命令打开独立 Electron 窗口中的 `/workbench-preview`。浏览器调试可运行 `npm run codecast:app -- --built`，访问 `http://127.0.0.1:3407/workbench-preview`。在「预览场景」中切换 3 人 / 10 人 100 条活动，或查看同窗口、同原始消息的 Codecast 原生阅读组件对照。
 
-阅读 [参考研究](docs/design/reference-research.md)、[现状审计](docs/design/current-ui-audit.md)、[信息架构](docs/design/information-architecture.md)、[两套布局取舍](docs/design/layout-explorations.md) 和 [实际检查与截图](docs/design/preview-validation.md)。
+预览明确使用演示数据，评论和交接草稿保留在本次页面内，恢复流程不写入文件。原生组件对照同样是 fixture，不是真实捕获会话。当前正式产品仍由 `npm start` 打开；`npm run design` 和 `design-explorations/workbench-20261026` 保留历史比较材料。
+
+本轮修改、源码依据、实际截图、交互录像、原生窗口缩放结果和未完成范围统一记录在 [工作记录](docs/workbench-revision/WORKLOG.md)。既有 [参考研究](docs/design/reference-research.md) 及 [旧 A/B 验证](docs/design/preview-validation.md) 保留，不代表当前候选获得批准。
 
 ## 源码与原版
 

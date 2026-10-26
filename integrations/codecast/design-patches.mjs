@@ -5,12 +5,12 @@ export const designPatches = [
     file: 'packages/web/src/App.tsx',
     before: 'const Login = lazy(() => import("@/app/login/page"));',
     after:
-      'const DesignLab = lazy(() => import("../collo/DesignLab"));\nconst Login = lazy(() => import("@/app/login/page"));',
+      'const DesignLab = lazy(() => import("../collo/DesignLab"));\nconst ContextWorkbench = lazy(() => import("../collo/ContextWorkbench"));\nconst Login = lazy(() => import("@/app/login/page"));',
   },
   {
     file: 'packages/web/src/App.tsx',
     before: '            {/* The product opens directly into its workbench. */}',
     after:
-      '            <Route path="design-lab" element={<E name="DesignLab"><DesignLab /></E>} />\n            {/* The product opens directly into its workbench. */}',
+      '            <Route path="design-lab" element={<E name="DesignLab"><DesignLab /></E>} />\n            <Route path="workbench-preview" element={<E name="ContextWorkbench"><ContextWorkbench /></E>} />\n            {/* The product opens directly into its workbench. */}',
   },
 ];

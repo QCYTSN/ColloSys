@@ -1,0 +1,34 @@
+[
+  {
+    "width": 1280,
+    "layout": "queue",
+    "readerTop": 545.328125,
+    "readerHeight": 350,
+    "readerWidth": 1175.625,
+    "capturedAt": "2026-10-26T07:51:35.752Z"
+  },
+  {
+    "width": 1280,
+    "layout": "focus",
+    "readerTop": 334,
+    "readerHeight": 466,
+    "readerWidth": 1280,
+    "capturedAt": "2026-10-26T07:51:37.643Z"
+  },
+  {
+    "width": 1440,
+    "layout": "queue",
+    "readerTop": 545.328125,
+    "readerHeight": 350,
+    "readerWidth": 1322.8125,
+    "capturedAt": "2026-10-26T07:51:39.662Z"
+  },
+  {
+    "width": 1440,
+    "layout": "focus",
+    "readerTop": 334,
+    "readerHeight": 566,
+    "readerWidth": 1440,
+    "capturedAt": "2026-10-26T07:51:41.669Z"
+  }
+]

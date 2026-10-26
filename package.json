@@ -32,6 +32,7 @@
     "db:init": "tsx scripts/migrate.ts",
     "start": "node scripts/codecast-start.mjs",
     "design": "node scripts/codecast-design.mjs",
+    "workbench:preview": "node scripts/codecast-context-preview.mjs",
     "legacy:start": "tsx scripts/start.ts",
     "test:integration": "node tests/codecast-integration.mjs",
     "test:cost": "node tests/codecast-cost-audit.mjs",

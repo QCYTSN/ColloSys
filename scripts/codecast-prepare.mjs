@@ -90,6 +90,11 @@ const additions = [
     'DesignIcons.tsx',
     'DesignScenario.ts',
     'design-lab.css',
+    'ContextWorkbench.tsx',
+    'ContextScenario.ts',
+    'ContextModel.ts',
+    'ContextReader.tsx',
+    'context-workbench.css',
   ].map((file) => [`web/${file}`, `packages/web/collo/${file}`]),
 ];
 for (const [from, to] of additions) {

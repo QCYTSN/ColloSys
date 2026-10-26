@@ -7,7 +7,12 @@ const origin = 'http://127.0.0.1:3407';
 const { app, BrowserWindow, Menu, ipcMain, dialog, session } = electron;
 const profile = process.env.COLLOSYS_DESKTOP_PROFILE || 'default';
 if (!/^(default|test-[a-f0-9-]{36})$/.test(profile)) throw new Error('Invalid desktop profile');
-const entryUrl = process.env.COLLOSYS_DESIGN_LAB === '1' ? `${origin}/design-lab` : origin;
+const entryUrl =
+  process.env.COLLOSYS_WORKBENCH_PREVIEW === '1'
+    ? `${origin}/workbench-preview`
+    : process.env.COLLOSYS_DESIGN_LAB === '1'
+      ? `${origin}/design-lab`
+      : origin;
 process.env.COLLOSYS_URL = entryUrl;
 process.env.COLLOSYS_USER_DATA = path.join(data, 'desktop-profiles', profile);
 delete process.env.COLLOSYS_CLAIM_PROTOCOL;

@@ -1,0 +1,91 @@
+{
+  "passed": true,
+  "results": [
+    {
+      "scale": 1,
+      "native": {
+        "visible": true,
+        "nativeHandle": true,
+        "sandbox": true,
+        "contextIsolation": true,
+        "nodeIntegration": false,
+        "contentBounds": {
+          "x": 733,
+          "y": 456,
+          "width": 1280,
+          "height": 800
+        },
+        "displayScale": 1
+      },
+      "layout": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1,
+        "readerTop": 136,
+        "readerHeight": 569,
+        "firstText": 180,
+        "overflow": 1280,
+        "font": true
+      },
+      "passed": true
+    },
+    {
+      "scale": 1.25,
+      "native": {
+        "visible": true,
+        "nativeHandle": true,
+        "sandbox": true,
+        "contextIsolation": true,
+        "nodeIntegration": false,
+        "contentBounds": {
+          "x": 442,
+          "y": 275,
+          "width": 1280,
+          "height": 800
+        },
+        "displayScale": 1.25
+      },
+      "layout": {
+        "width": 1280,
+        "height": 800,
+        "dpr": 1.25,
+        "readerTop": 136,
+        "readerHeight": 569.7999877929688,
+        "firstText": 179.8000030517578,
+        "overflow": 1280,
+        "font": true
+      },
+      "passed": true
+    },
+    {
+      "scale": 1.5,
+      "native": {
+        "visible": true,
+        "nativeHandle": true,
+        "sandbox": true,
+        "contextIsolation": true,
+        "nodeIntegration": false,
+        "contentBounds": {
+          "x": 249,
+          "y": 153,
+          "width": 1281,
+          "height": 801
+        },
+        "displayScale": 1.5
+      },
+      "layout": {
+        "width": 1281,
+        "height": 801,
+        "dpr": 1.5,
+        "readerTop": 136,
+        "readerHeight": 571,
+        "firstText": 179.6666717529297,
+        "overflow": 1281,
+        "font": true
+      },
+      "passed": true
+    }
+  ],
+  "capturedAt": "2026-10-26T09:00:13.735Z",
+  "scope": "Actual pinned Electron framework with owned Windows adaptation and isolated fixture route; forced device scaling tests, not a different physical monitor."
+}
