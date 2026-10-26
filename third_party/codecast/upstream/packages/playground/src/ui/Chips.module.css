@@ -1,0 +1,22 @@
+.chip {
+  display: inline-flex; align-items: center; flex: none; height: 30px; padding: 0 12px; border-radius: var(--r-pill);
+  background: var(--surface); box-shadow: 0 0 0 1px var(--line); font: 500 13px/1 var(--ui); color: var(--ink-2);
+  white-space: nowrap; transition: color var(--t-quick), box-shadow var(--t-quick), transform var(--t-press);
+}
+.chip:hover { color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); }
+.chip:active { transform: translateY(1px); transition-duration: 0s; }
+.chip:focus-visible { box-shadow: 0 0 0 1px var(--line-2), var(--focus); }
+
+.element, .file {
+  display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 22px; padding: 0 8px; border-radius: var(--r-sm);
+  background: var(--sunk); color: var(--ink-2); font: var(--t-mono); white-space: nowrap;
+}
+.elementText { overflow: hidden; text-overflow: ellipsis; }
+.glyph { width: 9px; height: 9px; flex: none; border: 1.3px dashed var(--ink-3); border-radius: 2px; }
+.remove { display: grid; place-items: center; width: 16px; height: 16px; margin-right: -4px; border-radius: 4px; color: var(--ink-3); }
+.remove:hover { background: var(--line); color: var(--ink); }
+.remove svg { width: 10px; height: 10px; }
+
+.file { gap: 5px; padding: 0 7px; }
+.written { background: var(--surface); box-shadow: var(--ring-line-2); color: var(--ink); }
+.written::before { content: ""; width: 5px; height: 5px; flex: none; border-radius: 50%; background: var(--accent); }

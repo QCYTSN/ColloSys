@@ -1,0 +1,325 @@
+"use client";
+// The hire form (docs/architecture/org-init.md O3): "Add a role" on /org and
+// "Add a lead" on a project page open this one dialog. It reads the scope back
+// as a preview (org.scopeSummary: what the seat will read and what the viewer
+// cannot), proposes a charter from the projects picked, shows the trust ladder
+// with the two higher stages locked, and takes caps. Submit is one store
+// action (createOrgRole with provision) so the graph moves in the same tick.
+import { useMemo, useState } from "react";
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { Lock } from "lucide-react";
+import { useWorkspaceCollection } from "../../hooks/useWorkspaceCollection";
+import { useScopeSummary } from "../../hooks/useScopeQueries";
+import type { PlanItem, ProjectItem } from "../../store/inboxStore";
+import type { OrgCreateRoleInput } from "../../store/orgSlice";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "../ui/dialog";
+import { SelectBox } from "../ui/select-box";
+import { parentNodeId, parentRefOfNodeId } from "./orgLayout";
+import type { OrgTree } from "./orgTypes";
+import { OrgTemplateHire } from "./orgTemplateHire";
+import { AVATAR_KEYS, avatarOf } from "@codecast/shared/contracts/orgAvatars";
+import { ORG_TENURE_THEN, seatSentence, type OrgRoleSeat, type OrgTenureSpec } from "@codecast/shared/contracts/orgProposal";
+import { RoleFace } from "./RoleFace";
+import { TakeoverEdit } from "./TakeoverEdit";
+import { useTakeoverPreviews } from "../../hooks/useTakeoverPreviews";
+
+function slugify(s: string): string {
+  return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32);
+}
+
+/** The charter the form proposes from what was picked; editable, and replaced
+ *  only while the person has not typed their own. */
+function proposeCharter(name: string, projects: Array<{ title: string; description?: string }>, summary: { plans: Array<{ title: string }>; tasks: { open: number; total: number }; sessions: { total: number } } | null | undefined): string {
+  const who = name.trim() || "This role";
+  if (projects.length === 0) return `${who} has no area of its own: it runs its check, answers what it is asked, and raises what needs a person with a recommendation.`;
+  const named = projects.map((p) => (p.description?.trim() ? `${p.title} (${p.description.trim().split(/\.\s|\n/)[0].slice(0, 120)})` : p.title));
+  const owns = named.length === 1 ? named[0] : `${named.slice(0, -1).join(", ")} and ${named[named.length - 1]}`;
+  const activity = summary
+    ? ` Right now that is ${summary.tasks.open} open of ${summary.tasks.total} tasks across ${summary.plans.length} plan${summary.plans.length === 1 ? "" : "s"}${summary.plans[0] ? `, the newest being ${summary.plans[0].title}` : ""}, with ${summary.sessions.total} recent session${summary.sessions.total === 1 ? "" : "s"}.`
+    : "";
+  return `${who} owns ${owns}.${activity} It keeps the plans and tasks in its area moving, reports what changed and why, and raises what needs a person with a recommendation.`;
+}
+
+export function HireRoleDialog({ open, onClose, tree, meId, onCreate, initialProjects = [], projectPath, title = "Add a role", initialName = "", submitLabel = "Create and start", seat, initialMode = "manual" }: {
+  open: boolean;
+  onClose: () => void;
+  tree: OrgTree;
+  meId: string;
+  onCreate: (input: OrgCreateRoleInput) => void;
+  /** "Add a lead" on a project page preselects that project. Passed as rows,
+   *  not ids: the page may hold a project the workspace collection has not
+   *  cached yet, and the preview and charter need its title and description. */
+  initialProjects?: ProjectItem[];
+  /** The cwd the standing session starts in (the project's path when known). */
+  projectPath?: string;
+  title?: string;
+  /** The name the form opens with ("Make this a role" offers the session's title). */
+  initialName?: string;
+  submitLabel?: string;
+  /** "Make this a role" on a session (org-roles-run-work.md R2): the role is
+   *  this session, so nothing new starts. The form says what naming changes,
+   *  offers no template, and the create seats the session. */
+  seat?: OrgRoleSeat;
+  /** "Hire" on the org page opens straight onto the gallery of templates. */
+  initialMode?: "manual" | "template";
+}) {
+  const [mode, setMode] = useState<"manual" | "template">(seat ? "manual" : initialMode);
+  // The gallery wants room for its cards; the answers form and the manual form do not.
+  const [templateStage, setTemplateStage] = useState<"gallery" | "form">("gallery");
+  const wide = mode === "template" && templateStage === "gallery";
+  const [name, setName] = useState(initialName);
+  const [handle, setHandle] = useState("");
+  const [handleTouched, setHandleTouched] = useState(false);
+  const [reportsTo, setReportsTo] = useState<string>(meId ? parentNodeId({ kind: "user", user_id: meId }) : "");
+  const [charter, setCharter] = useState("");
+  const [charterTouched, setCharterTouched] = useState(false);
+  const wsProjects = useWorkspaceCollection<ProjectItem>("projects");
+  const plans = useWorkspaceCollection<PlanItem>("plans");
+  const [projectIds, setProjectIds] = useState<string[]>(() => initialProjects.map((p) => p._id));
+  const [planIds, setPlanIds] = useState<string[]>([]);
+  // The face (S13): a chosen avatar key, else the default derived from the
+  // handle so every role has one. `avatar` is undefined until the person picks.
+  const [avatar, setAvatar] = useState<string | undefined>(undefined);
+  // Standing or program (S10). Standing by default; a program ends with a plan,
+  // a project or a date, and then retires or comes up for review.
+  const [tenureKind, setTenureKind] = useState<"standing" | "program">("standing");
+  const [endKind, setEndKind] = useState<"plan" | "project" | "date">("plan");
+  const [endPlan, setEndPlan] = useState<string>("");
+  const [endProject, setEndProject] = useState<string>("");
+  const [endDate, setEndDate] = useState<string>("");
+  const [tenureThen, setTenureThen] = useState<"retire" | "review">("retire");
+  const [faceOpen, setFaceOpen] = useState(false);
+  // Preset rows lead the list, then the rest of the workspace.
+  const projects = useMemo(() => [...initialProjects, ...wsProjects.filter((p) => !initialProjects.some((q) => q._id === p._id))], [initialProjects, wsProjects]);
+  const effHandle = handleTouched ? handle : slugify(name);
+  const taken = tree.roles.some((r) => r.handle === effHandle && r.status !== "retired");
+  // A program needs its end chosen; standing needs nothing.
+  const tenureOk = tenureKind === "standing" || (endKind === "plan" ? !!endPlan : endKind === "project" ? !!endProject : !!endDate);
+  const valid = name.trim().length > 0 && /^[a-z0-9-]{2,32}$/.test(effHandle) && !taken && !!reportsTo && tenureOk;
+  const wholeWorkspace = projectIds.length + planIds.length === 0;
+  const buildTenure = (): OrgTenureSpec => {
+    if (tenureKind === "standing") return { kind: "standing" };
+    const ends = endKind === "plan" ? { plan: endPlan } : endKind === "project" ? { project: endProject } : { date: new Date(`${endDate}T00:00:00Z`).getTime() };
+    return { kind: "program", ends, then: tenureThen };
+  };
+
+  // The scope preview: what the seat will read. A whole-workspace scope reads
+  // everything, so the query is skipped and the hint says so.
+  const { data: summary } = useScopeSummary(
+    open && mode === "manual" && !wholeWorkspace
+      ? { scope: { project_ids: projectIds, plan_ids: planIds }, ...(tree.workspace.kind === "team" ? { team_id: tree.workspace.id } : {}) }
+      : "skip",
+  );
+  // What the new role would take over (R1): the host's sessions in the picked
+  // scope that report to no role, counted before the create, with the one edit.
+  const [leaveSessions, setLeaveSessions] = useState(false);
+  const takeover = useTakeoverPreviews(tree.workspace, open && mode === "manual" && !wholeWorkspace
+    ? [{ key: "hire", says: effHandle, add: [...projectIds.map((id) => `project:${id}`), ...planIds.map((id) => `plan:${id}`)], seat: seat?.existing }]
+    : []).byKey.hire;
+  const picked = useMemo(() => projects.filter((p) => projectIds.includes(p._id)), [projects, projectIds]);
+  const cannotRead = summary
+    ? (projectIds.length - summary.projects.length) + planIds.filter((id) => !summary.plans.some((p) => p.id === id)).length
+    : 0;
+
+  const proposed = useMemo(() => proposeCharter(name, picked, wholeWorkspace ? null : summary), [name, picked, wholeWorkspace, summary]);
+  useWatchEffect(() => { if (!charterTouched) setCharter(proposed); }, [proposed, charterTouched]);
+
+  const me = tree.people.find((p) => p.user_id === meId);
+  // The standing session's cwd: the caller's path, else the first picked
+  // project's. The store's project row carries the path only when the server
+  // set one, so it is read loosely.
+  const cwd: string | undefined = projectPath ?? (picked[0] as { project_path?: string } | undefined)?.project_path ?? undefined;
+  const submit = () => {
+    if (mode !== "manual" || !valid) return;
+    const ref = parentRefOfNodeId(reportsTo) ?? { kind: "user" as const, user_id: meId };
+    onCreate({
+      name: name.trim(),
+      handle: effHandle,
+      ...(tree.workspace.kind === "team" ? { team_id: tree.workspace.id } : {}),
+      scope: { project_ids: projectIds, plan_ids: planIds },
+      reports_to: ref,
+      ...(charter.trim() ? { charter: charter.trim() } : {}),
+      tenure: buildTenure(),
+      ...(avatar ? { avatar } : {}),
+      provision: true,
+      ...(seat ? { adopt_conversation_id: seat.existing } : cwd ? { project_path: cwd } : {}),
+      host_user_id: meId,
+      client_id: `orgrolestub-${Math.random().toString(36).slice(2)}`,
+      ...(leaveSessions && takeover ? { leave_sessions: true } : {}),
+    });
+  };
+  const toggle = (list: string[], set: (v: string[]) => void, id: string) => set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
+  const scopeHint = wholeWorkspace
+    ? "optional: with nothing picked it has no area of its own"
+    : summary
+      ? `reads ${summary.plans.length} plan${summary.plans.length === 1 ? "" : "s"}, ${summary.tasks.total} task${summary.tasks.total === 1 ? "" : "s"}, ${summary.sessions.total} session${summary.sessions.total === 1 ? "" : "s"}${cannotRead ? ` · ${cannotRead} it cannot` : ""}`
+      : `${projectIds.length} project${projectIds.length === 1 ? "" : "s"}, ${planIds.length} plan${planIds.length === 1 ? "" : "s"} · reading…`;
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className={`${wide ? "max-w-[800px]" : "max-w-[520px]"} grid-cols-1 max-h-[92vh] overflow-y-auto transition-[max-width] duration-200`} style={{ background: "var(--sol-card)", borderColor: "color-mix(in srgb, var(--sol-border) 40%, transparent)" }} data-hire-stage={mode === "template" ? templateStage : "manual"}>
+        <DialogHeader>
+          <DialogTitle className="text-[17px]" style={{ fontFamily: "var(--font-serif)" }}>{title}</DialogTitle>
+          <DialogDescription className="text-[12px]" style={{ color: "var(--sol-text-muted)" }}>{seat ? seatSentence(seat) : mode === "manual" ? "A role has an area it looks after, someone it reports to, and a charter that says what it is for. It starts as soon as you create it." : templateStage === "gallery" ? "A ready-made role for one project: pick one to see what it asks for. Nothing is set up until you approve it." : "Answer what the template asks; the hire is one proposal you decide on the org page."}</DialogDescription>
+        </DialogHeader>
+        <div className={seat ? "hidden" : "grid grid-cols-2 gap-1 rounded-lg bg-sol-bg-alt p-1"} role="group" aria-label="Role setup">
+          {([["manual", "Write a role"], ["template", "From a template"]] as const).map(([value, label]) => (
+            <button key={value} type="button" aria-pressed={mode === value} onClick={() => setMode(value)} className="rounded-md px-3 py-2 text-[12px] font-semibold transition-colors focus-visible:outline focus-visible:outline-sol-cyan" style={{ background: mode === value ? "var(--sol-card)" : undefined, color: mode === value ? "var(--sol-text)" : "var(--sol-text-muted)" }}>{label}</button>
+          ))}
+        </div>
+        <div hidden={mode !== "template"}>
+          <OrgTemplateHire projects={projects} workspace={tree.workspace} roles={tree.roles} initialProjectId={initialProjects.length === 1 ? initialProjects[0]._id : undefined} projectPath={initialProjects.length === 1 ? projectPath : undefined} onClose={onClose} onStage={setTemplateStage} />
+        </div>
+        <form className={mode === "manual" ? "flex flex-col gap-3" : "hidden"} onSubmit={(e) => { e.preventDefault(); submit(); }}>
+          <div className="grid grid-cols-[1fr_auto] gap-3">
+            <Field label="Name">
+              <input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="Head of Growth" className={INPUT} style={INPUT_STYLE} />
+            </Field>
+            <Field label="Handle" hint={taken ? "already used in this workspace" : undefined}>
+              <div className="flex items-center gap-1">
+                <span className="text-[13px]" style={{ color: "var(--sol-violet)", fontFamily: "var(--font-mono)" }}>@</span>
+                <input value={effHandle} onChange={(e) => { setHandleTouched(true); setHandle(slugify(e.target.value)); }} placeholder="growth" className={INPUT} style={{ ...INPUT_STYLE, width: 150, fontFamily: "var(--font-mono)", ...(taken ? { borderColor: "var(--sol-red)" } : {}) }} />
+              </div>
+            </Field>
+          </div>
+
+          <Field label="Face" hint={avatar ? "chosen" : "from the handle"}>
+            <div className="flex items-center gap-2.5">
+              <RoleFace role={{ avatar, handle: effHandle, name }} size={36} />
+              <button type="button" onClick={() => setFaceOpen((o) => !o)} className="text-[11.5px] underline-offset-2 hover:underline" style={{ color: "var(--sol-text-muted)" }}>{faceOpen ? "Close" : "Choose a face"}</button>
+              {avatar && <button type="button" onClick={() => setAvatar(undefined)} className="text-[11px] underline-offset-2 hover:underline" style={{ color: "var(--sol-text-dim)" }}>reset to default</button>}
+            </div>
+            {faceOpen && (
+              <div className="mt-1.5 grid grid-cols-8 gap-1.5 rounded-lg border p-2" style={{ borderColor: "color-mix(in srgb, var(--sol-border) 40%, transparent)" }}>
+                {AVATAR_KEYS.map((k) => {
+                  const on = avatarOf({ avatar, handle: effHandle }) === k;
+                  return (
+                    <button key={k} type="button" onClick={() => { setAvatar(k); setFaceOpen(false); }} className="rounded-full inline-flex" style={{ outline: on ? "2px solid var(--sol-violet)" : "none", outlineOffset: 1 }} title={k}>
+                      <RoleFace role={{ avatar: k, handle: effHandle, name }} size={28} />
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Field>
+
+          <Field label="Area" hint={scopeHint}>
+            <div className="max-h-[132px] overflow-y-auto rounded-lg border p-1" style={{ borderColor: "color-mix(in srgb, var(--sol-border) 40%, transparent)" }}>
+              {projects.length === 0 && plans.length === 0 && <p className="px-2 py-1.5 text-[11.5px]" style={{ color: "var(--sol-text-dim)" }}>No projects or plans in this workspace yet.</p>}
+              {projects.map((p) => <ScopeOption key={p._id} checked={projectIds.includes(p._id)} onToggle={() => toggle(projectIds, setProjectIds, p._id)} tone="blue" label={p.title} sub="project" />)}
+              {plans.map((p) => <ScopeOption key={p._id} checked={planIds.includes(p._id)} onToggle={() => toggle(planIds, setPlanIds, p._id)} tone="magenta" label={p.title} sub="plan" />)}
+            </div>
+            {takeover && <TakeoverEdit className="mt-1.5" phrase={takeover.phrase} leave={leaveSessions} onLeave={setLeaveSessions} />}
+          </Field>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            <Field label="Reports to" hint="a person or another role">
+              <SelectBox value={reportsTo} onChange={(e) => setReportsTo(e.target.value)} className="text-[13px]">
+                <optgroup label="People">
+                  {tree.people.map((p) => <option key={p.user_id} value={parentNodeId({ kind: "user", user_id: p.user_id })}>{p.name}{p.is_me ? " (you)" : ""}</option>)}
+                </optgroup>
+                {tree.roles.filter((r) => r.status !== "retired").length > 0 && (
+                  <optgroup label="Roles">
+                    {tree.roles.filter((r) => r.status !== "retired").map((r) => <option key={r._id} value={parentNodeId({ kind: "role", role_id: r._id })}>@{r.handle} · {r.name}</option>)}
+                  </optgroup>
+                )}
+              </SelectBox>
+            </Field>
+            <Field label="Runs on" hint="your machine and your account">
+              <div className="h-9 px-2.5 rounded-lg border inline-flex items-center text-[13px]" style={{ ...INPUT_STYLE, color: "var(--sol-text-muted)" }}>{me?.name ?? "you"}</div>
+            </Field>
+          </div>
+
+          <Field label="Charter" hint={charterTouched ? "edited" : "written from its area; edit freely"}>
+            <textarea value={charter} onChange={(e) => { setCharterTouched(true); setCharter(e.target.value); }} rows={4} className={INPUT} style={{ ...INPUT_STYLE, height: "auto", padding: "8px 10px", lineHeight: 1.45 }} />
+            {charterTouched && charter !== proposed && (
+              <button type="button" onClick={() => { setCharterTouched(false); setCharter(proposed); }} className="self-start text-[10.5px] underline-offset-2 hover:underline" style={{ color: "var(--sol-text-dim)" }}>Use the proposed text</button>
+            )}
+          </Field>
+
+          <Field label="How long" hint={tenureKind === "standing" ? "it stays until you retire it" : "it ends when a plan, a project or a date does"}>
+            <div className="grid grid-cols-2 gap-1 rounded-lg bg-sol-bg-alt p-1">
+              {([["standing", "Ongoing"], ["program", "Until something ends"]] as const).map(([value, label]) => (
+                <button key={value} type="button" aria-pressed={tenureKind === value} onClick={() => setTenureKind(value)} className="rounded-md px-3 py-1.5 text-[12px] font-semibold transition-colors" style={{ background: tenureKind === value ? "var(--sol-card)" : undefined, color: tenureKind === value ? "var(--sol-text)" : "var(--sol-text-muted)" }}>{label}</button>
+              ))}
+            </div>
+            {tenureKind === "program" && (
+              <div className="mt-2 flex flex-col gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-[11px] shrink-0" style={{ color: "var(--sol-text-dim)" }}>ends with</span>
+                  <SelectBox value={endKind} onChange={(e) => setEndKind(e.target.value as "plan" | "project" | "date")} className="text-[12.5px]" style={{ width: 118 }}>
+                    <option value="plan">a plan</option>
+                    <option value="project">a project</option>
+                    <option value="date">a date</option>
+                  </SelectBox>
+                  {endKind === "plan" && (
+                    <SelectBox value={endPlan} onChange={(e) => setEndPlan(e.target.value)} className="text-[12.5px] flex-1" style={{ minWidth: 150 }}>
+                      <option value="">Pick a plan…</option>
+                      {plans.map((p) => <option key={p._id} value={p._id}>{p.title}{p.short_id ? ` (${p.short_id})` : ""}</option>)}
+                    </SelectBox>
+                  )}
+                  {endKind === "project" && (
+                    <SelectBox value={endProject} onChange={(e) => setEndProject(e.target.value)} className="text-[12.5px] flex-1" style={{ minWidth: 150 }}>
+                      <option value="">Pick a project…</option>
+                      {projects.map((p) => <option key={p._id} value={p._id}>{p.title}</option>)}
+                    </SelectBox>
+                  )}
+                  {endKind === "date" && (
+                    <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={INPUT} style={{ ...INPUT_STYLE, width: "auto", flex: 1, minWidth: 150 }} />
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[11px] shrink-0" style={{ color: "var(--sol-text-dim)" }}>then</span>
+                  <div className="grid grid-cols-2 gap-1 rounded-lg bg-sol-bg-alt p-1" style={{ width: 220 }}>
+                    {ORG_TENURE_THEN.map((t) => (
+                      <button key={t} type="button" aria-pressed={tenureThen === t} onClick={() => setTenureThen(t)} className="rounded-md px-2 py-1 text-[11.5px] font-medium capitalize transition-colors" style={{ background: tenureThen === t ? "var(--sol-card)" : undefined, color: tenureThen === t ? "var(--sol-text)" : "var(--sol-text-muted)" }}>{t}</button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </Field>
+
+          {/* A hired role starts work on its own (org-staffing.md S23.1); the
+              switch and its limits live on the role's page, not in the hire. */}
+          <p className="text-[11.5px] leading-snug" style={{ color: "var(--sol-text-dim)" }} data-hire-autonomy-note>
+            It starts work in its area on its own. You can turn that off from its page.
+          </p>
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="h-8 px-3 rounded-lg text-[12.5px] hover:bg-sol-bg-highlight" style={{ color: "var(--sol-text-muted)" }}>Cancel</button>
+            <button type="submit" disabled={!valid} className="h-8 px-3.5 rounded-lg text-[12.5px] font-semibold disabled:opacity-50" style={{ background: "var(--sol-violet)", color: "var(--sol-bg)" }}>{submitLabel}</button>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const INPUT = "w-full h-9 px-2.5 rounded-lg border outline-none text-[13px] focus:border-sol-cyan";
+const INPUT_STYLE: React.CSSProperties = { background: "var(--sol-bg-alt)", borderColor: "color-mix(in srgb, var(--sol-border) 40%, transparent)", color: "var(--sol-text)" };
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] font-semibold uppercase tracking-[0.08em] shrink-0" style={{ color: "var(--sol-text-dim)" }}>{label}</span>
+        {hint && <span className="text-[10.5px] text-right" style={{ color: hint.startsWith("already") ? "var(--sol-red)" : "var(--sol-text-dim)" }}>{hint}</span>}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function ScopeOption({ checked, onToggle, tone, label, sub }: { checked: boolean; onToggle: () => void; tone: "blue" | "magenta"; label: string; sub: string }) {
+  const color = tone === "blue" ? "var(--sol-blue)" : "var(--sol-magenta)";
+  return (
+    <button type="button" onClick={onToggle} className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left hover:bg-sol-bg-highlight/70">
+      <span className="w-3.5 h-3.5 rounded-[4px] border inline-flex items-center justify-center shrink-0" style={{ borderColor: checked ? color : "color-mix(in srgb, var(--sol-border) 60%, transparent)", background: checked ? color : "transparent" }}>
+        {checked && <span className="w-1.5 h-1.5 rounded-[1px]" style={{ background: "var(--sol-bg)" }} />}
+      </span>
+      <span className="flex-1 min-w-0 truncate text-[12.5px]" style={{ color: "var(--sol-text)" }}>{label}</span>
+      <span className="text-[10.5px] shrink-0" style={{ color }}>{sub}</span>
+    </button>
+  );
+}

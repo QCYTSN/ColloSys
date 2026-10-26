@@ -1,0 +1,9 @@
+.blob { position: relative; flex: none; display: inline-block; background: var(--accent); border-radius: 38%; }
+.blob::before, .blob::after {
+  content: ""; position: absolute; top: 38%; width: 13%; height: 22%;
+  border-radius: max(1px, calc(var(--size) * .07)); background: var(--clay-eyes);
+}
+.blob::before { left: 30%; }
+.blob::after { right: 30%; }
+.down::before, .down::after { top: calc(38% + 3px); }
+.faint { opacity: .5; }

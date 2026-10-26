@@ -1,0 +1,153 @@
+// Workflows and workflow runs — store-fed. Three server windows overlay one
+// runs collection (registry: workflowRuns isDelta).
+import { useMemo } from "react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { useInboxStore } from "../store/inboxStore";
+import { useSyncCollection } from "./useSyncCollection";
+import { useCollectionRows } from "./useCollectionRows";
+import { stableRefId } from "../store/wakeSig";
+import { isViewersWorkflow } from "../store/lineWorkflowSlice";
+
+const api = _api as any;
+
+export function useSyncWorkflows(enabled = true) {
+  return useSyncCollection("workflows", api.workflows.webList, enabled ? {} : "skip");
+}
+
+const newestFirst = (a: any, b: any) => (b.created_at ?? b._creationTime ?? 0) - (a.created_at ?? a._creationTime ?? 0);
+const workflowSig = (w: any) => `${w.name}|${w.slug}|${w.goal ?? ""}|${w.updated_at ?? 0}|${w.nodes?.length ?? 0}`;
+
+/** The viewer's id, for the readers that mean the viewer's own rows: the
+ *  collection also holds the graphs teammates' runs ran (useSyncRunGraph). */
+const useViewerId = () => useInboxStore((s) => (s.currentUser?._id ? String(s.currentUser._id) : null));
+
+/** Reader: the viewer's workflows, newest first. */
+export function useWorkflows(): { workflows: any[]; ready: boolean } {
+  const { ready } = useSyncWorkflows();
+  const viewerId = useViewerId();
+  const where = useMemo(() => (w: any) => isViewersWorkflow(w, viewerId), [viewerId]);
+  const workflows = useCollectionRows<any>("workflows", { where, sig: workflowSig, sort: newestFirst });
+  return { workflows, ready };
+}
+
+/** Feeder: the viewer's workflow of one slug, whatever its age (webList is a
+ *  50-newest window, and a project's customized line must always arrive). */
+export function useSyncWorkflowBySlug(slug: string | null | undefined) {
+  return useSyncCollection(
+    "workflows",
+    api.workflows.webGetBySlug,
+    slug ? { slug } : "skip",
+    { select: (row: any) => (row ? [row] : []) },
+  );
+}
+
+/** Reader: the viewer's workflow of one slug, or null once the server said
+ *  there is none (undefined while cold). Its graph is in the signature, so an
+ *  edited station re-renders. */
+export function useWorkflowBySlug(slug: string | null | undefined): any | null | undefined {
+  const { ready } = useSyncWorkflowBySlug(slug);
+  const viewerId = useViewerId();
+  const where = useMemo(() => (w: any) => !!slug && w.slug === slug && isViewersWorkflow(w, viewerId), [slug, viewerId]);
+  const rows = useCollectionRows<any>("workflows", { where, sig: workflowGraphSig });
+  if (!slug) return null;
+  if (rows[0]) return rows[0];
+  return ready ? null : undefined;
+}
+const workflowGraphSig = (w: any) => `${workflowSig(w)}|${w.nodes ? stableRefId(w.nodes) : 0}|${w.edges ? stableRefId(w.edges) : 0}`;
+
+/** Feeder: the graph one run ran (its workflows row), for any viewer who may
+ *  read the run, the owner of the row or not (the line page's graphs). */
+export function useSyncRunGraph(runId: string | null | undefined) {
+  return useSyncCollection(
+    "workflows",
+    api.workflow_runs.graphOfRun,
+    runId ? { run_id: runId } : "skip",
+    { select: (row: any) => (row ? [row] : []) },
+  );
+}
+
+/** Reader: the workflows row a run ran, by the run's workflow_id (undefined
+ *  while cold, null once the server said the viewer cannot read it). Its
+ *  graph is in the signature, so an edited station re-renders. */
+export function useRunGraph(runId: string | null | undefined, workflowId: string | null | undefined): any | null | undefined {
+  const { ready } = useSyncRunGraph(workflowId ? runId : null);
+  const where = useMemo(() => (w: any) => !!workflowId && w._id === workflowId, [workflowId]);
+  const rows = useCollectionRows<any>("workflows", { where, sig: workflowGraphSig });
+  if (!workflowId) return null;
+  if (rows[0]) return rows[0];
+  return ready ? null : undefined;
+}
+
+/** Feeder: the viewer's dynamic (multi-agent) runs window. */
+export function useSyncDynamicRuns(enabled = true) {
+  return useSyncCollection("workflowRuns", api.workflow_runs.listDynamicRuns, enabled ? {} : "skip");
+}
+
+/** Feeder: one workflow's recent runs. */
+export function useSyncWorkflowRuns(workflowId: string | null | undefined) {
+  return useSyncCollection(
+    "workflowRuns",
+    api.workflow_runs.listForWorkflow,
+    workflowId ? { workflow_id: workflowId } : "skip",
+  );
+}
+
+/** Feeder: one run, enriched (node sessions). */
+export function useSyncWorkflowRun(runId: string | null | undefined) {
+  return useSyncCollection(
+    "workflowRuns",
+    api.workflow_runs.get,
+    runId ? { id: runId } : "skip",
+    // A single row → the collection's overlay takes an array.
+    { select: (row: any) => (row ? [row] : []) },
+  );
+}
+
+const runSig = (r: any) =>
+  `${r.status}|${r.current_node_id ?? ""}|${r.updated_at ?? 0}|${r.total_tokens ?? 0}|${r.agent_count ?? 0}|${r.gate_prompt ?? ""}|` +
+  (r.node_statuses ?? []).map((n: any) =>
+    `${n.node_id}:${n.status}:${n.session?._id ?? ""}:${n.session?.is_active ? 1 : 0}:${n.session?.title ?? ""}:${n.session?.message_count ?? 0}:` +
+    `${n.completed_at ?? 0}:${n.outcome ?? ""}:${n.tokens ?? 0}:${n.activity ?? ""}:${n.result_preview ? 1 : 0}`,
+  ).join(",");
+const runNewestFirst = (a: any, b: any) => (b.updated_at ?? 0) - (a.updated_at ?? 0);
+
+/** Reader: runs, optionally filtered. */
+export function useWorkflowRuns(where?: (r: any) => boolean): any[] {
+  return useCollectionRows<any>("workflowRuns", { where, sig: runSig, sort: runNewestFirst });
+}
+
+/** Reader: dynamic (multi-agent) runs, newest first. */
+export function useDynamicRuns(): { runs: any[]; ready: boolean } {
+  const { ready } = useSyncDynamicRuns();
+  const where = useMemo(() => (r: any) => r.run_kind === "workflow", []);
+  const runs = useWorkflowRuns(where);
+  return { runs, ready };
+}
+
+/** Reader: one run by id (undefined while cold, null once the server said no). */
+export function useWorkflowRun(runId: string | null | undefined): any | null | undefined {
+  const { ready } = useSyncWorkflowRun(runId);
+  const where = useMemo(() => (runId ? (r: any) => r._id === runId : () => false), [runId]);
+  const rows = useWorkflowRuns(where);
+  if (!runId) return undefined;
+  if (rows[0]) return rows[0];
+  return ready ? null : undefined;
+}
+
+/** Feeder: one workflow by id (same raw doc shape as webList). */
+export function useSyncWorkflow(id: string | null | undefined) {
+  return useSyncCollection(
+    "workflows",
+    api.workflows.webGet,
+    id ? { id } : "skip",
+    { select: (row: any) => (row ? [row] : []) },
+  );
+}
+
+/** Reader: one workflow (undefined while cold, null once the server said no). */
+export function useWorkflow(id: string | null | undefined): any | null | undefined {
+  const { ready } = useSyncWorkflow(id);
+  const row = useInboxStore((s) => (id ? (s.workflows as any)[id] : undefined));
+  if (!id) return undefined;
+  return row ?? (ready ? null : undefined);
+}

@@ -1,0 +1,166 @@
+// The one integrations surface (docs/architecture/issue-sync.md S9): the
+// assistant's mail and calendar through Whisk (WhiskCard), then Slack,
+// GitHub, Linear, Google and Notion, each with connect, disconnect, who
+// connected it, health, and what it enables — plus the imported issue sources
+// inside the GitHub and Linear cards.
+//
+// Two ledgers, because a connection belongs to exactly one workspace
+// (appDescriptors.ts SCOPE): the team the reader is looking at, and the reader
+// themself. A team connection serves the team inside the team; a personal one
+// follows its owner into every workspace they work in, and a credential
+// resolver reaches for it whenever the work's team has none of its own.
+//
+// It replaces the old /settings/integrations/github-app page, whose installed
+// accounts and repository list now live inside the GitHub card.
+//
+// This page also finishes an OAuth connection (hooks/useConnectorReturn): the
+// connectors redirect back here with a confirm token in the URL fragment, which
+// is read once, spent in this signed-in session, and cleared.
+
+import { Surface, useHostedMode, useModeWords, useSimpleModeAllowed, useSurface } from "../../../lib/surfaces";
+import { Sparkles, User, Users } from "lucide-react";
+import {
+  APP_DESCRIPTORS,
+  APP_IDS,
+  type AppConnectionScope,
+  type AppConnectionStatus,
+  type AppConnectionsResult,
+} from "@codecast/shared/contracts";
+import { useSettingsData } from "../../../hooks/useSyncSettings";
+import { useCurrentUser } from "../../../hooks/useCurrentUser";
+import { useConnectorReturn } from "../../../hooks/useConnectorReturn";
+import { SettingsCallout, SettingsPanel, SettingsSection } from "../../../components/settings/ui";
+import { IntegrationCard } from "../../../components/integrations/IntegrationCard";
+import { WhiskCard } from "../../../components/integrations/WhiskCard";
+import { SourcesSection } from "../../../components/ops/SourcesSection";
+import { BrowserExtensionSetup } from "../../../components/settings/BrowserExtensionSetup";
+import { TeamSwitcher } from "../../../components/TeamSwitcher";
+import { useInboxStore } from "../../../store/inboxStore";
+import { describeConnectorError } from "../../../lib/connectorReturn";
+
+/** The entries at one scope, keyed by app, for the cards of that ledger. */
+function entriesAt(result: AppConnectionsResult | undefined, scope: AppConnectionScope) {
+  return new Map<string, AppConnectionStatus>(
+    (result?.apps ?? [])
+      .filter((a) => a.status === "coming_soon" || a.scope === scope)
+      .map((a) => [a.id, a]),
+  );
+}
+
+export default function IntegrationsPage() {
+  const connections = useSettingsData("connections");
+  const { user } = useCurrentUser();
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id);
+  const notice = useConnectorReturn();
+  const words = useModeWords();
+  const hosted = useHostedMode();
+  const assistant = useSimpleModeAllowed();
+  // Hosted mode lists only the services the assistant reaches, so a card
+  // never promises it mail or chat it cannot read.
+  const devApps = useSurface("settings.devIntegrations");
+  const shownApp = (id: (typeof APP_IDS)[number]) => devApps || !!APP_DESCRIPTORS[id].assistantReaches;
+  const shownAt = (scope: AppConnectionScope) =>
+    APP_IDS.filter((id) => APP_DESCRIPTORS[id].scopes.includes(scope) && shownApp(id));
+
+  const result = connections.data as AppConnectionsResult | undefined;
+  const loading = result === undefined && !connections.error;
+  // The team ledger answers for a team only once the query has said which;
+  // until then the section renders as unknown, never as "no team".
+  const team = result?.team ?? null;
+  const teamKnown = result !== undefined;
+  const teamEntries = entriesAt(result, "team");
+  const personalEntries = entriesAt(result, "personal");
+
+  const showsTeam = !(hosted && teamKnown && !team) && shownAt("team").length > 0;
+  const onlyWhisk = !devApps && !showsTeam && shownAt("personal").length === 0;
+
+  const errorCallout = connections.error && (
+    <div className="px-4 py-3 sm:px-5">
+      <SettingsCallout tone="warning">
+        Couldn&apos;t load connection state: {connections.error.message}. The cards below say nothing
+        rather than guessing.
+      </SettingsCallout>
+    </div>
+  );
+
+  return (
+    <SettingsPanel>
+      {notice?.kind === "error" && (
+        <SettingsCallout tone="danger">
+          {notice.provider ? `${APP_DESCRIPTORS[notice.provider].name}: ` : ""}
+          {describeConnectorError(notice.reason)}
+        </SettingsCallout>
+      )}
+
+      {/* The assistant's own connection: mail and calendar through Whisk,
+          personal, and first because it is what hosted mode runs on. When it
+          is the page's only section its heading would repeat the subtitle. */}
+      {assistant && (
+        <SettingsSection title={onlyWhisk ? undefined : "Assistant"} icon={Sparkles}>
+          <WhiskCard />
+        </SettingsSection>
+      )}
+
+      <Surface name="settings.browserExtension">
+        <BrowserExtensionSetup />
+      </Surface>
+
+      {/* Hosted mode on Personal has no team to connect for: the section
+          would only say so. A person in a team still sees it. */}
+      {showsTeam && <SettingsSection
+        title="Team connections"
+        icon={Users}
+        // The picker names the team the cards below belong to and switches the
+        // workspace to another. The client's own pointer leads while a switch
+        // is in flight; the server's answer stands in when the client is on
+        // Personal, since the ledger then falls back to the home team.
+        actions={<TeamSwitcher teamsOnly value={activeTeamId ?? team?.id ?? null} />}
+        description={words.teamConnectionsLede}
+      >
+        {errorCallout}
+        {teamKnown && !team ? (
+          <div className="px-4 py-3 sm:px-5">
+            <SettingsCallout tone="info">
+              You&apos;re not looking at a team you belong to. Join or create one to connect services for a
+              team, or connect them for yourself below.
+            </SettingsCallout>
+          </div>
+        ) : (
+          shownAt("team").map((id) => (
+            <IntegrationCard
+              key={id}
+              descriptor={APP_DESCRIPTORS[id]}
+              scope="team"
+              connection={teamEntries.get(id)}
+              loading={loading}
+              me={user}
+              showSources={!!team}
+            />
+          ))
+        )}
+      </SettingsSection>}
+
+      {shownAt("personal").length > 0 && <SettingsSection
+        title="Personal connections"
+        icon={User}
+        description={words.personalConnectionsLede}
+      >
+        {shownAt("personal").map((id) => (
+          <IntegrationCard
+            key={id}
+            descriptor={APP_DESCRIPTORS[id]}
+            scope="personal"
+            connection={personalEntries.get(id)}
+            loading={loading}
+            me={user}
+            showSources={teamKnown && !team}
+          />
+        ))}
+      </SettingsSection>}
+
+      <Surface name="settings.devIntegrations">
+        <SourcesSection />
+      </Surface>
+    </SettingsPanel>
+  );
+}

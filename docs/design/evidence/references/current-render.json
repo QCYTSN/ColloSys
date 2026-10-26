@@ -1,0 +1,32 @@
+[
+  {
+    "name": "rejected-1440",
+    "url": "http://127.0.0.1:3407/design-lab",
+    "title": "ColloSys",
+    "text": "跳到工作详情\nColloSys\n协作工作台\n项目\n设计样板 · 示例数据\n当前产品\n你\n团队动态\n6\n全部活动\n我的关注\n1\nCtrl K\n最近动态\n10 月 24—25 日\n舟\n林舟\nCodex\n14:32\n让会话回到上次读到的地方\n已完成\n4 个文件\n一\n陈一\nClaude Code\n14:25\n整理项目导航与成员筛选\n进行中\n1 个文件\n你\n你\n手动编辑\n14:12\n补充本地恢复的边界说明\n待查看\n1 个文件\n舟\n林舟\nCodex\n13:56\n检查断线后的补发顺序\n待查看\n设备离线\n1 个文件\n一\n陈一\nClaude Code\n13:41\n同步工具栏状态与权限提示\n待查看\n共享失败\n2 个文件\n你\n你\nCodex\n昨天\n修复 Workspace 切换后中文长任务标题、文件路径与成员状态的对齐问题\n已完成\n1 个文件\n产品开发小组\n3 位成员\n让会话回到上次读到的地方\n林舟\nCodex\nCW-24\n14:32\n已完成\n会话\n4\n文件变化\n4\n检查点\n2\n舟\n林舟\n需求\n14:28\n\n切回会话时，保留我上次阅读的位置。收到新的 Agent 回复时，也不要把我拉到最底部。\n\n只有我点击「回到最新」，才重新跟随内容。中文长回复和代码块的高度变化也需要考虑。\n\nCodex\nAgent\n14:29\n\n问题出在会话恢复时总是执行 scrollToBottom()。我把阅读位置与跟随最新内容分成了两种状态。\n\n这次调整\n返回会话时，定位到上次阅读的消息。\n阅读历史时，新回复只更新未读提示。\n主动回到底部后，恢复跟随新内容。\nif (anchor.followLatest) {\n  scrollToLatest();\n} else {\n  restoreMessageAnchor(anchor);\n}\n\n\n长代码块加载导致高度变化时，也会保持消息锚点。接下来检查切换会话、加载早期消息和连续回复这三种情况。\n\n舟\n林舟\n需求\n14:31\n\n对，返回时也要保留选中的文件。顺便检查一下窄窗口，不要把「查看检查点」挤掉。\n\nCodex\nAgent\n14:32\n\n已把文件选择和会话位置分开保存。下面的 4 个文件是这个测试场景中的对应改动，包括删除旧的强制滚动函数，可以逐个查看差异。\n\n检查点记录在源设备。共享差异不等于已备份完整文件，恢复前仍需要预览受影响的目录。\n\n查看这项工作的文件变化\n4 个文件\n关联资料\n\n保留阅读位置与文件选择，补齐新消息提示\n\n任务\nCW-24\n分支\nfeat/reading-anchor\n文件变化\n4\nrestoreReadingPosition.ts\nsrc/workspace/session\nM\nUnreadIndicator.tsx\nsrc/components/conversation\nA\n阅读历史时收到新消息.test.ts\ntests/conversation\nA\nscrollToBottom.ts\nsrc/legacy\nD\n保存状态\n\n源设备已保存\n14:32\n\n未异地备份\n\n查看检查点历史\n查看不会修改你的目录",
+    "dimensions": {
+      "scroll": 1440,
+      "viewport": 1440
+    }
+  },
+  {
+    "name": "codecast-reader-fixture",
+    "url": "http://127.0.0.1:3407/design-lab?reference=codecast&activity=reading",
+    "title": "ColloSys",
+    "text": "Codecast 原生会话组件 · 相同测试内容\n返回新样板\n让会话回到上次读到的地方\n林\n林舟\n23h ago\n\n切回会话时，保留我上次阅读的位置。收到新的 Agent 回复时，也不要把我拉到最底部。\n\n只有我点击「回到最新」，才重新跟随内容。中文长回复和代码块的高度变化也需要考虑。\n\nCodex\n23h ago\n\n问题出在会话恢复时总是执行 scrollToBottom()。我把阅读位置与跟随最新内容分成了两种状态。\n\n这次调整\n返回会话时，定位到上次阅读的消息。\n阅读历史时，新回复只更新未读提示。\n主动回到底部后，恢复跟随新内容。\nif (anchor.followLatest) {\n  scrollToLatest();\n} else {\n  restoreMessageAnchor(anchor);\n}\n\n\n长代码块加载导致高度变化时，也会保持消息锚点。接下来检查切换会话、加载早期消息和连续回复这三种情况。\n\n林舟\n23h ago\n\n对，返回时也要保留选中的文件。顺便检查一下窄窗口，不要把「查看检查点」挤掉。\n\nCodex\n23h ago\n\n已把文件选择和会话位置分开保存。下面的 4 个文件是这个测试场景中的对应改动，包括删除旧的强制滚动函数，可以逐个查看差异。\n\n检查点记录在源设备。共享差异不等于已备份完整文件，恢复前仍需要预览受影响的目录。\n\n23h ago",
+    "dimensions": {
+      "scroll": 1440,
+      "viewport": 1440
+    }
+  },
+  {
+    "name": "codecast-original-login",
+    "url": "http://127.0.0.1:3297/login",
+    "title": "Codecast: all your coding agents in one workspace",
+    "text": "",
+    "dimensions": {
+      "scroll": 1440,
+      "viewport": 1440
+    }
+  }
+]

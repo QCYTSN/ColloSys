@@ -1,0 +1,819 @@
+import { test, expect, describe, mock } from "bun:test";
+
+// End-to-end check of the label rule for inline object references: a reference
+// reads as the object's NAME, never its id. Here the whole path runs for real —
+// markdown → remark plugin → EntityIdPill — with only the Convex transport
+// faked, so what these assertions see is the same HTML a reader gets.
+//
+// The symptom that started this: an agent wrote a trigger's id into its summary
+// and the conversation rendered a raw 32-char blob in monospace. Tasks and
+// plans had the same problem in a milder form — "ct-38940" mid-sentence tells
+// the reader nothing about what is being discussed.
+
+const TRIGGER_CONVEX_ID = "rx72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_TRIGGER = {
+  _id: TRIGGER_CONVEX_ID,
+  short_id: "tr-42",
+  title: "Audit budget allocation across markets",
+  display_title: "Growth audit",
+  display_summary: "Checks funded markets and reports anything off.",
+  prompt: "Audit budget allocation across markets.",
+  schedule_type: "recurring" as const,
+  interval_ms: 4 * 60 * 60 * 1000,
+  status: "scheduled",
+  run_at: Date.now() + 90 * 60 * 1000,
+  run_count: 7,
+  last_run_at: Date.now() - 19 * 60 * 1000,
+};
+
+const TASK_CONVEX_ID = "kx72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_TASK = {
+  _id: TASK_CONVEX_ID,
+  short_id: "ct-38940",
+  title: "Retry queue for failed webhooks",
+  status: "in_progress",
+  priority: "high",
+};
+
+const PLAN_CONVEX_ID = "mx72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_PLAN = {
+  _id: PLAN_CONVEX_ID,
+  short_id: "pl-88",
+  title: "Billing migration",
+  status: "active",
+  goal: "Move every customer onto the new Stripe webhook API.",
+  tasks: [],
+};
+
+// A title long enough to prove the pill truncates rather than swallowing the
+// sentence around it.
+const LONG_TITLE_TASK = {
+  _id: "nx72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  short_id: "ct-77",
+  title: "Rewrite the delivery pipeline so queued sends survive a daemon restart",
+  status: "open",
+};
+
+// Every `webGet` is asked by `{ short_id }` or `{ id }`, so the fake transport
+// dispatches on the function's NAME. (`api` is a proxy — each property access
+// hands back a fresh object, so `===` on it never matches.)
+const { getFunctionName } = await import("convex/server");
+
+// A session with a generated short name — the form a repeat mention takes.
+const SESSION_CONVEX_ID = "qx72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_SESSION = {
+  _id: SESSION_CONVEX_ID,
+  short_id: "jx7b7mx",
+  session_id: "sess-1",
+  title: "Broker context render unification",
+  short_title: "Broker render",
+  status: "active",
+  updated_at: Date.now(),
+  is_own: true,
+};
+
+// A pull request codecast has synced. `union-ai/union-mobile#3263` below is
+// one it has not: no installation covers that repository.
+const FAKE_PR = {
+  _id: "sx72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  repository: "codecast-sh/codecast",
+  number: 482,
+  title: "Fix the auth race",
+  state: "open",
+  updated_at: Date.now(),
+};
+
+const ROWS: Record<string, any[]> = {
+  "agentTasks:webGet": [FAKE_TRIGGER],
+  "tasks:webGet": [FAKE_TASK, LONG_TITLE_TASK],
+  "plans:webGet": [FAKE_PLAN],
+  "conversations:webGet": [FAKE_SESSION],
+  "pull_requests:webGet": [FAKE_PR],
+};
+
+const TYPE_OF_CONVEX_ID: Record<string, string> = {
+  [TRIGGER_CONVEX_ID]: "trigger",
+  [TASK_CONVEX_ID]: "task",
+  [PLAN_CONVEX_ID]: "plan",
+};
+
+// A published page (`cast publish` output) the fake server knows about.
+const PAGE_SLUG = "Ab3xYz9Qw12k";
+const FAKE_PAGE = {
+  slug: PAGE_SLUG,
+  title: "Q3 growth report",
+  size: 4096,
+  version: 3,
+  kind: "html",
+  gated: false,
+  user: { name: "Ashot", image: null },
+};
+
+// A product source on the Ops page, failing: the shape agents write about
+// ("src-13 will stay in error until ...").
+const FAKE_SOURCE = {
+  _id: "tx72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  short_id: "src-13",
+  name: "union",
+  provider: "app",
+  status: "error",
+  last_error: "Union's API answers 401",
+  events_today: 0,
+  groups_open: 0,
+};
+
+// A product recording of a checkout that failed.
+const FAKE_REPLAY = {
+  _id: "rx72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  short_id: "rp-7",
+  provider: "posthog",
+  source_name: "codecast-web",
+  external_id: "0199abc",
+  url: "https://shop.example.com/checkout",
+  user: null,
+  started_at: Date.now() - 3600_000,
+  duration_ms: 185_000,
+  counts: { clicks: 9, errors: 1, failed_requests: 0 },
+  chunks: 1,
+  dom_chunks: 0,
+};
+
+// What the proposal feeder asked the server for. A proposal is store-fed, so
+// this fake never answers it: the pill paints from the seeded row.
+const PROPOSAL_GETS: string[] = [];
+
+function fakeQuery(fn: unknown, args: any) {
+  if (args === "skip") return undefined;
+  const name = getFunctionName(fn as any);
+  if (name === "orgProposals:get") {
+    PROPOSAL_GETS.push(args?.proposal);
+    return undefined;
+  }
+  if (name === "entities:resolveIdType") return TYPE_OF_CONVEX_ID[args?.id] ?? null;
+  if (name === "replays:webGetReplay") return args?.ref === "rp-7" ? FAKE_REPLAY : null;
+  if (name === "ingest:webGetSource") return [FAKE_SOURCE].find((r) => r.short_id === args?.ref || r._id === args?.ref) ?? null;
+  const rows = ROWS[name];
+  if (!rows) return undefined;
+  return rows.find((r) =>
+    (args?.short_id != null && r.short_id === args.short_id)
+    || (args?.id != null && r._id === args.id)
+    || (args?.repository != null && r.repository === args.repository && r.number === args.number),
+  ) ?? null;
+}
+
+// Keep every other export real — the component graph imports names statically,
+// and a missing one is a link-time error rather than a call-time one.
+const convexReact = await import("convex/react");
+mock.module("convex/react", () => ({
+  ...convexReact,
+  useQuery: fakeQuery,
+  useQueries: () => ({}),
+  // Nothing here writes; a surface that holds a mutation (a feature offer
+  // under an artifact card) only needs one to exist.
+  useMutation: () => async () => undefined,
+}));
+
+const noThrow = await import("../hooks/useQueryNoThrow");
+mock.module("../hooks/useQueryNoThrow", () => ({
+  ...noThrow,
+  useQueryNoThrow: (fn: unknown, args: any) => ({ data: fakeQuery(fn, args) }),
+}));
+
+mock.module("next/link", () => ({
+  default: ({ href, children, ...props }: any) => (
+    <a href={href} {...props}>{children}</a>
+  ),
+}));
+
+// A task the CLIENT knows about but this fake server never answers for — the
+// local-first seed. `ct-50001` is absent from ROWS above on purpose.
+const SEEDED_TASK = {
+  _id: "px72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  short_id: "ct-50001",
+  title: "Seeded from the local store",
+  status: "open",
+};
+// Seed the REAL store rather than mock.module-ing it: bun's module mocks are
+// process-global and never restored, so a getState-only stub here (no
+// setState) poisons every store suite that loads after this file in a full
+// `bun test` run. The pill reads via getState(), so a real seeded row behaves
+// identically.
+const { useInboxStore } = await import("../store/inboxStore");
+useInboxStore.setState({
+  tasks: { [SEEDED_TASK._id]: SEEDED_TASK },
+  pullRequests: { [FAKE_PR._id]: FAKE_PR },
+  // Embeds paint from the page info the store keeps (artifacts.embedInfo), one row per slug.
+  pageEmbeds: {
+    [PAGE_SLUG]: { _id: PAGE_SLUG, ...FAKE_PAGE },
+    Gone12345678: { _id: "Gone12345678", slug: "Gone12345678", missing: true },
+  },
+} as any);
+
+const { renderToStaticMarkup } = await import("react-dom/server");
+const { MemoryRouter } = await import("react-router");
+const { default: ReactMarkdown } = await import("react-markdown");
+const { entityRemarkPlugins } = await import("../lib/remarkEntityIds");
+const { EntityAwareLink, EntityAwareCode } = await import("./EntityIdPill");
+
+const MD_COMPONENTS = { a: EntityAwareLink, code: EntityAwareCode } as const;
+
+// The pill resolves its open gesture via router hooks (useOpenLinkedSession),
+// so rendering needs a Router around it — same as every real surface.
+function render(markdown: string): string {
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <ReactMarkdown remarkPlugins={entityRemarkPlugins} components={MD_COMPONENTS as any}>
+        {markdown}
+      </ReactMarkdown>
+    </MemoryRouter>,
+  );
+}
+
+// The pill's visible text, with the surrounding markup stripped — what a reader
+// actually sees where the id was written.
+function pillText(html: string): string {
+  const m = html.match(/<a [^>]*class="not-prose[^"]*"[^>]*>.*?<span[^>]*>([^<]*)<\/span><\/a>/);
+  return m ? m[1] : "";
+}
+
+// Every pill's visible text, in reading order.
+function pillTexts(html: string): string[] {
+  return [...html.matchAll(/<a [^>]*class="not-prose[^"]*"[^>]*>.*?<span[^>]*>([^<]*)<\/span><\/a>/g)].map((m) => m[1]);
+}
+
+const { EstablishedRefsProvider } = await import("../hooks/entityMentionScope");
+const { FilePathContext } = await import("../lib/filePathLinks");
+
+// The same pipeline inside a "message from <sender>" card: the header already
+// named the sender, and the body renders under that knowledge.
+function renderFrom(sender: string, markdown: string): string {
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <EstablishedRefsProvider ids={[sender]}>
+        <ReactMarkdown remarkPlugins={entityRemarkPlugins} components={MD_COMPONENTS as any}>
+          {markdown}
+        </ReactMarkdown>
+      </EstablishedRefsProvider>
+    </MemoryRouter>,
+  );
+}
+
+describe("inline trigger references", () => {
+  test("a bare short id renders the trigger's name, not its id", () => {
+    const html = render("Trigger tr-42 marked complete.");
+    expect(html).toContain("Growth audit");
+    expect(html).toContain('href="/triggers/' + TRIGGER_CONVEX_ID + '"');
+    // Reads as a sentence, with the reference standing in for the id.
+    expect(html).toContain("Trigger ");
+    expect(html).toContain("marked complete.");
+  });
+
+  test("the same id inside backticks becomes a reference too", () => {
+    // This is the exact shape from the report: the agent wrapped the id in
+    // inline code, so the fix has to cover the `code` renderer as well.
+    const html = render("Trigger `tr-42` marked complete.");
+    expect(html).toContain("Growth audit");
+    expect(html).not.toContain("<code>tr-42</code>");
+  });
+
+  test("an @[Title id] mention resolves to the same reference", () => {
+    const html = render("see @[Growth audit tr-42] for the cadence");
+    expect(html).toContain("Growth audit");
+    expect(html).not.toContain("@Growth audit");
+  });
+
+  test("a raw 32-char trigger id still resolves, for prose already written", () => {
+    // Old summaries carry the blob. resolveIdType now knows the agent_tasks
+    // table, so those become references retroactively instead of staying blobs.
+    const html = render(`Trigger \`${TRIGGER_CONVEX_ID}\` marked complete.`);
+    expect(html).not.toContain(`<code>${TRIGGER_CONVEX_ID}</code>`);
+    expect(html).toContain("Growth audit");
+  });
+
+  test("an unresolvable id degrades to plain text rather than crashing", () => {
+    const html = render("Trigger `tr-99999` is gone.");
+    expect(html).toContain("tr-99999");
+  });
+
+  test("a Convex-shaped id that resolves to no entity table stays inline code", () => {
+    // Message ids, hashes, and ids whose resolveIdType is still in flight all
+    // reach the pill with type === null; it must fall back, not throw on the
+    // missing task glyph (prod: "Cannot read properties of null (reading 'icon')").
+    const unknown = "zz72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+    const html = render(`See \`${unknown}\` for details.`);
+    expect(html).toMatch(new RegExp(`<code[^>]*>${unknown}<\/code>`));
+  });
+});
+
+describe("inline task and plan references", () => {
+  // The reported symptom: "…ticks (ct-38940)." told the reader nothing. A task
+  // reference is a name now, exactly like a session or trigger reference.
+  test("a task short id renders the task's title, not the id", () => {
+    const html = render("Ticks up on ct-38940 now.");
+    expect(pillText(html)).toBe("Retry queue for failed webhooks");
+    expect(html).not.toContain(">ct-38940<");
+    expect(html).toContain('href="/tasks/' + TASK_CONVEX_ID + '"');
+  });
+
+  test("a plan short id renders the plan's title", () => {
+    const html = render("Rolled into pl-88 this week.");
+    expect(pillText(html)).toBe("Billing migration");
+    expect(html).not.toContain(">pl-88<");
+  });
+
+  test("a task id in backticks becomes a titled reference too", () => {
+    const html = render("Filed `ct-38940` for the retry queue.");
+    expect(pillText(html)).toBe("Retry queue for failed webhooks");
+    expect(html).not.toContain("<code>ct-38940</code>");
+  });
+
+  test("an @[Title id] task mention resolves to the live title", () => {
+    // The written title is stale on purpose: the pill shows what the task is
+    // called NOW, not what it was called when the agent typed the mention.
+    const html = render("see @[Old name ct-38940] for the retry work");
+    expect(pillText(html)).toBe("Retry queue for failed webhooks");
+    expect(html).not.toContain("Old name");
+  });
+
+  test("a long title is clipped on a word boundary, not mid-word", () => {
+    const html = render("Blocked on ct-77 until the restart lands.");
+    const label = pillText(html);
+    expect(label).toBe("Rewrite the delivery pipeline so queued…");
+    expect(html).toContain("until the restart lands.");
+  });
+
+  test("a task nobody can read keeps its short id", () => {
+    // webGet returns null for a task outside the reader's workspace. The pill
+    // must not go blank or claim a title it never got — it falls back to the id.
+    const html = render("Ask them about ct-99999.");
+    expect(html).toContain("ct-99999");
+  });
+});
+
+describe("first mention vs. repeat", () => {
+  // The symptom: an agent's reply named the same session four times and the
+  // paragraph rendered as four full-title pills — a wall of titles, not a
+  // sentence. A reader needs the title ONCE; after that the short name is
+  // enough, and the title stays one hover away.
+  test("the first mention shows the title, every repeat shows the short name", () => {
+    const html = render("jx7b7mx flagged the checks. jx7b7mx's owner replied, so it goes back to jx7b7mx.");
+    expect(pillTexts(html)).toEqual(["Broker context render unification", "Broker render", "Broker render"]);
+    // The repeat still carries the full title for a reader who hovers.
+    expect(html).toContain('title="Broker context render unification"');
+  });
+
+  test("an object without a stored short name derives one from its title", () => {
+    const html = render("Blocked on ct-77; ct-77 needs the restart first.");
+    expect(pillTexts(html)).toEqual(["Rewrite the delivery pipeline so queued…", "Rewrite delivery"]);
+  });
+
+  test("a mention the author spelled out (@[Title id]) always renders in full", () => {
+    const html = render("ct-38940 is close. Ship @[Retry queue ct-38940] today.");
+    expect(pillTexts(html)).toEqual(["Retry queue for failed webhooks", "Retry queue for failed webhooks"]);
+  });
+
+  test("different objects are counted apart", () => {
+    const html = render("pl-88 covers ct-38940; ct-38940 lands under pl-88.");
+    // A two-word title already IS a name, so its repeat reads the same.
+    expect(pillTexts(html)).toEqual(["Billing migration", "Retry queue for failed webhooks", "Retry queue", "Billing migration"]);
+  });
+
+  test("a backticked repeat is a repeat too", () => {
+    const html = render("Filed ct-38940. Ticks up on `ct-38940` now.");
+    expect(pillTexts(html)).toEqual(["Retry queue for failed webhooks", "Retry queue"]);
+  });
+
+  test("inside a message-from card, the sender is already introduced", () => {
+    const html = renderFrom("jx7b7mx", "I am jx7b7mx and ct-38940 is mine.");
+    expect(pillTexts(html)).toEqual(["Broker render", "Retry queue for failed webhooks"]);
+  });
+
+  test("a possessive glued to a reference rides on the pill", () => {
+    const html = render("Check jx7b7mx's owner and ct-38940’s plan.");
+    expect(pillTexts(html)).toEqual(["Broker context render unification", "Retry queue for failed webhooks"]);
+    // The apostrophe-s leaves the prose text node and renders against the pill.
+    expect(html).toContain("</a><span class=\"-ml-[3px]\">&#x27;s</span> owner");
+    expect(html).toContain("</a><span class=\"-ml-[3px]\">’s</span> plan.");
+  });
+
+  test("each message body counts from one", () => {
+    // Two bodies, two parses: the second is a new reader context.
+    expect(pillText(render("First: ct-38940."))).toBe("Retry queue for failed webhooks");
+    expect(pillText(render("Again: ct-38940."))).toBe("Retry queue for failed webhooks");
+  });
+});
+
+describe("published page links", () => {
+  const PAGE_URL = `https://codecast.sh/a/${PAGE_SLUG}`;
+
+  test("a publish URL alone on its line embeds the live page", () => {
+    const html = render(`Here is the report:\n\n${PAGE_URL}\n\nTell me what to change.`);
+    expect(html).toContain("<iframe");
+    expect(html).toContain(`/cli/a/${PAGE_SLUG}`);
+    // The header carries the page's live title.
+    expect(html).toContain("Q3 growth report");
+    // The surrounding prose is untouched.
+    expect(html).toContain("Tell me what to change.");
+  });
+
+  test("[caption](url) on its own line renders the caption under the frame", () => {
+    const html = render(`[Funnel by market, last 30 days](${PAGE_URL})`);
+    expect(html).toContain("<iframe");
+    expect(html).toContain("Funnel by market, last 30 days");
+  });
+
+  test("a publish URL inside a sentence renders a titled pill, not a frame", () => {
+    const html = render(`The numbers are in ${PAGE_URL} if you want detail.`);
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("Q3 growth report");
+    expect(html).toContain(`href="${PAGE_URL}"`);
+  });
+
+  test("a deleted page degrades to a note with the link, not a framed 404", () => {
+    const html = render("https://codecast.sh/a/Gone12345678");
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("Published page unavailable");
+    expect(html).toContain("https://codecast.sh/a/Gone12345678");
+  });
+
+  test("a non-page /a/ lookalike on another host stays an ordinary link", () => {
+    const html = render("see https://example.com/a/Ab3xYz9Qw12k for theirs");
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain('href="https://example.com/a/Ab3xYz9Qw12k"');
+  });
+
+  // A pane verb rides next to "open" on both shapes, so a page can sit beside
+  // the conversation instead of in another browser tab: the embed's toolbar
+  // names it "Open beside your work", the pill's glyph "Open in a pane".
+  test("both the embed and the pill offer to open the page in a pane", () => {
+    expect(render(PAGE_URL)).toContain('aria-label="Open beside your work"');
+    expect(render(`The numbers are in ${PAGE_URL} if you want detail.`)).toContain('aria-label="Open in a pane"');
+  });
+});
+
+describe("Claude artifact links", () => {
+  const ID = "2c5e5d6e-0a70-4e04-9c7a-1c4f1f5b8b6d";
+  const URL = `https://claude.ai/public/artifacts/${ID}`;
+
+  // claude.ai refuses to be framed by other sites, so the card body is a tile
+  // that opens the artifact — never an iframe that would paint a refusal.
+  test("an artifact URL alone on its line renders a card, not a frame", () => {
+    const html = render(`Here is the mockup:\n\n${URL}\n\nTell me what to change.`);
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("Claude artifact");
+    expect(html).toContain("Copy link to Claude artifact");
+    expect(html).toContain(`href="${URL}"`);
+    expect(html).toContain("Tell me what to change.");
+  });
+
+  test("[caption](url) on its own line titles the card with the caption", () => {
+    const html = render(`[Pricing page mockup](https://claude.site/artifacts/${ID})`);
+    expect(html).not.toContain("<iframe");
+    expect(html).toContain("Pricing page mockup");
+    // The card opens the canonical claude.ai address, whichever host was pasted.
+    expect(html).toContain(`href="${URL}"`);
+  });
+
+  test("an artifact URL inside a sentence renders a pill", () => {
+    const html = render(`The mockup is at ${URL} if you want detail.`);
+    expect(html).not.toContain("Copy link to Claude artifact");
+    expect(html).toContain("rounded-full");
+    expect(html).toContain(">Claude artifact<");
+    expect(html).toContain(`href="${URL}"`);
+  });
+
+  // Only the desktop's native view can show a site that refuses to be framed,
+  // and this render has none, so no pane verb is offered.
+  test("no pane verb without the desktop's native view", () => {
+    expect(render(URL)).not.toContain('aria-label="Open in a pane"');
+    expect(render(`See ${URL} here.`)).not.toContain('aria-label="Open in a pane"');
+  });
+});
+
+describe("local dev server links", () => {
+  // An agent printing where its dev server runs: the link becomes a pill that
+  // opens a browser pane, reading as the address rather than the raw URL.
+  test("a loopback URL in agent prose renders as a preview pill", () => {
+    const html = render("The app is up at http://localhost:3200/inbox now.");
+    expect(html).toContain('href="http://localhost:3200/inbox"');
+    expect(html).toContain("rounded-full");
+    expect(html).toContain(">localhost:3200/inbox<");
+    expect(html).toContain("Open as a pane beside this conversation");
+    expect(html).toContain("The app is up at");
+  });
+
+  test("127.0.0.1 counts, and the author's own link text is kept", () => {
+    const html = render("Try [the files view](http://127.0.0.1:3200/files).");
+    expect(html).toContain('href="http://127.0.0.1:3200/files"');
+    expect(html).toContain(">the files view<");
+    expect(html).toContain("Open as a pane beside this conversation");
+  });
+
+  test("public and LAN addresses stay ordinary links", () => {
+    for (const url of ["https://example.com/docs", "http://192.168.1.20:3000/"]) {
+      const html = render(`see ${url} for that`);
+      expect(html).toContain(`href="${url}"`);
+      expect(html).not.toContain("Open as a pane beside this conversation");
+    }
+  });
+});
+
+describe("local-first seeding", () => {
+  // Without this, every task mention in a conversation renders "ct-…" first and
+  // swaps to the title a round-trip later — a visible flip and reflow on every
+  // mount, on a client that already had the answer in memory.
+  test("a reference paints its title on the first render, before any server answer", () => {
+    const html = render("Picked up ct-50001 this morning.");
+    expect(pillText(html)).toBe("Seeded from the local store");
+    expect(html).not.toContain(">ct-50001<");
+  });
+
+  test("the server row still wins once it lands", () => {
+    // ct-38940 is served AND could be seeded; the served row is the fresher of
+    // the two, so it is the one that shows.
+    const html = render("Ticks up on ct-38940 now.");
+    expect(pillText(html)).toBe("Retry queue for failed webhooks");
+  });
+
+  test("an id in neither the store nor the server still degrades to the id", () => {
+    const html = render("Ask them about ct-99999.");
+    expect(html).toContain("ct-99999");
+  });
+});
+
+describe("ids that resolve to no entity type", () => {
+  // A 32-char Convex id belongs to a table only if `entities.resolveIdType`
+  // says so. Until it answers — and forever, for a message id or a random hash
+  // — the pill has NO type, and the whole component has to survive that state:
+  // it renders on the way to the guard that degrades it to plain text.
+  //
+  // The regression: the icon was picked with `taskV!.icon`, and `taskV` is set
+  // only for a task. A typeless reference took that branch and threw
+  // "Cannot read properties of null (reading 'icon')", which killed the whole
+  // conversation view rather than one pill.
+  const UNKNOWN_CONVEX_ID = "zx72qtvpbmmrmwcjqmhzawejsx8bq9gm";
+
+  test("a Convex id belonging to no table degrades to plain text", () => {
+    const html = render(`Look at \`${UNKNOWN_CONVEX_ID}\` in the log.`);
+    expect(html).toContain(UNKNOWN_CONVEX_ID);
+    expect(html).toContain("in the log.");
+  });
+
+  test("a typeless id inside a list renders without taking the list down", () => {
+    // The reported shape: the reference sat in a markdown bullet, so the throw
+    // unmounted the list and the conversation around it.
+    const html = render(`- first\n- see ${UNKNOWN_CONVEX_ID}\n- third`);
+    expect(html).toContain("first");
+    expect(html).toContain("third");
+  });
+});
+
+describe("pill chrome", () => {
+  // The status tint belongs to the disc on a TASK pill and nowhere else — a
+  // session or plan glyph takes its colour from the pill chrome instead. This
+  // pins that split, because the icon and the tint are now resolved from the
+  // same always-defined status vocabulary and it would be easy to leak the
+  // task colour onto every type.
+  test("a task pill tints its disc with the status colour", () => {
+    // ct-38940 is in_progress → the yellow disc.
+    const html = render("Ticks up on ct-38940 now.");
+    expect(html).toContain("text-sol-yellow");
+    expect(html).toContain("bg-sol-violet/[0.08]");
+  });
+
+  test("a plan pill carries no task status colour", () => {
+    const html = render("Rolled into pl-88 this week.");
+    expect(html).toContain("bg-sol-cyan/[0.08]");
+    expect(html).not.toContain("text-sol-yellow");
+  });
+});
+
+describe("pull request references", () => {
+  // A conversation bound to a repository: the pill completes `#3263` from it.
+  function renderIn(repository: string | null, markdown: string, pullRequestIds: string[] = []): string {
+    return renderToStaticMarkup(
+      <MemoryRouter>
+        <FilePathContext.Provider value={{ repository, pullRequestIds: new Set(pullRequestIds) }}>
+          <ReactMarkdown remarkPlugins={entityRemarkPlugins} components={MD_COMPONENTS as any}>
+            {markdown}
+          </ReactMarkdown>
+        </FilePathContext.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  test("a GitHub link to a synced pull request reads as the PR's title and opens in the app", () => {
+    const html = render("see https://github.com/codecast-sh/codecast/pull/482 for the fix");
+    expect(pillText(html)).toBe("#482 Fix the auth race");
+    expect(html).toContain('href="/pr/codecast-sh/codecast/482"');
+    expect(html).not.toContain('href="https://github.com');
+  });
+
+  test("a GitHub link to a pull request codecast has not synced still pills and opens the app page", () => {
+    // No installation covers union-mobile, so the row is unknown. The link
+    // named a pull request beyond doubt, so it is a reference, not an external
+    // link; the page it opens offers GitHub when it has nothing to show.
+    const html = render("merged https://github.com/Union-AI/union-mobile/pull/3263 today");
+    expect(pillText(html)).toBe("union-ai/union-mobile#3263");
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3263"');
+    expect(html).not.toContain('href="https://github.com');
+  });
+
+  test("a GitHub link the author gave their own words keeps them until the row resolves", () => {
+    const html = render("see [the rescue dial card](https://github.com/Union-AI/union-mobile/pull/3247)");
+    expect(pillText(html)).toBe("the rescue dial card");
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3247"');
+  });
+
+  test("a GitHub commit link pills the same way", () => {
+    const html = render("at https://github.com/Union-AI/union-mobile/commit/aa57b85ee0123");
+    expect(pillText(html)).toBe("union-ai/union-mobile@aa57b85ee0123");
+    expect(html).toContain('href="/commit/union-ai/union-mobile/aa57b85ee0123"');
+  });
+
+  test("a bare owner/repo#N nobody has synced stays text (it could be a file and line)", () => {
+    const html = render("edit union-ai/union-mobile#3263 now");
+    expect(html).not.toContain('class="not-prose');
+    expect(html).toContain("union-ai/union-mobile#3263");
+  });
+
+  test("#N and PR N inside a repository bound conversation pill and open that repository's PR", () => {
+    const html = renderIn("union-ai/union-mobile", "PRs 3247 (rescue dial card), 3230 (objection playbook) and #3263 landed", ["union-ai/union-mobile#3263"]);
+    expect(pillTexts(html)).toEqual(["3247", "3230", "#3263"]);
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3230"');
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3247"');
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3263"');
+    // The words before the number stay prose.
+    expect(html).toContain("PRs <a");
+  });
+
+  test("#N in a repository bound conversation reads as the title once the row is in hand", () => {
+    const html = renderIn("codecast-sh/codecast", "landed PR #482 this morning");
+    expect(pillText(html)).toBe("#482 Fix the auth race");
+    expect(html).toContain('href="/pr/codecast-sh/codecast/482"');
+  });
+
+  test("a lone #N the conversation does not know as a pull request is a rank, not a reference", () => {
+    const html = renderIn("union-ai/union", "one candidate moved from #10 to #2 at a dial of 3, and down to #144 at 0", ["union-ai/union#3263"]);
+    expect(html).not.toContain('class="not-prose');
+    expect(html).toContain("moved from #10 to #2 at a dial of 3, and down to #144 at 0");
+  });
+
+  test("PR N needs no evidence; a lone #N it names is vouched for", () => {
+    const html = renderIn("union-ai/union", "PR 10 ranks #2 today", []);
+    expect(pillTexts(html)).toEqual(["10"]);
+    expect(html).toContain("ranks #2 today");
+  });
+
+  test("#N outside any repository is the text it was written as", () => {
+    const html = render("see #3263 and PR 3247");
+    expect(html).not.toContain('class="not-prose');
+    expect(html).not.toContain("pr:#");
+    expect(html).toContain("see #3263 and PR 3247");
+  });
+
+  test("a conversation with no repository prints the text back too", () => {
+    const html = renderIn(null, "see #3263 and PR 3247");
+    expect(html).not.toContain('class="not-prose');
+    expect(html).toContain("see #3263 and PR 3247");
+  });
+});
+
+// A codecast URL for a route with no entity pill (/org?proposal=…) is still a
+// place in this app. As a new tab it left the desktop app for the system browser.
+describe("codecast route links", () => {
+  test("an app route opens in this window at its path", () => {
+    const html = render("See https://codecast.sh/org?proposal=op-19 for the change.");
+    expect(html).toContain('href="/org?proposal=op-19"');
+    expect(html).not.toContain('target="_blank"');
+  });
+
+  test("a marketing page and a foreign site stay ordinary external links", () => {
+    for (const url of ["https://codecast.sh/pricing", "https://example.com/org"]) {
+      const html = render(`Read ${url} first.`);
+      expect(html).toContain(`href="${url}"`);
+      expect(html).toContain('target="_blank"');
+    }
+  });
+});
+
+// One change of a proposal, as the head of people writes it in a sentence
+// (`op-55#3`): still a proposal reference, pointed at one change. Inline it
+// reads as the change's number under the proposal's glyph; the title is one
+// hover away (the link's tooltip and the hover card), so a reply that names
+// five changes of one proposal reads as a sentence, not a wall of titles.
+describe("one change of a proposal (op-N#seq)", () => {
+  const PROPOSAL = { _id: "tx72qtvpbmmrmwcjqmhzawejsx8bq9gm", short_id: "op-55", title: "Rank the projects by their goals", status: "open" };
+  useInboxStore.setState({ orgProposals: { [PROPOSAL._id]: PROPOSAL } } as any);
+
+  test("the pill reads as the change's number, with the whole title on the tooltip", () => {
+    PROPOSAL_GETS.length = 0;
+    const html = render("Start with op-55#3 and the rest can wait.");
+    expect(pillTexts(html)).toEqual(["#3"]);
+    expect(html).toContain('title="Rank the projects by their goals #3"');
+    // It opens the org page with that change in focus.
+    expect(html).toContain('href="/org?proposal=op-55&amp;focus=3"');
+    // The number is the reference's, never loose text after the pill (where it read as a pull request).
+    expect(html).toMatch(/<p>Start with .*<\/a> and the rest can wait\.<\/p>/);
+    // The feeder is asked for the proposal: the server knows nothing called `op-55#3`.
+    expect(new Set(PROPOSAL_GETS)).toEqual(new Set(["op-55"]));
+  });
+
+  test("the whole proposal beside it keeps its plain name and its own page", () => {
+    const html = render("Proposed in op-55, and op-55#1 is the one to read first.");
+    expect(pillTexts(html)).toEqual(["Rank the projects by their goals", "#1"]);
+    expect(html).toContain('href="/org?proposal=op-55"');
+    expect(html).toContain('href="/org?proposal=op-55&amp;focus=1"');
+  });
+
+  test("several changes of one proposal in a sentence read as their numbers", () => {
+    const html = render("Approved, and applied: op-55#1, op-55#3 and op-55#4.");
+    expect(pillTexts(html)).toEqual(["#1", "#3", "#4"]);
+    expect(html).toContain('href="/org?proposal=op-55&amp;focus=4"');
+  });
+
+  test("a repeat mention reads the same as the first", () => {
+    const html = render("See op-55#3 first. Then approve op-55#3 if it holds.");
+    expect(pillTexts(html)).toEqual(["#3", "#3"]);
+  });
+
+  test("a change of a proposal this client does not hold reads as written", () => {
+    const html = render("Ask about op-77#2 when it lands.");
+    expect(pillTexts(html)).toEqual(["op-77#2"]);
+    expect(html).toContain('href="/org?proposal=op-77&amp;focus=2"');
+  });
+});
+
+describe("product sources (src-N)", () => {
+  test("a src-N reads as the source's name, linked to Ops narrowed to it", () => {
+    const html = render("src-13 will stay in error until Union's API is up.");
+    expect(pillText(html)).toBe("union");
+    expect(html).toContain('href="/ops?source=src-13"');
+    // A failing source says so on its glyph.
+    expect(html).toContain("text-sol-red");
+  });
+
+  test("a table cell of source ids becomes pills, a src- path stays text", () => {
+    const html = render("| Source |\n| --- |\n| src-13 union (app connector) |\n\nSee packages/src-tauri.");
+    expect(pillTexts(html)).toEqual(["union"]);
+    expect(html).toContain("src-tauri");
+  });
+});
+
+describe("replays (rp-N)", () => {
+  test("rp-N reads as the page it recorded, linked to its Ops page", () => {
+    const html = render("The failure is in rp-7.");
+    expect(pillText(html)).toBe("shop.example.com/checkout");
+    expect(html).toContain('href="/ops/replays/rp-7"');
+  });
+
+  test("a moment reads as the page and the second, and opens the replay there", () => {
+    const html = render("It broke at rp-7@1:23 after the second click.");
+    expect(pillText(html)).toBe("shop.example.com/checkout @1:23");
+    expect(html).toContain('href="/ops/replays/rp-7?t=83000"');
+  });
+
+  test("a replay this viewer cannot read stays the text it was written as", () => {
+    const html = render("See rp-9@0:05.");
+    expect(html).toContain("rp-9@0:05");
+    expect(html).not.toContain("shop.example.com");
+  });
+});
+
+// The company's objects (a goal, a project, a role, a person) each open their
+// sheet on the Org screen, `/org/<ref>`. A project and a role are named by
+// their short ids in prose; a person by a link to their address.
+describe("the company's objects (or-N, pj-…, @person)", () => {
+  const PROJECT = { _id: "ux72qtvpbmmrmwcjqmhzawejsx8bq9gm", short_id: "pj-mf3k2a", title: "Lead lists", status: "active" };
+  const ROLE = { _id: "vx72qtvpbmmrmwcjqmhzawejsx8bq9gm", short_id: "or-3", name: "Calling lead", handle: "calling", status: "active" };
+  const PERSON = { _id: "wx72qtvpbmmrmwcjqmhzawejsx8bq9gm", name: "Samvit", github_username: "samvit" };
+  useInboxStore.setState({
+    projects: { [PROJECT._id]: PROJECT },
+    orgTree: { workspace: { kind: "team", id: "t", name: "Union" }, people: [], roles: [ROLE], anchors: [], generated_at: 0 },
+    teamMembers: [PERSON],
+  } as any);
+
+  test("a role and a project read as their names and open their sheet", () => {
+    const html = render("Ask or-3 about pj-mf3k2a.");
+    expect(pillTexts(html)).toEqual(["Calling lead", "Lead lists"]);
+    expect(html).toContain('href="/org/or-3"');
+    expect(html).toContain('href="/projects/pj-mf3k2a"');
+  });
+
+  test("a link to a person's address reads as their name", () => {
+    const html = render("Talk to [Samvit](/org/@samvit) first.");
+    expect(pillText(html)).toBe("Samvit");
+    expect(html).toContain('href="/org/@samvit"');
+  });
+
+  test("a link to a project's board is the same project, opened as its sheet", () => {
+    const html = render(`See https://codecast.sh/projects/${PROJECT._id} for the list.`);
+    expect(pillText(html)).toBe("Lead lists");
+    expect(html).toContain('href="/projects/pj-mf3k2a"');
+  });
+
+  test("words that start like a role stay prose", () => {
+    const html = render("Do it now or-else.");
+    expect(pillTexts(html)).toEqual([]);
+  });
+});

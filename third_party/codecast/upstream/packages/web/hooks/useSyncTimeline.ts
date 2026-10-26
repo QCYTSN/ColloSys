@@ -1,0 +1,141 @@
+// Timeline lanes (commits, pull requests) — store-fed delta overlays.
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { normalizeRepository } from "@codecast/shared/contracts";
+import { useCallback } from "react";
+import { useSyncCollection, entityIdArgs } from "./useSyncCollection";
+import { useCollectionRows } from "./useCollectionRows";
+import { useInboxStore } from "../store/inboxStore";
+
+const api = _api as any;
+
+export function useSyncPullRequests(args: { repository?: string; limit?: number } | "skip" = {}) {
+  return useSyncCollection("pullRequests", api.pull_requests.getPRsForTimeline, args);
+}
+
+const commitSig = (c: any) => `${c.message}|${c.timestamp}|${c.pr_number ?? ""}|${c.conversation_id ?? ""}`;
+const prSig = (p: any) => `${p.title}|${p.state}|${p.updated_at}|${p.merged_at ?? ""}|${p.linked_session_ids?.length ?? 0}`;
+export const byTimestampDesc = (a: any, b: any) => (b.timestamp ?? 0) - (a.timestamp ?? 0);
+const byUpdatedDesc = (a: any, b: any) => (b.updated_at ?? 0) - (a.updated_at ?? 0);
+
+export function useCommits(where?: (c: any) => boolean): any[] {
+  return useCollectionRows<any>("commits", { where, sig: commitSig, sort: byTimestampDesc });
+}
+
+export function usePullRequests(where?: (p: any) => boolean): any[] {
+  return useCollectionRows<any>("pullRequests", { where, sig: prSig, sort: byUpdatedDesc });
+}
+
+// One PR, fed into the same collection the timeline fills. The page reads the
+// store, so a PR the timeline already cached paints before this answers.
+export function useSyncPullRequest(args: { repository: string; number: number } | "skip") {
+  return useSyncCollection("pullRequests", api.pull_requests.getPRByNumber, args, {
+    select: (row: any) => (row ? [row] : []),
+  });
+}
+
+// The PR page paints far more of a row than the timeline lane does, so it wakes
+// on its own signature rather than widening the lane's.
+const prDetailSig = (p: any) =>
+  [
+    p.title, p.state, p.draft, p.updated_at, p.merged_at ?? "", p.body,
+    p.head_sha ?? "", p.mergeable_state ?? "", p.behind_by ?? "", p.review_decision ?? "",
+    p.checks_state ?? "", JSON.stringify(p.checks), p.unresolved_review_count ?? "",
+    (p.requested_reviewers ?? []).join(","), (p.linked_session_ids ?? []).join(","),
+    (p.task_ids ?? []).join(","), (p.files ?? []).length,
+    p.shepherd_state ?? "", p.shepherd_enabled ?? "", p.shepherd_conversation_id ?? "",
+    p.shepherd_last_wake_at ?? "", p.shepherd_wake_count ?? "",
+    (p.labels ?? []).map((l: any) => l.name).join(","), (p.assignees ?? []).join(","), JSON.stringify(p.commits), p.commits_count ?? "",
+  ].join("|");
+
+export function usePullRequest(repository: string, number: number): any | undefined {
+  const canonicalRepository = normalizeRepository(repository);
+  const rows = useCollectionRows<any>("pullRequests", {
+    where: (p) => normalizeRepository(p.repository) === canonicalRepository && p.number === number,
+    sig: prDetailSig,
+  });
+  return rows[0];
+}
+
+// One commit, fed into the same collection the timeline fills. Same trick as
+// useSyncPullRequest: the commit page paints from whatever the timeline already
+// cached, and this refreshes the row with everything the lane leaves out.
+export function useSyncCommit(sha: string | undefined) {
+  return useSyncCollection("commits", api.commits.getCommitBySha, sha ? { sha } : "skip", {
+    select: (row: any) => (row ? [row] : []),
+  });
+}
+
+// The commit page paints the whole row, files included, so it wakes on its own
+// signature rather than widening the lane's.
+const commitDetailSig = (c: any) =>
+  [
+    c.message, c.timestamp, c.branch ?? "", c.conversation_id ?? "",
+    c.pr_id ?? "", c.pr_number ?? "", (c.task_ids ?? []).join(","),
+    (c.files ?? []).length, c.insertions ?? "", c.deletions ?? "",
+    // A fetch fills in the patches of files the row already named and counted,
+    // so the page must wake on their arrival, not only on the file list.
+    (c.files ?? []).filter((f: any) => f.patch !== undefined).length,
+  ].join("|");
+
+export function useCommit(sha: string | undefined): any | undefined {
+  const rows = useCollectionRows<any>("commits", {
+    where: (c) => !!sha && c.sha === sha,
+    sig: commitDetailSig,
+  });
+  return rows[0];
+}
+
+// ── One conversation's commits and pull requests ──
+//
+// The transcript shows a commit or a pull request inline when it was made
+// outside the transcript (a push the webhook linked to this session, a PR
+// opened from a terminal on its branch); the ones made by a Bash call in the
+// transcript already render on that call. These feeders bring the linked
+// rows into the same collections the timeline lane uses, and the readers
+// narrow to this conversation.
+
+// The answer is EVERY commit linked to the conversation, but the collection is
+// a delta, where a missing row means "unchanged". So a cached row that still
+// names the conversation and is missing from the answer was unlinked on the
+// server; it goes back in without the link, and stays for the repo and PR
+// timelines that show it too.
+export function detachUnlinkedCommits(answer: any[], cached: Record<string, any>, conversationId: string): any[] {
+  const answered = new Set(answer.map((row) => row._id));
+  const detached: any[] = [];
+  for (const row of Object.values(cached)) {
+    if (row?.conversation_id !== conversationId || answered.has(row._id)) continue;
+    const { conversation_id: _unlinked, ...rest } = row;
+    detached.push(rest);
+  }
+  return detached.length ? [...answer, ...detached] : answer;
+}
+
+export function useSyncConversationCommits(conversationId: string | undefined) {
+  const select = useCallback(
+    (answer: any) => (Array.isArray(answer) && conversationId
+      ? detachUnlinkedCommits(answer, useInboxStore.getState().commits ?? {}, conversationId)
+      : answer),
+    [conversationId],
+  );
+  return useSyncCollection("commits", api.commits.getCommitsForConversation, entityIdArgs("conversation_id", conversationId), { select });
+}
+
+export function useSyncConversationPullRequests(conversationId: string | undefined) {
+  return useSyncCollection("pullRequests", api.pull_requests.getPRsForConversation, entityIdArgs("conversation_id", conversationId));
+}
+
+export function useConversationCommits(conversationId: string | undefined): any[] {
+  return useCollectionRows<any>("commits", {
+    where: (c) => !!conversationId && c.conversation_id === conversationId,
+    sig: commitDetailSig,
+    sort: byTimestampDesc,
+  });
+}
+
+export function useConversationPullRequests(conversationId: string | undefined): any[] {
+  return useCollectionRows<any>("pullRequests", {
+    where: (p) => !!conversationId && Array.isArray(p.linked_session_ids) && p.linked_session_ids.includes(conversationId),
+    sig: prSig,
+    sort: byUpdatedDesc,
+  });
+}

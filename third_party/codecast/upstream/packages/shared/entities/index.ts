@@ -1,0 +1,1208 @@
+/**
+ * Shared mapping between codecast object types, their identifiers, their
+ * in-app routes, and the public URLs that address them. The single source of
+ * truth for "how do I name and address this object" — used by the web entity
+ * pills (to turn a bare id, an `@[Title id]` mention, or a pasted link into a
+ * rich in-app pill), by navigation, and by the `cast link` CLI command.
+ *
+ * ADDING A NEW REFERENCEABLE OBJECT TYPE: add it to `EntityType`, give it a
+ * `SHORT_ID_PREFIX` entry (or teach `entityTypeFromId` its id shape), add its
+ * route to `ENTITY_ROUTE` and its url segment(s) to `SEGMENT_TYPE`. Every
+ * mention surface derives its matching from those tables, so nothing else in
+ * web/CLI needs a regex of its own. That is why triggers used to render as raw
+ * 32-char ids: their table was simply never registered here.
+ */
+
+import { isPrivateHost } from "../contracts/browserPaneOffer";
+import { callAnchorHref, callFrameHref, parseCallMomentParam } from "../contracts/callLinks";
+import { CALL_TIME_SOURCE, formatCallTime, parseCallTime } from "../contracts/callRecordings";
+import { parseReplayRef, replayRefId, type ReplayRef } from "../contracts/replayPlayer";
+
+export type EntityType = "task" | "plan" | "session" | "doc" | "project" | "initiative" | "proposal" | "trigger" | "decision" | "pr" | "commit" | "call" | "source" | "replay" | "role" | "person" | "deploy";
+
+/** The public web origin that serves codecast object pages. */
+export const CODECAST_BASE_URL = "https://codecast.sh";
+
+/** The public address of a codecast path (an absolute URL passes through),
+ *  whichever window or device made it: a desktop pane, localhost, a phone. */
+export function publicUrl(path: string): string {
+  if (/^https?:\/\//.test(path)) return path;
+  return `${CODECAST_BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
+/**
+ * True only for a full Convex document id: exactly 32 lowercase base32 chars.
+ * Short ids (ct-…/pl-… and 7-char jx… sessions) and any malformed/garbage id
+ * fail this. Callers use it before handing an id to a `db.get`-backed query —
+ * a non-Convex string passed to `ctx.db.get` throws "Invalid ID length" and
+ * crashes the page. Single source of truth, re-exported by the inbox store.
+ */
+export function isConvexId(id: string): boolean {
+  // /^[a-z0-9]{32}$/ as a loop: the inbox placement asks this of every row on
+  // every pass, and the regex was a measurable share of an idle minute.
+  const s = typeof id === "string" ? id : String(id);
+  if (s.length !== 32) return false;
+  for (let i = 0; i < 32; i++) {
+    const c = s.charCodeAt(i);
+    if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 122))) return false;
+  }
+  return true;
+}
+
+/** In-app Next.js route prefix for each entity type. */
+export const ENTITY_ROUTE: Record<EntityType, string> = {
+  task: "/tasks",
+  plan: "/plans",
+  session: "/conversation",
+  doc: "/docs",
+  // The company's objects resolve through objectHref: a goal and a project
+  // have pages of their own, a role and a person live under `/org/<ref>`.
+  project: "/org",
+  initiative: "/org",
+  role: "/org",
+  person: "/org",
+  // A staffing proposal lives on the org page, beside the chart that draws
+  // its ghosts: addressed by query (`/org?proposal=op-N`, see QUERY_PARAM),
+  // because `/org/<or-N>` is a role's page.
+  proposal: "/org",
+  trigger: "/triggers",
+  decision: "/decisions",
+  // Repository objects are addressed by repository plus number or sha, so
+  // these prefixes are completed by `entityRoute` (see repoObjectRoute), not by
+  // appending the id.
+  pr: "/pr",
+  commit: "/commit",
+  call: "/calls",
+  // A product source is addressed by query: the Ops timeline narrowed to it
+  // (`/ops?source=src-N`), since `/ops/<tab>` is a view, never a source.
+  source: "/ops",
+  // A product recording is an Ops page of its own (`/ops/replays/rp-N`), and
+  // a moment of it opens there at that time (`?t=<ms>`, see entityRoute).
+  replay: "/ops/replays",
+  // A deploy opens on the Line app's Deploys view (`/line?view=deploys&deploy=dp-N`, see entityRoute).
+  deploy: "/line",
+};
+
+/**
+ * Short-id prefix → entity type. A short id is the human-quotable handle for an
+ * object (`ct-4102`, `pl-88`, `tr-17`); the registry is what makes one
+ * recognizable everywhere at once, so a new prefixed type needs one line here
+ * and nothing else. Sessions and docs are absent on purpose: a session's handle
+ * is the 7-char `jx…` head of its Convex id, and a doc has no short id at all.
+ */
+export const SHORT_ID_PREFIX: Record<string, EntityType> = {
+  ct: "task",
+  pl: "plan",
+  tr: "trigger",
+  in: "initiative",
+  op: "proposal",
+  sd: "decision",
+  cl: "call",
+  src: "source",
+  rp: "replay",
+  dp: "deploy",
+  or: "role",
+  pj: "project",
+};
+
+/**
+ * A prefix that is also an English word or a common path segment takes digits
+ * only: `in-7` is an initiative, `op-3` a proposal, `sd-289` a decision,
+ * `or-4` a role and `src-13` a source, while "in-app", "in-house", "op-ed",
+ * "sd-card", "or-else" and "src-tauri" are prose. A project's `pj-` is
+ * followed by base 36 (`pj-mf3k2a`), and "pj" is no word. Every matcher below derives
+ * from this, so the rule holds on every surface at once.
+ */
+const DIGITS_ONLY_PREFIX: ReadonlySet<string> = new Set(["in", "op", "sd", "cl", "src", "rp", "or", "dp"]);
+
+/**
+ * URL path segment → entity type. Several segments alias to one type
+ * (e.g. /conversation and /sessions both address a session), which is why this
+ * is a wider map than ENTITY_ROUTE's inverse.
+ */
+const SEGMENT_TYPE: Record<string, EntityType> = {
+  tasks: "task",
+  task: "task",
+  plans: "plan",
+  plan: "plan",
+  conversation: "session",
+  conversations: "session",
+  sessions: "session",
+  session: "session",
+  docs: "doc",
+  doc: "doc",
+  projects: "project",
+  project: "project",
+  goals: "initiative",
+  goal: "initiative",
+  // The goals page's old address, still live in old links.
+  initiatives: "initiative",
+  initiative: "initiative",
+  org: "proposal",
+  triggers: "trigger",
+  trigger: "trigger",
+  // Pre-rename alias, still live in old links.
+  schedules: "trigger",
+  decisions: "decision",
+  decision: "decision",
+  calls: "call",
+  call: "call",
+  ops: "source",
+};
+
+/**
+ * Query-param addressing. A proposal is addressed by query in both directions
+ * (`/org?proposal=op-N` is its canonical page: the org page with that
+ * proposal open). A trigger's entry is kept for PARSING old links only —
+ * triggers used to have no detail page, the list page opened one row via
+ * `?task=<id>`, and those links are still live in old messages — so new
+ * trigger links always use the path route (`/triggers/<id>`).
+ */
+const QUERY_PARAM: Partial<Record<EntityType, string>> = { trigger: "task", proposal: "proposal", source: "source" };
+/** Types whose page is the query form alone: a path under their route is
+ *  another object's page (`/org/<or-N>` is a role), never one of theirs. */
+const QUERY_ONLY: ReadonlySet<EntityType> = new Set(["proposal", "source"]);
+/** Path segments under a type's route that are other pages, never an id of
+ *  that type: `/decisions/stacks/<ds-N>` is a decision stack. */
+const NOT_AN_ID: Partial<Record<EntityType, ReadonlySet<string>>> = { decision: new Set(["stacks"]) };
+
+/** Normalize a canonical type or a url-segment alias to a canonical EntityType. */
+export function normalizeEntityType(type: string): EntityType | null {
+  return SEGMENT_TYPE[type] ?? (ENTITY_ROUTE[type as EntityType] ? (type as EntityType) : null);
+}
+
+/**
+ * Build the in-app route for an entity, or null when the type isn't one we know.
+ * Callers MUST treat null as "not navigable" rather than defaulting to /tasks/ —
+ * a session id sent to /tasks/<id> renders the conversation as a fake task
+ * (db.get is table-blind). `type` accepts both canonical types and url-segment
+ * aliases (e.g. "conversation" -> session).
+ */
+export function entityRoute(type: string, id: string): string | null {
+  const norm = normalizeEntityType(type);
+  if (!norm) return null;
+  if (isOrgObjectKind(norm)) return objectHref(norm, id);
+  if (norm === "pr" || norm === "commit") return repoObjectRoute(id);
+  if (norm === "deploy") return `${ENTITY_ROUTE.deploy}?view=deploys&deploy=${encodeURIComponent(id)}`;
+  if (norm === "replay") {
+    // A moment, or the start of a stretch, opens the replay at that time.
+    const ref = parseReplayRef(id);
+    const at = replayRefStart(ref);
+    const base = `${ENTITY_ROUTE.replay}/${encodeURIComponent(ref?.replay ?? id)}`;
+    return at != null ? `${base}?t=${at}` : base;
+  }
+  if (norm === "call") {
+    const ref = parseCallRef(id);
+    // A moment opens on the picture its citation renders (the shared screen
+    // when one covers it), not on the player's usual room view.
+    if (ref?.at_ms != null) return callFrameHref(ref.call, ref.at_ms);
+    if (ref) return callAnchorHref(ref.call, ref.turns && { kind: "turns", ...ref.turns });
+  }
+  // One change of a proposal opens the proposal's page with that change in focus.
+  const change = norm === "proposal" ? parseProposalChangeRef(id) : null;
+  if (change) return `${ENTITY_ROUTE[norm]}?${QUERY_PARAM[norm]}=${change.proposal}&focus=${change.seq}`;
+  if (QUERY_ONLY.has(norm)) return `${ENTITY_ROUTE[norm]}?${QUERY_PARAM[norm]}=${encodeURIComponent(id)}`;
+  return `${ENTITY_ROUTE[norm]}/${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// The company's objects
+//
+// A goal, a project, a role and a person each have one address. Goals and
+// projects are usable without the Org screen, so they keep pages of their
+// own (`/goals/in-2`, `/projects/pj-mf3k2a`); a role and a person open on the
+// Org screen (`/org/or-7`, `/org/@samvit`). Every link, pill, palette row and
+// map node that means "this object" is built here. A person's activity
+// profile (`/team/<handle>`) is a view of the person, not their address.
+// ---------------------------------------------------------------------------
+
+export type OrgObjectKind = "initiative" | "project" | "role" | "person";
+
+const ORG_OBJECT_KINDS: ReadonlySet<string> = new Set<OrgObjectKind>(["initiative", "project", "role", "person"]);
+
+export function isOrgObjectKind(type: string | null | undefined): type is OrgObjectKind {
+  return !!type && ORG_OBJECT_KINDS.has(type);
+}
+
+/** The address of a company object. A person is named by handle
+ *  (personRefOf), the rest by short id. A Convex id works too: the page
+ *  replaces it with the short form. */
+export function objectHref(kind: OrgObjectKind, ref: string): string {
+  const r = ref.trim();
+  if (kind === "person") return `/org/@${encodeURIComponent(r.replace(/^@/, ""))}`;
+  if (kind === "initiative") return `/goals/${encodeURIComponent(r)}`;
+  if (kind === "project") return `/projects/${encodeURIComponent(r)}`;
+  return `/org/${encodeURIComponent(r)}`;
+}
+
+/** The handle a person is addressed by: their GitHub name, else their user
+ *  id, the two forms the activity profile also resolves. */
+export function personRefOf(person: { _id: string; github_username?: string | null }): string {
+  return person.github_username || String(person._id);
+}
+
+/** The object an `/org/<ref>` segment names, or null for any other page
+ *  under /org (`workspace`, a Convex id, which names no kind by itself). */
+export function orgObjectOfRef(segment: string): { kind: OrgObjectKind; ref: string } | null {
+  let r: string;
+  try {
+    r = decodeURIComponent(segment).trim();
+  } catch {
+    r = segment.trim();
+  }
+  if (r.startsWith("@")) {
+    const handle = r.slice(1).trim();
+    return handle ? { kind: "person", ref: handle } : null;
+  }
+  const kind = inferEntityTypeFromShortId(r);
+  return isOrgObjectKind(kind) ? { kind, ref: r.toLowerCase() } : null;
+}
+
+/**
+ * Build the public URL that addresses an entity (e.g. task ct-37187 →
+ * https://codecast.sh/tasks/ct-37187), or null when the type is unknown. Short
+ * ids (ct-…/pl-…/jx…) and full Convex ids both resolve on the web, so either is
+ * a valid input. This is the inverse of `parseEntityUrl` for the non-anchored
+ * case — message anchors (#msg-<id>) are session-only and added by the caller.
+ */
+export function buildEntityUrl(type: string, id: string, base: string = CODECAST_BASE_URL): string | null {
+  const route = entityRoute(type, id);
+  return route ? `${base.replace(/\/+$/, "")}${route}` : null;
+}
+
+/**
+ * Infer an entity type from a bare short id by its prefix (`ct-…` → task,
+ * `pl-…` → plan, `tr-…` → trigger). Returns null for everything else (full
+ * Convex ids, 7-char `jx…` session ids, docs) — those have no distinguishing
+ * prefix, so the caller must supply the type (or default to session, the
+ * historical `cast link` behavior).
+ */
+export function inferEntityTypeFromShortId(id: string): EntityType | null {
+  const [prefix, ...rest] = (id || "").trim().toLowerCase().split("-");
+  if (DIGITS_ONLY_PREFIX.has(prefix) && !/^\d+$/.test(rest.join("-"))) return null;
+  return SHORT_ID_PREFIX[prefix] ?? null;
+}
+
+/**
+ * Infer an entity type from any bare id: a prefixed short id, a `jx…` session
+ * short id, or a `doc:<convexId>` reference. Returns null for a full 32-char
+ * Convex id — those carry no type at all and must be resolved server-side
+ * (`entities.resolveIdType`), which is what the web pill does.
+ */
+export function entityTypeFromId(id: string): EntityType | null {
+  const s = (id || "").trim();
+  const callRef = parseCallRef(s);
+  if (callRef?.turns || callRef?.at_ms != null) return "call";
+  if (/^rp-\d+@/i.test(s)) return parseReplayRef(s) ? "replay" : null;
+  if (/^doc:/i.test(s)) return "doc";
+  if (isConvexId(s.toLowerCase())) return null;
+  if (/^jx[a-z0-9]{5,}$/i.test(s)) return "session";
+  const repoObject = parseRepoObjectId(s);
+  if (repoObject) return repoObject.type;
+  if (parseProposalChangeRef(s)) return "proposal";
+  return inferEntityTypeFromShortId(s);
+}
+
+// ---------------------------------------------------------------------------
+// Repository objects: pull requests and commits
+//
+// Neither has a short id of its own. A pull request is named the way GitHub
+// and `cast task show` already print it, `owner/repo#482`, and a commit by its
+// repository and sha, `owner/repo@1a2b3c4`. Those strings are the reference
+// carried through markdown, the id half of `{ type, id }` from parseEntityUrl,
+// and what entityRoute turns back into a page. The repository part is always
+// canonical (lowercase), the same key the pull_requests and commits tables use.
+// ---------------------------------------------------------------------------
+
+const REPOSITORY_SOURCE = "[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\/[a-z0-9_.-]*[a-z0-9_-]";
+export const PR_REF_SOURCE = `${REPOSITORY_SOURCE}#\\d+`;
+export const COMMIT_REF_SOURCE = `${REPOSITORY_SOURCE}@[0-9a-f]{7,40}`;
+
+export type RepoObjectRef =
+  | { type: "pr"; repository: string; number: number }
+  | { type: "commit"; repository: string; sha: string };
+
+/** `owner/repo#482` or `owner/repo@<sha>`, or null for anything else. */
+export function parseRepoObjectId(id: string | undefined | null): RepoObjectRef | null {
+  const s = (id || "").trim();
+  const pr = new RegExp(`^(${REPOSITORY_SOURCE})#(\\d+)$`, "i").exec(s);
+  if (pr) return { type: "pr", repository: pr[1].toLowerCase(), number: Number(pr[2]) };
+  const commit = new RegExp(`^(${REPOSITORY_SOURCE})@([0-9a-f]{7,40})$`, "i").exec(s);
+  if (commit) return { type: "commit", repository: commit[1].toLowerCase(), sha: commit[2].toLowerCase() };
+  return null;
+}
+
+/** The reference string for a repository object — the inverse of parseRepoObjectId. */
+export function repoObjectId(ref: RepoObjectRef): string {
+  const repository = ref.repository.trim().toLowerCase();
+  return ref.type === "pr" ? `${repository}#${ref.number}` : `${repository}@${ref.sha.toLowerCase()}`;
+}
+
+/** The GitHub page for a repository object, where codecast holds no row of its own. */
+export function repoObjectGitHubUrl(ref: RepoObjectRef): string {
+  return ref.type === "pr"
+    ? `https://github.com/${ref.repository}/pull/${ref.number}`
+    : `https://github.com/${ref.repository}/commit/${ref.sha}`;
+}
+
+/**
+ * The in-app page for a repository object reference. A raw Convex id names
+ * the row but not its repository, so it cannot be routed from here — the
+ * caller resolves the row first and routes by its repository and number.
+ */
+export function repoObjectRoute(id: string): string | null {
+  const ref = parseRepoObjectId(id);
+  if (!ref) return null;
+  return ref.type === "pr" ? `${ENTITY_ROUTE.pr}/${ref.repository}/${ref.number}` : `${ENTITY_ROUTE.commit}/${ref.repository}/${ref.sha}`;
+}
+
+// ---------------------------------------------------------------------------
+// Contextual pull request references
+//
+// Inside a conversation bound to a repository, people and agents write a pull
+// request the way GitHub itself autolinks it: `#3263`, `PR 3263`, `PR #3263`,
+// `pull request 3263`. The number alone names nothing until the surrounding
+// context supplies the repository, so the plugin cannot mint a full
+// `owner/repo#N` reference. It carries the number plus the text as written in
+// a `pr:#N|<label>` payload; the renderer either completes it from the
+// conversation's repository or prints the label back unchanged, so a surface
+// with no repository never alters the text.
+//
+// A lone `#N` is weaker evidence than `PR N`: prose uses it for ranks,
+// positions and counts too ("moved from #10 to #2"). Its payload is marked
+// bare (`pr:?#N|<label>`), and the renderer completes it only when the
+// conversation already knows that pull request: linked to the session, made
+// by its shell calls, or named outright elsewhere in it. Otherwise it stays
+// the text it was written as.
+//
+// Group 1 is the words in front of the number (kept as prose), group 2 the
+// number. A `#` glued to a word, a path or an entity (`page.html#12`,
+// `&#123;`) is not a reference; `owner/repo#12` is matched first by the bare
+// id scan and never reaches this pattern.
+//
+// A list continues the reference: "PRs 3263 (rescheduled card), 3262 (verbal
+// yes), 3254 and 3253 (feedback)" names five pull requests. The match swallows
+// the whole run of `, N` / `and N` items, each optionally preceded by a
+// parenthetical note, and splitContextualPrRefs decides which of those
+// numbers are pull requests: only ones with the same digit count as the first,
+// so "PR 3263 (x), 3 items" ends the list at "3".
+// ---------------------------------------------------------------------------
+
+export const CONTEXTUAL_PR_REF_PREFIX = "pr:";
+
+const PR_LIST_SEP_SOURCE = "(?:\\s*\\([^()\\n]*\\))?(?:,\\s*(?:and\\s+)?|\\s+and\\s+)#?";
+
+export function contextualPrRefRegex(): RegExp {
+  return new RegExp(`(\\bPRs?\\s+#?|\\bpull requests?\\s+#?|(?<![\\w/&#])#)(\\d{1,6})\\b((?:${PR_LIST_SEP_SOURCE}\\d{1,6}\\b)*)`, "gi");
+}
+
+export type ContextualPrToken = { text: string } | { number: number; label: string; bare: boolean };
+
+/**
+ * The tokens of one contextualPrRefRegex match: prose to keep as written, and
+ * the pull request numbers with the label each was written as (`#3263` or
+ * `3263`). `lead` and `digits` are the match's first two groups, `tail` its
+ * third — the list that followed the first number.
+ */
+export function splitContextualPrRefs(lead: string, digits: string, tail: string): ContextualPrToken[] {
+  const bare = lead === "#";
+  const numberToken = (prefix: string, n: string): ContextualPrToken =>
+    ({ number: Number(n), label: prefix.endsWith("#") ? `#${n}` : n, bare });
+  const tokens: ContextualPrToken[] = [];
+  // "PR #6": the label carries the "#", so the prose in front keeps "PR " alone.
+  if (lead !== "#") tokens.push({ text: lead.endsWith("#") ? lead.slice(0, -1) : lead });
+  tokens.push(numberToken(lead, digits));
+  const step = new RegExp(`^(${PR_LIST_SEP_SOURCE})(\\d{1,6})\\b`);
+  let rest = tail;
+  while (rest) {
+    const m = step.exec(rest);
+    if (!m || m[2].length !== digits.length) {
+      tokens.push({ text: rest });
+      break;
+    }
+    const sep = m[1].endsWith("#") ? m[1].slice(0, -1) : m[1];
+    if (sep) tokens.push({ text: sep });
+    tokens.push(numberToken(m[1], m[2]));
+    rest = rest.slice(m[0].length);
+  }
+  return tokens;
+}
+
+/** The link-text payload for a contextual reference: `pr:#3263|<label as written>`, `pr:?#3263|…` when bare. */
+export function contextualPrRefPayload(number: number, label: string, bare = false): string {
+  return `${CONTEXTUAL_PR_REF_PREFIX}${bare ? "?" : ""}#${number}|${label}`;
+}
+
+/** Reads a `pr:#N|label` / `pr:?#N|label` payload back; null for anything else. */
+export function parseContextualPrRef(payload: string | undefined | null): { number: number; label: string; bare: boolean } | null {
+  const m = /^pr:(\?)?#(\d{1,6})\|(.*)$/.exec((payload ?? "").trim());
+  return m ? { number: Number(m[2]), label: m[3], bare: !!m[1] } : null;
+}
+
+/**
+ * The pull requests a piece of prose names beyond doubt: `PR 3263`, `pull
+ * request 12`, and GitHub pull request links, as repo object ids. A bare
+ * number is completed from `repository`; a lone `#N` is left out, since it is
+ * what this evidence exists to vouch for.
+ */
+export function namedPullRequestIds(text: string, repository: string): string[] {
+  const ids: string[] = [];
+  for (const m of text.matchAll(contextualPrRefRegex())) {
+    for (const token of splitContextualPrRefs(m[1], m[2], m[3] ?? "")) {
+      if ("number" in token && !token.bare) ids.push(repoObjectId({ type: "pr", repository, number: token.number }));
+    }
+  }
+  for (const m of text.matchAll(/github\.com\/([\w.-]+\/[\w.-]+)\/pull\/(\d+)/gi)) {
+    ids.push(repoObjectId({ type: "pr", repository: m[1], number: Number(m[2]) }));
+  }
+  return ids;
+}
+
+function isGitHubHost(host: string): boolean {
+  return /^(www\.)?github\.com$/i.test(host);
+}
+
+function stripGitSuffix(name: string): string {
+  return name.replace(/\.git$/i, "");
+}
+
+/**
+ * A repository object named by a URL: a GitHub pull request or commit page, or
+ * the codecast page for one in either family (app `/pr/o/r/482`,
+ * `/commit/o/r/<sha>`; standalone `/r/o/r/pull/482`, `/r/o/r/commit/<sha>`).
+ * Anything after the object (`/files`, `/checks`, a fragment) is dropped: it
+ * addresses a view of the object, and the object is what the reference names.
+ */
+/** `/ops/replays/<rp-N or id>[?t=<ms>]`: a replay, or the moment of it the
+ *  link opens at. The rest of `/ops` addresses a source (by query) or a view. */
+function parseReplayPath(segs: string[], search: string): string | null {
+  if (segs.length !== 3 || segs[0].toLowerCase() !== "ops" || segs[1].toLowerCase() !== "replays") return null;
+  let id: string;
+  try {
+    id = decodeURIComponent(segs[2]).trim();
+  } catch {
+    id = segs[2].trim();
+  }
+  if (!/^rp-\d+$/i.test(id) && !isConvexId(id)) return null;
+  const t = search ? new URLSearchParams(search).get("t") : null;
+  const atMs = t !== null && /^\d+$/.test(t) ? Number(t) : null;
+  return /^rp-/i.test(id) ? replayRefId(id.toLowerCase(), atMs) : id;
+}
+
+function parseRepoObjectPath(segs: string[], github: boolean): RepoObjectRef | null {
+  const object = (owner: string, name: string, kind: string, value: string): RepoObjectRef | null => {
+    const repository = `${owner}/${stripGitSuffix(name)}`.toLowerCase();
+    if (!new RegExp(`^${REPOSITORY_SOURCE}$`, "i").test(repository)) return null;
+    if ((kind === "pull" || kind === "pr") && /^\d+$/.test(value)) return { type: "pr", repository, number: Number(value) };
+    if (kind === "commit" && /^[0-9a-f]{7,40}$/i.test(value)) return { type: "commit", repository, sha: value.toLowerCase() };
+    return null;
+  };
+  if (github) {
+    // github.com/<owner>/<repo>/pull/<n>, github.com/<owner>/<repo>/commit/<sha>
+    return segs.length >= 4 ? object(segs[0], segs[1], segs[2], segs[3]) : null;
+  }
+  const head = segs[0]?.toLowerCase();
+  // /pr/<owner>/<repo>/<n>, /commit/<owner>/<repo>/<sha>
+  if ((head === "pr" || head === "commit") && segs.length >= 4) return object(segs[1], segs[2], head, segs[3]);
+  // /r/<owner>/<repo>/pull/<n>, /r/<owner>/<repo>/commit/<sha>
+  if (head === "r" && segs.length >= 5) return object(segs[1], segs[2], segs[3].toLowerCase(), segs[4]);
+  return null;
+}
+
+export type GitHubLocation = {
+  repository: string;
+  kind: "repo" | "tree" | "blob" | "commits" | "compare" | "branches" | "tags" | "pulls";
+  /** A branch, tag or sha. GitHub URLs do not delimit a ref from the path, so the first segment is taken as the ref. */
+  ref?: string;
+  path?: string;
+  /** Line range from a `#L10` or `#L10-L20` fragment on a blob. */
+  line?: number;
+  endLine?: number;
+  /** The two sides of a compare range. */
+  base?: string;
+  head?: string;
+};
+
+/**
+ * A GitHub URL that names a PLACE in a repository rather than an object: the
+ * repository itself, a tree or file at a ref, a commit list, a compare range,
+ * or the branches, tags and pulls lists. Pull request and commit URLs are
+ * objects and parse through parseEntityUrl instead; this returns null for them
+ * and for every URL off github.com.
+ */
+export function parseGitHubLocationUrl(href: string | undefined | null): GitHubLocation | null {
+  if (!href || typeof href !== "string" || !/^https?:\/\//i.test(href.trim())) return null;
+  let u: URL;
+  try {
+    u = new URL(href.trim());
+  } catch {
+    return null;
+  }
+  if (!isGitHubHost(u.host)) return null;
+  const segs = u.pathname.split("/").filter(Boolean).map((s) => {
+    try {
+      return decodeURIComponent(s);
+    } catch {
+      return s;
+    }
+  });
+  if (segs.length < 2) return null;
+  const repository = `${segs[0]}/${stripGitSuffix(segs[1])}`.toLowerCase();
+  if (!new RegExp(`^${REPOSITORY_SOURCE}$`, "i").test(repository)) return null;
+  if (segs.length === 2) return { repository, kind: "repo" };
+  const kind = segs[2].toLowerCase();
+  const rest = segs.slice(3);
+  if (kind === "tree" && rest.length >= 1) {
+    return { repository, kind: "tree", ref: rest[0], ...(rest.length > 1 ? { path: rest.slice(1).join("/") } : {}) };
+  }
+  if (kind === "blob" && rest.length >= 2) {
+    const lines = /^#L(\d+)(?:-L?(\d+))?$/.exec(u.hash);
+    return {
+      repository,
+      kind: "blob",
+      ref: rest[0],
+      path: rest.slice(1).join("/"),
+      ...(lines ? { line: Number(lines[1]), ...(lines[2] ? { endLine: Number(lines[2]) } : {}) } : {}),
+    };
+  }
+  if (kind === "commits") {
+    return { repository, kind: "commits", ...(rest.length >= 1 ? { ref: rest[0] } : {}), ...(rest.length > 1 ? { path: rest.slice(1).join("/") } : {}) };
+  }
+  if (kind === "compare" && rest.length >= 1) {
+    const range = rest.join("/");
+    const at = range.indexOf("...");
+    if (at <= 0 || at + 3 >= range.length) return null;
+    return { repository, kind: "compare", base: range.slice(0, at), head: range.slice(at + 3) };
+  }
+  if (kind === "branches" || kind === "tags" || kind === "pulls") return { repository, kind };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// The mention vocabulary
+//
+// Every surface that turns agent prose into rich object references matches the
+// same two shapes, so they are built here from one alternation instead of being
+// retyped (and drifting) in each component:
+//
+//   • a bare id     — `ct-4102`, `pl-88`, `tr-17`, `jx7c6zk`, `doc:<32 chars>`,
+//                     or a raw 32-char Convex id
+//   • a named mention — `@[Some Title ct-4102]`, optionally trailed by a `(…)`
+//
+// Each accessor returns a FRESH RegExp: these are used with the `g` flag, whose
+// `lastIndex` is mutable state, and a module-level shared instance silently
+// skips matches when two callers interleave.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Calls and the turns inside them
+//
+// A call is quoted by its short id, `cl-42`, and a stretch of what was said
+// by the call plus the transcript seqs `cast call --transcript` prints,
+// `cl-42:15-25` (one turn: `cl-42:15`). The range form also takes a full call
+// id, which is what a pasted `/calls/<id>?turns=15-25` link becomes.
+//
+// A MOMENT of a call is the call plus a time into it, `cl-42@12:34`: what the
+// room looked like then, a frame of its recording. The time is the clock the
+// call page shows, measured from the call's start, and is written the way
+// people read a player: `12:34`, `1:02:03`, or plain seconds `754s`. A turn
+// names words and a moment names a picture, so a reference is one or the
+// other, never both.
+// ---------------------------------------------------------------------------
+
+/** A call with a turn range, as prose writes it. */
+export const CALL_TURNS_REF_SOURCE = "(?:cl-\\d+|[a-z0-9]{32}):\\d+(?:-\\d+)?";
+
+/** A time into a call (`754s`, `12:34`, `1:02:03`) and its reader live in
+ *  contracts/callRecordings, beside the clock that writes it. */
+export { CALL_TIME_SOURCE, parseCallTime };
+
+/** A moment of a call, as prose writes it: `cl-42@12:34`. */
+export const CALL_MOMENT_REF_SOURCE = `(?:cl-\\d+|[a-z0-9]{32})@(?:${CALL_TIME_SOURCE})`;
+
+export type CallRef = {
+  call: string;
+  turns: { from_seq: number; to_seq: number } | null;
+  /** A moment: ms since the call started. Present only on `cl-42@12:34`. */
+  at_ms?: number;
+};
+
+/** The player clock for a time into a call (contracts/callRecordings holds
+ *  it, beside the spans it names). */
+export { formatCallTime };
+
+/** A call reference split into the call (short or full id) and its turns or
+ *  moment. A bare full id is not a call reference (it could be any table's). */
+export function parseCallRef(id: string | null | undefined): CallRef | null {
+  const s = (id || "").trim();
+  const at = /^(cl-\d+|[a-z0-9]{32})@(.+)$/i.exec(s);
+  if (at) {
+    const ms = parseCallTime(at[2]);
+    return ms === null ? null : { call: at[1].toLowerCase(), turns: null, at_ms: ms };
+  }
+  const m = /^(cl-\d+|[a-z0-9]{32})(?::(\d+)(?:-(\d+))?)?$/i.exec(s);
+  if (!m) return null;
+  if (!m[2]) return /^cl-/i.test(m[1]) ? { call: m[1].toLowerCase(), turns: null } : null;
+  const a = Number(m[2]);
+  const b = m[3] ? Number(m[3]) : a;
+  return { call: m[1].toLowerCase(), turns: { from_seq: Math.min(a, b), to_seq: Math.max(a, b) } };
+}
+
+/** The prose form of a call reference: `cl-42`, `cl-42:15`, `cl-42:15-25`,
+ *  or a moment `cl-42@12:34`. A moment wins over turns: the two never ride
+ *  one reference. */
+export function callRefId(
+  call: string,
+  turns?: { from_seq: number; to_seq: number } | null,
+  atMs?: number | null,
+): string {
+  if (atMs != null) return `${call}@${formatCallTime(atMs)}`;
+  if (!turns) return call;
+  return `${call}:${turns.from_seq}${turns.to_seq !== turns.from_seq ? `-${turns.to_seq}` : ""}`;
+}
+
+/** What a call reference adds to the call's name in a pill: the time on the
+ *  player for a moment (` @12:34`), the transcript lines for a stretch
+ *  (` #15–25`), nothing for the whole call. Web and mobile pills both read
+ *  it, so a moment is labeled alike on both. */
+export function callRefLabelSuffix(ref: { turns?: { from_seq: number; to_seq: number } | null; at_ms?: number | null } | null | undefined): string {
+  if (ref?.at_ms != null) return ` @${formatCallTime(ref.at_ms)}`;
+  const t = ref?.turns;
+  return t ? ` #${t.from_seq}${t.to_seq !== t.from_seq ? `–${t.to_seq}` : ""}` : "";
+}
+
+// ---------------------------------------------------------------------------
+// Replays and the moments inside them
+//
+// A product recording is quoted by its short id, `rp-12`, and a moment of it
+// the way a call moment is written: `rp-12@1:23`, on the replay's own clock
+// (ms since its first event, the clock the player and the text timeline
+// show). A stretch, `rp-12@1:00-2:30`, is what `cast replay snap --every`
+// samples; a reader opens it at its start. The parser and the prose form live
+// with the player contract (contracts/replayPlayer).
+// ---------------------------------------------------------------------------
+
+/** A moment or a stretch of a replay, as prose writes it: `rp-12@1:23`, `rp-12@1:00-2:30`. */
+export const REPLAY_REF_SOURCE = `rp-\\d+@(?:${CALL_TIME_SOURCE})(?:-(?:${CALL_TIME_SOURCE}))?`;
+
+export { parseReplayRef, replayRefId, type ReplayRef };
+
+/** Where a replay reference opens, in ms of the replay's clock: its moment,
+ *  the start of its stretch, or null for the whole replay. */
+export function replayRefStart(ref: ReplayRef | null | undefined): number | null {
+  return ref?.at_ms ?? ref?.range?.from_ms ?? null;
+}
+
+/** What a replay reference adds to the replay's name in a pill (` @1:23`,
+ *  ` @1:00–2:30`), the way callRefLabelSuffix labels a call moment. */
+export function replayRefLabelSuffix(ref: ReplayRef | null | undefined): string {
+  if (ref?.range) return ` @${formatCallTime(ref.range.from_ms)}–${formatCallTime(ref.range.to_ms)}`;
+  return ref?.at_ms != null ? ` @${formatCallTime(ref.at_ms)}` : "";
+}
+
+// ---------------------------------------------------------------------------
+// One change of a proposal
+//
+// A proposal's changes are numbered, and a person or an agent names one the
+// way the server's errors already print it: `op-55#3`. The reference is still
+// a proposal reference (its type, its row in the store, its page); the number
+// says which change the reader is pointed at.
+// ---------------------------------------------------------------------------
+
+/** One change of a proposal, as prose writes it: `op-55#3` (3 is the change's seq). */
+export const PROPOSAL_CHANGE_REF_SOURCE = "op-\\d+#\\d+";
+
+export type ProposalChangeRef = { proposal: string; seq: number };
+
+/** A change reference split into its proposal (lower case) and the change's
+ *  number. Null for a whole proposal (`op-55`) and for anything else. */
+export function parseProposalChangeRef(id: string | null | undefined): ProposalChangeRef | null {
+  const m = /^(op-\d+)#(\d+)$/i.exec((id || "").trim());
+  return m ? { proposal: m[1].toLowerCase(), seq: Number(m[2]) } : null;
+}
+
+/** The prose form of a change reference: `op-55#3`. */
+export function proposalChangeRefId(proposal: string, seq: number): string {
+  return `${proposal}#${seq}`;
+}
+
+/** ` #3`: what a change reference adds to the proposal's name in a pill (the
+ *  way callRefLabelSuffix does for a stretch of a call). Web and mobile pills
+ *  both read it. */
+export function proposalChangeLabelSuffix(ref: ProposalChangeRef | null | undefined): string {
+  return ref ? ` #${ref.seq}` : "";
+}
+
+/**
+ * The registered short ids as a regex source: `(?:ct|pl|tr)-<tail>|(?:in)-\d+`.
+ * `tail` is what follows a prefix that is not an English word. Exported so a
+ * surface with its own scanner (the editor's input rule) embeds this branch
+ * instead of rebuilding it from the prefix table.
+ */
+export function shortIdSource(tail = "[a-z0-9]+"): string {
+  const prefixes = Object.keys(SHORT_ID_PREFIX);
+  const loose = prefixes.filter((p) => !DIGITS_ONLY_PREFIX.has(p)).join("|");
+  const strict = prefixes.filter((p) => DIGITS_ONLY_PREFIX.has(p)).join("|");
+  return `(?:${loose})-${tail}|(?:${strict})-\\d+`;
+}
+
+/**
+ * Bare ids as they appear in prose, widest form first. Exported as a source
+ * fragment (not a RegExp) for surfaces that must embed it inside a larger
+ * alternation — mobile's markdown tokenizer scans every inline form in one
+ * pass, so it needs the branch, not a standalone matcher.
+ */
+export const BARE_ID_SOURCE = `${PR_REF_SOURCE}|${COMMIT_REF_SOURCE}|${CALL_TURNS_REF_SOURCE}|${CALL_MOMENT_REF_SOURCE}|${REPLAY_REF_SOURCE}|${PROPOSAL_CHANGE_REF_SOURCE}|${shortIdSource()}|jx[a-z0-9]{5,}|doc:[a-z0-9]{20,}|[a-z0-9]{32}`;
+
+/** Ids as they appear inside an `@[Title id]` mention (a label is not an object). */
+export const MENTION_ID_SOURCE = `${PR_REF_SOURCE}|${COMMIT_REF_SOURCE}|${CALL_TURNS_REF_SOURCE}|${CALL_MOMENT_REF_SOURCE}|${REPLAY_REF_SOURCE}|${PROPOSAL_CHANGE_REF_SOURCE}|${shortIdSource("\\w+")}|jx\\w+|doc:\\w+|label:\\w+|date:\\d{4}-\\d{2}-\\d{2}|[a-z0-9]{32}`;
+
+/** The bounds of a bare id in prose: anything but a letter, digit or hyphen
+ *  on either side, so a scan can't split a longer token. A hyphen is a word
+ *  boundary to `\b`, which read "2-in-1" as "2-" and an initiative. A
+ *  scanner that embeds BARE_ID_SOURCE in its own alternation (mobile's
+ *  markdown tokenizer) wraps it in these rather than `\b`. */
+export const BARE_ID_BEFORE = "(?<![\\w-])";
+export const BARE_ID_AFTER = "(?![\\w-])";
+
+/** Scans prose for bare object ids, inside BARE_ID_BEFORE and BARE_ID_AFTER. */
+export function bareEntityIdRegex(): RegExp {
+  return new RegExp(`${BARE_ID_BEFORE}(?:${BARE_ID_SOURCE})${BARE_ID_AFTER}`, "gi");
+}
+
+/**
+ * Matches `@[Title id]` mentions. Group 1 is the display title, group 2 the id
+ * (absent for a bare `@[Name]` person mention). `requireId` is for the send-time
+ * expander, which only enriches mentions that actually name an object.
+ */
+export function entityMentionRegex(opts: { requireId?: boolean } = {}): RegExp {
+  const idGroup = opts.requireId
+    ? `\\s+(${MENTION_ID_SOURCE})`
+    : `(?:\\s+(${MENTION_ID_SOURCE}))?`;
+  return new RegExp(`@\\[([^\\]]*?)${idGroup}\\](?:\\s*\\([^)]*\\))?`, "g");
+}
+
+/** True when a whole string is an object id (not a scan — an exact test). */
+export function isEntityId(text: string): boolean {
+  return new RegExp(`^(?:${BARE_ID_SOURCE})$`, "i").test((text || "").trim());
+}
+
+// ---------------------------------------------------------------------------
+// What a reference is CALLED
+//
+// An id names nothing. "ct-38940" mid-sentence forces the reader to hover or
+// click just to learn what is being discussed, so every reference surface —
+// web pills, mobile pills — shows the object's title and keeps the id for the
+// hover card. The rule lives here because both platforms need exactly it, and
+// the last copy of it drifted.
+// ---------------------------------------------------------------------------
+
+/** Longest title a reference shows inline before it gets clipped. */
+export const ENTITY_LABEL_MAX = 40;
+
+/**
+ * Clip a title to something that reads inline without swallowing the sentence
+ * around it. Clips on a word boundary when there is a sensible one, and leaves
+ * a title alone when clipping would save only a character or two.
+ */
+export function truncateEntityLabel(title: string, max: number = ENTITY_LABEL_MAX): string {
+  const t = title.trim();
+  if (t.length <= max + 3) return t;
+  const cut = t.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  // Only break on a space if it leaves most of the budget used — otherwise a
+  // long first word would collapse the label to almost nothing.
+  const body = lastSpace > max * 0.6 ? cut.slice(0, lastSpace) : cut;
+  return body.trimEnd() + "…";
+}
+
+/**
+ * The text an inline object reference shows. The title, once the row resolves;
+ * otherwise the short id, which at least says WHICH object and stays stable.
+ * A 32-char Convex id is never readable, so it degrades to the type name.
+ */
+export function entityReferenceLabel(args: {
+  title?: string | null;
+  shortId?: string | null;
+  rawId: string;
+  typeLabel?: string | null;
+}): string {
+  const title = args.title?.trim();
+  if (title) return truncateEntityLabel(title);
+  if (args.shortId) return args.shortId;
+  if (isConvexId(args.rawId) && args.typeLabel) return args.typeLabel;
+  return args.rawId;
+}
+
+// ---------------------------------------------------------------------------
+// The SHORT name of a reference
+//
+// A title is a sentence ("Broker context render unification"); a name is what
+// a teammate says out loud ("Broker render"). Prose that mentions the same
+// object again and again reads as a wall of titles, so a repeat mention shows
+// the short name instead. Sessions carry a generated one (`short_title`,
+// written by title generation); every other object derives one from its
+// title here, so the rule stays the same on every platform.
+// ---------------------------------------------------------------------------
+
+/** Longest short name a compact reference shows. */
+export const ENTITY_SHORT_LABEL_MAX = 22;
+
+// Function words that carry no identity. A derived short name skips them so
+// "Unify the AI's context" becomes "Unify AI's context", not "Unify the".
+const SHORT_LABEL_STOPWORDS = new Set([
+  "a", "an", "the", "of", "to", "for", "in", "on", "at", "by", "and", "or",
+  "its", "with", "from", "into", "over", "via", "vs", "is", "are", "be",
+]);
+
+/**
+ * Derive a short name from a title: the first two words that carry identity,
+ * clipped to the short budget, trailing punctuation dropped. Deterministic —
+ * the same title always yields the same name, so a reader learns it once.
+ */
+export function deriveShortLabel(title: string, max: number = ENTITY_SHORT_LABEL_MAX): string {
+  const words = title
+    .trim()
+    .split(/\s+/)
+    .map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ""))
+    .filter(Boolean);
+  if (words.length === 0) return "";
+  const content = words.filter((w) => !SHORT_LABEL_STOPWORDS.has(w.toLowerCase()));
+  const picked = (content.length ? content : words).slice(0, 2);
+  let out = picked.join(" ");
+  if (out.length > max) {
+    // Two words overran the budget: fall back to the first alone, clipped.
+    out = picked[0].length <= max ? picked[0] : picked[0].slice(0, max - 1) + "…";
+  }
+  return out;
+}
+
+/**
+ * The text a COMPACT reference shows — a repeat mention inside one message,
+ * or any surface where the full title would drown the line. The stored short
+ * title wins; otherwise the name is derived from the title; otherwise the
+ * same degradations as the full label.
+ */
+export function entityShortLabel(args: {
+  shortTitle?: string | null;
+  title?: string | null;
+  shortId?: string | null;
+  rawId: string;
+  typeLabel?: string | null;
+}): string {
+  const stored = args.shortTitle?.trim();
+  if (stored) return truncateEntityLabel(stored, ENTITY_SHORT_LABEL_MAX);
+  const title = args.title?.trim();
+  if (title) {
+    const derived = deriveShortLabel(title);
+    if (derived) return derived;
+  }
+  return entityReferenceLabel(args);
+}
+
+/**
+ * True for hosts we treat as "ours" — production, the dev origins, and
+ * localhost. Only links on these hosts (or path-only links) are eligible to
+ * become pills; everything else stays an ordinary external link.
+ */
+export function isAppHost(host: string): boolean {
+  if (/(^|\.)codecast\.sh$/i.test(host)) return true;
+  if (host === "localhost" || host.startsWith("localhost:")) return true;
+  if (host === "127.0.0.1" || host.startsWith("127.0.0.1:")) return true;
+  return false;
+}
+
+/**
+ * If `href` points at a codecast object, return its `{ type, id }`; otherwise
+ * null. Accepts absolute app URLs (https://codecast.sh/tasks/<id>), dev/local
+ * origins, and path-only hrefs (/tasks/<id>). The id may be a short id
+ * (ct-…/pl-…/jx…) or a full Convex document id — downstream resolution handles
+ * both. Non-entity app paths (/settings, /login, /share/…) return null and are
+ * left as normal links.
+ */
+export function parseEntityUrl(
+  href: string | undefined | null,
+): { type: EntityType; id: string } | null {
+  if (!href || typeof href !== "string") return null;
+  let path = href.trim();
+  let search = "";
+
+  if (/^https?:\/\//i.test(path)) {
+    let u: URL;
+    try {
+      u = new URL(path);
+    } catch {
+      return null;
+    }
+    if (isGitHubHost(u.host)) {
+      // A GitHub pull request or commit page names the same object codecast
+      // has a page for, so it becomes that reference; every other GitHub URL
+      // is a place (see parseGitHubLocationUrl) or foreign.
+      const ref = parseRepoObjectPath(u.pathname.split("/").filter(Boolean), true);
+      return ref ? { type: ref.type, id: repoObjectId(ref) } : null;
+    }
+    if (!isAppHost(u.host)) return null;
+    path = u.pathname;
+    search = u.search;
+  } else if (/^[a-z][a-z0-9+.-]*:\/\//i.test(path)) {
+    // Some other protocol (mailto:, entity://, mention://, codecast://, …).
+    // Those are handled elsewhere or are genuinely external — not ours.
+    return null;
+  } else {
+    // Path-only href: split the query string / hash off the path, but keep the
+    // query — a trigger is addressed by it (/triggers?task=<id>).
+    const qIdx = path.search(/[?#]/);
+    if (qIdx !== -1) {
+      search = path[qIdx] === "?" ? path.slice(qIdx).split("#")[0] : "";
+      path = path.slice(0, qIdx);
+    }
+  }
+
+  const segs = path.split("/").filter(Boolean);
+  if (segs.length < 1) return null;
+  const repoObject = parseRepoObjectPath(segs, false);
+  if (repoObject) return { type: repoObject.type, id: repoObjectId(repoObject) };
+  const replay = parseReplayPath(segs, search);
+  if (replay) return { type: "replay", id: replay };
+  // `/org/<ref>` is a goal, project, role or person's sheet (objectHref).
+  const orgObject = segs.length === 2 && segs[0].toLowerCase() === "org" ? orgObjectOfRef(segs[1]) : null;
+  if (orgObject) return { type: orgObject.kind, id: orgObject.ref };
+  const type = SEGMENT_TYPE[segs[0].toLowerCase()];
+  if (!type) return null;
+
+  // Query-addressed links (/org?proposal=op-N, old /triggers?task=<id>). For
+  // a query-only type a deeper path is another object's page (/org/<or-N> is
+  // a role), so it resolves to nothing here; otherwise the path segment wins
+  // when both are present.
+  const param = QUERY_PARAM[type];
+  if (param && (segs.length < 2 || QUERY_ONLY.has(type))) {
+    if (segs.length >= 2) return null;
+    const params = search ? new URLSearchParams(search) : null;
+    const qId = params?.get(param)?.trim();
+    if (!qId) return null;
+    // A proposal's page with a change in focus (`&focus=3`) is that change. A
+    // focus on a goal or a role (`in-4`, `@handle`) is still the whole proposal.
+    const change = type === "proposal" ? parseProposalChangeRef(`${qId}#${params?.get("focus")?.trim() ?? ""}`) : null;
+    return { type, id: change ? proposalChangeRefId(change.proposal, change.seq) : qId };
+  }
+
+  if (segs.length < 2) return null;
+  let id: string;
+  try {
+    id = decodeURIComponent(segs[1]).trim();
+  } catch {
+    id = segs[1].trim();
+  }
+  if (!id || NOT_AN_ID[type]?.has(id.toLowerCase())) return null;
+  // A link to turns of a call is the excerpt, not the whole call, and a link
+  // to a time in it (`?t=754`) is that moment.
+  if (type === "call") {
+    const params = search ? new URLSearchParams(search) : null;
+    const turns = params?.get("turns");
+    const ref = turns ? parseCallRef(`${id}:${turns}`) : null;
+    if (ref) return { type, id: callRefId(ref.call, ref.turns) };
+    const atMs = parseCallMomentParam(params);
+    const moment = atMs != null ? parseCallRef(`${id}@${Math.floor(atMs / 1000)}s`) : null;
+    if (moment) return { type, id: callRefId(moment.call, null, moment.at_ms) };
+  }
+  return { type, id };
+}
+
+/**
+ * If `href` points at a published page (`cast publish` output), return its
+ * slug; otherwise null. Accepts the canonical share URL
+ * (https://codecast.sh/a/<slug>), the raw serving origin
+ * (https://convex.codecast.sh/cli/a/<slug>), dev/local hosts, and path-only
+ * hrefs. Slugs are alphanumeric secrets, so anything with other characters —
+ * or a deeper path, which addresses an asset inside a directory bundle — is
+ * not a page link.
+ */
+export function parsePublishedPageUrl(href: string | undefined | null): { slug: string } | null {
+  const loc = appLocationOf(href);
+  if (!loc) return null;
+  const m = /^\/(?:cli\/)?a\/([A-Za-z0-9]{8,24})$/.exec(loc.path)
+    ?? (loc.host === "a.codecast.sh" ? /^\/([A-Za-z0-9]{8,24})\/?$/.exec(loc.path) : null);
+  return m ? { slug: m[1] } : null;
+}
+
+/**
+ * A codecast mod's pane: `/m/<mod>` or `/m/<mod>/<pane>` on the app. Alone on
+ * a line in a message, it renders the mod's live pane in place, so an agent
+ * building a mod shows the person the running thing in the thread itself.
+ */
+export function parseModPaneUrl(href: string | undefined | null): { mod: string; pane?: string } | null {
+  const loc = appLocationOf(href);
+  if (!loc) return null;
+  const m = /^\/m\/([a-z][a-z0-9-]{1,39})(?:\/([a-z][a-z0-9-]{0,39}))?\/?$/.exec(loc.path);
+  return m ? { mod: m[1], ...(m[2] ? { pane: m[2] } : {}) } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Claude artifacts
+//
+// A Claude artifact shared publicly circulates as
+// https://claude.ai/public/artifacts/<uuid> (claude.site/artifacts/<uuid> is
+// the older host and redirects there). It is a page someone made, like a
+// published codecast page, so prose treats it the same way: a titled pill in a
+// sentence, a card when the link stands alone. claude.ai refuses to be framed
+// by other sites (frame-ancestors 'self'), so the card cannot show the live
+// page the way a codecast page card does.
+// ---------------------------------------------------------------------------
+
+const CLAUDE_ARTIFACT_HOSTS = new Set(["claude.ai", "www.claude.ai", "claude.site", "www.claude.site"]);
+
+/** If `href` points at a public Claude artifact, its id and canonical URL. */
+export function parseClaudeArtifactUrl(href: string | undefined | null): { id: string; url: string } | null {
+  if (!href || typeof href !== "string" || !/^https?:\/\//i.test(href.trim())) return null;
+  let u: URL;
+  try {
+    u = new URL(href.trim());
+  } catch {
+    return null;
+  }
+  if (!CLAUDE_ARTIFACT_HOSTS.has(u.hostname.toLowerCase())) return null;
+  const m = /^\/(?:public\/)?artifacts\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/embed)?\/?$/i.exec(u.pathname);
+  if (!m) return null;
+  const id = m[1].toLowerCase();
+  return { id, url: claudeArtifactUrl(id) };
+}
+
+export function claudeArtifactUrl(id: string): string {
+  return `https://claude.ai/public/artifacts/${id}`;
+}
+
+// ---------------------------------------------------------------------------
+// Web links
+//
+// A link to anywhere else on the web previews the way Slack unfurls one: the
+// page's own meta tags (title, description, image) drawn as a card when the
+// link stands alone on its line.
+// ---------------------------------------------------------------------------
+
+/**
+ * The URL a web link previews as, or null when it is not a public page: our
+ * own hosts, codecast objects (GitHub pull requests and commits included),
+ * published pages and Claude artifacts (each has its own card), private or
+ * bare hosts, IP literals, and every scheme but http(s). Message markdown,
+ * the server that reads the meta tags, and Slack mirroring all ask this one
+ * question.
+ */
+export function parseLinkPreviewUrl(href: string | undefined | null): string | null {
+  if (!href || typeof href !== "string" || !/^https?:\/\//i.test(href.trim())) return null;
+  let u: URL;
+  try {
+    u = new URL(href.trim());
+  } catch {
+    return null;
+  }
+  const host = u.hostname.toLowerCase();
+  if (!host || host.startsWith("[") || /^\d+\.\d+\.\d+\.\d+$/.test(host) || isPrivateHost(host)) return null;
+  if (u.username || u.password) return null;
+  if (isAppHost(u.host) || parseEntityUrl(u.href) || parseClaudeArtifactUrl(u.href)) return null;
+  u.hash = "";
+  return u.href;
+}
+
+/**
+ * The path and fragment of an href that addresses one of OUR pages: an
+ * absolute URL on an app host, or a path-only href. Anything on another host
+ * or another protocol (mailto:, entity://, …) is not ours and yields null.
+ * Query strings are dropped; the fragment survives because message deep links
+ * live in it (`/conversation/<id>#msg-<id>`).
+ */
+function appLocationOf(href: string | undefined | null): { path: string; hash: string; host?: string } | null {
+  if (!href || typeof href !== "string") return null;
+  const raw = href.trim();
+  if (/^https?:\/\//i.test(raw)) {
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      return null;
+    }
+    if (!isAppHost(u.host)) return null;
+    return { path: u.pathname, hash: u.hash, host: u.hostname };
+  }
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(raw)) return null;
+  const hashIdx = raw.indexOf("#");
+  const beforeHash = hashIdx === -1 ? raw : raw.slice(0, hashIdx);
+  return { path: beforeHash.split("?")[0], hash: hashIdx === -1 ? "" : raw.slice(hashIdx) };
+}
+
+// ---------------------------------------------------------------------------
+// Message references
+//
+// A conversation message is addressed two ways, and both circulate as links:
+//
+//   /share/message/<token>              a public excerpt (token minted by the
+//                                       sharer; anyone holding it may read)
+//   /conversation/<id>#msg-<message id> the message in place (readable by
+//                                       whoever can read the conversation)
+//
+// Neither is an entity route (no `/messages/<id>` page exists), so the message
+// is its own reference kind rather than an EntityType. A reference is carried
+// through markdown as `msg:<token>` or `msg:<message id>` — the two never
+// collide, a share token is a UUID and a message id a 32-char Convex id.
+// ---------------------------------------------------------------------------
+
+export const MESSAGE_REF_PREFIX = "msg:";
+
+export type MessageRef = { kind: "share"; token: string } | { kind: "message"; id: string };
+
+/** If `href` addresses a conversation message (either form above), its reference. */
+export function parseMessageRefUrl(href: string | undefined | null): MessageRef | null {
+  const loc = appLocationOf(href);
+  if (!loc) return null;
+  const share = parseSharePath(loc.path);
+  if (share) return share.kind === "message" ? { kind: "share", token: share.token } : null;
+  const entity = parseEntityUrl(loc.path);
+  if (!entity || entity.type !== "session") return null;
+  const m = /^#msg-([a-z0-9]{32})$/.exec(loc.hash);
+  return m ? { kind: "message", id: m[1] } : null;
+}
+
+/** The markdown payload for a message reference (`msg:<token or id>`). */
+export function messageRefPayload(ref: MessageRef): string {
+  return `${MESSAGE_REF_PREFIX}${ref.kind === "share" ? ref.token : ref.id}`;
+}
+
+/** The inverse of messageRefPayload; null for any other payload. */
+export function parseMessageRefPayload(payload: string | undefined | null): MessageRef | null {
+  if (!payload || !payload.startsWith(MESSAGE_REF_PREFIX)) return null;
+  const value = payload.slice(MESSAGE_REF_PREFIX.length).trim();
+  if (isConvexId(value)) return { kind: "message", id: value };
+  return /^[A-Za-z0-9_-]{6,80}$/.test(value) ? { kind: "share", token: value } : null;
+}
+
+/**
+ * The /share URL family. A share link addresses an object through an opaque
+ * token (a UUID minted when the owner shares it) rather than an id:
+ *
+ *   /share/<token>            → a whole conversation
+ *   /share/<kind>/<token>     → every other kind in SHARED_OBJECT_KINDS
+ *
+ * One grammar, every consumer: the web server (routes, bot unfurls, SSR), the
+ * standalone share boot, the desktop handoff gate, the mobile deep-link
+ * router and the mobile /share resolver screen. The sub-kind segment set is
+ * closed on purpose — an unknown segment is not a token, it is a URL we do
+ * not own yet. Adding a kind is one entry here; the type then makes each
+ * consumer's table incomplete until it handles the new kind.
+ */
+export const SHARED_OBJECT_KINDS = ["message", "doc", "plan", "task", "call", "project", "initiative", "decision", "stack", "trigger", "run"] as const;
+export type SharedObjectKind = (typeof SHARED_OBJECT_KINDS)[number];
+export type ShareKind = "conversation" | SharedObjectKind;
+
+const SHARE_TOKEN_SRC = "[A-Za-z0-9_-]{6,80}";
+const SHARE_PATH_RE = new RegExp(`^/share/(?:(${SHARED_OBJECT_KINDS.join("|")})/)?(${SHARE_TOKEN_SRC})/?$`);
+
+export function parseSharePath(path: string): { kind: ShareKind; token: string } | null {
+  const clean = (path || "").split(/[?#]/)[0];
+  const m = SHARE_PATH_RE.exec(clean);
+  if (!m) return null;
+  return { kind: (m[1] as ShareKind) ?? "conversation", token: m[2] };
+}
+
+/** The path a share token is opened at: the inverse of parseSharePath. */
+export function sharePath(kind: ShareKind, token: string): string {
+  return kind === "conversation" ? `/share/${token}` : `/share/${kind}/${token}`;
+}

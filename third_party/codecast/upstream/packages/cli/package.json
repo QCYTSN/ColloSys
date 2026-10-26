@@ -1,0 +1,41 @@
+{
+  "name": "@codecast/cli",
+  "version": "1.1.180",
+  "description": "Sync coding agent conversations to a shared Convex database",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "codecast": "./dist/main.js",
+    "cast": "./dist/main.js"
+  },
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bun scripts/stamp-daemon-build-id.ts && bun scripts/build-with-native.ts src/main.ts src/daemon.ts --outdir dist --target=node --splitting",
+    "build:binary": "bash scripts/guard-no-src-shadow.sh && bun scripts/build-with-native.ts src/main.ts --compile --outfile codecast",
+    "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+    "test": "bun test ./src/",
+    "test:computer": "bun test ./src/computer/ --isolate --path-ignore-patterns=''"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.2",
+    "@codecast/shared": "workspace:*",
+    "@inquirer/prompts": "^8.2.0",
+    "@platform/auth": "file:../../platform/packages/auth",
+    "@platform/cli-kit": "file:../../platform/packages/cli-kit",
+    "@platform/evals": "file:../../platform/packages/evals",
+    "@platform/flags": "file:../../platform/packages/flags",
+    "@platform/snippets": "file:../../platform/packages/snippets",
+    "@types/ws": "^8.18.1",
+    "chokidar": "^4.0.3",
+    "commander": "^12.1.0",
+    "convex": "1.31.2",
+    "glob": "^13.0.0",
+    "open": "^11.0.0",
+    "ws": "8.21.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.3",
+    "@types/node": "^22.10.1",
+    "typescript": "^5.7.2"
+  }
+}

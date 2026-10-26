@@ -1,0 +1,857 @@
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect } from "react";
+import {
+  StyleSheet,
+  ScrollView,
+  TouchableOpacity,
+  View as RNView,
+  ActionSheetIOS,
+  ActivityIndicator,
+  type TextInput as RNTextInput,
+} from 'react-native';
+import { Text as RNText, TextInput } from '@/components/Themed';
+import { useLocalSearchParams, useRouter, Stack } from "expo-router";
+import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { Theme, Spacing, themedStyles, useTheme } from "@/constants/Theme";
+import { Mono, uiFace } from "@/constants/fonts";
+import { useInboxStore, type TaskItem } from "@codecast/web/store/inboxStore";
+import { directChildren, isActiveTask, subtaskProgressOf, waitTone, type WaitTone } from "@codecast/shared/tasks";
+import { createTaskAndAdopt, openSubtasksOf } from "@codecast/web/lib/taskActions";
+import { useSyncTaskDetail } from "@codecast/web/hooks/useSyncTasks";
+import { useCoarseNow } from "@codecast/web/hooks/useCoarseNow";
+import { useRepoObject } from "@codecast/web/hooks/useRepoObject";
+import { useFeedLoading } from "@/hooks/useSyncWorkspaceData";
+import { MarkdownContent } from "@/components/MarkdownRenderer";
+import { CollapsibleBody } from "@/components/CollapsibleBody";
+import { formatRelativeTime } from "@/components/SessionItem";
+import { taskGraphView, type BlockerRow, type PrKey } from "@/lib/taskGraphRows";
+import {
+  STATUS_CONFIG,
+  STATUS_ORDER,
+  PRIORITY_CONFIG,
+} from "@/components/TaskItem";
+
+type TaskStatus = keyof typeof STATUS_CONFIG;
+type TaskPriority = keyof typeof PRIORITY_CONFIG;
+
+export default function TaskDetailScreen() {
+  const Theme = useTheme();
+  const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
+  const tasks = useInboxStore((s) => s.tasks);
+  const updateTask = useInboxStore((s) => s.updateTask);
+  const addTaskComment = useInboxStore((s) => s.addTaskComment);
+  const listLoading = useFeedLoading("tasks");
+  // Fetch the per-task detail (full task + comments + history) and seed it into
+  // the store row via syncRecord, mirroring web's TaskDetailContent. This is what
+  // makes task.comments exist so the optimistic addTaskComment push lands; the
+  // enrichTasks list shape synced by useSyncTasks does NOT carry comments.
+  const directData = useSyncTaskDetail(id);
+
+  const task = useMemo(() => {
+    return (
+      (id ? tasks[id] : undefined) ??
+      Object.values(tasks).find((t) => t.short_id === id) ??
+      ((directData as TaskItem | null) ?? undefined)
+    );
+  }, [tasks, id, directData]);
+
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+  const titleInputRef = useRef<RNTextInput>(null);
+  const [commentText, setCommentText] = useState("");
+  const [subtaskTitle, setSubtaskTitle] = useState("");
+  const [addingSubtask, setAddingSubtask] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
+
+  const parentRow = useMemo(() => {
+    const pid = (task as any)?.parent_id;
+    return pid ? (tasks[String(pid)] as TaskItem | undefined) : undefined;
+  }, [tasks, (task as any)?.parent_id]);
+  const subtasks = useMemo(() => {
+    if (!task) return [] as TaskItem[];
+    return directChildren(Object.values(tasks) as TaskItem[], task._id)
+      .filter((t: any) => isActiveTask(t))
+      .sort((a: any, b: any) => (a.created_at || 0) - (b.created_at || 0));
+  }, [tasks, task?._id]);
+  const subtaskProgress = useMemo(() => subtaskProgressOf(subtasks as any[]), [subtasks]);
+  // Blockers and links resolve against the one tasks collection; the detail
+  // files the rows they name into it (graph_tasks), finished blockers included.
+  // The minute tick keeps a time wait's countdown live, as on the web. A
+  // checks wait reads its PR's checks from pullRequests, fed per row below.
+  const now = useCoarseNow(60_000);
+  const pullRequests = useInboxStore((s) => s.pullRequests);
+  const graph = useMemo(() => (task ? taskGraphView(task, tasks, now, pullRequests) : null), [tasks, task, now, pullRequests]);
+  const addSubtask = useCallback(() => {
+    const t = subtaskTitle.trim();
+    if (!t || !task) return;
+    setSubtaskTitle("");
+    // Shared create helper: mints a client_key so the stub altKey-supersedes to
+    // the real row (the tasks collection rekeys it), instead of stranding a
+    // permanent ghost. Refusals are toasted and the stub removed.
+    void createTaskAndAdopt({ title: t, parent: task.short_id });
+  }, [subtaskTitle, task]);
+
+  useEffect(() => {
+    if (editingTitle) {
+      setTimeout(() => titleInputRef.current?.focus(), 50);
+    }
+  }, [editingTitle]);
+
+  const startEditTitle = useCallback(() => {
+    if (!task) return;
+    setTitleDraft(task.title);
+    setEditingTitle(true);
+  }, [task]);
+
+  const commitTitle = useCallback(() => {
+    const trimmed = titleDraft.trim();
+    if (task && trimmed && trimmed !== task.title) {
+      updateTask(task.short_id, { title: trimmed });
+    }
+    setEditingTitle(false);
+  }, [task, titleDraft, updateTask]);
+
+  const status = task ? (STATUS_CONFIG[task.status as TaskStatus] ?? STATUS_CONFIG.open) : STATUS_CONFIG.open;
+  const priority = task ? (PRIORITY_CONFIG[task.priority as TaskPriority] ?? PRIORITY_CONFIG.medium) : PRIORITY_CONFIG.medium;
+
+  // Terminal move with open subtasks → three-way close prompt (mobile's
+  // equivalent of the web CloseGuardDialog), so mobile can't strand a parent
+  // in a "done" state the server refuses.
+  const closeWithGuard = useCallback((shortId: string, next: "done" | "dropped") => {
+    const open = openSubtasksOf(shortId);
+    if (open.length === 0) { updateTask(shortId, { status: next }); return; }
+    const verb = next === "done" ? "Close" : "Drop";
+    ActionSheetIOS.showActionSheetWithOptions(
+      {
+        options: [`${verb} subtasks too`, `${verb} only this`, "Cancel"],
+        cancelButtonIndex: 2,
+        title: `${open.length} open subtask${open.length === 1 ? "" : "s"}`,
+      },
+      (i) => {
+        if (i === 0) updateTask(shortId, { status: next, subtask_resolution: "cascade" });
+        else if (i === 1) updateTask(shortId, { status: next, subtask_resolution: "only_parent" });
+      },
+    );
+  }, [updateTask]);
+
+  const handleStatusPress = useCallback(() => {
+    if (!task) return;
+    const available = STATUS_ORDER.filter((s) => s !== task.status);
+    const options = available.map((s) => STATUS_CONFIG[s].label);
+    options.push("Cancel");
+    ActionSheetIOS.showActionSheetWithOptions(
+      { options, cancelButtonIndex: options.length - 1, title: "Change Status" },
+      (idx) => {
+        if (idx >= available.length) return;
+        const next = available[idx];
+        if (next === "done" || next === "dropped") closeWithGuard(task.short_id, next);
+        else updateTask(task.short_id, { status: next });
+      },
+    );
+  }, [task, updateTask, closeWithGuard]);
+
+  const handlePriorityPress = useCallback(() => {
+    if (!task) return;
+    const prios = (Object.keys(PRIORITY_CONFIG) as TaskPriority[]).filter((p) => p !== task.priority);
+    const options = prios.map((p) => PRIORITY_CONFIG[p].label);
+    options.push("Cancel");
+    ActionSheetIOS.showActionSheetWithOptions(
+      { options, cancelButtonIndex: options.length - 1, title: "Change Priority" },
+      (idx) => {
+        if (idx < prios.length) {
+          updateTask(task.short_id, { priority: prios[idx] });
+        }
+      },
+    );
+  }, [task, updateTask]);
+
+  const handleAddComment = useCallback(() => {
+    const text = commentText.trim();
+    if (!task || !text) return;
+    // Optimistic, local-first: addTaskComment pushes onto task.comments and
+    // dispatches the same server write through the outbox. Clear synchronously.
+    addTaskComment(task.short_id, text, "note");
+    setCommentText("");
+  }, [task, commentText, addTaskComment]);
+
+  // "Not found" only once both the list and the detail have answered; until
+  // then a row we have never cached is genuinely cold.
+  const hasSynced = !listLoading && directData !== undefined;
+
+  if (!task) {
+    return (
+      <>
+        <Stack.Screen options={{ title: id ?? "Task" }} />
+        <RNView style={styles.loading}>
+          {hasSynced ? (
+            <>
+              <FontAwesome name="exclamation-circle" size={28} color={Theme.textMuted0} />
+              <RNText style={styles.loadingText}>Task not found</RNText>
+              <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
+                <RNText style={styles.backBtnText}>Go back</RNText>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <ActivityIndicator size="small" color={Theme.textMuted} />
+              <RNText style={styles.loadingText}>Loading task...</RNText>
+            </>
+          )}
+        </RNView>
+      </>
+    );
+  }
+
+  const steps = task.steps ?? [];
+  const criteria = task.acceptance_criteria ?? [];
+  const labels = task.labels ?? [];
+  // Array.isArray, not just ??: a cached row poisoned by a stale pending lock
+  // once carried a lone comment object here (see tasks.unprotectedFields in
+  // clientSyncRegistry); one bad row must not crash the screen.
+  const rawComments = (task as any).comments;
+  const comments = (Array.isArray(rawComments) ? [...rawComments] : []).sort(
+    (a: any, b: any) => (a.created_at ?? 0) - (b.created_at ?? 0),
+  );
+
+  return (
+    <>
+      <Stack.Screen
+        options={{
+          title: task.short_id,
+          headerStyle: { backgroundColor: Theme.bgAlt },
+          headerTintColor: Theme.text,
+          headerTitleStyle: { fontSize: 14, fontFamily: uiFace(Mono.semiBold), color: Theme.textMuted },
+        }}
+      />
+      <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+        {editingTitle ? (
+          <TextInput
+            ref={titleInputRef}
+            style={styles.titleInput}
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            onBlur={commitTitle}
+            onSubmitEditing={commitTitle}
+            multiline
+          />
+        ) : (
+          <TouchableOpacity onPress={startEditTitle} activeOpacity={0.7}>
+            <RNText style={styles.title}>{task.title}</RNText>
+          </TouchableOpacity>
+        )}
+
+        <RNView style={styles.badgeRow}>
+          <TouchableOpacity style={[styles.badge, { borderColor: status.color + "40" }]} onPress={handleStatusPress}>
+            <FontAwesome name={status.icon} size={12} color={status.color} />
+            <RNText style={[styles.badgeText, { color: status.color }]}>{status.label}</RNText>
+          </TouchableOpacity>
+
+          <TouchableOpacity style={[styles.badge, { borderColor: priority.color + "40" }]} onPress={handlePriorityPress}>
+            <FontAwesome name={priority.icon} size={10} color={priority.color} />
+            <RNText style={[styles.badgeText, { color: priority.color }]}>{priority.label}</RNText>
+          </TouchableOpacity>
+
+          {labels.map((l) => (
+            <RNView key={l} style={styles.labelChip}>
+              <RNText style={styles.labelChipText}>{l}</RNText>
+            </RNView>
+          ))}
+        </RNView>
+
+        {graph?.supersededBy && (
+          <TaskLinkRow icon="exchange" label="Superseded by" link={graph.supersededBy} color={Theme.orange} />
+        )}
+
+        {/* Render whenever the task HAS a parent, mirroring web — a subtask must
+            never appear context-free even if the parent row isn't cached yet
+            (deep link / cold start). The press is disabled until it resolves. */}
+        {(task as any).parent_id && (
+          <TouchableOpacity
+            style={styles.parentLink}
+            onPress={() => parentRow && router.push(`/task/${parentRow.short_id}` as any)}
+            disabled={!parentRow}
+            activeOpacity={0.6}
+          >
+            <FontAwesome name="level-up" size={11} color={Theme.textMuted0} />
+            <RNText style={styles.parentLinkLabel}>Subtask of {parentRow?.short_id ?? "…"}</RNText>
+            {parentRow && <RNText style={styles.parentLinkTitle} numberOfLines={1}>{parentRow.title}</RNText>}
+          </TouchableOpacity>
+        )}
+
+        {task.plan && (
+          <TouchableOpacity
+            style={styles.parentLink}
+            onPress={() => router.push(`/plan/${task.plan!.short_id}` as any)}
+            activeOpacity={0.6}
+          >
+            <FontAwesome name="map-o" size={11} color={Theme.textMuted0} />
+            <RNText style={styles.parentLinkLabel}>Plan</RNText>
+            <RNText style={styles.parentLinkTitle} numberOfLines={1}>{task.plan.title}</RNText>
+          </TouchableOpacity>
+        )}
+
+        {graph?.foundDuring && <TaskLinkRow icon="search" label="Found during" link={graph.foundDuring} />}
+
+        {task.description && (
+          <RNView style={styles.section}>
+            <CollapsibleBody fadeColor={Theme.bg} height={180}>
+              <MarkdownContent text={task.description} baseStyle={styles.description} />
+            </CollapsibleBody>
+          </RNView>
+        )}
+
+        {graph && graph.blockedBy.length > 0 && (
+          <RNView style={styles.section}>
+            <RNView style={styles.subtaskHeader}>
+              <RNText style={styles.sectionLabel}>Blocked by</RNText>
+              {graph.unblocked && (
+                <RNText style={[styles.blockerState, { color: Theme.green }]}>unblocked</RNText>
+              )}
+            </RNView>
+            {graph.blockedBy.map((b) => <BlockerRowView key={b.key} row={b} taskStatus={task.status} />)}
+          </RNView>
+        )}
+
+        {subtasks.length > 0 || addingSubtask ? (
+        <RNView style={styles.section}>
+          <RNView style={styles.subtaskHeader}>
+            <RNText style={styles.sectionLabel}>Subtasks</RNText>
+            {subtaskProgress.total > 0 && (
+              <RNText style={styles.subtaskProgress}>{subtaskProgress.done}/{subtaskProgress.total}</RNText>
+            )}
+          </RNView>
+          {subtaskProgress.total > 0 && (
+            <RNView style={styles.subtaskBarTrack}>
+              <RNView style={[styles.subtaskBarFill, { width: `${Math.round((subtaskProgress.done / subtaskProgress.total) * 100)}%` }]} />
+            </RNView>
+          )}
+          {subtasks.map((s: any) => {
+            const cfg = STATUS_CONFIG[s.status as TaskStatus] ?? STATUS_CONFIG.open;
+            const closed = s.status === "done" || s.status === "dropped";
+            return (
+              <TouchableOpacity
+                key={s._id}
+                style={styles.subtaskRow}
+                onPress={() => router.push(`/task/${s.short_id}` as any)}
+                activeOpacity={0.6}
+              >
+                <FontAwesome name={cfg.icon} size={12} color={cfg.color} />
+                <RNText style={styles.subtaskId}>{s.short_id}</RNText>
+                <RNText style={[styles.subtaskTitle, closed && styles.subtaskTitleDone]} numberOfLines={1}>{s.title}</RNText>
+              </TouchableOpacity>
+            );
+          })}
+          <RNView style={styles.subtaskInputRow}>
+            <FontAwesome name="plus" size={11} color={Theme.textMuted0} />
+            <TextInput
+              style={styles.subtaskInput}
+              value={subtaskTitle}
+              onChangeText={setSubtaskTitle}
+              placeholder="Add subtask..."
+              placeholderTextColor={Theme.textMuted0}
+              returnKeyType="done"
+              onSubmitEditing={addSubtask}
+              onBlur={() => { if (!subtaskTitle.trim()) setAddingSubtask(false); }}
+              autoFocus={addingSubtask && subtasks.length === 0}
+              blurOnSubmit={false}
+            />
+          </RNView>
+        </RNView>
+        ) : (
+          <TouchableOpacity style={styles.addSubtaskLink} onPress={() => setAddingSubtask(true)} activeOpacity={0.6}>
+            <FontAwesome name="plus" size={11} color={Theme.textMuted0} />
+            <RNText style={styles.parentLinkLabel}>Add subtask</RNText>
+          </TouchableOpacity>
+        )}
+
+
+        {criteria.length > 0 && (
+          <RNView style={styles.section}>
+            <RNText style={styles.sectionLabel}>Acceptance Criteria</RNText>
+            {criteria.map((c, i) => (
+              <RNView key={i} style={styles.criteriaRow}>
+                <FontAwesome name="circle-o" size={10} color={Theme.textMuted0} style={{ marginTop: 4 }} />
+                <RNText style={styles.criteriaText}>{c}</RNText>
+              </RNView>
+            ))}
+          </RNView>
+        )}
+
+        {steps.length > 0 && (
+          <RNView style={styles.section}>
+            <RNText style={styles.sectionLabel}>Steps</RNText>
+            {steps.map((s, i) => (
+              <RNView key={i} style={styles.criteriaRow}>
+                <FontAwesome
+                  name={s.done ? "check-square-o" : "square-o"}
+                  size={13}
+                  color={s.done ? Theme.green : Theme.textMuted0}
+                  style={{ marginTop: 2 }}
+                />
+                <RNText style={[styles.criteriaText, s.done && styles.stepDone]}>{s.title}</RNText>
+              </RNView>
+            ))}
+          </RNView>
+        )}
+
+        {task.execution_status && (
+          <RNView style={styles.section}>
+            <RNText style={styles.sectionLabel}>Execution</RNText>
+            <RNView style={[styles.executionBadge, executionColor(task.execution_status)]}>
+              <RNText style={styles.executionText}>{task.execution_status.replace(/_/g, " ")}</RNText>
+            </RNView>
+            {task.execution_concerns && (
+              <RNText style={styles.concernsText}>{task.execution_concerns}</RNText>
+            )}
+          </RNView>
+        )}
+
+        {task.files_changed && task.files_changed.length > 0 && (
+          <RNView style={styles.section}>
+            <TouchableOpacity style={styles.subtaskHeader} onPress={() => setShowFiles((v) => !v)} activeOpacity={0.6}>
+              <RNText style={styles.sectionLabel}>{task.files_changed.length} {task.files_changed.length === 1 ? "file" : "files"} changed</RNText>
+              <FontAwesome name={showFiles ? "angle-up" : "angle-down"} size={14} color={Theme.textMuted0} />
+            </TouchableOpacity>
+            {showFiles && task.files_changed.map((f, i) => (
+              <RNText key={i} style={styles.fileText}>{f}</RNText>
+            ))}
+          </RNView>
+        )}
+
+        <RNView style={styles.section}>
+          <RNText style={styles.sectionLabel}>Activity</RNText>
+          {comments.length > 0 ? (
+            comments.map((c: any) => (
+              <RNView key={c._id} style={styles.commentRow}>
+                <RNView style={styles.commentMeta}>
+                  <RNText style={styles.commentAuthor}>{c.author}</RNText>
+                  {c.comment_type && c.comment_type !== "note" && (
+                    <RNView style={styles.commentTypeBadge}>
+                      <RNText style={styles.commentTypeText}>{c.comment_type}</RNText>
+                    </RNView>
+                  )}
+                  {typeof c.created_at === "number" && (
+                    <RNText style={styles.commentTime}>{formatRelativeTime(c.created_at)}</RNText>
+                  )}
+                </RNView>
+                <MarkdownContent text={c.text} baseStyle={styles.commentBody} />
+              </RNView>
+            ))
+          ) : (
+            <RNText style={styles.commentEmpty}>No comments yet</RNText>
+          )}
+          <RNView style={styles.commentInputRow}>
+            <TextInput
+              style={styles.commentInput}
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Add a comment..."
+              placeholderTextColor={Theme.textMuted0}
+              multiline
+            />
+            <TouchableOpacity
+              style={[styles.commentSend, !commentText.trim() && { opacity: 0.3 }]}
+              onPress={handleAddComment}
+              disabled={!commentText.trim()}
+            >
+              <FontAwesome name="arrow-up" size={14} color={Theme.accent} />
+            </TouchableOpacity>
+          </RNView>
+        </RNView>
+
+        <RNView style={{ height: 40 }} />
+      </ScrollView>
+    </>
+  );
+}
+
+function executionColor(status: string): { backgroundColor: string; borderColor: string } {
+  switch (status) {
+    case "done":
+      return { backgroundColor: Theme.green + "15", borderColor: Theme.green + "40" };
+    case "done_with_concerns":
+      return { backgroundColor: Theme.orange + "15", borderColor: Theme.orange + "40" };
+    case "blocked":
+      return { backgroundColor: Theme.red + "15", borderColor: Theme.red + "40" };
+    case "needs_context":
+      return { backgroundColor: Theme.accent + "15", borderColor: Theme.accent + "40" };
+    default:
+      return { backgroundColor: Theme.bgHighlight, borderColor: Theme.borderLight };
+  }
+}
+
+type IconName = React.ComponentProps<typeof FontAwesome>["name"];
+
+const WAIT_ICON: Record<Exclude<BlockerRow["kind"], "task">, IconName> = {
+  pr_merged: "code-fork",
+  pr_checks_green: "check-circle-o",
+  decision: "question-circle-o",
+  time: "clock-o",
+};
+
+const WAIT_TONE_COLOR = { waiting: "orange", met: "green", failed: "red", dim: "textDim" } as const satisfies Record<WaitTone, keyof typeof Theme>;
+
+/** One Blocked by entry, read-only: a task blocker opens its task (a ref this
+ *  viewer cannot read stays plain); a wait shows its condition, its glyph in
+ *  the tone the task page explains it with (`waitTone` untilClosed), and the
+ *  shared word for its state, red when it fails and dim otherwise, as on the web. */
+function BlockerRowView({ row, taskStatus }: { row: BlockerRow; taskStatus: string }) {
+  const Theme = useTheme();
+  const router = useRouter();
+  if (row.kind === "task") {
+    const cfg = STATUS_CONFIG[row.status as TaskStatus];
+    const state = cfg?.label ?? row.stateLabel;
+    return (
+      <TouchableOpacity
+        style={styles.subtaskRow}
+        onPress={() => router.push(`/task/${row.ref}` as any)}
+        disabled={!!row.stateLabel}
+        activeOpacity={0.6}
+      >
+        <FontAwesome name={cfg?.icon ?? "question-circle-o"} size={12} color={cfg?.color ?? Theme.textMuted0} />
+        <RNText style={styles.subtaskId}>{row.ref}</RNText>
+        <RNText style={[styles.subtaskTitle, row.cleared && styles.subtaskTitleDone]} numberOfLines={1}>{row.title ?? ""}</RNText>
+        <RNText style={[styles.blockerState, { color: cfg?.color ?? Theme.textMuted0 }]}>{state}</RNText>
+      </TouchableOpacity>
+    );
+  }
+  return (
+    <RNView style={styles.subtaskRow}>
+      {row.pr && <PrFeeder pr={row.pr} />}
+      <FontAwesome name={WAIT_ICON[row.kind] ?? "hourglass-o"} size={12} color={Theme[WAIT_TONE_COLOR[waitTone(row.state, taskStatus, { untilClosed: true })]]} />
+      <RNText style={[styles.subtaskTitle, row.cleared && styles.subtaskTitleDone]} numberOfLines={1}>{row.label}</RNText>
+      {row.word ? <RNText style={[styles.blockerState, { color: row.failing ? Theme.red : Theme.textDim }]} numberOfLines={1}>{row.word}</RNText> : null}
+    </RNView>
+  );
+}
+
+/** Feeds the PR a checks wait reads into pullRequests (the web's useRepoObject),
+ *  so the row can say its checks are failing. */
+function PrFeeder({ pr }: { pr: PrKey }) {
+  useRepoObject("pr", `${pr.repository}#${pr.number}`, pr);
+  return null;
+}
+
+/** A link that does not block (found during, superseded by), opening its task. */
+function TaskLinkRow({ icon, label, link, color }: { icon: IconName; label: string; link: { ref: string; title?: string }; color?: string }) {
+  const Theme = useTheme();
+  const router = useRouter();
+  return (
+    <TouchableOpacity style={styles.parentLink} onPress={() => router.push(`/task/${link.ref}` as any)} activeOpacity={0.6}>
+      <FontAwesome name={icon} size={11} color={color ?? Theme.textMuted0} />
+      <RNText style={[styles.parentLinkLabel, color ? { color } : null]}>{label} {link.ref}</RNText>
+      {link.title ? <RNText style={styles.parentLinkTitle} numberOfLines={1}>{link.title}</RNText> : null}
+    </TouchableOpacity>
+  );
+}
+
+const styles = themedStyles((Theme) => StyleSheet.create({
+  container: { flex: 1, backgroundColor: Theme.bg },
+  content: { padding: Spacing.lg },
+  loading: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 8,
+    backgroundColor: Theme.bg,
+  },
+  loadingText: { fontSize: 14, color: Theme.textMuted },
+  backBtn: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: Theme.bgAlt,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Theme.borderLight,
+  },
+  backBtnText: { fontSize: 14, fontWeight: "500", color: Theme.accent },
+  title: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: Theme.text,
+    lineHeight: 26,
+    marginBottom: Spacing.md,
+  },
+  addSubtaskLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    marginBottom: Spacing.lg,
+  },
+  titleInput: {
+    fontSize: 20,
+    fontWeight: "700",
+    color: Theme.text,
+    lineHeight: 26,
+    marginBottom: Spacing.md,
+    backgroundColor: Theme.bgAlt,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Theme.accent + "60",
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  badgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
+    marginBottom: Spacing.lg,
+  },
+  badge: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  badgeText: {
+    fontSize: 12,
+    fontWeight: "600",
+  },
+  section: {
+    marginBottom: Spacing.lg,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Theme.textMuted0,
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  description: {
+    fontSize: 14,
+    color: Theme.text,
+    lineHeight: 20,
+  },
+  planLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 10,
+    backgroundColor: Theme.bgAlt,
+    borderRadius: 8,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Theme.borderLight,
+  },
+  planLinkText: {
+    fontSize: 14,
+    fontWeight: "500",
+    color: Theme.cyan,
+    flex: 1,
+  },
+  parentLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    paddingVertical: 6,
+    marginBottom: 4,
+  },
+  parentLinkLabel: {
+    fontSize: 12,
+    color: Theme.textMuted0,
+  },
+  parentLinkTitle: {
+    fontSize: 12,
+    color: Theme.textMuted,
+    flex: 1,
+  },
+  subtaskHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  subtaskProgress: {
+    fontSize: 12,
+    color: Theme.textMuted,
+    fontFamily: Mono.regular,
+  },
+  subtaskBarTrack: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: Theme.borderLight,
+    overflow: "hidden",
+    marginTop: 6,
+    marginBottom: 4,
+  },
+  subtaskBarFill: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: Theme.green,
+  },
+  subtaskRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 7,
+  },
+  subtaskId: {
+    fontSize: 11,
+    color: Theme.textMuted0,
+    fontFamily: Mono.regular,
+  },
+  subtaskTitle: {
+    fontSize: 13,
+    color: Theme.text,
+    flex: 1,
+  },
+  subtaskTitleDone: {
+    color: Theme.textMuted0,
+    textDecorationLine: "line-through",
+  },
+  blockerState: {
+    fontSize: 11,
+    fontFamily: Mono.regular,
+    maxWidth: "45%",
+  },
+  subtaskInputRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 7,
+  },
+  subtaskInput: {
+    flex: 1,
+    fontSize: 13,
+    color: Theme.text,
+    padding: 0,
+  },
+  labelRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+  },
+  labelChip: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    backgroundColor: Theme.bgHighlight,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Theme.borderLight,
+  },
+  labelChipText: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: Theme.textMuted,
+  },
+  criteriaRow: {
+    flexDirection: "row",
+    gap: 8,
+    marginBottom: 6,
+  },
+  criteriaText: {
+    fontSize: 14,
+    color: Theme.text,
+    lineHeight: 20,
+    flex: 1,
+  },
+  stepDone: {
+    textDecorationLine: "line-through",
+    color: Theme.textMuted,
+  },
+  executionBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignSelf: "flex-start",
+    marginBottom: 6,
+  },
+  executionText: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: Theme.text,
+    textTransform: "capitalize",
+  },
+  concernsText: {
+    fontSize: 13,
+    color: Theme.orange,
+    lineHeight: 18,
+  },
+  fileText: {
+    fontSize: 12,
+    fontFamily: "JetBrainsMono",
+    color: Theme.textMuted,
+    lineHeight: 20,
+  },
+  moreText: {
+    fontSize: 12,
+    color: Theme.textMuted0,
+    marginTop: 4,
+  },
+  commentRow: {
+    marginBottom: 14,
+  },
+  commentMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 4,
+  },
+  commentAuthor: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: Theme.text,
+  },
+  commentTypeBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: Theme.bgHighlight,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Theme.borderLight,
+  },
+  commentTypeText: {
+    fontSize: 10,
+    fontWeight: "600",
+    color: Theme.textMuted,
+    textTransform: "lowercase",
+  },
+  commentTime: {
+    fontSize: 11,
+    color: Theme.textMuted0,
+  },
+  commentBody: {
+    fontSize: 14,
+    color: Theme.text,
+    lineHeight: 20,
+  },
+  commentEmpty: {
+    fontSize: 13,
+    color: Theme.textMuted0,
+    marginBottom: 12,
+  },
+  commentInputRow: {
+    flexDirection: "row",
+    alignItems: "flex-end",
+    gap: 8,
+    marginTop: 4,
+  },
+  commentInput: {
+    flex: 1,
+    backgroundColor: Theme.bgAlt,
+    borderRadius: 10,
+    paddingHorizontal: Spacing.md,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Theme.text,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: Theme.borderLight,
+    minHeight: 40,
+    maxHeight: 100,
+  },
+  commentSend: {
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+  },
+}));

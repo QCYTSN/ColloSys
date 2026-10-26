@@ -1,0 +1,223 @@
+/**
+ * Build-time prerender of the marketing routes + sitemap generation.
+ *
+ * Runs at the end of `npm run build`:
+ *   1. SSR-builds src/prerender-entry.tsx (vite.prerender.config.ts → dist-ssr/).
+ *   2. Renders every route in lib/seoRoutes.ts to full HTML documents under
+ *      dist/prerender/<path>/index.html — the built index.html shell with the
+ *      route's rendered markup injected into #root and its real title,
+ *      description, canonical, and og tags swapped into <head>.
+ *      Each route also gets a 1200x630 social card at dist/og/ (og-cards.mjs),
+ *      which its og:image points at.
+ *   3. Writes dist/prerender/manifest.json (what server/bot-meta.ts serves
+ *      snapshots from), dist/sitemap.xml, dist/llms.txt and the blog feed
+ *      (dist/blog/rss.xml, from lib/blogFeed.ts).
+ *
+ * FAIL-OPEN: SEO must never block a deploy. Any failure logs loudly and exits
+ * 0 — the server falls back to the SPA shell for routes with no snapshot.
+ */
+import { execFileSync } from "node:child_process";
+import { mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const WEB_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const DIST = join(WEB_ROOT, "dist");
+const OUT = join(DIST, "prerender");
+
+function esc(s) {
+  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * JSON-LD for the crawler snapshots: SoftwareApplication on the homepage,
+ * Article on blog posts and guides. Kept to fields we can fill truthfully from
+ * the SEO manifest — no invented ratings or review counts.
+ */
+function jsonLd(entry, siteUrl) {
+  const url = entry.path === "/" ? siteUrl : `${siteUrl}${entry.path}`;
+  let data;
+  if (entry.path === "/") {
+    data = {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "Codecast",
+      applicationCategory: "DeveloperApplication",
+      operatingSystem: "macOS, Linux, Windows, iOS, Web",
+      description: entry.description,
+      url: siteUrl,
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+      publisher: { "@type": "Organization", name: "codecast", url: siteUrl },
+    };
+  } else if (entry.path.startsWith("/blog/") || entry.path.startsWith("/documentation/") || entry.path.startsWith("/compare/")) {
+    data = {
+      "@context": "https://schema.org",
+      "@type": entry.path.startsWith("/documentation/") ? "TechArticle" : "Article",
+      headline: entry.title,
+      description: entry.description,
+      url,
+      ...(entry.published ? { datePublished: entry.published } : {}),
+      publisher: { "@type": "Organization", name: "codecast", url: siteUrl },
+    };
+  } else {
+    return null;
+  }
+  return `<script type="application/ld+json">${JSON.stringify(data)}</script>`;
+}
+
+function buildHead(entry, siteUrl, card) {
+  const url = entry.path === "/" ? siteUrl : `${siteUrl}${entry.path}`;
+  const ld = jsonLd(entry, siteUrl);
+  const image = card ? `${siteUrl}${card.path}` : `${siteUrl}/logo-final.png`;
+  return [
+    `<title>${esc(entry.title)}</title>`,
+    `<meta name="description" content="${esc(entry.description)}" />`,
+    `<link rel="canonical" href="${esc(url)}" />`,
+    `<meta property="og:title" content="${esc(entry.title)}" />`,
+    `<meta property="og:description" content="${esc(entry.description)}" />`,
+    `<meta property="og:site_name" content="codecast" />`,
+    `<meta property="og:type" content="${entry.path.startsWith("/blog/") ? "article" : "website"}" />`,
+    `<meta property="og:url" content="${esc(url)}" />`,
+    ...(entry.published ? [`<meta property="article:published_time" content="${esc(entry.published)}" />`] : []),
+    `<meta property="og:image" content="${esc(image)}" />`,
+    ...(card
+      ? [
+          `<meta property="og:image:width" content="${card.width}" />`,
+          `<meta property="og:image:height" content="${card.height}" />`,
+          `<meta property="og:image:alt" content="${esc(card.alt)}" />`,
+        ]
+      : []),
+    `<meta name="twitter:card" content="${card ? "summary_large_image" : "summary"}" />`,
+    `<meta name="twitter:title" content="${esc(entry.title)}" />`,
+    `<meta name="twitter:description" content="${esc(entry.description)}" />`,
+    `<meta name="twitter:image" content="${esc(image)}" />`,
+    ...(ld ? [ld] : []),
+  ].join("\n    ");
+}
+
+/** Strip the shell's own title/description/og/twitter tags so the injected set is the only one,
+ *  and the default color theme (plugins/colorThemeBoot.ts): a marketing page is light Classic,
+ *  so a first visit must not paint the app's theme before MarketingLayout's lock. */
+function stripShellMeta(shell) {
+  return shell
+    .replace(/<script>window\.__ccDefaultColorTheme=[^<]*<\/script>\s*/, "")
+    .replace(/<title>[\s\S]*?<\/title>\s*/, "")
+    .replace(/<meta name="description"[^>]*\/>\s*/g, "")
+    .replace(/<meta property="og:[^"]*"[^>]*\/>\s*/g, "")
+    .replace(/<meta name="twitter:[^"]*"[^>]*\/>\s*/g, "");
+}
+
+async function main() {
+  // 1. SSR build
+  execFileSync(
+    process.execPath,
+    [join(WEB_ROOT, "node_modules", "vite", "bin", "vite.js"), "build", "-c", "vite.prerender.config.ts"],
+    { cwd: WEB_ROOT, stdio: "inherit" },
+  );
+
+  const entryMod = await import(pathToFileURL(join(WEB_ROOT, "dist-ssr", "prerender-entry.mjs")).href);
+  const { render, SEO_ROUTES, SITE_URL, buildBlogFeed, BLOG_FEED_PATH, cardHeading, cardImagePath } = entryMod;
+
+  const shellRaw = readFileSync(join(DIST, "index.html"), "utf-8");
+  const ROOT_DIV = '<div id="root"></div>';
+  if (!shellRaw.includes(ROOT_DIV)) throw new Error("dist/index.html has no empty #root div to inject into");
+  const shell = stripShellMeta(shellRaw);
+  if (!shell.includes("<head>")) throw new Error("dist/index.html has no <head>");
+
+  rmSync(OUT, { recursive: true, force: true });
+  rmSync(join(DIST, "og"), { recursive: true, force: true });
+
+  // 2a. Social cards (dist/og/), before the documents that point at them.
+  // Loaded here so a broken card dependency costs the images, never the snapshots.
+  let carded = new Set();
+  let cardSize = null;
+  try {
+    const { renderCards, CARD_WIDTH, CARD_HEIGHT } = await import("./og-cards.mjs");
+    cardSize = { width: CARD_WIDTH, height: CARD_HEIGHT };
+    carded = await renderCards({
+      entries: SEO_ROUTES,
+      cardHeading,
+      cardImagePath,
+      outDir: DIST,
+      logoPath: join(WEB_ROOT, "public", "logo-final.png"),
+    });
+  } catch (err) {
+    console.error("social cards FAILED entirely (every route keeps the default image):", err?.message ?? err);
+  }
+
+  const manifest = [];
+  let failed = 0;
+  for (const entry of SEO_ROUTES) {
+    try {
+      const html = render(entry.path);
+      if (!html || html.length < 500) throw new Error(`suspiciously small render (${html.length} bytes)`);
+      const doc = shell
+        .replace("<head>", `<head>\n    ${buildHead(entry, SITE_URL, carded.has(entry.path) ? { ...cardSize, path: cardImagePath(entry.path), alt: cardHeading(entry) } : null)}`)
+        .replace(ROOT_DIV, `<div id="root">${html}</div>`);
+      const dir = entry.path === "/" ? OUT : join(OUT, ...entry.path.split("/").filter(Boolean));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "index.html"), doc);
+      manifest.push(entry.path);
+    } catch (err) {
+      failed++;
+      console.error(`prerender FAILED for ${entry.path} (crawlers get the SPA shell for it):`, err?.message ?? err);
+    }
+  }
+  writeFileSync(join(OUT, "manifest.json"), JSON.stringify(manifest, null, 2));
+
+  // 3. sitemap.xml — every route that actually has content to crawl.
+  const today = new Date().toISOString().slice(0, 10);
+  const urls = SEO_ROUTES.map((e) => {
+    const loc = e.path === "/" ? `${SITE_URL}/` : `${SITE_URL}${e.path}`;
+    return `  <url><loc>${esc(loc)}</loc><lastmod>${today}</lastmod></url>`;
+  }).join("\n");
+  writeFileSync(
+    join(DIST, "sitemap.xml"),
+    `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`,
+  );
+
+  // RSS feed for the blog, from the same posts.ts the routes derive from.
+  const feedFile = join(DIST, ...BLOG_FEED_PATH.split("/").filter(Boolean));
+  mkdirSync(dirname(feedFile), { recursive: true });
+  writeFileSync(feedFile, buildBlogFeed());
+
+  // 4. llms.txt — a plain-text site map for AI crawlers (llmstxt.org format).
+  // Derived from the same manifest, so it stays current for free.
+  const home = SEO_ROUTES.find((e) => e.path === "/");
+  const section = (title, filter) => {
+    const rows = SEO_ROUTES.filter(filter)
+      .map((e) => `- [${e.title}](${SITE_URL}${e.path === "/" ? "" : e.path}): ${e.description}`)
+      .join("\n");
+    return rows ? `\n## ${title}\n\n${rows}\n` : "";
+  };
+  // The "For AI agents" section is written for the agent itself as the reader:
+  // coding agents routinely act on install instructions mid-session, so give
+  // them the exact commands and what to expect. Keep every claim true.
+  const agentSection = `
+## For AI agents
+
+If you are a coding agent (or assisting a developer) and want to set up Codecast:
+
+- Install the CLI non-interactively: \`curl -fsSL https://codecast.sh/install | sh\` (macOS/Linux) or \`npm install -g @codecast-sh/cli\`. Homebrew: \`brew install codecast-sh/tap/codecast\`.
+- Then run \`cast login\` — it prints a browser URL for the human to approve; no credentials pass through the agent.
+- After setup, a background daemon records the agent sessions already running on the machine (Claude Code, Codex, Cursor, Gemini). Nothing about how sessions are run needs to change.
+- Agents gain team memory: \`cast search "<query>"\` and \`cast ask "<question>"\` query every past session, and \`cast blame <file>:<line>\` traces code to the conversation that wrote it.
+- Codecast is free for individuals and MIT-licensed (https://github.com/codecast-sh/codecast); the backend is self-hostable.
+`;
+  writeFileSync(
+    join(DIST, "llms.txt"),
+    `# Codecast\n\n> ${home.description}\n` +
+      section("Product", (e) => !e.path.startsWith("/blog") && !e.path.startsWith("/documentation") && !["/privacy", "/terms"].includes(e.path)) +
+      section("Documentation", (e) => e.path.startsWith("/documentation")) +
+      section("Blog", (e) => e.path.startsWith("/blog")) +
+      agentSection,
+  );
+
+  console.log(`prerendered ${manifest.length}/${SEO_ROUTES.length} routes → dist/prerender, ${carded.size} social cards → dist/og, sitemap.xml + llms.txt + blog feed written`);
+  if (failed > 0) console.error(`WARNING: ${failed} route(s) failed to prerender — fix before the next deploy`);
+}
+
+main().catch((err) => {
+  console.error("prerender step FAILED entirely (site still works; crawlers get the SPA shell):", err);
+  process.exitCode = 0;
+});

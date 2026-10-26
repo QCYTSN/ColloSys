@@ -1,0 +1,109 @@
+{
+  "name": "@codecast/electron",
+  "version": "1.1.127",
+  "description": "Codecast Desktop (Electron)",
+  "main": "main.js",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "native": "scripts/build-native.sh",
+    "prestart": "npm run native",
+    "predev": "npm run native",
+    "prebuild": "npm run native",
+    "prebuild:dir": "npm run native",
+    "prebuild:local": "npm run native",
+    "start": "electron .",
+    "dev": "CODECAST_URL=https://local.codecast.sh electron .",
+    "test": "node --test *.test.js",
+    "build": "NOTARIZE_KEYCHAIN_PROFILE=codecast electron-builder -m",
+    "build:dir": "electron-builder -m --config.mac.target=dir",
+    "build:local": "electron-builder -m --config.mac.target=dir --config.mac.identity=null",
+    "install:local": "npm run build:local && pkill -f Codecast.app 2>/dev/null; sleep 1 && rm -rf /Applications/Codecast.app && cp -R dist/mac-arm64/Codecast.app /Applications/Codecast.app && xattr -cr /Applications/Codecast.app && echo 'Installed to /Applications'"
+  },
+  "dependencies": {
+    "@platform/desktop": "file:../../platform/packages/desktop",
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "@electron/notarize": "^3.1.1",
+    "electron": "^44.3.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "sh.codecast.desktop",
+    "productName": "Codecast",
+    "files": [
+      "main.js",
+      "shellAuthority.js",
+      "appWindows.mjs",
+      "callWindowPolicy.js",
+      "paletteFace.js",
+      "meetingDetector.js",
+      "agentDock.js",
+      "notificationRouter.js",
+      "osPermissions.js",
+      "computerPermissions.js",
+      "daemonSetup.js",
+      "browserPanes.js",
+      "shareCursors.js",
+      "spellMenu.js",
+      "editUndo.js",
+      "menuKeys.js",
+      "shortcutSettings.js",
+      "updaterNet.js",
+      "preload.js",
+      "native/notifications.node",
+      "assets/icon.png",
+      "assets/trayTemplate.png",
+      "assets/trayTemplate@2x.png",
+      "assets/trayAttention.png",
+      "assets/trayAttention@2x.png",
+      "assets/trayColor.png",
+      "assets/trayColorAttention.png",
+      "trayIcon.js"
+    ],
+    "asarUnpack": [
+      "native/*.node"
+    ],
+    "directories": {
+      "buildResources": "assets"
+    },
+    "afterSign": "notarize.js",
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.developer-tools",
+      "icon": "assets/icon.icns",
+      "darkModeSupport": true,
+      "minimumSystemVersion": "13.0",
+      "identity": "Ashot Petrosian (WRG9THCK9Q)",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "entitlements.mac.plist",
+      "entitlementsInherit": "entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Codecast uses the microphone for team huddles.",
+        "NSCameraUsageDescription": "Codecast uses the camera for team huddles.",
+        "NSAudioCaptureUsageDescription": "Codecast records system audio when you record a meeting or share your screen with sound."
+      }
+    },
+    "dmg": {
+      "title": "Codecast",
+      "artifactName": "Codecast-${version}-arm64.${ext}"
+    },
+    "protocols": [
+      {
+        "name": "Codecast",
+        "schemes": [
+          "codecast"
+        ]
+      }
+    ],
+    "publish": {
+      "provider": "generic",
+      "url": "https://dl.codecast.sh/desktop"
+    }
+  }
+}

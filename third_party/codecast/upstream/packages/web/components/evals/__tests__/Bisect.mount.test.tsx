@@ -1,0 +1,577 @@
+// The bisect pages (U14): the ruler model brackets a range the way the search
+// narrows it; the free answer lights the first class that differs for each
+// Tier 0 answer; a pinned answer shows its commit and no Start; a narrowed
+// one is priced, with the agent confirm gating Start; the live page draws the
+// ruler mid-run, flags a stall, shows the drift banner and the result card;
+// and the list reads every bisect. All through the fixture world.
+
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, setSystemTime } from "bun:test";
+import { act } from "react";
+import { JSDOM } from "jsdom";
+import { replaceGlobals } from "../../../test-helpers/globals";
+import { closeDomWindow } from "../../../test-helpers/domGlobals";
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://local.codecast.sh/evals/bisect", pretendToBeVisual: true });
+const DOM_GLOBAL = /^(navigator|getComputedStyle|requestAnimationFrame|cancelAnimationFrame|Node|NodeFilter|Element|Text|Range|Selection|Document\w*|MutationObserver|DOMRect\w*|HTML\w*Element|SVG\w*Element|\w*Event)$/;
+const restoreGlobals = replaceGlobals({
+  ...Object.fromEntries(Object.getOwnPropertyNames(dom.window).filter((k) => DOM_GLOBAL.test(k)).map((k) => [k, (dom.window as unknown as Record<string, unknown>)[k]])),
+  window: dom.window,
+  document: dom.window.document,
+  ResizeObserver: class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  },
+  IS_REACT_ACT_ENVIRONMENT: true,
+});
+
+const { createRoot } = await import("react-dom/client");
+const { MemoryRouter } = await import("react-router");
+const { ConvexProvider } = await import("convex/react");
+// Session pills resolve through Convex; the marketing stub answers every query with nothing.
+const { heroConvexStub } = await import("../../../app/(marketing)/heroFly/convexStub");
+const { matchEvalsRoute } = await import("@codecast/shared/contracts/evalsApi");
+const { useEvalsStore } = await import("../../../store/evalsStore");
+const { evalsFixtureWorld } = await import("../__fixtures__/world");
+const { attributionPairs, fixtureBisect } = await import("../__fixtures__/bisect");
+const { rulerModel, orderCandidates, probesLeftFor, bisectSummaryWord, repTally, answerStepText, isStalled, canStart, localTransport } = await import("@platform/evals/client");
+const { AttributionView } = await import("@platform/evals/react");
+const { BisectView } = await import("@platform/evals/react");
+const { BisectListView } = await import("@platform/evals/react");
+const { CommitPanelView } = await import("@platform/evals/react");
+const { codecastEvalsHost, CodecastEvalsProvider } = await import("../host");
+type EvalsHost = import("@platform/evals/react").EvalsHost;
+type CommitResponse = import("@codecast/shared/contracts/evalsApi").CommitResponse;
+const { BisectPlanPanel } = await import("@platform/evals/react");
+const { BisectNewPage } = await import("@platform/evals/react");
+const { BisectPage } = await import("@platform/evals/react");
+const { BisectListPage } = await import("@platform/evals/react");
+type Attribution = import("@codecast/shared/contracts/evalsApi").Attribution;
+type BisectResponse = import("@codecast/shared/contracts/evalsApi").BisectResponse;
+type BisectPlan = import("@codecast/shared/contracts/evalsApi").BisectPlan;
+type BisectListResponse = import("@codecast/shared/contracts/evalsApi").BisectListResponse;
+
+// A loaded machine renders a DiffView in seconds, and the case search walks the world.
+setDefaultTimeout(120_000);
+
+// The world's bisects run on the real clock, and the pages weigh them against it. The test runs at one fixed instant
+// (the clock still ticks from it), so what it reads off the world and what the pages draw agree.
+setSystemTime(new Date("2026-10-05T23:30:00.000Z"));
+const world = evalsFixtureWorld();
+const pairs = await attributionPairs(world);
+// Every answer the tests read off the world, asked once: a describe body cannot wait for one.
+const attributions = new Map<string, Attribution>();
+for (const [k, p] of Object.entries(pairs)) attributions.set(k, await world.answer("GET /attribution", {}, { surface: p.surface, good: p.good, bad: p.bad }));
+const bisectList: BisectListResponse = await world.answer("GET /bisects");
+const bisects = new Map<string, BisectResponse>();
+for (const b of bisectList.bisects) bisects.set(b.id, await world.answer("GET /bisect/:id", { id: b.id }));
+const posts: Array<{ path: string; body: unknown }> = [];
+const gets: Array<{ path: string; query: Record<string, string> }> = [];
+/** Whether the world's running bisect holds the one-bisect lock (or a named holder the list does not carry); most tests start on a free machine. */
+let lockHeld: boolean | string = false;
+/** A bisect id whose state is not written yet: GET /bisect/:id answers 404 `misses` times, then as the world's bisect `as`. */
+const notYet = new Map<string, { misses: number; as: string }>();
+
+beforeAll(() => {
+  // One world for the test and the pages, so batch names agree. Each answer is a copy, as it is over the wire.
+  const answers = localTransport(world.handle, "fixture");
+  const transport = {
+    kind: "fixture" as const,
+    async send(req: import("@codecast/shared/contracts/evalsApi").EvalsBridgeRequest) {
+      if (req.method === "POST") posts.push({ path: req.path, body: req.body });
+      else gets.push({ path: req.path, query: req.query });
+      const route = matchEvalsRoute(req.method, req.path);
+      if (!route) return { status: 404, body: { error: "no route", reason: "not-found" } };
+      const pending = route.key === "GET /bisect/:id" ? notYet.get(route.params.id!) : undefined;
+      if (pending && pending.misses-- > 0) return { status: 404, body: { error: "no such bisect", reason: "not-found" } };
+      const res = await answers.send(pending ? { ...req, path: `/bisect/${pending.as}` } : req);
+      if (res.status === 200 && route.key === "GET /bisects" && !lockHeld) (res.body as BisectListResponse).running = null;
+      if (res.status === 200 && route.key === "GET /bisects" && typeof lockHeld === "string") (res.body as BisectListResponse).running = lockHeld;
+      return res;
+    },
+  };
+  useEvalsStore.setState({ connection: "connected", transport, resources: {} });
+});
+
+afterAll(() => {
+  setSystemTime();
+  closeDomWindow(dom);
+  restoreGlobals();
+});
+
+async function mount(node: React.ReactNode) {
+  const container = document.createElement("div");
+  document.body.appendChild(container);
+  const root = createRoot(container);
+  await act(async () =>
+    root.render(
+      <ConvexProvider client={heroConvexStub}>
+        <MemoryRouter initialEntries={["/evals/bisect"]}><CodecastEvalsProvider>{node}</CodecastEvalsProvider></MemoryRouter>
+      </ConvexProvider>,
+    ),
+  );
+  return { container, unmount: () => act(async () => root.unmount()) };
+}
+
+/** Lets fetches and the plan's debounce settle. */
+async function settle(container: HTMLElement, until: (c: HTMLElement) => boolean, ms = 20_000) {
+  const end = Date.now() + ms;
+  while (!until(container) && Date.now() < end) await act(async () => new Promise((r) => setTimeout(r, 40)));
+  return until(container);
+}
+
+const attribution = (k: keyof typeof pairs) => attributions.get(k)!;
+const bisect = (id: string) => bisects.get(id)!;
+
+describe("the ruler model", () => {
+  const running = bisect("b-settle-1003");
+  const culprit = bisect("b-settle-0927");
+  const range = bisect("b-call-summary-0929");
+
+  it("orders commits by date with the patch last", () => {
+    const ordered = orderCandidates([...running.state.candidates].reverse());
+    const commitTimes = ordered.filter((c) => c.kind === "commit").map((c) => Date.parse((c as { commit: { at: string } }).commit.at));
+    expect(commitTimes).toEqual([...commitTimes].sort((a, b) => a - b));
+    expect(ordered[ordered.length - 1].kind).toBe("patch");
+  });
+
+  it("brackets the range the search has left, a class at a time", () => {
+    const m = rulerModel(running.state);
+    expect(m.goodAt).toBeGreaterThanOrEqual(0);
+    expect(m.badAt).toBeGreaterThan(m.goodAt);
+    expect(m.tiles.some((t) => t.verdict === "pending")).toBe(true);
+    expect(m.tiles.some((t) => t.recorded)).toBe(true);
+    // A tile inside the brackets is neither known good nor after the oldest known bad.
+    for (const t of m.tiles) expect(t.outside).toBe(t.index <= m.goodAt || t.index > m.badAt);
+    const r = rulerModel(range.state);
+    const rangeClass = r.tiles[0].classN;
+    expect(r.tiles.filter((t) => t.classN === rangeClass).every((t) => !t.outside)).toBe(true);
+  });
+
+  it("lifts the culprit and has nothing left to probe", () => {
+    const m = rulerModel(culprit.state);
+    expect(m.culpritAt).not.toBeNull();
+    expect(m.tiles[m.culpritAt!].culprit).toBe(true);
+    expect(m.probesLeft).toBe(0);
+    expect(probesLeftFor(1)).toBe(0);
+    expect(probesLeftFor(5)).toBe(3);
+  });
+
+  it("names a list row by outcome", () => {
+    expect(bisectSummaryWord({ status: "done", outcome: "culprit", culprit: "0123456789ab" })).toBe("culprit 01234567");
+    expect(bisectSummaryWord({ status: "done", outcome: "drift", culprit: null })).toBe("drift, not source");
+    expect(bisectSummaryWord({ status: "probing", outcome: null, culprit: null })).toBe("probing");
+    expect(bisectSummaryWord({ status: "done", outcome: "crashed", culprit: null })).toBe("a control crashed");
+  });
+
+  it("counts a rep with a run and no pass or fail as crashed, not still to land", () => {
+    // As the runner records reps (runner.ts repOf): every rep has its run, and a crash has passed null.
+    const t = repTally([
+      { freezeId: "f", runId: "r1", passed: true, score: 0.8 },
+      { freezeId: "f", runId: "r2", passed: false, score: 0.3 },
+      { freezeId: "f", runId: "r3", passed: null, score: null },
+      { freezeId: "f", runId: null, passed: null, score: null },
+    ]);
+    expect(t).toEqual({ passed: 1, failed: 1, crashed: 1, pending: 1, landed: 3, all: 4 });
+  });
+});
+
+describe("the free answer", () => {
+  it("finds a pair in the world for every Tier 0 answer", () => {
+    for (const k of ["footing", "freeze", "live-reads", "noise", "pinned", "narrowed", "unattributable", "agent"] as const) expect(pairs[k], k).toBeTruthy();
+  });
+
+  for (const [k, kind] of [["footing", "footing"], ["freeze", "freeze"], ["live-reads", "live-reads"], ["noise", "noise"], ["narrowed", "source"], ["unattributable", "source"]] as const) {
+    it(`lights ${k} as the answer, with the lines before it reading same`, async () => {
+      const a = attribution(k);
+      const { container, unmount } = await mount(<AttributionView attribution={a} />);
+      const lines = [...container.querySelectorAll("[data-evb-class]")].map((el) => [el.getAttribute("data-evb-class"), el.getAttribute("data-state")]);
+      expect(lines.map(([c]) => c)).toEqual(["footing", "freeze", "live-reads", "source", "noise"]);
+      const at = lines.findIndex(([, s]) => s === "answer");
+      expect(lines[at][0]).toBe(kind);
+      expect(lines.slice(0, at).every(([, s]) => s === "same")).toBe(true);
+      expect(container.querySelector(`[data-evb-answer="${kind}"]`)).toBeTruthy();
+      // The rendered prompt change is always shown: per focus freeze, the flips or in score mode the largest drops.
+      expect(Number(container.querySelector("[data-evb-prompt-diffs]")?.getAttribute("data-evb-prompt-diffs"))).toBeGreaterThan(0);
+      if (k === "unattributable") expect(container.querySelector('[data-evb-confidence="unattributable"]')).toBeTruthy();
+      if (k === "narrowed") expect(container.querySelectorAll("[data-evb-candidate]").length).toBeGreaterThan(1);
+      await unmount();
+    });
+  }
+
+  it("draws each flip's before and after in the host's container, so a pair stacks in its narrow cell as it did before the shared views", async () => {
+    const a = (Object.keys(pairs) as Array<keyof typeof pairs>).map(attribution).find((x) => x.examples.length > 0)!;
+    expect(a).toBeTruthy();
+    const { container, unmount } = await mount(<AttributionView attribution={a} />);
+    const examples = [...container.querySelectorAll("[data-evb-examples] .cc-example")];
+    expect(examples.length).toBe(a.examples.length);
+    // The change card stacks its two sides by the nearest `cc` container; the host draws one around every pair.
+    for (const ex of examples) expect((ex.parentElement as HTMLElement).style.containerName).toBe("cc");
+    await unmount();
+  });
+
+  it("shows a pinned answer's commit and no Start", async () => {
+    const p = pairs.pinned!;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector("[data-evb-commit]:not([data-evb-commit='loading'])"))).toBe(true);
+    expect(container.querySelector('[data-evb-confidence="pinned"]')).toBeTruthy();
+    expect(container.querySelector("[data-evb-start]")).toBeNull();
+    expect(container.querySelector("[data-evb-plan]")).toBeNull();
+    await unmount();
+  });
+
+  it("prices a narrowed range and starts it", async () => {
+    const p = pairs.narrowed!;
+    posts.length = 0;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector('[data-evb-plan="priced"] [data-evb-cost]'))).toBe(true);
+    const cost = container.querySelector("[data-evb-cost]")!.textContent!;
+    expect(cost).toMatch(/2 controls \+ up to \d+ probes? \+ confirmation, \d+ freezes, 3 to 5 reps: at most \d+ reps, about \$[\d.]+, budget \$[\d.]+/);
+    expect(container.querySelector("[data-evb-confirm]")).toBeNull();
+    const start = container.querySelector<HTMLButtonElement>("[data-evb-start]")!;
+    expect(start.disabled).toBe(false);
+    expect(start.querySelector("kbd")).toBeTruthy();
+    // Seeding the default freeze set costs no second plan.
+    expect(posts.filter((x) => x.path === "/bisect/plan").length).toBe(1);
+    await act(async () => start.click());
+    expect(await settle(container, () => posts.some((x) => x.path === "/bisect"))).toBe(true);
+    await unmount();
+  });
+
+  it("offers the plan for an unattributable range too, since Start renders the candidates and can map the unreplayable end", async () => {
+    const p = pairs.unattributable!;
+    const a = attribution("unattributable");
+    expect(a.answer.kind === "source" && a.answer.candidates.length).toBeGreaterThan(0);
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector('[data-evb-plan="priced"] [data-evb-cost]'))).toBe(true);
+    expect(container.querySelector('[data-evb-confidence="unattributable"]')).toBeTruthy();
+    await unmount();
+  });
+
+  it("asks an agent surface for a confirm before Start", async () => {
+    const p = pairs.agent!;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector("[data-evb-confirm]"))).toBe(true);
+    const start = () => container.querySelector<HTMLButtonElement>("[data-evb-start]")!;
+    expect(start().disabled).toBe(true);
+    await act(async () => container.querySelector<HTMLInputElement>("[data-evb-confirm] input")!.click());
+    expect(start().disabled).toBe(false);
+    await unmount();
+  });
+
+  it("names the bisect holding the lock and holds Start until it is done", async () => {
+    const p = pairs.narrowed!;
+    lockHeld = true;
+    useEvalsStore.setState({ resources: {} });
+    try {
+      const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+      expect(await settle(container, (c) => !!c.querySelector('[data-evb-plan="priced"] [data-evb-blocked]'))).toBe(true);
+      expect(container.querySelector("[data-evb-blocked]")!.getAttribute("data-evb-blocked")).toBe("b-settle-1003");
+      expect(container.querySelector('[data-evb-blocked] a')!.getAttribute("href")).toBe("/evals/bisect/b-settle-1003");
+      expect(container.querySelector<HTMLButtonElement>("[data-evb-start]")!.disabled).toBe(true);
+      await unmount();
+    } finally {
+      lockHeld = false;
+      useEvalsStore.setState({ resources: {} });
+    }
+  });
+
+  it("names a lock holder the pages cannot open (a Multiplayer sim bisect) with its commands, never a dead link", async () => {
+    const p = pairs.narrowed!;
+    lockHeld = "sim-memberRemovedMidTurn-20261004-221500";
+    useEvalsStore.setState({ resources: {} });
+    try {
+      const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+      expect(await settle(container, (c) => !!c.querySelector('[data-evb-plan="priced"] [data-evb-blocked]'))).toBe(true);
+      const lock = container.querySelector("[data-evb-blocked]")!;
+      expect(lock.querySelector("a")).toBeNull();
+      expect(lock.textContent).toContain("./evals bisect stop sim-memberRemovedMidTurn-20261004-221500");
+      expect(container.querySelector<HTMLButtonElement>("[data-evb-start]")!.disabled).toBe(true);
+      await unmount();
+    } finally {
+      lockHeld = false;
+      useEvalsStore.setState({ resources: {} });
+    }
+  });
+
+  it("asks the records for the ends when only a surface is named", async () => {
+    const p = pairs.narrowed!;
+    gets.length = 0;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: null, bad: null, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector("[data-evb-checklist], [data-evb-answer]") || !!c.querySelector("[data-evb-needs-endpoints]"))).toBe(true);
+    expect(container.querySelector("[data-evb-needs-endpoints]")).toBeNull();
+    const asked = gets.find((g) => g.path === "/attribution")!;
+    expect(asked.query.surface).toBe(p.surface);
+    expect(asked.query.good).toBeUndefined();
+    expect(asked.query.bad).toBeUndefined();
+    await unmount();
+  });
+
+  it("lists a bisect already over the range, with its culprit, before anyone pays again", async () => {
+    const done = bisect("b-settle-0927").state;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: done.surface, good: done.plan.good.batch!, bad: done.plan.bad.batch!, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector('[data-evb-prior-row="b-settle-0927"]'))).toBe(true);
+    const row = container.querySelector('[data-evb-prior-row="b-settle-0927"]')!;
+    expect(row.getAttribute("href")).toBe("/evals/bisect/b-settle-0927");
+    expect(row.textContent).toContain(`culprit ${done.answer?.kind === "culprit" ? done.answer.commit.sha.slice(0, 8) : ""}`);
+    expect(row.textContent).toContain("these same ends");
+    // The running bisect over the same ends is listed first.
+    expect(container.querySelector("[data-evb-prior-row]")!.getAttribute("data-evb-prior-row")).toBe("b-settle-1003");
+    await unmount();
+  });
+
+  it("says when no candidate is left, and widens to every commit on request", async () => {
+    const p = pairs.empty!;
+    const a = attribution("empty");
+    expect(a.answer).toMatchObject({ kind: "source", confidence: "empty", candidates: [] });
+    gets.length = 0;
+    const { container, unmount } = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null }} />);
+    expect(await settle(container, (c) => !!c.querySelector("[data-evb-empty]"))).toBe(true);
+    // No false "narrowed": no confidence scale, no plan, and the one way forward is a button.
+    expect(container.querySelector("[data-evb-confidence]")).toBeNull();
+    expect(container.querySelector("[data-evb-plan]")).toBeNull();
+    expect(container.textContent).not.toContain("A bisect can replay them");
+    if (a.answer.kind === "source" && a.answer.rangeCommits > 0) expect(container.querySelector("[data-evb-widen]")).toBeTruthy();
+    await unmount();
+    const wide = await mount(<BisectNewPage view={{ view: "bisect-new", surface: p.surface, good: p.good, bad: p.bad, freeze: null, all: true }} />);
+    expect(await settle(wide.container, (c) => !!c.querySelector("[data-evb-widened]"))).toBe(true);
+    expect(gets.some((g) => g.path === "/attribution" && g.query.allCommits === "1")).toBe(true);
+    await wide.unmount();
+  });
+
+  it("narrows the fixture the way the engine does: a recorded good batch's commit is never a candidate", () => {
+    for (const k of ["pinned", "narrowed", "agent", "empty"] as const) {
+      const a = attribution(k);
+      if (a.answer.kind !== "source") continue;
+      const shas = new Set(a.answer.candidates.flatMap((c) => (c.kind === "commit" ? [c.commit.sha] : [])));
+      for (const r of a.answer.narrowedBy) if (r.verdict === "good") expect(shas.has(r.sha)).toBe(false);
+      expect(a.answer.noDeclaredSourceMoved && a.answer.candidates.some((c) => c.kind === "patch")).toBe(false);
+    }
+  });
+
+  it("refuses Start over budget or with no freeze", async () => {
+    const plan = await world.answer("POST /bisect/plan", {}, {}, { surface: pairs.narrowed!.surface, good: pairs.narrowed!.good, bad: pairs.narrowed!.bad });
+    const settings = { freezes: plan.freezes.map((f) => f.id), reps: 3, budgetUsd: null, maxMinutes: null, allCommits: false };
+    expect(canStart({ plan, pending: false, starting: false, confirm: false, settings })).toBe(true);
+    expect(canStart({ plan, pending: false, starting: false, confirm: false, settings: { ...settings, budgetUsd: plan.bound.maxUsd / 2 } })).toBe(false);
+    expect(canStart({ plan, pending: false, starting: false, confirm: false, settings: { ...settings, freezes: [] } })).toBe(false);
+    expect(canStart({ plan, pending: true, starting: false, confirm: false, settings })).toBe(false);
+  });
+
+  it("shows the bound in plain words and an over-budget warning", async () => {
+    const plan = await world.answer("POST /bisect/plan", {}, {}, { surface: pairs.agent!.surface, good: pairs.agent!.good, bad: pairs.agent!.bad });
+    const settings = { freezes: plan.freezes.map((f) => f.id), reps: 3, budgetUsd: plan.bound.maxUsd / 2, maxMinutes: null, allCommits: false };
+    const noop = () => {};
+    const { container, unmount } = await mount(
+      <BisectPlanPanel plan={plan} pending={false} error={null} freezeOptions={plan.freezes} settings={settings} onSettings={noop} confirm onConfirm={noop} starting={false} startError={null} onStart={noop} />,
+    );
+    expect(container.querySelector("[data-evb-cost]")!.textContent).toContain(plan.summary);
+    expect(container.textContent).toContain("would refuse to start");
+    expect(container.querySelector<HTMLButtonElement>("[data-evb-start]")!.disabled).toBe(true);
+    await unmount();
+  });
+});
+
+describe("one bisect", () => {
+  // The world's bisects run on the real clock (buildBisects).
+  const NOW = Date.now();
+
+  it("draws the live ruler mid-run with its rail", async () => {
+    const data = bisect("b-settle-1003");
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    expect(container.querySelector("[data-evb-ruler]")).toBeTruthy();
+    expect(container.querySelectorAll('[data-evb-control]').length).toBe(2);
+    expect(container.querySelector('[data-evb-wells="probe"]')).toBeTruthy();
+    expect(container.querySelector(".ev-b-bracket--good")).toBeTruthy();
+    expect(container.querySelector(".ev-b-bracket--bad")).toBeTruthy();
+    expect(container.querySelector("[data-evb-stop]")).toBeTruthy();
+    expect(container.querySelector("[data-evb-stalled]")).toBeNull();
+    expect(container.textContent).toContain(`tmux attach -t evals-bisect-b-settle-1003`);
+    expect(container.querySelector("[data-evb-log]")!.textContent).toContain("waiting on claude -p");
+    await unmount();
+  });
+
+  it("tallies each probe's wells in words, marks flipped and control rows, and links landed reps to their runs", async () => {
+    const data = bisect("b-settle-1003");
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    const tallies = [...container.querySelectorAll("[data-evb-tally]")].map((t) => t.textContent ?? "");
+    expect(tallies.some((t) => /^\d+ pass \d+ fail$/.test(t))).toBe(true);
+    expect(tallies.some((t) => /^\d+ of \d+ landed$/.test(t))).toBe(true);
+    const roles = (xs: Array<string | null>) => [...new Set(xs)].sort();
+    expect(roles([...container.querySelectorAll(".ev-b-wells-role")].map((r) => r.textContent))).toEqual(roles(data.state.plan.freezes.map((f) => (f.role === "flipped" ? "f" : "c"))));
+    expect(container.querySelector('[data-evb-wells] a[href^="/evals/r/"]')).toBeTruthy();
+    await unmount();
+  });
+
+  it("prints a step's batch as every page names it, linked to that batch on the chart", async () => {
+    const data = bisect("b-settle-0927");
+    const steps = [...data.steps, { seq: 99, at: data.state.updatedAt, kind: "narrow" as const, sha: null, text: "Recorded batch 2026-10-01T20:52:00.000Z reads class 1 good" }];
+    const { container, unmount } = await mount(<BisectView data={data} steps={steps} now={NOW} onStop={() => {}} stopping={false} />);
+    const link = [...container.querySelectorAll(".ev-b-step-text a")].find((a) => a.getAttribute("href")?.includes("2026-10-01T20%3A52%3A00.000Z"))!;
+    expect(link.getAttribute("href")).toBe(`/evals/s/settle?batch=${encodeURIComponent("2026-10-01T20:52:00.000Z")}`);
+    expect(link.textContent).not.toContain("T20:52");
+    await unmount();
+  });
+
+  it("flags a bisect that stopped writing steps", async () => {
+    const data = bisect("b-anchor-brief-1003");
+    expect(data.stalled).toBe(true);
+    expect(isStalled({ ...data, stalled: false }, Date.parse(data.state.updatedAt) + 6 * 60_000)).toBe(true);
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    expect(container.querySelector("[data-evb-stalled]")).toBeTruthy();
+    await unmount();
+  });
+
+  it("shows drift as a plain banner, not a culprit", async () => {
+    const data = bisect("b-handoff-0930");
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    expect(container.querySelector('[data-evb-result="drift"]')!.textContent).toContain("Does not reproduce on today's tool and judge: drift, not source.");
+    expect(container.querySelector("[data-evb-stop]")).toBeNull();
+    await unmount();
+  });
+
+  it("shows a control whose every rep crashed as no answer, with the crashed reps drawn and linked", async () => {
+    const data = bisect("b-title-1002");
+    expect(data.state.answer?.kind).toBe("crashed");
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    const result = container.querySelector('[data-evb-result="crashed"]')!;
+    expect(result.textContent).toContain("No answer: a control could not run a rep.");
+    const runIds = (data.state.answer as { runIds: string[] }).runIds;
+    expect(runIds.length).toBeGreaterThan(0);
+    // Each crashed run is named once (a repeated id is a duplicate React key and a repeated chip).
+    expect(new Set(runIds).size).toBe(runIds.length);
+    expect(result.querySelectorAll("a").length).toBe(Math.min(6, runIds.length));
+    // The good control's wells read crashed, never "not landed yet", and its tally says so.
+    const crashedReps = data.state.probes.find((p) => p.kind === "control-good")!.reps.filter((r) => r.runId && r.passed === null).length;
+    expect(crashedReps).toBeGreaterThanOrEqual(runIds.length);
+    const wells = container.querySelector('[data-evb-wells="control-good"]')!;
+    expect(wells.querySelectorAll('[data-evb-rep="crashed"]').length).toBe(crashedReps);
+    expect(wells.querySelector('[data-evb-tally="landed"]')!.textContent).toContain(`${crashedReps} crashed`);
+    expect(wells.innerHTML).not.toContain("not landed yet");
+    // The runner stops at the good control: no bad control, no drift banner, nothing to stop.
+    expect(container.querySelector('[data-evb-wells="control-bad"]')).toBeNull();
+    expect(container.querySelector('[data-evb-result="drift"]')).toBeNull();
+    expect(container.querySelector("[data-evb-stop]")).toBeNull();
+    await unmount();
+  });
+
+  it("reads a finished bisect to its culprit through the page", async () => {
+    const { container, unmount } = await mount(<BisectPage view={{ view: "bisect", id: "b-settle-0927" }} />);
+    expect(await settle(container, (c) => !!c.querySelector('[data-evb-result="culprit"] [data-evb-commit]:not([data-evb-commit="loading"])'))).toBe(true);
+    const result = container.querySelector('[data-evb-result="culprit"]')!;
+    expect(result.querySelector('[data-ev-separation="worse"]')).toBeTruthy();
+    expect(result.textContent).toContain("Tier 2");
+    expect(container.querySelector(".ev-b-tile--culprit")).toBeTruthy();
+    // The trailer shows as the session pill, never as a raw line or link in the body.
+    const commitText = result.querySelector("[data-evb-commit]")!.textContent ?? "";
+    expect(commitText).not.toContain("Codecast-Session");
+    expect(commitText).not.toContain("https://");
+    await unmount();
+  });
+
+  it("reads a commit's session from its trailer value as git log hands it over", () => {
+    const id = "jx747bn5qcccdv5asr8jrk3n9d8fj2j0";
+    const read = codecastEvalsHost.commitSession!;
+    expect(read.id(`https://codecast.sh/conversation/${id}`)).toBe(id);
+    expect(read.id(id)).toBe(id);
+    // A short id is a prefix that can collide, so it names nothing, as blame reads it.
+    expect(read.id("jx747bn")).toBeNull();
+    expect(read.strip(`Fix it\n\nCodecast-Session: ${id}`)).toBe("Fix it");
+  });
+
+  it("names a commit's session only through a host that reads one, and shows the message whole otherwise", async () => {
+    const data: CommitResponse = await world.answer("GET /commit/:sha", { sha: "28a65ba1d0a91b5a0a2f1536cd86e6a554e4dc8d" });
+    expect(data.commit.session).toBeTruthy();
+    const render = (commitSession: EvalsHost["commitSession"]) =>
+      mount(
+        <CodecastEvalsProvider host={{ ...codecastEvalsHost, commitSession, ui: { ...codecastEvalsHost.ui, SessionPill: ({ id }) => <span data-test-pill={id} /> } }}>
+          <CommitPanelView data={data} whole={false} onWhole={() => {}} />
+        </CodecastEvalsProvider>,
+      );
+    const reading = await render(codecastEvalsHost.commitSession);
+    expect(reading.container.querySelector("[data-test-pill]")!.getAttribute("data-test-pill")).toBe(codecastEvalsHost.commitSession!.id(data.commit.session!));
+    expect(reading.container.textContent).not.toContain("Codecast-Session");
+    await reading.unmount();
+    const plain = await render(undefined);
+    expect(plain.container.querySelector("[data-test-pill]")).toBeNull();
+    expect(plain.container.textContent).toContain("Codecast-Session");
+    await plain.unmount();
+  });
+
+  it("reads a range when the replay could not tell commits apart", async () => {
+    const data = bisect("b-call-summary-0929");
+    const { container, unmount } = await mount(<BisectView data={data} steps={data.steps} now={NOW} onStop={() => {}} stopping={false} />);
+    expect(container.querySelector('[data-evb-result="range"] [data-evb-candidates]')).toBeTruthy();
+    expect(container.querySelector(".ev-b-span")).toBeTruthy();
+    // The headline names why it is a range, counts candidates (the edits are not a commit), and a finished run offers no tmux to attach to.
+    expect(container.querySelector('[data-evb-result="range"] .ev-b-answer-say')!.textContent).toBe(answerStepText(data.steps));
+    expect(answerStepText(data.steps)).toContain("did not separate");
+    expect(container.querySelector('[data-evb-result="range"] .ev-b-answer-num')!.textContent).toMatch(/candidates?$/);
+    expect(container.textContent).not.toContain("tmux attach");
+    // Each candidate opens its diff in place: a commit its CommitPanel, the uncommitted edits their patch.
+    const row = container.querySelector<HTMLElement>('[data-evb-result="range"] [data-evb-candidate]')!;
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => row.click());
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    expect(container.querySelector("[data-evb-commit], [data-evb-patch]")).toBeTruthy();
+    await unmount();
+  });
+
+  it("reads why a bisect ended from the runner's own last answer line", () => {
+    const step = (seq: number, kind: "narrow" | "answer", text: string) => ({ seq, at: "2026-10-04T00:00:00.000Z", kind, sha: null, text });
+    expect(answerStepText([step(1, "answer", "first"), step(2, "narrow", "x"), step(3, "answer", "range: 2 candidate(s) between good and class 3; the classes between them do not load")])).toContain("do not load");
+    expect(answerStepText([step(1, "narrow", "x")])).toBeNull();
+  });
+
+  it("keeps asking for a bisect started a moment ago until its state lands, rather than saying there is none", async () => {
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+    const id = `settle-${stamp}`;
+    notYet.set(id, { misses: 2, as: "b-settle-0927" });
+    const { container, unmount } = await mount(<BisectPage view={{ view: "bisect", id }} />);
+    expect(await settle(container, (c) => !!c.querySelector('[data-evals-loading="starting"]'))).toBe(true);
+    expect(container.textContent).not.toContain("No bisect with this id");
+    // Two 404s, then the state: the page polls through them on its own clock and draws the bisect.
+    expect(await settle(container, (c) => !!c.querySelector('[data-evb-result="culprit"]'), 30_000)).toBe(true);
+    expect(container.textContent).not.toContain("No bisect with this id");
+    await unmount();
+  });
+
+  it("answers an unknown id with a not-found state", async () => {
+    const { container, unmount } = await mount(<BisectPage view={{ view: "bisect", id: "b-nope" }} />);
+    expect(await settle(container, (c) => (c.textContent ?? "").includes("No bisect with this id"))).toBe(true);
+    await unmount();
+  });
+
+  it("builds every fixture kind from one plan", () => {
+    const plan = (bisect("b-settle-1003").state.plan) as BisectPlan;
+    for (const kind of ["running", "stalled", "drift", "crashed", "culprit", "range"] as const) {
+      const b = fixtureBisect(kind, plan, { id: `t-${kind}`, now: NOW, ageMin: 30 });
+      expect(b.state.id).toBe(`t-${kind}`);
+      expect(b.steps.length).toBeGreaterThan(2);
+    }
+  });
+});
+
+describe("the list", () => {
+  it("lists running bisects first, then newest", async () => {
+    const list = bisectList;
+    // The world's bisects run on the real clock, as the pages weigh them (buildBisects).
+    const { container, unmount } = await mount(<BisectListView bisects={list.bisects} now={Date.now()} />);
+    const rows = [...container.querySelectorAll("[data-evb-row]")];
+    expect(rows.length).toBe(list.bisects.length);
+    expect(rows[0].hasAttribute("data-evb-live")).toBe(true);
+    expect(container.textContent).toContain("drift, not source");
+    expect(container.textContent).toContain("a control crashed");
+    // The stalled bisect says so in the list, not only on its own page.
+    expect(container.querySelector('[data-evb-row="b-anchor-brief-1003"] [data-evb-stalled]')).toBeTruthy();
+    expect(container.querySelector('[data-evb-row="b-settle-1003"] [data-evb-stalled]')).toBeNull();
+    await unmount();
+  });
+
+  it("reads the list through the page", async () => {
+    const { container, unmount } = await mount(<BisectListPage view={{ view: "bisect-list" }} />);
+    expect(await settle(container, (c) => c.querySelectorAll("[data-evb-row]").length > 0)).toBe(true);
+    await unmount();
+  });
+});
+

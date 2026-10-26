@@ -1,0 +1,55 @@
+import { useQuery } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import { useWatchEffect } from "../../../../hooks/useWatchEffect";
+import { AuthGuard } from "../../../../components/AuthGuard";
+import { DashboardLayout } from "../../../../components/DashboardLayout";
+import { Id } from "@codecast/convex/convex/_generated/dataModel";
+import { ConversationDiffLayout } from "../../../../components/ConversationDiffLayout";
+import type { ConversationData } from "../../../../components/conversation/types";
+import { useConversationMessages } from "../../../../hooks/useConversationMessages";
+import { useDiffViewerStore } from "../../../../store/diffViewerStore";
+
+export default function ConversationDiffPage() {
+  const params = useParams();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const id = params.id as string;
+  const changeParam = searchParams.get("change");
+
+  const { conversation } = useConversationMessages(id);
+  const { selectChange, setDiffPanelOpen } = useDiffViewerStore();
+
+  useWatchEffect(() => {
+    setDiffPanelOpen(true);
+  }, [setDiffPanelOpen]);
+
+  useWatchEffect(() => {
+    if (changeParam) {
+      const changeIndex = parseInt(changeParam, 10) - 1;
+      if (!isNaN(changeIndex) && changeIndex >= 0) {
+        selectChange(changeIndex);
+      }
+    }
+  }, [changeParam, selectChange]);
+
+  if (!conversation) {
+    return (
+      <AuthGuard>
+        <DashboardLayout>
+          <div className="h-full w-full flex items-center justify-center">
+            <div className="text-muted-foreground">Loading conversation...</div>
+          </div>
+        </DashboardLayout>
+      </AuthGuard>
+    );
+  }
+
+  return (
+    <AuthGuard>
+      <DashboardLayout>
+        <ConversationDiffLayout conversation={conversation as ConversationData} embedded />
+      </DashboardLayout>
+    </AuthGuard>
+  );
+}

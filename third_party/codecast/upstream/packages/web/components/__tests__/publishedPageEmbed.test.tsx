@@ -1,0 +1,246 @@
+import { afterAll, describe, expect, mock, spyOn, test } from "bun:test";
+import { act } from "react";
+import { JSDOM } from "jsdom";
+import { ConvexProvider } from "convex/react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { replaceGlobals } from "../../test-helpers/globals";
+import { ClaudeArtifactEmbed, PublishedPageEmbed } from "../PublishedPageEmbed";
+import { useInboxStore } from "../../store/inboxStore";
+import { MemoryRouter } from "react-router";
+
+import { closeDomWindow } from "../../test-helpers/domGlobals";
+import { offlineConvexClient } from "../../test-helpers/offlineConvex";
+const client = offlineConvexClient("https://example.convex.cloud");
+// The page's embed info answers (an open page, so the frame mounts); every other query is still loading.
+const INFO = [{ slug: "my-page", title: "A page", kind: "html", version: 1, gated: false, user: null }];
+const watchQuery = spyOn(client, "watchQuery").mockImplementation(((query: unknown) => ({
+  onUpdate: () => () => {},
+  localQueryResult: () => (String((query as { [k: symbol]: unknown })[Symbol.for("functionName")] ?? "") === "artifacts:embedInfo" ? INFO : undefined),
+  localQueryLogs: () => undefined,
+  journal: () => undefined,
+})) as never);
+
+function markup(slug = "abc") {
+  return renderToStaticMarkup(
+    <ConvexProvider client={client}>
+      <PublishedPageEmbed slug={slug} />
+    </ConvexProvider>,
+  );
+}
+
+// The verbs on the page's floating toolbar, in the order a reader meets them.
+function toolbarVerbs(html: string): string[] {
+  const bar = html.match(/<span class="page-embed__bar"[\s\S]*?<\/span><span class="page-embed__grip"/)?.[0] ?? "";
+  return [...bar.matchAll(/<button[^>]*aria-label="([^"]+)"/g)].map((m) => m[1]);
+}
+
+describe("PublishedPageEmbed header actions", () => {
+  test("copy link to the published page is first, then expand, the two ways to open it, and collapse", () => {
+    expect(toolbarVerbs(markup("my-page"))).toEqual(["Copy link", "Expand", "Open beside your work", "Open in a new tab", "Collapse"]);
+  });
+
+  test("open points at the public share URL, not the serving origin", () => {
+    const html = markup("my-page");
+    expect(html).toContain('href="https://codecast.sh/a/my-page"');
+    expect(html).not.toContain('href="https://convex.codecast.sh');
+  });
+});
+
+const written: string[] = [];
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true, url: "https://codecast.sh/inbox" });
+const restoreGlobals = replaceGlobals({
+  window: Object.assign(dom.window, { innerWidth: 1400 }),
+  document: dom.window.document,
+  navigator: Object.assign(dom.window.navigator, {
+    clipboard: { writeText: (t: string) => { written.push(t); return Promise.resolve(); } },
+  }),
+  HTMLElement: dom.window.HTMLElement,
+  // useFrameTheme posts the theme to a framed page on the next frame.
+  requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+  IS_REACT_ACT_ENVIRONMENT: true,
+});
+// react-dom/client decides at load whether a DOM exists, so it is loaded
+// here — after the globals above — not as a static import.
+const {createRoot} = await import("react-dom/client");
+
+afterAll(async () => {
+  watchQuery.mockRestore();
+  await client.close();
+  closeDomWindow(dom);
+  restoreGlobals();
+});
+
+describe("PublishedPageEmbed copy", () => {
+  test("the copy button writes the public share URL", async () => {
+    written.length = 0;
+    mock.module("sonner", () => ({ toast: { success: () => {}, error: () => {} } }));
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(() =>
+      root.render(
+        <ConvexProvider client={client}>
+          <PublishedPageEmbed slug="my-page" />
+        </ConvexProvider>,
+      ),
+    );
+    const btn = container.querySelector('[aria-label="Copy link"]') as HTMLButtonElement;
+    expect(btn).toBeTruthy();
+    await act(() => btn.click());
+    expect(written).toEqual(["https://codecast.sh/a/my-page"]);
+    await act(() => root.unmount());
+  });
+});
+
+// The frame opens short; a page that declares <meta name="codecast:height">
+// opens at the height it asked for, never past its own content.
+describe("PublishedPageEmbed height", () => {
+  test("opens at 420, or at the page's declared height, and Expand doubles it", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(() =>
+      root.render(
+        <ConvexProvider client={client}>
+          <PublishedPageEmbed slug="tall-page" />
+        </ConvexProvider>,
+      ),
+    );
+    try {
+      const frame = container.querySelector("iframe") as HTMLIFrameElement;
+      const stage = () => (container.querySelector(".page-embed__stage") as HTMLElement).style.height;
+      const report = (height: number, preferred: number | null) =>
+        act(() => { dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data: { type: "codecast:height", height, preferred }, source: frame.contentWindow as any })); });
+      await report(3000, null);
+      expect(stage()).toBe("420px");
+      await report(3000, 700);
+      expect(stage()).toBe("700px");
+      await act(() => (container.querySelector('[aria-label="Expand"]') as HTMLButtonElement).click());
+      expect(stage()).toBe("1400px");
+      await act(() => (container.querySelector('[aria-label="Shrink"]') as HTMLButtonElement).click());
+      expect(stage()).toBe("700px");
+      await report(500, 700);
+      expect(stage()).toBe("500px");
+    } finally {
+      await act(() => root.unmount());
+      container.remove();
+    }
+  });
+});
+
+// A Claude artifact card suggests the Publish feature only to a reader whose
+// machines all have it off. Rendered on the client: the roster comes through
+// a store subscription, and a server render would read the store's initial
+// (empty) roster instead of the seeded one.
+describe("ClaudeArtifactEmbed publish suggestion", () => {
+  const ID = "2c5e5d6e-0a70-4e04-9c7a-1c4f1f5b8b6d";
+  const seed = (snippets: Record<string, boolean> | null) =>
+    useInboxStore.setState({
+      machineRoster: snippets ? [{ device_id: "dev-1", online: true, last_seen: 1, settings: { snippets } }] : [],
+    } as any);
+
+  async function mount(): Promise<HTMLElement> {
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => {
+      // The suggestion is an in-app link (next/link shim over react-router),
+      // so it needs the Router every real surface has.
+      root.render(
+        <MemoryRouter>
+          <ConvexProvider client={client}>
+            <ClaudeArtifactEmbed id={ID} />
+          </ConvexProvider>
+        </MemoryRouter>,
+      );
+    });
+    const snapshot = container.cloneNode(true) as HTMLElement;
+    await act(() => root.unmount());
+    container.remove();
+    return snapshot;
+  }
+
+  const OFFER = '[aria-label="Not now: stop suggesting Publish"]';
+
+  test("offered when no machine has Publish on; silent when one does, or before the roster loads", async () => {
+    try {
+      seed(null);
+      expect((await mount()).querySelector(OFFER)).toBeNull();
+      seed({ memory: true });
+      expect((await mount()).querySelector(OFFER)).toBeTruthy();
+      seed({ publish: true });
+      expect((await mount()).querySelector(OFFER)).toBeNull();
+    } finally {
+      seed(null);
+    }
+  });
+
+  test("silent once declined", async () => {
+    const dismissed = useInboxStore.getState().clientState.dismissed;
+    try {
+      seed({ memory: true });
+      useInboxStore.setState((s: any) => ({ clientState: { ...s.clientState, dismissed: { ...dismissed, snippet_intro_publish: 1 } } }));
+      expect((await mount()).querySelector(OFFER)).toBeNull();
+    } finally {
+      useInboxStore.setState((s: any) => ({ clientState: { ...s.clientState, dismissed } }));
+      seed(null);
+    }
+  });
+});
+
+// A page framed in a conversation the viewer can reply in takes notes into
+// that conversation's quote batch: the frame reports a pin, the batch gains a
+// page note quoting the spot, and the frame is sent the notes to draw.
+describe("PublishedPageEmbed notes", () => {
+  test("a pin from the frame joins the quote batch and is mirrored back", async () => {
+    const { ImageGalleryProvider, GalleryMessageScope } = await import("../ImageGallery");
+    const container = dom.window.document.createElement("div");
+    dom.window.document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(() =>
+      root.render(
+        <ConvexProvider client={client}>
+          <ImageGalleryProvider conversationId="conv-1" quotable>
+            <GalleryMessageScope messageId="msg-1">
+              <PublishedPageEmbed slug="notes-page" />
+            </GalleryMessageScope>
+          </ImageGalleryProvider>
+        </ConvexProvider>,
+      ),
+    );
+    try {
+      const frame = container.querySelector("iframe") as HTMLIFrameElement;
+      const sent: any[] = [];
+      frame.contentWindow!.postMessage = ((m: unknown) => { sent.push(m); }) as any;
+      const toggle = container.querySelector('[aria-pressed]') as HTMLButtonElement;
+      expect(toggle.getAttribute("aria-label")).toBe("Pin a note, or select text on the page");
+      await act(() => toggle.click());
+      expect(sent.at(-1)).toMatchObject({ type: "codecast:notes", pinMode: true, notes: [] });
+
+      const fromFrame = (data: unknown, source: unknown = frame.contentWindow) =>
+        act(() => { dom.window.dispatchEvent(new dom.window.MessageEvent("message", { data, source: source as any })); });
+      // Another window cannot write into the batch.
+      await fromFrame({ type: "codecast:note-add", point: { x: 0.5, y: 0.5 } }, dom.window);
+      expect(useInboxStore.getState().getReviewComments("conv-1")).toEqual([]);
+
+      await fromFrame({ type: "codecast:note-add", point: { x: 0.25, y: 0.4 }, snippet: "Needs you now" });
+      const [note] = useInboxStore.getState().getReviewComments("conv-1");
+      expect(note).toMatchObject({ messageId: "msg-1", page: { slug: "notes-page", point: { x: 0.25, y: 0.4 }, snippet: "Needs you now" } });
+      expect(note.quote).toBe('Published page "Published page" (https://codecast.sh/a/notes-page), at "Needs you now"');
+      expect(sent.at(-1)).toMatchObject({ editing: note.id, notes: [{ id: note.id, n: 1, x: 0.25, y: 0.4, body: "" }] });
+
+      await fromFrame({ type: "codecast:note-body", id: note.id, body: " fix this first " });
+      expect(useInboxStore.getState().getReviewComments("conv-1")[0].body).toBe("fix this first");
+      expect(container.querySelector('[aria-pressed]')!.textContent).toBe("1");
+
+      await fromFrame({ type: "codecast:note-remove", id: note.id });
+      expect(useInboxStore.getState().getReviewComments("conv-1")).toEqual([]);
+      expect(sent.at(-1)).toMatchObject({ notes: [], editing: null });
+    } finally {
+      useInboxStore.getState().clearReviewComments("conv-1");
+      await act(() => root.unmount());
+      container.remove();
+    }
+  });
+});

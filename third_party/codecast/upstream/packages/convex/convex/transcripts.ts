@@ -1,0 +1,2897 @@
+// Huddle transcription control plane.
+//
+// The SCRIBE — the client that toggled Transcribe on — owns the run: it holds
+// every audio track in the room (its mic plus each subscribed remote track),
+// streams each one to ASR separately, and appends attributed segments here.
+// Speaker attribution is structural (track identity = participant), never
+// inferred. This module stores the segments, mints short-lived ASR credentials,
+// and delivers accumulated words to the transcript's routes: an agent session
+// (the same rails as `cast send`, so the agent answers in its own thread), a
+// doc (content append), or a linked Slack channel. Route mode "live" delivers
+// on the silence gaps the scribe detects via server VAD — the natural beat for
+// an agent to reply; "after" delivers once at stop.
+//
+// A RECORDING (`rec:<uuid>`, see callRooms) is the same machinery with one
+// track and no room: somebody presses record, their microphone becomes the
+// only scribe, and everything after capture — segments, flush beats, the
+// summary and action items, the calls page, `cast calls` — happens unchanged.
+// Only three things differ, and each is marked where it lives: the paths a
+// recording may walk pass `{ rec: true }` to authorizeRoom; `canReadCall`
+// answers a recording with its creator and nobody else; and the row carries
+// its own liveness (`last_beat`) because there are no seat leases to read it
+// off, plus the audio file it uploads when it stops.
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./functions";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  authorizeRoom,
+  authorizeRoomNoGrant,
+  isRoomTranscribeOff,
+  isSeat,
+  liveMembers,
+  readRoomState,
+  stampRoomWordsPublic,
+} from "./callRooms";
+import { isTeamMember } from "./privacy";
+import { teamHasFeature } from "./teamFeatures";
+import { performSessionSend } from "./pendingMessages";
+import { findConversationByAnyRefWhere } from "./conversationSessionLookup";
+import {
+  addressesAgent,
+  agentSpokenNames,
+  FALLBACK_TRANSCRIBE_MODEL,
+  HEARTBEAT_ALIVE_MS,
+  LIVE_TRANSCRIBE_MODEL,
+  MID_TURN_AGENT_STATUSES,
+  trustedAgentStatus,
+  REC_LEASE_STALE_MS,
+  RECORDING_SUMMARY_PUSH_TYPE,
+  TRANSCRIBE_MAX_BYTES,
+  asrTranscriptionSession,
+  callParticipantKind,
+  callSpeakerName,
+  coveredSpans,
+  formatHuddleDigest,
+  formatHuddleSummaryTag,
+  formatTranscriptChunk as formatChunk,
+  guestIdFromIdentity,
+  isRecRoomKey,
+  isRecordingActive,
+  lineSaidAt,
+  liveFeedChunkHeader,
+  needsFullBrief,
+  videoStretches,
+  ownRoomChunkHeader,
+  parseRoomKey,
+  sessionRoomConversationId,
+  shareIncludesVideo,
+  unionTranscribeLanguages,
+} from "@codecast/shared/contracts";
+import { characterOf } from "@codecast/shared/contracts/sessionCharacter";
+import { canAccessConversation, canAccessTask, requireAccessibleDoc } from "./lib/access";
+import { verifyApiToken } from "./apiTokens";
+import { nextShortId } from "./counters";
+import { enqueuePush } from "./pushRouter";
+import { agentIdentity, claimRoomRows, liveTranscriptFor, postEvent } from "./callChat";
+import { mayPublishCall, stopRoomRecording } from "./lib/callRecordingRuns";
+import { callGuestsOnRecord, endGuestAdmissions, noteGuestAttendance } from "./lib/callGuestAdmission";
+import { scheduleFaceJoin, scheduleFaceLeave } from "./callFace";
+import { CHEAP_MODEL, postMessages, replyText, type SurfaceRequest } from "./lib/anthropic";
+
+export { asrTranscriptionSession };
+
+// added_by is deliberately NOT accepted from clients: delivery acts AS the
+// route's adder (deliverRoutes), so a client-chosen added_by would let a
+// scribe inject messages as any user into sessions and docs only that user
+// can reach. The server stamps it from the authenticated caller everywhere.
+const ROUTE_VALIDATOR = v.object({
+  kind: v.union(v.literal("session"), v.literal("doc"), v.literal("slack")),
+  target: v.string(),
+  mode: v.union(v.literal("live"), v.literal("after")),
+  sent_seq: v.number(),
+  face: v.optional(v.boolean()),
+});
+
+type Route = {
+  kind: "session" | "doc" | "slack";
+  target: string;
+  mode: "live" | "after";
+  sent_seq: number;
+  added_by?: Id<"users">;
+  face?: boolean;
+  hold_until?: number;
+  briefed_chunks?: number;
+  context_at?: number;
+};
+
+// Why deliverRoutes is running. A flush is the scribe's lull; the other three
+// are clocks, and a clock-driven delivery to a session waits for the room to
+// be quiet so a catch up never cuts a sentence in half.
+const DELIVER_REASON = v.union(
+  v.literal("flush"),
+  v.literal("settle"),
+  v.literal("hold_expired"),
+  v.literal("route_added"),
+);
+type DeliverReason = "flush" | "settle" | "hold_expired" | "route_added";
+// A catch up delivery counts the room as quiet after this long without a
+// closed utterance: the scribe's own lull (scribeEngine GAP_MS).
+export const CATCH_UP_QUIET_MS = 2_500;
+// The shortest gap between two context deliveries to one session. A line
+// that names the agent still goes at once and carries everything unsent with
+// it; the rest of the room's talk waits and arrives as one catch up. Each
+// delivery costs the agent a whole turn over its context, and most unnamed
+// chunks end in a pass (agent comms study, 2026-10-06).
+export const CONTEXT_MIN_GAP_MS = 3 * 60_000;
+// deliverRoutes reschedules itself at most this many times per run: a failed
+// final delivery backs off from DELIVER_RETRY_MS, a catch up that found the
+// room talking waits one more quiet window.
+export const DELIVER_RETRY_MAX = 3;
+export const DELIVER_RETRY_MS = 5_000;
+// The longest a fed agent may hold the room off in one ask.
+export const HOLD_MAX_MS = 30 * 60_000;
+
+/** The session this room BELONGS to, if it is a session room: the one route
+ *  target that is the huddle's own home rather than somewhere to report to. */
+export const ownRoomTarget = sessionRoomConversationId;
+
+/** The routes a room gets for free, on the transcript's first breath.
+ *
+ *  A session room has one: the session itself, live. Talking in a session's
+ *  huddle IS talking to its agent — the words reach it on every conversational
+ *  gap instead of waiting for a digest nobody would read to it. Seeded here
+ *  rather than by the client so it holds for every way a run starts (a joining
+ *  window's auto-scribe, the manual toggle, web and mobile alike) and for
+ *  whoever ends up scribing.
+ *
+ *  A caller that named its own routes has decided already; a route the same
+ *  caller asked for wins on kind and target, so an explicit "after" feed to
+ *  this session is not silently upgraded to live. */
+export function withDefaultRoutes(roomKey: string, routes: Route[]): Route[] {
+  const own = ownRoomTarget(roomKey);
+  if (!own) return routes;
+  if (routes.some((r) => r.kind === "session" && r.target === own)) return routes;
+  return [...routes, { kind: "session", target: own, mode: "live", sent_seq: 0 }];
+}
+
+/** Keep call_agent_feeds equal to this transcript's live session routes.
+ *
+ *  A fed session is a participant: its replies are mirrored into the room
+ *  chat (callChat.mirrorAgentTurn) and the room's chat lines reach it. Both
+ *  need a cheap "which huddle is this session in" that a settle or a chat
+ *  post can answer with one indexed read, and this table is that answer.
+ *  Every writer of routes calls here, and an ended transcript wipes its rows,
+ *  so the table can never claim a feed the transcript no longer has.
+ *
+ *  A new row is stamped with the session's newest assistant message: the
+ *  watermark the mirror advances from, so what the agent said before the
+ *  huddle is never replayed into it.
+ *
+ *  The room's thread learns who came and went from this same diff: a row
+ *  inserted is an agent joining (credited to whoever added the route), a row
+ *  deleted while the transcript is live is an agent leaving. The wipe at the
+ *  end of a call writes nothing: the call ended, nobody left. The agent's voice
+ *  in the room (callFace.ts) joins and leaves with its row. */
+export async function syncAgentFeeds(ctx: any, t: Doc<"transcripts">): Promise<void> {
+  const existing: Doc<"call_agent_feeds">[] = await ctx.db
+    .query("call_agent_feeds")
+    .withIndex("by_transcript", (q: any) => q.eq("transcript_id", t._id))
+    .collect();
+  const wanted = new Map<string, { conversationId: Id<"conversations">; addedBy: Id<"users">; face: boolean }>();
+  if (t.status === "live") {
+    for (const r of t.routes) {
+      if (r.kind !== "session") continue;
+      const conv = await findConversationByAnyRefWhere(ctx, r.target, () => true);
+      if (!conv) continue;
+      const addedBy = (r.added_by ?? t.started_by) as Id<"users">;
+      // Every session route is a lasting link, whatever its mode; only a live
+      // one makes the session a participant in the room.
+      await linkCallSession(ctx, t._id, conv._id as Id<"conversations">, addedBy, { live: true });
+      if (r.mode !== "live") continue;
+      wanted.set(String(conv._id), { conversationId: conv._id as Id<"conversations">, addedBy, face: r.face !== false });
+    }
+  }
+  for (const row of existing) {
+    const keep = wanted.get(String(row.conversation_id));
+    if (keep) {
+      wanted.delete(String(row.conversation_id));
+      // The avatar switched on or off mid-call: the agent stays, its face
+      // comes or goes.
+      if (keep.face !== (row.face !== false)) {
+        await ctx.db.patch(row._id, { face: keep.face ? undefined : false });
+        if (keep.face) await scheduleFaceJoin(ctx, { ...row, face: undefined });
+        else await scheduleFaceLeave(ctx, row);
+      }
+      continue;
+    }
+    await ctx.db.delete(row._id);
+    await scheduleFaceLeave(ctx, row);
+    if (t.status === "live") {
+      await postEvent(ctx, {
+        room_key: t.room_key,
+        team_id: t.team_id,
+        user_id: row.added_by,
+        event: "agent_left",
+        agent_conversation_id: row.conversation_id,
+      });
+    }
+  }
+  for (const { conversationId, addedBy, face } of wanted.values()) {
+    const newest = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_role_timestamp", (q: any) =>
+        q.eq("conversation_id", conversationId).eq("role", "assistant"),
+      )
+      .order("desc")
+      .first();
+    const feedId = await ctx.db.insert("call_agent_feeds", {
+      conversation_id: conversationId,
+      transcript_id: t._id,
+      room_key: t.room_key,
+      team_id: t.team_id,
+      added_by: addedBy,
+      last_mirrored_message_id: newest?._id,
+      ...(face ? {} : { face: false }),
+    });
+    await scheduleFaceJoin(ctx, (await ctx.db.get(feedId))!);
+    await postEvent(ctx, {
+      room_key: t.room_key,
+      team_id: t.team_id,
+      user_id: addedBy,
+      event: "agent_joined",
+      agent_conversation_id: conversationId,
+    });
+  }
+}
+
+const MAX_LINK_EXCERPTS = 20;
+
+/** Record that a call's words reached a session (call_session_links): once
+ *  per pair, so the call page lists its agents and the session names its
+ *  call long after any feed ended. `live` marks a feed; an excerpt appends
+ *  the seq range a one-shot send carried. */
+export async function linkCallSession(
+  ctx: any,
+  transcriptId: Id<"transcripts">,
+  conversationId: Id<"conversations">,
+  addedBy: Id<"users">,
+  how: { live: true } | { from_seq: number; to_seq: number },
+): Promise<void> {
+  const now = Date.now();
+  const existing: Doc<"call_session_links"> | null = (
+    await ctx.db
+      .query("call_session_links")
+      .withIndex("by_conversation", (q: any) => q.eq("conversation_id", conversationId))
+      .collect()
+  ).find((l: Doc<"call_session_links">) => String(l.transcript_id) === String(transcriptId)) ?? null;
+  const excerpt = "live" in how ? null : { from_seq: how.from_seq, to_seq: how.to_seq, at: now };
+  if (!existing) {
+    await ctx.db.insert("call_session_links", {
+      transcript_id: transcriptId,
+      conversation_id: conversationId,
+      added_by: addedBy,
+      created_at: now,
+      updated_at: now,
+      ...(excerpt ? { excerpts: [excerpt] } : { live: true }),
+    });
+    return;
+  }
+  if (!excerpt) {
+    if (!existing.live) await ctx.db.patch(existing._id, { live: true, updated_at: now });
+    return;
+  }
+  await ctx.db.patch(existing._id, {
+    excerpts: [...(existing.excerpts ?? []), excerpt].slice(-MAX_LINK_EXCERPTS),
+    updated_at: now,
+  });
+}
+
+/** One-time fill of call_session_links from the session routes past calls
+ *  still carry (a route stays on the transcript after the call ends). Pages
+ *  itself; run with no args. */
+export const backfillCallSessionLinks = internalMutation({
+  args: { cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("transcripts").paginate({ cursor: args.cursor ?? null, numItems: 100 });
+    let linked = 0;
+    for (const t of page.page) {
+      for (const r of t.routes ?? []) {
+        if (r.kind !== "session") continue;
+        const conv = await findConversationByAnyRefWhere(ctx, r.target, () => true);
+        if (!conv) continue;
+        await linkCallSession(ctx, t._id, conv._id as Id<"conversations">, (r.added_by ?? t.started_by) as Id<"users">, { live: true });
+        linked++;
+      }
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.transcripts.backfillCallSessionLinks, { cursor: page.continueCursor });
+    }
+    return { linked, done: page.isDone };
+  },
+});
+
+// A transcript the caller may write to: they started it and it is live.
+async function requireOwnLiveTranscript(
+  ctx: any,
+  userId: Id<"users">,
+  id: Id<"transcripts">,
+): Promise<Doc<"transcripts">> {
+  const t = await ctx.db.get(id);
+  if (!t || String(t.started_by) !== String(userId)) {
+    throw new Error("Transcript not found");
+  }
+  if (t.status !== "live") throw new Error("Transcript has ended");
+  return t;
+}
+
+/** Who runs the room's transcript, decided here so every client agrees.
+ *
+ *  Every huddle transcribes: each deliberate participant's client asks to
+ *  scribe when it joins, and this is the arbiter. One live transcript per
+ *  room; the caller either owns it ("scribe" — a fresh run, their own run
+ *  resumed after a reload, or an orphaned run adopted because its scribe's
+ *  seat lease died), or somebody else is running it ("observer" — open no
+ *  pipes, or the room would hear every word twice), or the huddle turned
+ *  transcription off ("off", auto starts only — a manual toggle clears the
+ *  flag first). Adoption reassigns `started_by`, which is what the append and
+ *  flush paths authorize on: the new scribe must be able to write. */
+export const start = mutation({
+  args: {
+    room_key: v.string(),
+    routes: v.optional(v.array(ROUTE_VALIDATOR)),
+    // The client is starting on its own because it joined a huddle, not
+    // because a person pressed Transcribe. Honors the room's opt-out.
+    auto: v.optional(v.boolean()),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<{
+    transcript_id: Id<"transcripts"> | null;
+    existing: boolean;
+    role: "scribe" | "observer" | "off";
+    // How far into the huddle this is, so a scribe that takes over (a
+    // handoff, an adoption, transcription back on) times its words on the
+    // record's clock instead of restarting it at zero.
+    elapsed_ms?: number;
+  }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    // `{ rec: true }`: this is one of the five paths a recording is allowed
+    // to walk. For a rec key the rule underneath is the transcript's own
+    // creator, and a fresh uuid nobody has started on belongs to whoever
+    // starts it here.
+    const auth = await authorizeRoom(ctx, userId, args.room_key, { rec: true });
+    if (!auth.ok) throw new Error(`Cannot transcribe this room: ${auth.reason}`);
+    if (args.auto && (await isRoomTranscribeOff(ctx, args.room_key))) {
+      return { transcript_id: null, existing: false, role: "off" };
+    }
+    const existing = await ctx.db
+      .query("transcripts")
+      .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+      .collect();
+    const live = existing.find((t) => t.status === "live");
+    if (live) {
+      // A record Record began while transcription was off, adopted now that
+      // it is on (the auto start returned above while it was off).
+      await ensureOwnRoute(ctx, live, userId);
+      const elapsed_ms = Math.max(0, Date.now() - live.started_at);
+      // A record a Record press made has an owner but no scribe yet: the
+      // presser may be on a phone, which never scribes, so the first client
+      // that asks takes the seat, whoever pressed.
+      if (live.scribe_open) {
+        await ctx.db.patch(live._id, { started_by: userId, scribe_open: undefined });
+        return { transcript_id: live._id, existing: true, role: "scribe", elapsed_ms };
+      }
+      if (String(live.started_by) === String(userId)) {
+        return { transcript_id: live._id, existing: true, role: "scribe", elapsed_ms };
+      }
+      // A recording never reaches here (only its creator may start on its
+      // key), so the seat check reads the room the huddle is actually in.
+      const seated = await ctx.db
+        .query("call_members")
+        .withIndex("by_room", (q: any) => q.eq("room_key", args.room_key))
+        .collect();
+      const scribeSeated = liveMembers(seated, Date.now()).some(
+        (m: any) => String(m.user_id) === String(live.started_by),
+      );
+      if (scribeSeated) return { transcript_id: live._id, existing: true, role: "observer" };
+      await ctx.db.patch(live._id, { started_by: userId });
+      return { transcript_id: live._id, existing: true, role: "scribe", elapsed_ms };
+    }
+    const id = await beginCallRecord(ctx, {
+      roomKey: args.room_key,
+      teamId: auth.teamId,
+      userId,
+      routes: args.routes ?? [],
+      // A fresh run somebody PRESSED for is news to the room; a joining
+      // window's auto start is every huddle's ordinary breath, and which
+      // client won that race says nothing worth a line.
+      announce: !args.auto,
+    });
+    return { transcript_id: id, existing: false, role: "scribe", elapsed_ms: 0 };
+  },
+});
+
+/** A room's call record begins: the one insert of a live transcripts row, for
+ *  the scribe's `start` and for a press of Record in a huddle that is not
+ *  transcribing (callRecordings.startRecording), so a call that is only
+ *  recorded is still a call, with a short id, a page and the room's chat.
+ *  `userId` becomes `started_by`, which is the scribe's seat. A press of
+ *  Record owns the record without holding that seat (`scribeOpen`), since
+ *  the presser may be on a client that never scribes: the first client to
+ *  ask takes it, and turning transcription back on hands it to whoever
+ *  pressed (setRoomTranscribeOff). */
+export async function beginCallRecord(
+  ctx: any,
+  args: {
+    roomKey: string;
+    teamId: Id<"teams">;
+    userId: Id<"users">;
+    routes: Route[];
+    announce: boolean;
+    // false: hold the room's own session route back (own_route_owed) until
+    // transcription comes on. Record does this in a room that switched
+    // transcription off, so filming a huddle never summons its agent.
+    ownRoute?: boolean;
+    // The record is made by a Record press, not a scribe: `userId` owns it,
+    // but nobody is writing its words yet, so the first client to ask
+    // (transcripts.start) scribes it rather than waiting on the presser.
+    scribeOpen?: boolean;
+  },
+): Promise<Id<"transcripts">> {
+  const startedAt = Date.now();
+  const ownRoute = args.ownRoute !== false;
+  const id = await ctx.db.insert("transcripts", {
+    room_key: args.roomKey,
+    team_id: args.teamId,
+    started_by: args.userId,
+    status: "live",
+    started_at: startedAt,
+    short_id: await nextShortId(ctx.db, "cl"),
+    routes: (ownRoute ? withDefaultRoutes(args.roomKey, args.routes) : args.routes).map((r) => ({
+      ...r,
+      added_by: args.userId,
+    })),
+    last_seq: 0,
+    ...(!ownRoute && ownRoomTarget(args.roomKey) ? { own_route_owed: true } : {}),
+    ...(args.scribeOpen ? { scribe_open: true } : {}),
+  });
+  // A new record has no public link, whatever the room's last one had.
+  await stampRoomWordsPublic(ctx, (await ctx.db.get(id))!);
+  if (args.announce) {
+    await postEvent(ctx, { room_key: args.roomKey, team_id: args.teamId, user_id: args.userId, event: "transcribe_on" });
+  }
+  // What was typed in the room since this huddle began is this huddle's.
+  if (!isRecRoomKey(args.roomKey)) {
+    const seats = liveMembers(
+      await ctx.db
+        .query("call_members")
+        .withIndex("by_room", (q: any) => q.eq("room_key", args.roomKey))
+        .collect(),
+      startedAt,
+    );
+    const began = seats.reduce((m: number, r: any) => Math.min(m, r.joined_at ?? startedAt), startedAt);
+    await claimRoomRows(ctx, args.roomKey, id, began);
+  }
+  await syncAgentFeeds(ctx, (await ctx.db.get(id))!);
+  return id;
+}
+
+/** Pay a live record's owed own route (beginCallRecord's `ownRoute: false`):
+ *  transcription is on in this huddle now, so the session it belongs to hears
+ *  it the way every transcribed session huddle does. The one place a record
+ *  that lacked the route gains it. A record that owes nothing is left alone,
+ *  so a route somebody removed stays removed. The route is added by whoever
+ *  turned transcription on, the person it now speaks for. */
+export async function ensureOwnRoute(ctx: any, t: Doc<"transcripts">, userId: Id<"users">): Promise<void> {
+  if (!t.own_route_owed || t.status !== "live") return;
+  const routes = withDefaultRoutes(t.room_key, t.routes).map((r) => ({ ...r, added_by: r.added_by ?? userId }));
+  await ctx.db.patch(t._id, { routes, own_route_owed: undefined });
+  await syncAgentFeeds(ctx, (await ctx.db.get(t._id))!);
+}
+
+/** A route as clients read it: whose it is, and whether its agent wears a face. */
+function routeView(t: Doc<"transcripts">, r: Route) {
+  return {
+    kind: r.kind,
+    target: r.target,
+    mode: r.mode,
+    added_by: String(r.added_by ?? t.started_by),
+    ...(r.face === false ? { face: false } : {}),
+  };
+}
+
+export const setRoutes = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    routes: v.array(ROUTE_VALIDATOR),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await requireOwnLiveTranscript(ctx, userId, args.transcript_id);
+    // Keep delivery watermarks (and who added what) for routes that survive
+    // the edit, so changing one route never re-sends another's history.
+    const routes = args.routes.map((r) => {
+      const prior = t.routes.find((p) => p.kind === r.kind && p.target === r.target);
+      return {
+        ...r,
+        sent_seq: prior?.sent_seq ?? 0,
+        added_by: prior?.added_by ?? userId,
+        ...(r.face === undefined && prior?.face === false ? { face: false } : {}),
+        ...(prior?.hold_until ? { hold_until: prior.hold_until } : {}),
+        ...(prior?.briefed_chunks !== undefined ? { briefed_chunks: prior.briefed_chunks } : {}),
+        ...(prior?.context_at ? { context_at: prior.context_at } : {}),
+      };
+    });
+    await ctx.db.patch(t._id, { routes });
+    await syncAgentFeeds(ctx, (await ctx.db.get(t._id))!);
+  },
+});
+
+// Any participant points the live words at a session or doc — feeding an
+// agent must not require being the scribe. The route delivers as its adder,
+// and the backlog ships immediately so the target starts with full context.
+export const addRoute = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    kind: v.union(v.literal("session"), v.literal("doc"), v.literal("slack")),
+    target: v.string(),
+    mode: v.union(v.literal("live"), v.literal("after")),
+    // Session routes: false leaves the agent's video avatar out of the call.
+    face: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    // A LIVE-huddle action authorizes like the huddle, grant included: a
+    // guest rung into the room may point the words at their agent even
+    // before they have spoken (canReadCall is the HISTORY rule — its
+    // participant door would blink on only once the scribe hears them).
+    if (!t || !(await authorizeRoom(ctx, userId, t.room_key, { rec: true })).ok) {
+      throw new Error("Transcript not found");
+    }
+    // A recording has exactly one participant, so "any participant" is its
+    // owner and nothing else. Checked against THIS row rather than the room:
+    // a rec key is a uuid, and the room's answer could be some later
+    // transcript that reused it.
+    if (isRecRoomKey(t.room_key) && String(t.started_by) !== String(userId)) {
+      throw new Error("Transcript not found");
+    }
+    if (t.status !== "live") throw new Error("Transcript has ended");
+    if (t.routes.some((r) => r.kind === args.kind && r.target === args.target)) return;
+    await ctx.db.patch(t._id, {
+      routes: [
+        ...t.routes,
+        { kind: args.kind, target: args.target, mode: args.mode, sent_seq: 0, added_by: userId, ...(args.face === false ? { face: false } : {}) },
+      ],
+    });
+    await syncAgentFeeds(ctx, (await ctx.db.get(t._id))!);
+    if (args.mode === "live") {
+      await ctx.scheduler.runAfter(0, internal.transcripts.deliverRoutes, {
+        transcript_id: t._id,
+        include_after_routes: false,
+        reason: "route_added",
+      });
+    }
+  },
+});
+
+// Anyone in the huddle turns an agent's video avatar on or off; the agent
+// itself stays in the room either way (its replies keep landing in the chat).
+export const setAgentFace = mutation({
+  args: { transcript_id: v.id("transcripts"), target: v.string(), face: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || !(await authorizeRoom(ctx, userId, t.room_key, { rec: true })).ok) {
+      throw new Error("Transcript not found");
+    }
+    if (t.status !== "live") throw new Error("Transcript has ended");
+    const i = t.routes.findIndex((r) => r.kind === "session" && r.target === args.target);
+    if (i < 0 || (t.routes[i].face !== false) === args.face) return;
+    const routes = [...t.routes];
+    const { face: _face, ...rest } = routes[i];
+    routes[i] = args.face ? rest : { ...rest, face: false };
+    await ctx.db.patch(t._id, { routes });
+    await syncAgentFeeds(ctx, (await ctx.db.get(t._id))!);
+  },
+});
+
+export const removeRoute = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    kind: v.string(),
+    target: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) throw new Error("Transcript not found");
+    const route = t.routes.find((r) => r.kind === args.kind && r.target === args.target);
+    if (!route) return;
+    // The scribe and the adder may take a route back at any time. While the
+    // huddle runs, so may anyone in it, through addRoute's door: an agent in
+    // the room hears everyone, so everyone it hears may show it out.
+    const isScribe = String(t.started_by) === String(userId);
+    const isAdder = route.added_by && String(route.added_by) === String(userId);
+    const inRoom =
+      t.status === "live" &&
+      !isRecRoomKey(t.room_key) &&
+      (await authorizeRoom(ctx, userId, t.room_key)).ok;
+    if (!isScribe && !isAdder && !inRoom) throw new Error("Not your route");
+    await dropRoute(ctx, t, args.kind, args.target);
+  },
+});
+
+/** Anyone in the room may put an agent out of it (callFace.removeAgent),
+ *  not only the scribe or whoever added it: an agent talking over the room
+ *  is the room's to stop, the way a guest is. */
+export const removeAgentFromRoom = internalMutation({
+  args: { user_id: v.id("users"), room_key: v.string(), conversation_id: v.string() },
+  handler: async (ctx, args) => {
+    if (!(await authorizeRoom(ctx, args.user_id, args.room_key)).ok) throw new Error("Not in this room");
+    const t = await liveTranscriptFor(ctx, args.room_key);
+    if (!t) return;
+    for (const r of t.routes) {
+      if (r.kind !== "session") continue;
+      const conv = await findConversationByAnyRefWhere(ctx, r.target, () => true);
+      if (conv && String(conv._id) === args.conversation_id) return await dropRoute(ctx, t, r.kind, r.target);
+    }
+  },
+});
+
+/** Take one route off a transcript and let the fed sessions follow. */
+async function dropRoute(ctx: any, t: Doc<"transcripts">, kind: string, target: string): Promise<void> {
+  await ctx.db.patch(t._id, {
+    routes: t.routes.filter((r) => !(r.kind === kind && r.target === target)),
+  });
+  await syncAgentFeeds(ctx, (await ctx.db.get(t._id))!);
+}
+
+/** Delivery found the route's session killed or gone: the words have nowhere
+ *  to go, so the route leaves instead of retrying on every flush. */
+export const dropDeadRoute = internalMutation({
+  args: { transcript_id: v.id("transcripts"), target: v.string() },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) return;
+    await dropRoute(ctx, t, "session", args.target);
+  },
+});
+
+export const appendSegments = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    segments: v.array(
+      v.object({
+        speaker_id: v.string(),
+        speaker_name: v.string(),
+        text: v.string(),
+        t0: v.number(),
+        t1: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await requireOwnLiveTranscript(ctx, userId, args.transcript_id);
+    return { last_seq: await writeSegments(ctx, t, args.segments) };
+  },
+});
+
+/**
+ * The one place `transcript_segments` rows are made.
+ *
+ * Two callers reach it and they disagree about everything except the write:
+ * the live scribe appends to its own transcript while it runs, and the
+ * recording transcriber appends to its own transcript after it ended. Keeping
+ * one writer is what makes the seq watermark trustworthy — it is the routes'
+ * delivery cursor, and two hand-rolled increments would eventually skip one.
+ *
+ * `trackParticipants` is off for a recording, deliberately. The roster means
+ * "voices we could put a name to", and one microphone in a room can name none
+ * of them; filling it with a placeholder would put a fake person on the call
+ * object that the list, the summary and the detail view all read.
+ */
+export async function writeSegments(
+  ctx: any,
+  t: Doc<"transcripts">,
+  segments: {
+    speaker_id: string;
+    speaker_name: string;
+    text: string;
+    t0: number;
+    t1: number;
+  }[],
+  opts: { trackParticipants?: boolean } = {},
+): Promise<number> {
+  const trackParticipants =
+    opts.trackParticipants !== false && !isRecRoomKey(t.room_key);
+  // A GUEST'S WORDS CARRY THE NAME THE ROOM LET IN, marked as a guest
+  // (callSpeakerName: "Ada (guest)"), whatever name the scribe's client read
+  // off the media server. The transcript outlives the call and is read where
+  // no badge follows it (a fed session, a doc, Slack), so the marking lives
+  // in the words; and the server's row is the authority on the name. A
+  // guest heard in this call is on its record's attendance on the way.
+  const guestNames = new Map<string, string>();
+  for (const s of segments) {
+    const guestId = guestIdFromIdentity(s.speaker_id);
+    if (!guestId || guestNames.has(s.speaker_id)) continue;
+    const id = ctx.db.normalizeId("call_guests", guestId);
+    const guest = id ? await ctx.db.get(id) : null;
+    const ours = guest && guest.room_key === t.room_key ? guest : null;
+    guestNames.set(s.speaker_id, callSpeakerName(s.speaker_id, ours?.name ?? s.speaker_name));
+    if (ours?.status === "admitted") await noteGuestAttendance(ctx, ours, t._id, t.started_at + s.t0);
+  }
+  const nameOf = (s: { speaker_id: string; speaker_name: string }) =>
+    guestNames.get(s.speaker_id) ?? s.speaker_name;
+  let seq = t.last_seq;
+  for (const s of segments) {
+    const text = s.text.trim();
+    if (!text) continue;
+    seq += 1;
+    await ctx.db.insert("transcript_segments", {
+      transcript_id: t._id,
+      seq,
+      speaker_id: s.speaker_id,
+      speaker_name: nameOf(s),
+      text,
+      t0: s.t0,
+      t1: s.t1,
+    });
+  }
+  if (seq === t.last_seq) return seq;
+  // Accumulate the speaker roster on the call object as voices appear —
+  // actual speakers, not seat leases (a lurker who never talks is in the
+  // room but not in the transcript's cast).
+  const known = new Set((t.participants ?? []).map((p) => p.id));
+  const newcomers = !trackParticipants
+    ? []
+    : segments
+        .filter((s) => s.text.trim() && !known.has(s.speaker_id))
+        .reduce((acc: { id: string; name: string }[], s) => {
+          if (!acc.some((p) => p.id === s.speaker_id)) {
+            acc.push({ id: s.speaker_id, name: nameOf(s) });
+          }
+          return acc;
+        }, []);
+  await ctx.db.patch(t._id, {
+    last_seq: seq,
+    ...(newcomers.length
+      ? { participants: [...(t.participants ?? []), ...newcomers] }
+      : {}),
+  });
+  return seq;
+}
+
+// The room went quiet (scribe-side VAD gap): ship every live route its unsent
+// segments. Also called with force=true on stop, where "after" routes ship too.
+export const flush = mutation({
+  args: { transcript_id: v.id("transcripts"), force: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || String(t.started_by) !== String(userId)) {
+      throw new Error("Transcript not found");
+    }
+    await ctx.scheduler.runAfter(0, internal.transcripts.deliverRoutes, {
+      transcript_id: t._id,
+      include_after_routes: args.force === true,
+      reason: "flush",
+    });
+    await claimRollingSummary(ctx, t, Date.now());
+  },
+});
+
+/** How the words should be paced for one fed session right now: what the
+ *  room calls it (the names a spoken line uses to address it), and whether
+ *  it is mid-turn. Busy is a fresh heartbeat AND a turn in progress: a
+ *  daemon that died mid "working" must not hold the room's words forever,
+ *  and neither must a status that froze (trustedAgentStatus decays it). */
+export async function fedSessionPacing(
+  ctx: any,
+  target: string,
+  now: number,
+): Promise<{ conversation_id: string; names: string[]; busy: boolean; killed: boolean } | null> {
+  const conv = await findConversationByAnyRefWhere(ctx, target, () => true);
+  if (!conv) return null;
+  const managed = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conv._id))
+    .first();
+  const heartbeatFresh = !!managed?.last_heartbeat && now - managed.last_heartbeat < HEARTBEAT_ALIVE_MS;
+  const status = trustedAgentStatus(managed?.agent_status, managed?.agent_status_updated_at, now, heartbeatFresh);
+  const character = characterOf({
+    _id: String(conv._id),
+    character_avatar: (conv as any).character_avatar,
+    character_name: (conv as any).character_name,
+  });
+  return {
+    conversation_id: String(conv._id),
+    names: agentSpokenNames({ name: character.name, agentType: (conv as any).agent_type }),
+    busy: heartbeatFresh && MID_TURN_AGENT_STATUSES.has(status ?? ""),
+    // A killed session is gone for the room: its route is dropped, never retried.
+    killed: !!(conv as any).inbox_killed_at,
+  };
+}
+
+/** `cast call hold <duration>` from a fed session: the live words wait on
+ *  this session's route until the hold ends (or `off` lifts it), except a
+ *  line that names the agent, which comes through at once. The hold's end
+ *  schedules the catch up delivery, so nothing waits past it. */
+export const cliHoldCall = mutation({
+  args: {
+    api_token: v.string(),
+    session: v.string(),
+    // 0 lifts the hold.
+    duration_ms: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+    const conv = await findConversationByAnyRefWhere(
+      ctx,
+      args.session,
+      (c) => c.user_id?.toString() === auth.userId.toString() || c.owner_user_id?.toString() === auth.userId.toString(),
+    );
+    if (!conv) throw new Error(`No session found for "${args.session}" (you can only hold a huddle for a session you run or own)`);
+    const shortId = conv.short_id ?? conv._id.toString().slice(0, 7);
+    const feed = await ctx.db
+      .query("call_agent_feeds")
+      .withIndex("by_conversation", (q: any) => q.eq("conversation_id", conv._id))
+      .first();
+    const t = feed ? await ctx.db.get(feed.transcript_id) : null;
+    if (!feed || !t || t.status !== "live") {
+      return { held: false as const, reason: "not_in_huddle" as const, short_id: shortId };
+    }
+    const now = Date.now();
+    const holdUntil = args.duration_ms > 0 ? now + Math.min(args.duration_ms, HOLD_MAX_MS) : undefined;
+    // The route's target may be any ref of this conversation (id, short id,
+    // the agent's session id); resolve each session route the way delivery
+    // does rather than comparing strings.
+    const routes: Route[] = [];
+    for (const r of t.routes) {
+      if (r.kind !== "session") {
+        routes.push(r);
+        continue;
+      }
+      const target = await findConversationByAnyRefWhere(ctx, r.target, () => true);
+      const mine = target && String(target._id) === String(conv._id);
+      // Only the caller's own route changes: another agent's hold is its own.
+      if (!mine) {
+        routes.push(r);
+        continue;
+      }
+      const { hold_until: _dropped, ...rest } = r;
+      routes.push(holdUntil ? { ...rest, hold_until: holdUntil } : rest);
+    }
+    await ctx.db.patch(t._id, { routes });
+    await ctx.scheduler.runAfter(holdUntil ? holdUntil - now : 0, internal.transcripts.deliverRoutes, {
+      transcript_id: t._id,
+      include_after_routes: false,
+      reason: "hold_expired",
+    });
+    return { held: !!holdUntil, held_until: holdUntil ?? null, room_key: t.room_key, short_id: shortId };
+  },
+});
+
+// The recap while the call is live: at least this long since the last run,
+// and at least this many new words since it, before another run is worth
+// the model call. Each run reads the whole transcript so far.
+export const ROLLING_SUMMARY_GAP_MS = 90_000;
+export const ROLLING_SUMMARY_MIN_WORDS = 120;
+
+export function countWords(texts: string[]): number {
+  return texts.reduce((n, text) => n + text.split(/\s+/).filter(Boolean).length, 0);
+}
+
+/** Schedule a rolling recap of a live huddle if enough has been said since
+ *  the last one. The claim (summary_at, summary_seq) is written in the same
+ *  mutation as the schedule, so two flushes landing together cannot both
+ *  run it. A recording has no thread to show a recap in, and its summary is
+ *  written once at the end like today. */
+export async function claimRollingSummary(ctx: any, t: Doc<"transcripts">, now: number): Promise<boolean> {
+  if (t.status !== "live" || isRecRoomKey(t.room_key)) return false;
+  if (now - (t.summary_at ?? t.started_at) < ROLLING_SUMMARY_GAP_MS) return false;
+  const since = t.summary_seq ?? 0;
+  if (t.last_seq <= since) return false;
+  const fresh: Doc<"transcript_segments">[] = await ctx.db
+    .query("transcript_segments")
+    .withIndex("by_transcript_seq", (q: any) => q.eq("transcript_id", t._id).gt("seq", since))
+    .collect();
+  if (countWords(fresh.map((s) => s.text)) < ROLLING_SUMMARY_MIN_WORDS) return false;
+  await ctx.db.patch(t._id, { summary_at: now, summary_seq: t.last_seq });
+  await ctx.scheduler.runAfter(0, internal.transcripts.generateSummary, {
+    transcript_id: t._id,
+    rolling: true,
+  });
+  return true;
+}
+
+/**
+ * Has a recording's own lease gone stale?
+ *
+ * This is the whole difference between a recording and a huddle in the orphan
+ * sweep. A huddle's transcript is kept alive by the room's seat leases; a
+ * recording has no room and no seats, so an empty `call_members` table is its
+ * NORMAL state — reading that as "the room emptied" would end every live
+ * recording on the sweep's next pass, two minutes in. It reads the row's own
+ * beat instead, through the same window a seat uses.
+ *
+ * A recording that has not beaten yet is measured from its start, so a
+ * process that died during the first beat still gets swept. The window is
+ * longer than a seat's: see REC_LEASE_STALE_MS.
+ */
+export function recLeaseExpired(
+  t: { last_beat?: number; started_at: number },
+  now: number,
+): boolean {
+  return now - (t.last_beat ?? t.started_at) >= REC_LEASE_STALE_MS;
+}
+
+/** A recording says it is still going. The room's seat leases do this job for
+ *  a huddle; a recording has no room, so it holds its own lease and the orphan
+ *  sweep reads the same staleness window off it. */
+export const beat = mutation({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await requireOwnLiveTranscript(ctx, userId, args.transcript_id);
+    // Only a recording holds its own lease; a huddle's liveness is its seats.
+    if (!isRecRoomKey(t.room_key)) throw new Error("Not a recording");
+    await ctx.db.patch(t._id, { last_beat: Date.now() });
+  },
+});
+
+/** The audio a recording kept, uploaded once it stops. Additive to the row and
+ *  deliberately separate from `stop`: the transcript, the summary and the
+ *  action items are the artifact, and they must land whether or not the bytes
+ *  do. Callable on an ended transcript for exactly that reason — the upload
+ *  finishes after the recording has. */
+export const attachRecording = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    storage_id: v.id("_storage"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || String(t.started_by) !== String(userId)) {
+      throw new Error("Transcript not found");
+    }
+    // A huddle has no single recording to keep: its transcript is shared, and
+    // an audio blob attached by one seat would publish that seat's mic to the
+    // whole room's detail page. Only rec transcripts carry audio.
+    if (!isRecRoomKey(t.room_key)) throw new Error("Not a recording");
+    await ctx.db.patch(t._id, { recording_storage_id: args.storage_id });
+    if (!needsServerTranscription(t)) return;
+    // A finished recording that produced no words while it ran has none at all
+    // unless the server reads them out of the audio. That is every phone
+    // recording by construction, and a desktop one whose recognizer died.
+    //
+    // Both statuses go back to pending here. `stop` already ran the summary
+    // against an empty transcript and got "skipped" for it, which would
+    // otherwise sit on the screen as a finished, wordless meeting while the
+    // words were still being fetched.
+    await ctx.db.patch(t._id, {
+      transcribe_status: "pending",
+      summary_status: "pending",
+    });
+    await ctx.scheduler.runAfter(0, internal.transcripts.transcribeRecording, {
+      transcript_id: t._id,
+    });
+  },
+});
+
+/**
+ * Does this recording still need its words read out of its audio?
+ *
+ * Three conditions, and each one rules out a different way of being wrong:
+ * only a recording has audio to read (a huddle's transcript is shared and its
+ * audio is nobody's); only an ENDED one is finished being written, so this can
+ * never race a live recognizer that is still appending; and only an EMPTY one
+ * has nothing, so a desktop recording whose live pipe worked is never
+ * transcribed twice and never pays for the same words at the same API a second
+ * time.
+ *
+ * Exported for its test: the condition is the whole trigger, and getting it
+ * wrong is either a silent duplicate transcript or a permanently wordless one.
+ */
+export function needsServerTranscription(t: {
+  room_key: string;
+  status: string;
+  last_seq: number;
+}): boolean {
+  return isRecRoomKey(t.room_key) && t.status === "ended" && t.last_seq === 0;
+}
+
+export const stop = mutation({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || String(t.started_by) !== String(userId)) {
+      throw new Error("Transcript not found");
+    }
+    // A huddle's record is the huddle: switching transcription off is a gap
+    // in it, and only the room standing empty ends it (idleLiveTranscripts).
+    // The scribe stopping here just stops sending words.
+    if (!isRecRoomKey(t.room_key)) return;
+    if (t.status === "ended") {
+      // A recording the sweep closed while the phone was still capturing:
+      // the honest end is when the person actually stopped, not when the
+      // lease went stale.
+      if (isRecRoomKey(t.room_key)) {
+        const endedAt = Date.now();
+        if (endedAt > (t.ended_at ?? 0)) {
+          await ctx.db.patch(t._id, { ended_at: endedAt });
+        }
+      }
+      return;
+    }
+    await endTranscript(ctx, t);
+  },
+});
+
+/** The one way a transcript ends: flip the flag, deliver the "after" routes,
+ *  generate the summary. `stop` (the scribe's toggle), the room-emptied
+ *  hooks in calls.ts and the orphan sweep all funnel here. */
+export async function endTranscript(
+  ctx: any,
+  t: Doc<"transcripts">,
+  endedAt: number = Date.now(),
+): Promise<void> {
+  if (t.status === "ended") return;
+  // The huddle is over, so is its video. Usually already stopped when the
+  // room emptied (calls.leaveRoom); this covers the record the orphan sweep
+  // or a later join ends.
+  if (!isRecRoomKey(t.room_key)) await stopRoomRecording(ctx, t.room_key, { reason: "huddle_ended", transcriptId: t._id });
+  await ctx.db.patch(t._id, {
+    status: "ended",
+    ended_at: Math.max(t.started_at, endedAt),
+    summary_status: "pending",
+    idle_since: undefined,
+  });
+  // Its link may stay on, but the room is no longer being written into it.
+  // Only a record with a link ever set the room's stamp.
+  if (t.share_token) await stampRoomWordsPublic(ctx, t, { ending: true });
+  // The fed sessions leave the room with the words: an ended huddle has no
+  // chat to mirror a reply into.
+  await syncAgentFeeds(ctx, { ...t, status: "ended" });
+  await ctx.scheduler.runAfter(0, internal.transcripts.deliverRoutes, {
+    transcript_id: t._id,
+    include_after_routes: true,
+  });
+  await ctx.scheduler.runAfter(0, internal.transcripts.generateSummary, {
+    transcript_id: t._id,
+  });
+}
+
+/** How long an emptied room's huddle waits for somebody to come back. A
+ *  rejoin, a window handoff, a dropped connection or an accidental hop to
+ *  another room inside this window is the same conversation, and the same
+ *  record carries on. */
+export const HUDDLE_GRACE_MS = 3 * 60_000;
+
+/** When a live huddle went quiet: the stamp the last leave left on the
+ *  record, else the latest of the room's own emptied stamp (the last leave,
+ *  with or without a record: call_room_state.emptied_at) and the last lease
+ *  any seat refreshed (a tab that died never leaves). SEATS ONLY: a prewarm
+ *  row is somebody holding a connection open after the huddle died, and
+ *  dating the end from it would inflate the call by up to ninety seconds. */
+function quietSince(
+  t: Doc<"transcripts"> | null,
+  rows: Array<{ last_seen: number; prewarm?: boolean }>,
+  emptiedAt?: number,
+): number | null {
+  if (t?.idle_since) return t.idle_since;
+  const lastSeen = rows.filter(isSeat).reduce((m, r) => Math.max(m, r.last_seen), emptiedAt ?? 0);
+  return lastSeen || null;
+}
+
+/** Is an EMPTY room still inside its huddle's grace? The one answer to "is
+ *  this the same huddle", for the people coming back (resumeOrEndHuddle) and
+ *  for the guests they let in (huddleAlive), so the two can never disagree.
+ *  With a live record, a record nobody dated yet counts as just gone quiet.
+ *  Without one (transcription off, or nobody scribing yet) the room's own
+ *  stamps date it: when the last person left, or when the last seat lapsed.
+ *  Both cases get the same grace, so a teammate who reloads the tab comes
+ *  back to the same huddle whether or not anything was transcribing it. */
+function withinHuddleGrace(
+  t: Doc<"transcripts"> | null,
+  rows: Array<{ last_seen: number; prewarm?: boolean }>,
+  now: number,
+  emptiedAt?: number,
+): boolean {
+  const quiet = t ? (quietSince(t, rows, emptiedAt) ?? now) : quietSince(null, rows, emptiedAt);
+  return quiet !== null && now - quiet < HUDDLE_GRACE_MS;
+}
+
+/** When the room's last leave emptied it, from the room's state row. */
+async function roomEmptiedAt(ctx: any, roomKey: string): Promise<number | undefined> {
+  return (await readRoomState(ctx, roomKey))?.emptied_at;
+}
+
+/** Is a huddle running in this room right now? Somebody from the team is
+ *  seated, or the room emptied inside the grace. A guest alone never keeps a
+ *  huddle going, the same rule acceptedInviteGrant applies to a rung-in
+ *  teammate. This is what a guest's admission lasts for (callGuests). */
+export async function huddleAlive(ctx: any, roomKey: string, now: number): Promise<boolean> {
+  const rows: Doc<"call_members">[] = await ctx.db
+    .query("call_members")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey))
+    .collect();
+  if (liveMembers(rows, now).length > 0) return true;
+  return withinHuddleGrace(await liveTranscriptFor(ctx, roomKey), rows, now, await roomEmptiedAt(ctx, roomKey));
+}
+
+/** The last person left the room: its live huddle waits out the grace, and
+ *  ends at the moment the room emptied unless somebody comes back first
+ *  (resumeOrEndHuddle). Called from calls.leaveRoom. */
+export async function idleLiveTranscriptsForRoom(ctx: any, roomKey: string, at: number): Promise<void> {
+  const t = await liveTranscriptFor(ctx, roomKey);
+  if (!t || t.idle_since) return;
+  await ctx.db.patch(t._id, { idle_since: at });
+  await ctx.scheduler.runAfter(HUDDLE_GRACE_MS, internal.transcripts.endIdleTranscript, { transcript_id: t._id });
+}
+
+/** Somebody took a seat in an empty room. Inside the grace the room's live
+ *  huddle goes on (true: same record, same grants, same switch). Past it,
+ *  what was left of the previous huddle ends where it went quiet (its
+ *  scribe's tab may have died without anybody leaving) and the caller starts
+ *  a new huddle (false). `rows` is the room's seat rows before the join swept
+ *  the dead ones. */
+export async function resumeOrEndHuddle(
+  ctx: any,
+  roomKey: string,
+  now: number,
+  rows: Array<{ last_seen: number; prewarm?: boolean }>,
+): Promise<boolean> {
+  const t = await liveTranscriptFor(ctx, roomKey);
+  if (withinHuddleGrace(t, rows, now, await roomEmptiedAt(ctx, roomKey))) {
+    if (t?.idle_since) await ctx.db.patch(t._id, { idle_since: undefined });
+    return true;
+  }
+  if (t) await endTranscript(ctx, t, quietSince(t, rows) ?? now);
+  return false;
+}
+
+/** The grace ran out on a room leaveRoom left empty. A rejoin cleared the
+ *  stamp (or restamped it on a later leave, which scheduled its own check),
+ *  so only a record still quiet for the whole grace ends here. */
+export const endIdleTranscript = internalMutation({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || t.status !== "live" || !t.idle_since) return { ended: false };
+    if (Date.now() - t.idle_since < HUDDLE_GRACE_MS - 5_000) return { ended: false };
+    const seated = await ctx.db
+      .query("call_members")
+      .withIndex("by_room", (q) => q.eq("room_key", t.room_key))
+      .collect();
+    if (liveMembers(seated, Date.now()).length > 0) return { ended: false };
+    await endTranscript(ctx, t, t.idle_since);
+    // The huddle is over, so is every guest's admission to it, whether or
+    // not their page is still there to notice.
+    await endGuestAdmissions(ctx, t.room_key);
+    return { ended: true };
+  },
+});
+
+/** Cron backstop: a live transcript whose room holds no fresh lease is an
+ *  orphan (the scribe closed the tab, the last member timed out and nobody
+ *  rejoined to trigger the in-mutation end). Ends it. */
+export const sweepOrphanedLive = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const live = await ctx.db
+      .query("transcripts")
+      .withIndex("by_status", (q) => q.eq("status", "live"))
+      .collect();
+    let ended = 0;
+    for (const t of live) {
+      // A recording is its own room, so it holds its own lease. Without this
+      // branch the sweep would end every live recording two minutes in: a rec
+      // key has no call_members rows by design, which reads here as an empty
+      // room. Same staleness window as a seat, ended at the last beat so the
+      // duration stays honest.
+      if (isRecRoomKey(t.room_key)) {
+        if (!recLeaseExpired(t, now)) continue;
+        await endTranscript(ctx, t, t.last_beat ?? t.started_at);
+        ended++;
+        continue;
+      }
+      const seated = await ctx.db
+        .query("call_members")
+        .withIndex("by_room", (q) => q.eq("room_key", t.room_key))
+        .collect();
+      if (liveMembers(seated, now).length > 0) continue;
+      // The honest end is when the room went quiet, not when the sweep
+      // noticed, and a room quiet for less than the grace may yet resume.
+      const quiet = quietSince(t, seated);
+      if (quiet === null) {
+        await ctx.db.patch(t._id, { idle_since: now });
+        continue;
+      }
+      if (now - quiet < HUDDLE_GRACE_MS) continue;
+      await endTranscript(ctx, t, quiet);
+      await endGuestAdmissions(ctx, t.room_key);
+      ended++;
+    }
+    return { checked: live.length, ended };
+  },
+});
+
+// ── The call object: summary + list/detail surfaces ───────────────────────
+// Otter's post-meeting artifact, minus the guesswork: attribution here is
+// structural (one audio track = one speaker), so "who said what" is exact,
+// and the summary/action items generate within seconds of stop.
+
+// Below this many words there is nothing worth summarizing.
+export const SUMMARY_MIN_WORDS = 40;
+// Transcript text sent to the model is capped; long calls get the tail
+// (decisions and action items live at the end far more often than the start).
+export const SUMMARY_MAX_CHARS = 60_000;
+
+/**
+ * What a call is, as far as its summary prompt cares. A huddle is one audio
+ * track per person, so who said what is structural and the model can be told
+ * to trust it. A recording is one microphone in a room: it heard everybody and
+ * can tell nobody apart, so the same instruction would invite it to invent an
+ * attribution out of a placeholder speaker label. The two transcripts are not
+ * the same evidence and must not be described to the model as if they were.
+ */
+export type CallSummaryKind = "huddle" | "recording";
+
+export function callSummaryKind(roomKey: string): CallSummaryKind {
+  return isRecRoomKey(roomKey) ? "recording" : "huddle";
+}
+
+/**
+ * The transcript text a call summary reads, or null when the call is under
+ * SUMMARY_MIN_WORDS and gets no model call. A recording's lines carry no
+ * speaker; a long call keeps its last SUMMARY_MAX_CHARS characters.
+ */
+export function callSummarySource(lines: Array<{ speaker: string; text: string }>, kind: CallSummaryKind): string | null {
+  if (countWords(lines.map((l) => l.text)) < SUMMARY_MIN_WORDS) return null;
+  const text = kind === "recording"
+    ? lines.map((l) => l.text).join("\n")
+    : lines.map((l) => `${l.speaker}: ${l.text}`).join("\n");
+  return text.length > SUMMARY_MAX_CHARS ? text.slice(-SUMMARY_MAX_CHARS) : text;
+}
+
+/**
+ * The call summary request over a source from callSummarySource. `rolling` is
+ * the recap of a call still going. No temperature: the API default applies.
+ */
+export function callSummaryRequest(
+  source: string,
+  call: { kind: CallSummaryKind; started_at: number; ended_at?: number; rolling?: boolean },
+): SurfaceRequest {
+  const durationMin = call.ended_at
+    ? Math.max(1, Math.round((call.ended_at - call.started_at) / 60_000))
+    : null;
+  const preamble = call.kind === "recording"
+    ? `This is the transcript of a meeting recorded on ONE microphone in the room${durationMin ? `, about ${durationMin} min` : ""}. Voices are NOT separated and nobody is identified: attribute something to a person only when the words themselves name them, and otherwise write about what was said, not who said it.`
+    : `This is the transcript of a team huddle (voice call)${durationMin ? `, about ${durationMin} min` : ""}${call.rolling ? ", still going: summarize what has been said so far" : ""}. Speakers are exactly attributed.`;
+  return {
+    model: CHEAP_MODEL,
+    max_tokens: 700,
+    prompt: `${preamble}
+
+Write JSON only, this shape:
+{"title": "3-7 word title of what the call was about", "summary": "2-5 sentences: what was discussed, what was decided. Name people for decisions and disagreements. Plain words.", "action_items": ["one per commitment, written as 'Owner: what they will do'"]}
+
+An action item is a commitment: work a person took on, by offering it or by agreeing when asked. Its owner is whoever holds the work when the call ends, who is not always the person who first raised or offered it. An idea, a suggestion or a wish that nobody took on is not an action item, whoever voiced it; it belongs in the summary if anywhere. Never invent an item or an owner. When nobody committed to anything, action_items is empty.
+
+Transcript:
+${source}`,
+  };
+}
+
+/**
+ * The call summary reply as the transcript row stores it. Throws when the
+ * reply holds no JSON object, which the action records as a failed summary.
+ */
+export function parseCallSummaryReply(raw: string): { title?: string; summary?: string; action_items?: string[] } {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("No JSON in response");
+  const parsed = JSON.parse(match[0]);
+  return {
+    title: typeof parsed.title === "string" ? parsed.title.slice(0, 120) : undefined,
+    summary: typeof parsed.summary === "string" ? parsed.summary.slice(0, 2000) : undefined,
+    action_items: Array.isArray(parsed.action_items)
+      ? parsed.action_items
+          .filter((a: unknown) => typeof a === "string")
+          .slice(0, 20)
+      : undefined,
+  };
+}
+
+export const getForSummary = internalQuery({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) return null;
+    const segs = await ctx.db
+      .query("transcript_segments")
+      .withIndex("by_transcript_seq", (q) => q.eq("transcript_id", t._id))
+      .collect();
+    return {
+      title: t.title,
+      room_key: t.room_key,
+      status: t.status,
+      started_at: t.started_at,
+      ended_at: t.ended_at,
+      participants: t.participants ?? [],
+      lines: segs.map((s) => ({ speaker: s.speaker_name, text: s.text })),
+    };
+  },
+});
+
+export const setSummary = internalMutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    summary_status: v.union(
+      v.literal("done"),
+      v.literal("failed"),
+      v.literal("skipped"),
+    ),
+    title: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    action_items: v.optional(v.array(v.string())),
+    // A recap of a call still going (claimRollingSummary). It refreshes the
+    // summary and action items and nothing else: the status, the title, the
+    // digest and the push all belong to the end of the call. A rolling run
+    // that lands after the call ended is stale by definition and writes
+    // nothing, so it can never overwrite the final summary.
+    rolling: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) return;
+    if (args.rolling) {
+      if (t.status !== "live" || args.summary_status !== "done") return;
+      await ctx.db.patch(t._id, {
+        ...(args.summary ? { summary: args.summary } : {}),
+        ...(args.action_items ? { action_items: args.action_items } : {}),
+      });
+      return;
+    }
+    // The first terminal write for this run. `endTranscript` (and, for a
+    // recording, `attachRecording`) put the row at "pending" exactly once, so
+    // this is what makes the digest below post once however many times the
+    // summary action is retried.
+    const firstVerdict = t.summary_status === "pending";
+    await ctx.db.patch(t._id, {
+      summary_status: args.summary_status,
+      ...(args.title && !t.title ? { title: args.title } : {}),
+      ...(args.summary ? { summary: args.summary } : {}),
+      ...(args.action_items ? { action_items: args.action_items } : {}),
+    });
+    if (firstVerdict) await scheduleHuddleDigest(ctx, t, args);
+    // A recording is the one transcript whose owner walked away from it. They
+    // pressed stop, put the phone in a pocket, and the words, the summary and
+    // the action items land minutes later with nothing on screen to see them
+    // on. A huddle is the opposite — everyone was just in it — so it does not
+    // push, and nobody but the recording's creator can read it anyway.
+    if (args.summary_status !== "done" || !isRecRoomKey(t.room_key)) return;
+    const owner = await ctx.db.get(t.started_by);
+    if (!owner) return;
+    await enqueuePush(ctx, {
+      user: owner,
+      type: RECORDING_SUMMARY_PUSH_TYPE,
+      title: args.title || "Recording ready",
+      body: args.summary
+        ? args.summary.slice(0, 200)
+        : "Your recording has been transcribed.",
+      data: { type: RECORDING_SUMMARY_PUSH_TYPE, recordingId: String(t._id) },
+    });
+  },
+});
+
+/** Where a huddle's digest goes, from its room key: a chat room (a channel or
+ *  a member set) gets a chat message; a session room gets a turn for its agent.
+ *  A recording is one person's microphone and has no room to report into. */
+export function huddleDigestTarget(
+  roomKey: string,
+): { kind: "chat" } | { kind: "session"; conversationId: string } | null {
+  const parsed = parseRoomKey(roomKey);
+  if (!parsed) return null;
+  if (parsed.kind === "channel" || parsed.kind === "dm") return { kind: "chat" };
+  if (parsed.kind === "session") return { kind: "session", conversationId: parsed.conversationId };
+  return null;
+}
+
+/** The row a finished huddle leaves where it was held. Every huddle with any
+ *  words gets one — a summary when there was enough said to write one, the
+ *  words themselves when there was not (a "skipped" summary is under forty
+ *  words, and those words ARE the summary). So does every huddle Record
+ *  filmed, words or none: a teammate looking for "the recording from that
+ *  huddle" looks where it was held, and its digest names the filmed
+ *  stretches (and tells an agent it can snap a frame). A chat room gets a message the
+ *  reader can unfold into the transcript (chat.postCallDigest); a session room
+ *  gets its agent woken with the summary and the command that reads the whole
+ *  transcript, never the transcript itself. Delivery acts as the scribe. */
+async function scheduleHuddleDigest(
+  ctx: any,
+  t: Doc<"transcripts">,
+  verdict: { summary_status: "done" | "failed" | "skipped"; title?: string; summary?: string; action_items?: string[] },
+): Promise<void> {
+  const target = huddleDigestTarget(t.room_key);
+  const filmed = callFilmed(t);
+  if (!target || (t.last_seq <= 0 && !filmed)) return;
+  const video = filmed ? await huddleVideoStretches(ctx, t) : null;
+  let summary = verdict.summary ?? t.summary ?? null;
+  if (!summary && verdict.summary_status === "skipped") {
+    const segs = await ctx.db
+      .query("transcript_segments")
+      .withIndex("by_transcript_seq", (q: any) => q.eq("transcript_id", t._id))
+      .collect();
+    summary = formatChunk(segs) || null;
+  }
+  const digest = {
+    title: t.title ?? verdict.title ?? null,
+    startedAt: t.started_at,
+    endedAt: t.ended_at ?? null,
+    speakers: (t.participants ?? []).map((p) => p.name),
+    summary,
+    actionItems: verdict.action_items ?? t.action_items ?? [],
+    summaryStatus: verdict.summary_status,
+    video,
+  };
+  if (target.kind === "chat") {
+    await ctx.scheduler.runAfter(0, internal.chat.postCallDigest, {
+      transcript_id: t._id,
+      room_key: t.room_key,
+      team_id: t.team_id,
+      author: t.started_by,
+      content: formatHuddleDigest(digest),
+    });
+    return;
+  }
+  await ctx.scheduler.runAfter(0, internal.transcripts.deliverToSession, {
+    as_user: t.started_by,
+    to: target.conversationId,
+    body: formatHuddleSummaryTag(String(t._id), digest, {
+      callRef: t.short_id ?? null,
+      heardLive: t.routes.some(
+        (r) => r.kind === "session" && r.target === target.conversationId && r.mode === "live",
+      ),
+    }),
+  });
+}
+
+/** The stretches of a call its recordings filmed, as the call page's header
+ *  names them (coveredSpans, then videoStretches): failed files left out, a
+ *  file still saving counted to its stop. */
+async function huddleVideoStretches(ctx: any, t: Doc<"transcripts">) {
+  const rows: Doc<"call_recordings">[] = await ctx.db
+    .query("call_recordings")
+    .withIndex("by_transcript", (q: any) => q.eq("transcript_id", t._id))
+    .collect();
+  const spans = coveredSpans(
+    rows.map((r) => ({ ...r, id: String(r._id) })),
+    t.started_at,
+    Date.now(),
+  );
+  const out = videoStretches(spans);
+  return out.length ? out : null;
+}
+
+export const generateSummary = internalAction({
+  args: { transcript_id: v.id("transcripts"), rolling: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const t = await ctx.runQuery(internal.transcripts.getForSummary, {
+      transcript_id: args.transcript_id,
+    });
+    if (!t) return;
+    // A rolling run claimed while the call was live and read after it ended
+    // would recap a finished call as if it were still going; the end of the
+    // call has its own run.
+    const rolling = args.rolling === true;
+    if (rolling && t.status !== "live") return;
+    const kind = callSummaryKind(t.room_key);
+    const source = callSummarySource(t.lines, kind);
+    if (source === null) {
+      await ctx.runMutation(internal.transcripts.setSummary, {
+        transcript_id: args.transcript_id,
+        summary_status: "skipped",
+        rolling,
+      });
+      return;
+    }
+    if (!process.env.ANTHROPIC_API_KEY) {
+      await ctx.runMutation(internal.transcripts.setSummary, {
+        transcript_id: args.transcript_id,
+        summary_status: "failed",
+        rolling,
+      });
+      return;
+    }
+    try {
+      const response = await postMessages(
+        callSummaryRequest(source, { kind, started_at: t.started_at, ended_at: t.ended_at, rolling }),
+      );
+      if (!response) throw new Error("ANTHROPIC_API_KEY not configured");
+      if (!response.ok) throw new Error(`Anthropic ${response.status}`);
+      const data = await response.json();
+      await ctx.runMutation(internal.transcripts.setSummary, {
+        transcript_id: args.transcript_id,
+        summary_status: "done",
+        rolling,
+        ...parseCallSummaryReply(replyText(data)),
+      });
+    } catch (err) {
+      console.error("Call summary generation failed:", err);
+      await ctx.runMutation(internal.transcripts.setSummary, {
+        transcript_id: args.transcript_id,
+        summary_status: "failed",
+        rolling,
+      });
+    }
+  },
+});
+
+// ── Reading a recording's words out of its audio ──────────────────────────
+// The live recognizer is a websocket fed PCM by the browser, and a phone
+// cannot open one: React Native has no AudioContext and no way to tap a
+// microphone as samples. So a phone recording arrives as a finished m4a with
+// an empty transcript, and this is where it gets its words.
+
+/**
+ * What reads the file.
+ *
+ * Deliberately NOT the live recognizer's model. The live path streams words as
+ * they are spoken and has no use for timestamps; a recording is a finished
+ * thing somebody scrolls through next to a player, so every line needs to know
+ * when it was said. `whisper-1` is the transcription model that returns
+ * segment boundaries, which is the whole reason it is used here.
+ */
+const RECORDING_TRANSCRIBE_MODEL = "whisper-1";
+
+/** Segments written per mutation. A two hour meeting is a couple of thousand
+ *  lines, and one mutation inserting all of them would run past what a
+ *  transaction should do; the seq watermark makes the batches safe to resume
+ *  from and stitch back together in order. */
+const SEGMENT_WRITE_BATCH = 200;
+
+/** One microphone in a room heard everybody. There is no diarization here and
+ *  no honest name to put on a line, so every segment carries the same one and
+ *  the surfaces that render a recording hide the label entirely. */
+const RECORDING_SPEAKER = { id: "mic", name: "Speaker" } as const;
+
+/**
+ * The transcriber's reply, as segments this table can hold.
+ *
+ * `verbose_json` gives `{ text, segments: [{ start, end, text }] }` with the
+ * times in seconds. A reply without a segments array is still words — the
+ * models degrade to a plain transcript under load and for very short audio —
+ * so it becomes one segment spanning the whole file rather than nothing.
+ * Exported for its test: this is the seam between somebody else's JSON and our
+ * rows, and it is the piece most likely to change under us.
+ */
+export function parseTranscriptionSegments(
+  payload: unknown,
+  fallbackDurationMs: number,
+): { speaker_id: string; speaker_name: string; text: string; t0: number; t1: number }[] {
+  const body = (payload ?? {}) as {
+    text?: unknown;
+    segments?: unknown;
+  };
+  const speaker = {
+    speaker_id: RECORDING_SPEAKER.id,
+    speaker_name: RECORDING_SPEAKER.name,
+  };
+  if (Array.isArray(body.segments)) {
+    const out = body.segments
+      .map((raw: any) => {
+        const text = typeof raw?.text === "string" ? raw.text.trim() : "";
+        if (!text) return null;
+        const t0 = Math.max(0, Math.round((Number(raw?.start) || 0) * 1000));
+        const t1 = Math.max(t0, Math.round((Number(raw?.end) || 0) * 1000));
+        return { ...speaker, text, t0, t1 };
+      })
+      .filter(Boolean) as {
+      speaker_id: string;
+      speaker_name: string;
+      text: string;
+      t0: number;
+      t1: number;
+    }[];
+    if (out.length) return out;
+  }
+  const whole = typeof body.text === "string" ? body.text.trim() : "";
+  if (!whole) return [];
+  return [{ ...speaker, text: whole, t0: 0, t1: Math.max(0, fallbackDurationMs) }];
+}
+
+/** Append a batch of a recording's transcribed words. Owner-checked at the
+ *  scheduling end (only `attachRecording` reaches this), rec-checked here so a
+ *  future caller cannot use it to write into somebody's huddle. */
+export const appendRecordingSegments = internalMutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    segments: v.array(
+      v.object({
+        speaker_id: v.string(),
+        speaker_name: v.string(),
+        text: v.string(),
+        t0: v.number(),
+        t1: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || !isRecRoomKey(t.room_key)) return { last_seq: 0 };
+    // A recording names no voices; see writeSegments.
+    return { last_seq: await writeSegments(ctx, t, args.segments, { trackParticipants: false }) };
+  },
+});
+
+/** Close the transcription out: say how it went, and hand a transcript that
+ *  now has words to the parts of the pipeline that were waiting for them. */
+export const finishRecordingTranscript = internalMutation({
+  args: { transcript_id: v.id("transcripts"), ok: v.boolean() },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || !isRecRoomKey(t.room_key)) return;
+    if (!args.ok) {
+      // The audio is still there and still plays. What is gone is the words,
+      // and with them anything to summarize — "skipped" is exactly what that
+      // means everywhere else in this file, so the surfaces need no new case.
+      await ctx.db.patch(t._id, {
+        transcribe_status: "failed",
+        summary_status: "skipped",
+      });
+      return;
+    }
+    await ctx.db.patch(t._id, { transcribe_status: "done" });
+    // Everything downstream of an ended transcript runs now, for the first
+    // time with something in it: the routes ship the words, and the summary
+    // and action items generate off them.
+    await ctx.scheduler.runAfter(0, internal.transcripts.deliverRoutes, {
+      transcript_id: t._id,
+      include_after_routes: true,
+    });
+    await ctx.scheduler.runAfter(0, internal.transcripts.generateSummary, {
+      transcript_id: t._id,
+    });
+  },
+});
+
+/**
+ * Transcribe a recording's uploaded audio.
+ *
+ * Scheduled by `attachRecording`, once, for a recording that ended with
+ * nothing in it. Every exit sets a status: a recording that sits on
+ * "transcribing" forever is worse than one that says it failed, because the
+ * person watching cannot tell the difference between working and broken.
+ */
+export const transcribeRecording = internalAction({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args): Promise<void> => {
+    let ok = false;
+    try {
+      const row = await ctx.runQuery(internal.transcripts.getForTranscription, {
+        transcript_id: args.transcript_id,
+      });
+      if (!row?.storage_id) throw new Error("no audio attached");
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error("OPENAI_API_KEY is not set");
+      const audio = await ctx.storage.get(row.storage_id);
+      if (!audio) throw new Error("audio missing from storage");
+      // The recorder stops before it can make a file this big (see
+      // shared/contracts/recordingAudio). Reaching here means something else
+      // produced the audio, and the endpoint would refuse it with a 413 that
+      // reads like an outage — say the real thing instead.
+      if (audio.size > TRANSCRIBE_MAX_BYTES) {
+        throw new Error(
+          `audio is ${Math.round(audio.size / 1024 / 1024)}MB, over the ${Math.round(TRANSCRIBE_MAX_BYTES / 1024 / 1024)}MB transcription limit`,
+        );
+      }
+      const form = new FormData();
+      // The extension is what the API reads the container off. A phone records
+      // m4a; the desktop recorder's MediaRecorder gives webm everywhere but
+      // Safari, which gives mp4.
+      const ext = audio.type.includes("webm") ? "webm" : "m4a";
+      form.append("file", audio, `recording.${ext}`);
+      form.append("model", RECORDING_TRANSCRIBE_MODEL);
+      form.append("response_format", "verbose_json");
+      const resp = await fetch("https://api.openai.com/v1/audio/transcriptions", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+      if (!resp.ok) {
+        throw new Error(`OpenAI ${resp.status}: ${(await resp.text()).slice(0, 300)}`);
+      }
+      const segments = parseTranscriptionSegments(
+        await resp.json(),
+        Math.max(0, (row.ended_at ?? row.started_at) - row.started_at),
+      );
+      if (!segments.length) throw new Error("transcription came back empty");
+      for (let i = 0; i < segments.length; i += SEGMENT_WRITE_BATCH) {
+        await ctx.runMutation(internal.transcripts.appendRecordingSegments, {
+          transcript_id: args.transcript_id,
+          segments: segments.slice(i, i + SEGMENT_WRITE_BATCH),
+        });
+      }
+      ok = true;
+    } catch (err) {
+      console.error("[transcripts] recording transcription failed", String(err).slice(0, 300));
+    }
+    await ctx.runMutation(internal.transcripts.finishRecordingTranscript, {
+      transcript_id: args.transcript_id,
+      ok,
+    });
+  },
+});
+
+export const getForTranscription = internalQuery({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || !isRecRoomKey(t.room_key)) return null;
+    return {
+      storage_id: t.recording_storage_id ?? null,
+      started_at: t.started_at,
+      ended_at: t.ended_at ?? null,
+    };
+  },
+});
+
+// Live view for the dock caption strip + the routes popover. Team-gated the
+// same way the room is.
+export const getLive = query({
+  args: { room_key: v.string(), tail: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const auth = await authorizeRoom(ctx, userId, args.room_key, { rec: true });
+    if (!auth.ok) return null;
+    const all = await ctx.db
+      .query("transcripts")
+      .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+      .collect();
+    const t = all.find((x) => x.status === "live");
+    if (!t) return null;
+    const tail = Math.min(args.tail ?? 6, 20);
+    const segs = await ctx.db
+      .query("transcript_segments")
+      .withIndex("by_transcript_seq", (q) => q.eq("transcript_id", t._id))
+      .order("desc")
+      .take(tail);
+    return {
+      transcript_id: t._id,
+      // Who is writing the words: null while a record Record made waits for
+      // its first scribe (scribe_open), so a client adopts it rather than
+      // holding for a presser who may never scribe, and no surface says the
+      // room is transcribed before anyone is.
+      started_by: t.scribe_open ? null : t.started_by,
+      started_at: t.started_at,
+      // The room's team, so an agent spawned into it starts in that team's repo.
+      team_id: String(t.team_id),
+      routes: t.routes.map((r: Route) => routeView(t, r)),
+      tail: segs.reverse().map((s: Doc<"transcript_segments">) => ({
+        seq: s.seq,
+        speaker_name: s.speaker_name,
+        text: s.text,
+        // Wall-clock arrival, so clients can age captions out — someone who
+        // joins an hour into a lulled transcript must not see stale lines.
+        // (Age-filtering lives client-side: a Date.now() cutoff inside a
+        // reactive query only re-evaluates on data changes, not as time
+        // passes, so it could never HIDE a caption on its own.)
+        at: s._creationTime,
+      })),
+    };
+  },
+});
+
+// ── Call list/detail (web page + cast CLI) ────────────────────────────────
+// One core, two doors of authentication: the web queries use getAuthUserId,
+// the CLI twins verifyApiToken. Authorization per row is canReadCall.
+
+/** May `userId` read this call's record? Two doors: the room's own
+ *  membership rules (no invite grant — a grant admits its guest to the
+ *  running huddle, never to everything the room ever recorded), or having
+ *  BEEN in it: the words you sat through stay yours after the huddle ends,
+ *  guest or not — while you remain on the call's team. Leaving the team
+ *  closes this door like every other (and keeps list and get agreeing:
+ *  listCallsCore only walks the viewer's current teams). participants[] is
+ *  the scribe's attribution list — built from speaker ids the scribe client
+ *  reports (appendSegments), not server-derived — so this second door
+ *  trusts the scribe, which already holds the words. A guest who never
+ *  spoke leaves no participant row and loses the record when the huddle
+ *  ends: accepted. */
+export async function canReadCall(
+  ctx: any,
+  userId: Id<"users">,
+  t: Doc<"transcripts">,
+): Promise<boolean> {
+  // A RECORDING IS ITS CREATOR'S until they say otherwise. No participant
+  // door (they are the only voice in it), and for the creator no team door
+  // and no feature gate — a person recording the meeting in the room around
+  // them has not published anything to anybody. `rec_shared` is the creator
+  // having said otherwise: the recording was triaged into its team, and
+  // teammates read it under the ordinary team door, feature gate included.
+  if (isRecRoomKey(t.room_key)) {
+    if (String(t.started_by) === String(userId)) return true;
+    return (
+      !!t.rec_shared &&
+      (await isTeamMember(ctx, userId, t.team_id)) &&
+      (await teamHasFeature(ctx, t.team_id, "calls"))
+    );
+  }
+  // The people in it: whoever spoke, and whoever a recording of it showed
+  // (recorded_people: seated while it was filmed, the presser included,
+  // even when they came in on an invite grant, never spoke, or transcription
+  // was off). Still only while they are on the team with calls on. The scope
+  // is the whole call, not the stretch they sat in: anyone filmed in any part
+  // of it may read all of it, every run and the full transcript, the way a
+  // speaker always could.
+  if (
+    (t.participants ?? []).some((p) => String(p.id) === String(userId)) ||
+    (t.recorded_people ?? []).some((id) => String(id) === String(userId))
+  ) {
+    return (
+      (await isTeamMember(ctx, userId, t.team_id)) &&
+      (await teamHasFeature(ctx, t.team_id, "calls"))
+    );
+  }
+  return (await authorizeRoomNoGrant(ctx, userId, t.room_key)).ok;
+}
+
+function shapeCallRow(t: Doc<"transcripts">) {
+  return {
+    _id: t._id,
+    short_id: t.short_id ?? null,
+    room_key: t.room_key,
+    status: t.status,
+    // The room emptied and the huddle is waiting out its grace.
+    idle_since: t.idle_since ?? null,
+    started_at: t.started_at,
+    ended_at: t.ended_at ?? null,
+    title: t.title ?? null,
+    participants: t.participants ?? [],
+    summary: t.summary ?? null,
+    action_items: t.action_items ?? [],
+    summary_status: t.summary_status ?? null,
+    // Absent on everything that got its words live, which is every huddle. A
+    // recording waiting on the server to read its audio says so with this.
+    transcribe_status: t.transcribe_status ?? null,
+    last_seq: t.last_seq,
+    // For the calls page's recording scope chip: whose row this is, where it
+    // is filed, and whether the creator shared it there. Routing facts plus
+    // one flag — access already happened (canReadCall) before shaping.
+    started_by: String(t.started_by),
+    team_id: String(t.team_id),
+    rec_shared: t.rec_shared ?? false,
+    // Whether Record was ever pressed on this call (a run seats the people it
+    // shows): the history marks the calls that have video, and a surface
+    // that cannot play it yet (the phone) says where it plays rather than
+    // offering only the words. Off the row, so neither the list nor the
+    // detail re-runs for the recording reconciler's writes.
+    filmed: callFilmed(t),
+  };
+}
+
+/** Does this call have video, or video on its way? The row's own count of
+ *  files that have not failed (lib/callRecordingRuns.syncCallVideo), so the
+ *  row answers without reading a run. Never recorded_people: that is who may
+ *  watch, written at the press, and it outlives a refused start and a
+ *  deleted run. */
+export function callFilmed(t: Pick<Doc<"transcripts">, "video_runs">): boolean {
+  return (t.video_runs ?? 0) > 0;
+}
+
+/** How many rows one source of the call list may read past the calls it
+ *  keeps. A team whose newest rows are all silent scratch huddles (a ring
+ *  answered and hung up, a microphone test) stays bounded rather than
+ *  walking its whole history. */
+const CALL_LIST_SCAN_CAP = 400;
+
+async function listCallsCore(ctx: any, userId: Id<"users">, limit: number) {
+  const memberships = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+    .collect();
+  // Each source keeps its own newest `limit` calls the viewer would see,
+  // filtering WHILE it walks. Taking `limit` rows and filtering afterwards
+  // let a team whose newest rows are silent huddles contribute nothing, so
+  // the merged list came back short and skipped recent calls. With every
+  // source holding its own top `limit` kept rows, the merged top `limit` is
+  // exact.
+  const keep = async (t: Doc<"transcripts">) =>
+    !(await isSilentHuddle(ctx, t)) && (await canReadCall(ctx, userId, t));
+  const walk = async (query: any, only?: (t: Doc<"transcripts">) => boolean) => {
+    const kept: Doc<"transcripts">[] = [];
+    let scanned = 0;
+    for await (const t of query) {
+      if (kept.length >= limit || scanned++ >= CALL_LIST_SCAN_CAP) break;
+      if ((!only || only(t)) && (await keep(t))) kept.push(t);
+    }
+    return kept;
+  };
+  const rows: Doc<"transcripts">[] = [];
+  for (const m of memberships) {
+    rows.push(
+      ...(await walk(
+        ctx.db
+          .query("transcripts")
+          .withIndex("by_team_started", (q: any) => q.eq("team_id", m.team_id))
+          .order("desc"),
+      )),
+    );
+  }
+  // The personal shelf: my own recordings, whatever team they were filed
+  // under. The team walk above only sees the CURRENT teams — a recording
+  // routed to a team I later left, or filed under a team this viewer stopped
+  // looking at, is still mine to read, and this is the index that finds it.
+  rows.push(
+    ...(await walk(
+      ctx.db
+        .query("transcripts")
+        .withIndex("by_creator_started", (q: any) => q.eq("started_by", userId))
+        .order("desc"),
+      (t) => isRecRoomKey(t.room_key),
+    )),
+  );
+  rows.sort((a, b) => b.started_at - a.started_at);
+  const out = [];
+  const seen = new Set<string>();
+  for (const t of rows) {
+    if (out.length >= limit) break;
+    if (seen.has(String(t._id))) continue;
+    seen.add(String(t._id));
+    out.push(shapeCallRow(t));
+  }
+  return out;
+}
+
+/** A huddle that ended with nothing in it: no word said, no line typed or
+ *  answered (an agent coming and going, the switch flipped, is the room's
+ *  log, not content). A ring answered and hung up, a join to test the
+ *  microphone. It is no call anybody would look for, so the history leaves
+ *  it out, unless it was filmed (the video is content). A recording is
+ *  never silent here: its words can arrive after it ends. */
+async function isSilentHuddle(ctx: any, t: Doc<"transcripts">): Promise<boolean> {
+  if (t.status === "live" || isRecRoomKey(t.room_key) || t.last_seq > 0) return false;
+  // A huddle that was filmed and never transcribed is still a call: its
+  // video is the content. The same rule the Video glyph reads.
+  if (callFilmed(t)) return false;
+  const line = await ctx.db
+    .query("call_chat_messages")
+    .withIndex("by_transcript", (q: any) => q.eq("transcript_id", t._id))
+    .filter((q: any) => q.eq(q.field("event"), undefined))
+    .first();
+  return !line;
+}
+
+async function getCallCore(
+  ctx: any,
+  userId: Id<"users">,
+  transcriptId: Id<"transcripts">,
+) {
+  const t = await ctx.db.get(transcriptId);
+  if (!t) return null;
+  if (!(await canReadCall(ctx, userId, t))) return null;
+  const segs = await ctx.db
+    .query("transcript_segments")
+    .withIndex("by_transcript_seq", (q: any) => q.eq("transcript_id", t._id))
+    .collect();
+  return {
+    ...shapeCallRow(t),
+    // "Anyone with the link" (publicShare.ts): readers may copy it, like a doc's.
+    share_token: t.share_token ?? null,
+    // Whether this viewer may open the link to anyone (mayPublishCall: in the
+    // call, or a team admin), so the popover says who can rather than failing
+    // on the press. Closing it is any reader's.
+    can_share_link: await mayPublishCall(ctx, userId, t),
+    // Present only for a recording that finished uploading its audio; a
+    // detail view offers playback when there is something to play.
+    recording_url: t.recording_storage_id
+      ? await ctx.storage.getUrl(t.recording_storage_id)
+      : null,
+    routes: t.routes.map((r: Route) => routeView(t, r)),
+    sessions: await linkedSessions(ctx, userId, t._id),
+    // The people from outside the team who were let in, each already marked
+    // "(guest)" in the name, with `spoke` matched by identity against
+    // `participants` (who the scribe heard), so a page lists the listeners
+    // from here without matching names.
+    guests: await callGuestsOnRecord(ctx, t),
+    segments: segs.map((s: Doc<"transcript_segments">) => ({
+      seq: s.seq,
+      speaker_id: s.speaker_id,
+      speaker_name: s.speaker_name,
+      text: s.text,
+      t0: s.t0,
+      t1: s.t1,
+      at: s._creationTime,
+    })),
+  };
+}
+
+/** The sessions a call reached that the viewer may open, newest first. */
+async function linkedSessions(ctx: any, userId: Id<"users">, transcriptId: Id<"transcripts">) {
+  const links: Doc<"call_session_links">[] = await ctx.db
+    .query("call_session_links")
+    .withIndex("by_transcript", (q: any) => q.eq("transcript_id", transcriptId))
+    .collect();
+  links.sort((a, b) => b.updated_at - a.updated_at);
+  const out = [];
+  for (const l of links) {
+    const conv = await ctx.db.get(l.conversation_id);
+    if (!conv || !(await canAccessConversation(ctx, userId, conv))) continue;
+    const who = await agentIdentity(ctx, l.conversation_id);
+    if (!who) continue;
+    out.push({ ...who, live: !!l.live, excerpts: l.excerpts ?? [], added_by: String(l.added_by), at: l.updated_at });
+  }
+  return out;
+}
+
+/** The tasks pulled from a call (tasks.from_call) that the viewer may read. */
+async function callTasks(ctx: any, userId: Id<"users">, transcriptId: Id<"transcripts">) {
+  const rows: Doc<"tasks">[] = await ctx.db
+    .query("tasks")
+    .withIndex("by_from_call", (q: any) => q.eq("from_call", transcriptId))
+    .take(200);
+  const out = [];
+  for (const t of rows) {
+    if (!(await canAccessTask(ctx, userId, t))) continue;
+    out.push({ short_id: t.short_id, title: t.title, status: t.status, assignee: t.assignee ?? null });
+  }
+  return out;
+}
+
+/** A call named the way prose names it: its short id (`cl-42`) or its full
+ *  id. Null for anything else, and for a call the viewer may not read. */
+export async function resolveCallRef(
+  ctx: any,
+  userId: Id<"users">,
+  ref: string,
+): Promise<Doc<"transcripts"> | null> {
+  const r = ref.trim().toLowerCase();
+  let t: Doc<"transcripts"> | null = null;
+  if (/^cl-\d+$/.test(r)) {
+    t = await ctx.db
+      .query("transcripts")
+      .withIndex("by_short_id", (q: any) => q.eq("short_id", r))
+      .first();
+  } else {
+    const id = ctx.db.normalizeId("transcripts", r);
+    t = id ? await ctx.db.get(id) : null;
+  }
+  return t && (await canReadCall(ctx, userId, t)) ? t : null;
+}
+
+/** The most turns one embedded excerpt carries; a longer range shows its
+ *  head and says how many more the call page holds. */
+export const CALL_EXCERPT_MAX_TURNS = 40;
+
+/** How many lines before the last one begun by a moment are read to find
+ *  the line being said then: a line still being said that began earlier
+ *  than the lines after it (two people talking over each other). */
+const MOMENT_LINE_LOOKBACK = 8;
+
+/**
+ * The line a moment of a call is captioned with (the shared lineSaidAt, the
+ * rule `cast call snap` names a frame's line by), found without reading the
+ * whole transcript: seq order is time order (every surface reads it so), so
+ * a binary search over seq finds the last line begun by the moment in a
+ * dozen point reads, and the few lines before it settle which one was being
+ * said. A long call's card then re-runs on a handful of rows, not thousands.
+ */
+export async function lineAtMoment(ctx: any, t: Doc<"transcripts">, atMs: number) {
+  const at = (seq: number) =>
+    ctx.db
+      .query("transcript_segments")
+      .withIndex("by_transcript_seq", (q: any) => q.eq("transcript_id", t._id).gte("seq", seq))
+      .first() as Promise<Doc<"transcript_segments"> | null>;
+  let lo = 1;
+  let hi = t.last_seq;
+  let found = 0;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const s = await at(mid);
+    if (!s || s.seq > hi || s.t0 > atMs) hi = mid - 1;
+    else {
+      found = s.seq;
+      lo = s.seq + 1;
+    }
+  }
+  if (!found) return null;
+  const near: Doc<"transcript_segments">[] = await ctx.db
+    .query("transcript_segments")
+    .withIndex("by_transcript_seq", (q: any) =>
+      q.eq("transcript_id", t._id).gte("seq", found - MOMENT_LINE_LOOKBACK).lte("seq", found),
+    )
+    .collect();
+  const hit = lineSaidAt(near, atMs);
+  if (!hit) return null;
+  const s = near[hit.index];
+  return { seq: s.seq, speaker_id: s.speaker_id, speaker_name: s.speaker_name, text: s.text, t0: s.t0, t1: s.t1, during: hit.during };
+}
+
+async function callRefCore(
+  ctx: any,
+  userId: Id<"users">,
+  args: { ref: string; from_seq?: number; to_seq?: number; at_ms?: number },
+) {
+  const t = await resolveCallRef(ctx, userId, args.ref);
+  if (!t) return null;
+  const row = shapeCallRow(t);
+  const lean = {
+    _id: row._id,
+    short_id: row.short_id,
+    room_key: row.room_key,
+    status: row.status,
+    started_at: row.started_at,
+    ended_at: row.ended_at,
+    title: row.title,
+    participants: row.participants,
+    summary: row.summary,
+  };
+  // A moment (`cl-42@12:34`) carries the line said then, its card's caption.
+  if (args.at_ms !== undefined) return { ...lean, turns: null, line: await lineAtMoment(ctx, t, args.at_ms) };
+  if (args.from_seq === undefined) return { ...lean, turns: null };
+  const from = Math.min(args.from_seq, args.to_seq ?? args.from_seq);
+  const to = Math.max(args.from_seq, args.to_seq ?? args.from_seq);
+  const segs = await ctx.db
+    .query("transcript_segments")
+    .withIndex("by_transcript_seq", (q: any) =>
+      q.eq("transcript_id", t._id).gte("seq", from).lte("seq", to),
+    )
+    .take(CALL_EXCERPT_MAX_TURNS + 1);
+  return {
+    ...lean,
+    turns: {
+      from_seq: from,
+      to_seq: to,
+      more: segs.length > CALL_EXCERPT_MAX_TURNS,
+      segments: segs.slice(0, CALL_EXCERPT_MAX_TURNS).map((s: Doc<"transcript_segments">) => ({
+        seq: s.seq,
+        speaker_id: s.speaker_id,
+        speaker_name: s.speaker_name,
+        text: s.text,
+        t0: s.t0,
+        t1: s.t1,
+        at: s._creationTime,
+      })),
+    },
+  };
+}
+
+// A call mentioned in prose: `cl-42` is the pill, `cl-42:15-25` the excerpt
+// card with those turns, `cl-42@12:34` the frame captioned with the line said
+// then. One query for all, so they cannot disagree.
+export const webGetCallRef = query({
+  args: { ref: v.string(), from_seq: v.optional(v.number()), to_seq: v.optional(v.number()), at_ms: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return callRefCore(ctx, userId, args);
+  },
+});
+
+// Every call older than its short id gets one, oldest first, so the numbers
+// read in the order the calls happened.
+export const backfillCallShortIds = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("transcripts").collect();
+    rows.sort((a, b) => a.started_at - b.started_at);
+    let n = 0;
+    for (const t of rows) {
+      if (t.short_id) continue;
+      await ctx.db.patch(t._id, { short_id: await nextShortId(ctx.db, "cl") });
+      n++;
+    }
+    return { assigned: n };
+  },
+});
+
+export const webListCalls = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return listCallsCore(ctx, userId, Math.min(args.limit ?? 50, 200));
+  },
+});
+
+export const webGetCall = query({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return getCallCore(ctx, userId, args.transcript_id);
+  },
+});
+
+// A session's calls: every call whose words reached it (a live feed or a sent
+// excerpt) that the viewer may read. The header pill's way back to the call.
+export const webCallsForConversation = query({
+  args: { conversation_id: v.id("conversations") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const conv = await ctx.db.get(args.conversation_id);
+    if (!conv || !(await canAccessConversation(ctx, userId, conv))) return [];
+    const links = await ctx.db
+      .query("call_session_links")
+      .withIndex("by_conversation", (q) => q.eq("conversation_id", args.conversation_id))
+      .collect();
+    links.sort((a, b) => b.updated_at - a.updated_at);
+    const out = [];
+    for (const l of links) {
+      const t = await ctx.db.get(l.transcript_id);
+      if (!t || !(await canReadCall(ctx, userId, t))) continue;
+      out.push({
+        _id: t._id,
+        title: t.title ?? null,
+        room_key: t.room_key,
+        status: t.status,
+        started_at: t.started_at,
+        // What the header pill names an untitled call by (callTitle: the
+        // people, a guest) and whether it marks it as filmed.
+        participants: t.participants ?? [],
+        filmed: callFilmed(t),
+        live: !!l.live,
+        excerpts: l.excerpts ?? [],
+      });
+    }
+    return out;
+  },
+});
+
+// A one-shot send of a call (or a range of its turns) to a session: the
+// message itself rides the store's send path; this records where it came
+// from. The sender must be able to read the call and open the session.
+export const linkExcerpt = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    conversation: v.string(),
+    from_seq: v.number(),
+    to_seq: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t || !(await canReadCall(ctx, userId, t))) throw new Error("Call not found");
+    const conv = await findConversationByAnyRefWhere(ctx, args.conversation, (c: any) =>
+      canAccessConversation(ctx, userId, c),
+    );
+    if (!conv) throw new Error("Session not found");
+    await linkCallSession(ctx, t._id, conv._id as Id<"conversations">, userId, {
+      from_seq: Math.min(args.from_seq, args.to_seq),
+      to_seq: Math.max(args.from_seq, args.to_seq),
+    });
+  },
+});
+
+// The triage gesture: a recording's creator files it into one of their teams
+// (or takes it back). Sharing sets BOTH fields on purpose — team_id so the
+// team's list walk finds the row, rec_shared so canReadCall opens the team
+// door. Unsharing only clears the flag: team_id is routing and keeps its last
+// honest value, and access never read it anyway.
+export const setRecordingScope = mutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    // A team to share into, or absent to make it private again.
+    team_id: v.optional(v.id("teams")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const t = await ctx.db.get(args.transcript_id);
+    // One error for "no row", "not a recording", and "not yours": naming
+    // which of the three failed would confirm the row exists.
+    if (!t || !isRecRoomKey(t.room_key) || String(t.started_by) !== String(userId)) {
+      throw new Error("Recording not found");
+    }
+    if (!args.team_id) {
+      await ctx.db.patch(t._id, { rec_shared: false });
+      return;
+    }
+    if (!(await isTeamMember(ctx, userId, args.team_id))) {
+      throw new Error("Not a member of that team");
+    }
+    await ctx.db.patch(t._id, { team_id: args.team_id, rec_shared: true });
+  },
+});
+
+export const cliListCalls = query({
+  args: { api_token: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+    const rows = await listCallsCore(ctx, auth.userId, Math.min(args.limit ?? 30, 200));
+    // Which calls have video, so `cast calls` can mark the ones `cast call
+    // snap` can show. Here and not in listCallsCore: the web list is a live
+    // subscription, and reading every call's recordings there would re-run
+    // it for each write the recording reconciler makes.
+    // The place too, so an untitled call reads "Huddle in <session>" rather
+    // than its room key. Same reason it is here: the web list names rooms
+    // from its own store and asks webCallPlaces only for the rooms it cannot.
+    return Promise.all(
+      rows.map(async (r) => ({
+        ...r,
+        ...(await callVideoState(ctx, r._id)),
+        place: await callPlaceNames(ctx, auth.userId, r.room_key),
+      })),
+    );
+  },
+});
+
+/** The place names of the calls the web could not name from its own store
+ *  (roomLabels.callTitle asks only for those: an older session that was
+ *  never loaded, a channel this client never synced). Its own query and not a
+ *  field on webListCalls or webGetCall, because a session's row is written on
+ *  every message: carried on the list, each message in a session that once
+ *  hosted a huddle would re-run the whole page of calls, and on the detail it
+ *  would re-send every segment. Here a write re-runs a handful of reads.
+ *  Each call is checked with canReadCall first, so a key cannot be used to
+ *  learn a channel's name the viewer has no call in. */
+export const webCallPlaces = query({
+  args: { transcript_ids: v.array(v.id("transcripts")) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    const out: Record<string, Awaited<ReturnType<typeof callPlaceNames>>> = {};
+    if (!userId) return out;
+    for (const id of args.transcript_ids.slice(0, 100)) {
+      const t = await ctx.db.get(id);
+      if (!t || !(await canReadCall(ctx, userId, t))) continue;
+      out[String(id)] = await callPlaceNames(ctx, userId, t.room_key);
+    }
+    return out;
+  },
+});
+
+/** The names an untitled call is called by (callDisplayTitle), read with the
+ *  viewer's own rights: a session's title only when they may open the
+ *  session, which is the rule calls.getLiveRooms holds for a room's label. A
+ *  channel's name and a people room's members are the room itself, which
+ *  canReadCall already let them read. */
+async function callPlaceNames(
+  ctx: any,
+  userId: Id<"users">,
+  roomKey: string,
+): Promise<{ session_title: string | null; peer_name: string | null; channel_name: string | null }> {
+  const place = { session_title: null as string | null, peer_name: null as string | null, channel_name: null as string | null };
+  const parsed = parseRoomKey(roomKey);
+  // A key's ids are shape-checked only; a stale or foreign one names nothing.
+  const get = (table: string, id: string) => {
+    const norm = ctx.db.normalizeId(table, id);
+    return norm ? ctx.db.get(norm) : null;
+  };
+  if (parsed?.kind === "session") {
+    const conv = await get("conversations", parsed.conversationId);
+    if (conv?.title && (await canAccessConversation(ctx, userId, conv))) place.session_title = conv.title;
+  } else if (parsed?.kind === "channel") {
+    const channel = await get("chat_channels", parsed.channelId);
+    if (channel?.name) place.channel_name = channel.name;
+  } else if (parsed?.kind === "dm") {
+    const names: string[] = [];
+    for (const id of parsed.users) {
+      if (id === String(userId)) continue;
+      const u = await get("users", id);
+      const name = u?.name?.trim() || u?.email;
+      if (name) names.push(name);
+    }
+    if (names.length) place.peer_name = names.join(", ");
+  }
+  return place;
+}
+
+/** A call's video as one word: "recording" while a run is being filmed or
+ *  saved, "ready" when some of it plays, null when there is none. And
+ *  whether a shared screen has its own full-resolution file that plays
+ *  (`video_screen`), the picture an agent reading a call wants most. */
+async function callVideoState(ctx: any, transcriptId: Id<"transcripts">): Promise<{ video: "recording" | "ready" | null; video_screen: boolean }> {
+  const files: Doc<"call_recordings">[] = await ctx.db
+    .query("call_recordings")
+    .withIndex("by_transcript", (q: any) => q.eq("transcript_id", transcriptId))
+    .collect();
+  const video = files.some((f) => isRecordingActive(f.status)) ? "recording" : files.some((f) => f.status === "ready") ? "ready" : null;
+  return { video, video_screen: files.some((f) => f.kind === "screen" && f.status === "ready") };
+}
+
+export const cliGetCall = query({
+  // A call's short id (`cl-42`) or full id.
+  args: { api_token: v.string(), transcript_id: v.string() },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+    const t = await resolveCallRef(ctx, auth.userId, args.transcript_id);
+    const call = t ? await getCallCore(ctx, auth.userId, t._id) : null;
+    if (!call) return null;
+    // The share token is the whole secret of the public page, and what the
+    // CLI prints lands in a session transcript that can be read more widely
+    // than the call. An agent learns whether the call is shared, never how
+    // to open it; the page's share control is where a person copies a link.
+    const { share_token, ...rest } = call;
+    return {
+      ...rest,
+      shared: !!share_token,
+      video_shared: shareIncludesVideo(t!),
+      place: await callPlaceNames(ctx, auth.userId, t!.room_key),
+      tasks: await callTasks(ctx, auth.userId, t!._id),
+    };
+  },
+});
+
+// ── ASR credentials ───────────────────────────────────────────────────────
+// OpenAI Realtime transcription: the scribe opens one websocket per audio
+// track and streams pcm16; the server returns streaming transcript deltas and
+// VAD speech start/stop events (the gap signal). The browser must never see
+// OPENAI_API_KEY, so this action mints a short-lived client secret scoped to
+// a transcription session. Authorization = may the caller transcribe the room.
+
+export const mintAsrToken = action({
+  args: {
+    room_key: v.string(),
+    // Languages this recognizer may emit, ISO-639-1. The client sends the
+    // browser's list; we fold and cap it here so a bad tag cannot fail the mint.
+    languages: v.optional(v.array(v.string())),
+  },
+  handler: async (
+    ctx,
+    args,
+  ): Promise<
+    { client_secret: string; model: string; languages: string[] } | { error: string }
+  > => {
+    const grant = await ctx.runQuery(internal.transcripts.authForAsr, {
+      room_key: args.room_key,
+    });
+    if (!grant) return { error: "Not authorized for this room" };
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) return { error: "Transcription is not configured" };
+    let model = LIVE_TRANSCRIBE_MODEL;
+    let languages = unionTranscribeLanguages(args.languages, grant.languages);
+    // GA realtime API: client secrets are minted at /v1/realtime/client_secrets
+    // with the session config nested under `session` (audio.input vocabulary).
+    const mint = async (
+      session: ReturnType<typeof asrTranscriptionSession>,
+    ): Promise<{ error: string } | { client_secret: string }> => {
+      const resp = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ session }),
+      });
+      if (!resp.ok) {
+        const body = (await resp.text()).slice(0, 300);
+        console.error("[transcripts] mint failed", resp.status, body);
+        let hint = "";
+        try {
+          const parsed = JSON.parse(body) as { error?: { message?: string }; message?: string };
+          const msg = parsed.error?.message ?? parsed.message;
+          if (typeof msg === "string" && msg) hint = `: ${msg.slice(0, 160)}`;
+        } catch {
+          // Body was not JSON; the status is enough.
+        }
+        return { error: `ASR session mint failed (${resp.status})${hint}` };
+      }
+      const data = (await resp.json()) as { value?: string; client_secret?: { value?: string } };
+      const secret = data.value ?? data.client_secret?.value;
+      if (!secret) return { error: "ASR session mint returned no secret" };
+      return { client_secret: secret };
+    };
+    let minted = await mint(asrTranscriptionSession(model, languages));
+    // One unsupported language code rejects the whole session. Retry
+    // unconstrained so the huddle still gets words; the client keeps its
+    // own list for the script filter.
+    if ("error" in minted && languages.length) {
+      languages = [];
+      minted = await mint(asrTranscriptionSession(model, languages));
+    }
+    // The live model 400'd the session even without languages (VAD body or
+    // the model itself). The previous recognizer still mints, and it closes
+    // turns on VAD without a client commit.
+    if ("error" in minted) {
+      model = FALLBACK_TRANSCRIBE_MODEL;
+      languages = [];
+      minted = await mint(asrTranscriptionSession(model, languages));
+    }
+    if ("error" in minted) return { error: minted.error };
+    return { client_secret: minted.client_secret, model, languages };
+  },
+});
+
+export const authForAsr = internalQuery({
+  args: { room_key: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    // A recording mints against its own key like a huddle does; authorizeRoom
+    // has already answered "is this transcript yours".
+    const auth = await authorizeRoom(ctx, userId, args.room_key, { rec: true });
+    if (!auth.ok) return null;
+    const rows = await ctx.db
+      .query("call_members")
+      .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+      .collect();
+    const languages = unionTranscribeLanguages(
+      ...liveMembers(rows, Date.now()).map((m) => m.languages),
+    );
+    return { user_id: String(userId), languages };
+  },
+});
+
+// ── Route delivery ────────────────────────────────────────────────────────
+
+// Chunk formatting is shared with the web's "send to agent" actions:
+// @codecast/shared/contracts formatTranscriptChunk.
+export { formatChunk };
+
+export const readUnsent = internalQuery({
+  args: { transcript_id: v.id("transcripts") },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) return null;
+    const minSent = Math.min(...t.routes.map((r) => r.sent_seq), t.last_seq);
+    const segs = await ctx.db
+      .query("transcript_segments")
+      .withIndex("by_transcript_seq", (q) =>
+        q.eq("transcript_id", args.transcript_id).gt("seq", minSent),
+      )
+      .collect();
+    // The pacing of every fed session, keyed by route target, read here so
+    // the action decides from one consistent snapshot.
+    const now = Date.now();
+    const pacing: Record<string, { conversation_id: string; names: string[]; busy: boolean; killed: boolean }> = {};
+    // Session routes whose target is killed or gone: delivery drops them.
+    const dead: string[] = [];
+    for (const r of t.routes) {
+      if (r.kind !== "session" || pacing[r.target] || dead.includes(r.target)) continue;
+      const p = await fedSessionPacing(ctx, r.target, now);
+      if (!p || p.killed) dead.push(r.target);
+      else pacing[r.target] = p;
+    }
+    return {
+      now,
+      dead,
+      transcript: {
+        _id: t._id,
+        room_key: t.room_key,
+        team_id: t.team_id,
+        status: t.status,
+        started_by: t.started_by,
+        started_at: t.started_at,
+        routes: t.routes,
+        last_seq: t.last_seq,
+      },
+      segments: segs.map((s) => ({
+        seq: s.seq,
+        speaker_id: s.speaker_id,
+        speaker_name: s.speaker_name,
+        text: s.text,
+        // Wall clock of the utterance's end: the offsets are from started_at.
+        ended_at: t.started_at + s.t1,
+      })),
+      pacing,
+    };
+  },
+});
+
+export const markRouteSent = internalMutation({
+  args: {
+    transcript_id: v.id("transcripts"),
+    kind: v.string(),
+    target: v.string(),
+    sent_seq: v.number(),
+    // A session chunk went out: whether it carried the full framing.
+    full_brief: v.optional(v.boolean()),
+    // A context lane chunk went out at this time (CONTEXT_MIN_GAP_MS).
+    context_at: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const t = await ctx.db.get(args.transcript_id);
+    if (!t) return;
+    await ctx.db.patch(t._id, {
+      routes: t.routes.map((r) =>
+        r.kind === args.kind && r.target === args.target
+          ? {
+              ...r,
+              sent_seq: Math.max(r.sent_seq, args.sent_seq),
+              ...(args.context_at ? { context_at: args.context_at } : {}),
+              ...(args.full_brief === undefined
+                ? {}
+                : { briefed_chunks: args.full_brief ? 1 : (r.briefed_chunks ?? 0) + 1 }),
+            }
+          : r,
+      ),
+    });
+  },
+});
+
+export const deliverToSession = internalMutation({
+  args: {
+    as_user: v.id("users"),
+    to: v.string(),
+    body: v.string(),
+    image_storage_ids: v.optional(v.array(v.id("_storage"))),
+    // Deterministic per chunk: enqueuePendingMessage returns the existing row
+    // for a repeated client_id, so a second delivery of the same words (two
+    // overlapping deliverRoutes runs, a crash before markRouteSent) is a no-op.
+    client_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await performSessionSend(ctx, args.as_user, {
+      to: args.to,
+      body: args.body,
+      image_storage_ids: args.image_storage_ids,
+      client_id: args.client_id,
+    });
+  },
+});
+
+export const deliverToDoc = internalMutation({
+  args: {
+    as_user: v.id("users"),
+    doc_id: v.string(),
+    chunk: v.string(),
+    header: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const docId = ctx.db.normalizeId("docs", args.doc_id);
+    if (!docId) throw new Error("Doc not found");
+    const doc = await requireAccessibleDoc(ctx, args.as_user, docId);
+    const base = doc.content ?? "";
+    const head = args.header && !base.includes(args.header) ? `${args.header}\n\n` : "";
+    await ctx.db.patch(docId, {
+      content: `${base ? base + "\n\n" : ""}${head}${args.chunk}`,
+      updated_at: Date.now(),
+    });
+  },
+});
+
+export const slackTokenForChannel = internalQuery({
+  args: { channel: v.string(), team_id: v.id("teams") },
+  handler: async (ctx, args): Promise<string | null> => {
+    // A linked channel (anchor_channels) whose anchor belongs to the
+    // transcript's team; its workspace installation holds the bot token.
+    const rows = await ctx.db
+      .query("anchor_channels")
+      .withIndex("by_surface_channel", (q: any) =>
+        q.eq("surface", "slack").eq("channel_key", args.channel),
+      )
+      .collect();
+    for (const row of rows) {
+      const install = await ctx.db
+        .query("slack_installations")
+        .withIndex("by_workspace", (q: any) => q.eq("workspace_id", row.workspace_key))
+        .first();
+      if (install?.bot_token) return install.bot_token;
+    }
+    return null;
+  },
+});
+
+/** Whether a session route's unsent words go now, and in which lane. Pure,
+ *  so the pacing rule is one readable function with tests. Context also
+ *  waits out CONTEXT_MIN_GAP_MS after the last context chunk.
+ *
+ *  A line that names the agent goes at once, mid-turn if need be: the ask
+ *  lane. Everything else is context, and context waits while the agent is
+ *  mid-turn or holding the room off (`hold_until`); its turn's end and the
+ *  hold's end each run delivery again. A clock-driven delivery (settle, hold
+ *  expiry) also waits for the room to be quiet, so a catch up never opens
+ *  on half a sentence: the scribe's next lull delivers it instead. */
+export function sessionDeliveryVerdict(opts: {
+  reason: DeliverReason;
+  now: number;
+  route: { hold_until?: number; context_at?: number };
+  pacing: { names: string[]; busy: boolean } | null;
+  unsent: Array<{ text: string; ended_at: number; speaker_id?: string }>;
+}): { deliver: false; wait?: "quiet" | "gap"; at?: number } | { deliver: true; lane: "ask" | "context"; held: boolean } {
+  const { reason, now, route, pacing, unsent } = opts;
+  // Only the team opens the ask lane. A guest naming the agent is talking
+  // about it or to it, and their words still arrive as context, but they
+  // never cut into its turn: the ask lane reaches the agent at once with the
+  // authority of whoever pointed the route at the call, and an outsider in
+  // somebody's meeting does not get to spend that.
+  const teamWords = unsent.filter((s) => !s.speaker_id || callParticipantKind(s.speaker_id) !== "guest");
+  const addressed = !!pacing && addressesAgent(teamWords.map((s) => s.text).join("\n"), pacing.names);
+  if (addressed) return { deliver: true, lane: "ask", held: false };
+  const holding = (route.hold_until ?? 0) > now;
+  if (pacing?.busy || holding) return { deliver: false };
+  // A lull's flush and a turn's end both wait out the gap. A context chunk
+  // costs the agent a turn, and that turn's end is a settle seconds later:
+  // exempt, it shipped the next chunk at once and the gap never held. The
+  // gap's own closing run is a settle that arrives after the gap, so it
+  // delivers; a hold's catch up and a new route's backlog are never gapped.
+  const gapped = reason === "flush" || reason === "settle";
+  if (gapped && route.context_at && route.context_at + CONTEXT_MIN_GAP_MS > now) {
+    return { deliver: false, wait: "gap", at: route.context_at + CONTEXT_MIN_GAP_MS };
+  }
+  const clockDriven = reason === "settle" || reason === "hold_expired";
+  if (clockDriven) {
+    const lastEnd = Math.max(...unsent.map((s) => s.ended_at));
+    // Not quiet yet: the caller schedules one more clock-driven run after
+    // the quiet window, so the words never wait for the call's end.
+    if (now - lastEnd < CATCH_UP_QUIET_MS) return { deliver: false, wait: "quiet" };
+  }
+  // Words said under a hold are a catch up however they leave: the hold's end
+  // can find the agent still mid-turn, and the scribe's next lull ships them.
+  const saidUnderHold = unsent.some((s) => s.ended_at <= (route.hold_until ?? 0));
+  return { deliver: true, lane: "context", held: clockDriven || saidUnderHold };
+}
+
+export const deliverRoutes = internalAction({
+  args: {
+    transcript_id: v.id("transcripts"),
+    include_after_routes: v.boolean(),
+    reason: v.optional(DELIVER_REASON),
+    // How many times this run has already rescheduled itself (a failed final
+    // delivery, a catch up that found the room talking). Bounded.
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const data = await ctx.runQuery(internal.transcripts.readUnsent, {
+      transcript_id: args.transcript_id,
+    });
+    if (!data) return;
+    const { transcript, segments, pacing, now, dead } = data;
+    const reason: DeliverReason = args.reason ?? "flush";
+    const attempt = args.attempt ?? 0;
+    let failed = false;
+    let waitQuiet = false;
+    let contextSent = false;
+    for (const route of transcript.routes) {
+      if (route.mode === "after" && !args.include_after_routes) continue;
+      if (route.kind === "session" && dead.includes(route.target)) {
+        // The session is killed or gone: the words have no reader, and a
+        // route that fails on every flush is noise. Drop it.
+        await ctx.runMutation(internal.transcripts.dropDeadRoute, {
+          transcript_id: args.transcript_id,
+          target: route.target,
+        });
+        continue;
+      }
+      const unsent = segments.filter((s: { seq: number }) => s.seq > route.sent_seq);
+      if (unsent.length === 0) continue;
+      const chunk = formatChunk(unsent);
+      const maxSeq = unsent[unsent.length - 1].seq;
+      // Delivery acts as whoever pointed the route at the call — a
+      // participant feeding an agent speaks as themselves. Routes from before
+      // added_by existed fall back to the scribe.
+      const asUser = route.added_by ?? transcript.started_by;
+      let fullBrief: boolean | undefined;
+      let contextLane = false;
+      try {
+        if (route.kind === "session") {
+          const target = pacing[route.target] ?? null;
+          // The stop's final delivery (include_after_routes) is the record of
+          // the call and bypasses the pacing: a busy agent still gets the end.
+          const verdict = args.include_after_routes
+            ? ({ deliver: true, lane: "context", held: false } as const)
+            : sessionDeliveryVerdict({ reason, now, route, pacing: target, unsent });
+          // The watermark stays put: the words wait for the turn's end, the
+          // hold's end or the next lull, whichever delivers them.
+          if (!verdict.deliver) {
+            if (verdict.wait === "quiet") waitQuiet = true;
+            continue;
+          }
+          contextLane = verdict.lane === "context";
+          // A session hearing its OWN room is being spoken to, not sent a
+          // report about a meeting elsewhere, and the two want different
+          // words in front of the same chunk.
+          const own = ownRoomTarget(transcript.room_key) === route.target;
+          fullBrief = needsFullBrief(route.briefed_chunks);
+          const headerOpts = {
+            name: target?.names[0] ?? "the agent",
+            lane: verdict.lane,
+            held: verdict.held,
+            full: fullBrief,
+          };
+          await ctx.runMutation(internal.transcripts.deliverToSession, {
+            as_user: asUser,
+            to: route.target,
+            body: `${own ? ownRoomChunkHeader(headerOpts) : liveFeedChunkHeader(headerOpts)}\n\n${chunk}`,
+            client_id: deliveryClientId(transcript._id, route.target, maxSeq),
+          });
+        } else if (route.kind === "doc") {
+          await ctx.runMutation(internal.transcripts.deliverToDoc, {
+            as_user: asUser,
+            doc_id: route.target,
+            chunk,
+            header: `# Huddle transcript — ${new Date(transcript.started_at).toISOString().slice(0, 16).replace("T", " ")}`,
+          });
+        } else if (route.kind === "slack") {
+          const token = await ctx.runQuery(internal.transcripts.slackTokenForChannel, {
+            channel: route.target,
+            team_id: transcript.team_id,
+          });
+          if (!token) throw new Error("Slack channel not linked");
+          const resp = await fetch("https://slack.com/api/chat.postMessage", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              Authorization: `Bearer ${token}`,
+            },
+            // Slack renders *bold* with single asterisks.
+            body: JSON.stringify({
+              channel: route.target,
+              text: chunk.replace(/\*\*/g, "*"),
+            }),
+          });
+          const out = (await resp.json()) as { ok: boolean; error?: string };
+          if (!out.ok) throw new Error(`slack: ${out.error}`);
+        }
+        await ctx.runMutation(internal.transcripts.markRouteSent, {
+          transcript_id: args.transcript_id,
+          kind: route.kind,
+          target: route.target,
+          sent_seq: maxSeq,
+          full_brief: fullBrief,
+          ...(contextLane ? { context_at: now } : {}),
+        });
+        if (contextLane) contextSent = true;
+      } catch (err) {
+        // A failing route never blocks the others; the watermark stays put so
+        // the next flush retries this chunk.
+        failed = true;
+        console.error("[transcripts] route delivery failed", route.kind, String(err).slice(0, 200));
+      }
+    }
+    // Two runs that reschedule themselves, each a bounded number of times.
+    // The end of the call has no later flush to retry a failed final
+    // delivery, so it comes back with backoff; a catch up that found the
+    // room still talking comes back once the quiet window has passed.
+    // A context chunk opens a gap; one run at its end delivers whatever the
+    // gap held back, so a room that falls silent does not keep it until the
+    // call is over. Scheduled once per delivery, never per held flush.
+    if (contextSent && !args.include_after_routes) {
+      await ctx.scheduler.runAfter(CONTEXT_MIN_GAP_MS, internal.transcripts.deliverRoutes, {
+        transcript_id: args.transcript_id,
+        include_after_routes: false,
+        reason: "settle",
+      });
+    }
+    if (attempt >= DELIVER_RETRY_MAX) return;
+    const retry = args.include_after_routes && failed
+      ? { delay: DELIVER_RETRY_MS * 2 ** attempt, reason: args.reason }
+      : waitQuiet && (reason === "settle" || reason === "hold_expired")
+        ? { delay: CATCH_UP_QUIET_MS, reason }
+        : null;
+    if (!retry) return;
+    await ctx.scheduler.runAfter(retry.delay, internal.transcripts.deliverRoutes, {
+      transcript_id: args.transcript_id,
+      include_after_routes: args.include_after_routes,
+      reason: retry.reason,
+      attempt: attempt + 1,
+    });
+  },
+});
+
+/** The pending-message client_id of one chunk to one session: the same words
+ *  to the same route carry the same id, so a repeat is deduped at insert. */
+export function deliveryClientId(transcriptId: string, target: string, maxSeq: number): string {
+  return `${transcriptId}:${target}:${maxSeq}`;
+}

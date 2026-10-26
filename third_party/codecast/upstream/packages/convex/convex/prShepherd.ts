@@ -1,0 +1,1038 @@
+import { v } from "convex/values";
+import { internalMutation, internalQuery, internalAction, mutation } from "./functions";
+import { internal } from "./_generated/api";
+import { Doc, Id } from "./_generated/dataModel";
+import { requireUser } from "./lib/auth";
+import { canAccessConversation, canAccessPullRequest } from "./lib/access";
+import { insertTask, patchTask } from "./agentTasks";
+import { scheduleTriggerMatch } from "./lib/triggerMatch";
+import { recordExternalEvent } from "./externalEvents";
+import { foldChecksState, foldShepherdState, prUrl, shortSha } from "./lib/gitRefs";
+import { checkLabel, inlineForeignText } from "@codecast/shared/contracts";
+import { syncPullRequestSessions } from "./lib/prSessions";
+
+const SHEPHERD_MAX_RUNTIME_MS = 30 * 60 * 1000;
+const WAKE_RETRY_MS = 20 * 1000;
+const MAX_WAKE_RETRIES = 5;
+// GitHub computes mergeability lazily after a push; a repository with hundreds
+// of open PRs takes minutes to answer for all of them, so each retry waits
+// twice as long as the one before (15s, 30s, 60s, 120s).
+const mergeStateRetryMs = (attempt: number) => 15_000 * 2 ** attempt;
+const MAX_MERGE_STATE_ATTEMPTS = 4;
+const RETIRE_RETRY_MS = 5 * 60 * 1000;
+const MAX_RETIRE_ATTEMPTS = 12;
+
+const GITHUB_API_BASE = "https://api.github.com";
+
+type Ctx = { db: any; scheduler?: any };
+type PR = Doc<"pull_requests">;
+
+// ── Folding PR state ──
+
+/**
+ * Fire a derived pull request trigger.
+ *
+ * Standing triggers are armed on names like "pr_check_failed" rather than the
+ * raw GitHub event kinds, so a task can wait for the thing that matters instead
+ * of decoding webhook payloads. Every derived event is about exactly one pull
+ * request, so the repository and number always ride along and a trigger that
+ * names a pr_number only fires for that one.
+ */
+export async function firePrTrigger(
+  ctx: Parameters<typeof scheduleTriggerMatch>[0],
+  eventType: string,
+  pr: Doc<"pull_requests">,
+): Promise<void> {
+  await scheduleTriggerMatch(ctx, {
+    event_type: eventType,
+    repository: pr.repository,
+    pr_number: pr.number,
+    team_id: pr.team_id,
+  });
+}
+
+/**
+ * The one writer for a pull request row that keeps its folded fields honest.
+ *
+ * Every webhook processor patches through here, so `checks_state` always agrees
+ * with `checks`, `shepherd_state` always agrees with the whole row, and the
+ * session card's `pr_status` is refreshed in the same breath. Returns the row
+ * as it now stands, plus what the folded state was before, so a caller can tell
+ * a real transition from a repeat.
+ */
+export async function patchPullRequest(
+  ctx: Ctx,
+  prId: Id<"pull_requests">,
+  updates: Record<string, any>,
+): Promise<{ pr: PR; previousState: string | undefined; stateChanged: boolean } | null> {
+  const before = await ctx.db.get(prId);
+  if (!before) return null;
+
+  const patch: Record<string, any> = { ...updates };
+  const merged: any = { ...before, ...patch };
+  if ("checks" in patch) {
+    merged.checks_state = foldChecksState(merged.checks);
+    patch.checks_state = merged.checks_state;
+  }
+
+  const previousState = before.shepherd_state;
+  const state = foldShepherdState(merged);
+  if (state !== previousState) {
+    patch.shepherd_state = state;
+    patch.shepherd_state_at = Date.now();
+  }
+  patch.updated_at = patch.updated_at ?? Date.now();
+
+  await ctx.db.patch(prId, patch);
+  const after = (await ctx.db.get(prId)) as PR;
+  await syncPullRequestSessions(ctx, after);
+
+  if (after.shepherd_conversation_id) {
+    await refreshConversationPrStatus(ctx, after.shepherd_conversation_id);
+  }
+  if (after.state === "merged" || after.state === "closed") {
+    await closeOutShepherd(ctx, after, after.state);
+  }
+  // Tasks waiting on this PR settle in a transaction of their own, from every
+  // path that moves it (webhook, refresh, reconcile): task-graph.md TG2.
+  if (after.waiting_task_ids?.length && (after.state !== before.state || after.checks_state !== before.checks_state)) {
+    await ctx.scheduler?.runAfter(0, internal.taskWaits.settlePr, { pr_id: prId });
+  }
+
+  return { pr: after, previousState, stateChanged: state !== previousState };
+}
+
+/**
+ * The reviewers' verdict, recomputed from the latest review each reviewer left.
+ *
+ * A "commented" review says nothing about whether the PR may land, and a
+ * dismissed one has been withdrawn, so neither counts. One outstanding request
+ * for changes outranks any number of approvals.
+ */
+export async function recomputeReviewDecision(ctx: Ctx, pr: PR): Promise<string> {
+  const reviews = await ctx.db
+    .query("reviews")
+    .withIndex("by_pull_request", (q: any) => q.eq("pull_request_id", pr._id))
+    .collect();
+
+  const latest = new Map<string, any>();
+  for (const review of reviews) {
+    if (review.state !== "approved" && review.state !== "changes_requested") continue;
+    const who = review.author_github_username ?? String(review.reviewer_user_id ?? "");
+    if (!who) continue;
+    const prior = latest.get(who);
+    if (!prior || (review.submitted_at ?? 0) >= (prior.submitted_at ?? 0)) latest.set(who, review);
+  }
+
+  const verdicts = [...latest.values()].map((r) => r.state);
+  if (verdicts.includes("changes_requested")) return "changes_requested";
+  if (verdicts.includes("approved")) return "approved";
+  if ((pr.requested_reviewers ?? []).length > 0) return "review_required";
+  return "none";
+}
+
+/**
+ * Mirror the pull request a session shepherds onto its conversation row, so the
+ * inbox card and the thread panel can show it without a second query. An open
+ * PR wins over a merged one; when the session shepherds nothing, the field is
+ * cleared rather than left describing a PR that closed last week.
+ */
+export async function refreshConversationPrStatus(
+  ctx: Ctx,
+  conversationId: Id<"conversations">,
+): Promise<void> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) return;
+
+  const prs: PR[] = await ctx.db
+    .query("pull_requests")
+    .withIndex("by_shepherd_conversation", (q: any) => q.eq("shepherd_conversation_id", conversationId))
+    .collect();
+
+  const open = prs.filter((pr) => pr.state === "open").sort((a, b) => b.updated_at - a.updated_at);
+  const rest = prs.sort((a, b) => b.updated_at - a.updated_at);
+  const chosen = open[0] ?? rest[0];
+
+  if (!chosen) {
+    if (conversation.pr_status) await ctx.db.patch(conversationId, { pr_status: undefined });
+    return;
+  }
+
+  const next = {
+    pr_id: chosen._id,
+    repository: chosen.repository,
+    number: chosen.number,
+    title: chosen.title,
+    state: chosen.shepherd_state ?? foldShepherdState(chosen),
+    at: Date.now(),
+  };
+  const current = conversation.pr_status;
+  const same =
+    current &&
+    String(current.pr_id) === String(next.pr_id) &&
+    current.state === next.state &&
+    current.title === next.title;
+  if (same) return;
+
+  await ctx.db.patch(conversationId, { pr_status: next });
+}
+
+// ── The wake prompt ──
+
+export type ReviewLine = {
+  author: string;
+  state: string;
+  body?: string;
+  url?: string;
+};
+
+export type CommentLine = {
+  author: string;
+  file_path?: string;
+  line_number?: number;
+  content: string;
+  url?: string;
+};
+
+export type WakePromptInput = {
+  pr: {
+    number: number;
+    title: string;
+    repository: string;
+    state?: string;
+    head_ref?: string;
+    base_ref?: string;
+    head_sha?: string;
+    draft?: boolean;
+    behind_by?: number;
+    mergeable?: boolean | null;
+    mergeable_state?: string;
+    review_decision?: string;
+    requested_reviewers?: string[];
+    checks?: Array<{ name: string; status: string; conclusion?: string; url?: string }>;
+    shepherd_state?: string;
+  };
+  reviews?: ReviewLine[];
+  comments?: CommentLine[];
+  tasks?: Array<{ short_id: string; title: string }>;
+  reason: string;
+  detail?: string;
+  /** Reasons that also piled up since the last delivered wake, if any. */
+  other_reasons?: string[];
+};
+
+/** Plain English for each wake reason, so the agent reads a sentence not a key. */
+const REASON_TEXT: Record<string, string> = {
+  bound: "you were put in charge of this pull request",
+  review_comment_created: "a reviewer left a comment on the code",
+  review_submitted: "a reviewer submitted a review",
+  review_requested: "a review was requested",
+  check_failed: "a check failed",
+  changes_requested: "a reviewer asked for changes",
+  checks_green: "the checks went green",
+  behind: "the base branch moved ahead of this one",
+  conflict: "the branch no longer merges cleanly",
+  ready: "the branch merges cleanly again",
+  synchronize: "new commits were pushed to the branch",
+  opened: "the pull request was opened",
+  merged: "the pull request merged",
+  closed: "the pull request was closed without merging",
+};
+
+/**
+ * Which reason leads the prompt when several piled up.
+ *
+ * Events arrive in the order GitHub happens to send them, and the last one is
+ * rarely the one that matters most: a wake that says "the checks went green"
+ * while the branch is in conflict points the shepherd at the wrong problem.
+ * Most urgent first, and everything the agent can still act on ranks above
+ * news it can only acknowledge.
+ */
+const WAKE_SEVERITY = [
+  "conflict",
+  "check_failed",
+  "changes_requested",
+  "behind",
+  "review_comment_created",
+  "review_requested",
+  "review_submitted",
+  "checks_green",
+  "ready",
+];
+
+// The pull request is over. Nothing else is worth leading with, and if both
+// somehow arrive the later one is the truth.
+const TERMINAL_REASONS = new Set(["merged", "closed"]);
+const QUIET_REASONS = new Set(["bound", "opened", "behind", "checks_green", "ready", "synchronize", "review_requested"]);
+
+function isCurrentWakeReason(pr: PR, reason: string): boolean {
+  if (QUIET_REASONS.has(reason) || TERMINAL_REASONS.has(reason)) return false;
+  if (reason === "check_failed") return pr.checks_state === "failure";
+  if (reason === "conflict") return pr.mergeable === false || pr.mergeable_state === "dirty";
+  if (reason === "changes_requested") return pr.review_decision === "changes_requested";
+  return true;
+}
+
+/** The headline reason, plus the rest in the order they happened. */
+export function pickWakeReason(reasons: string[]): { headline: string; others: string[] } {
+  const seen = reasons.filter(Boolean);
+  if (seen.length === 0) return { headline: "bound", others: [] };
+
+  const terminal = [...seen].reverse().find((r) => TERMINAL_REASONS.has(r));
+  const headline =
+    terminal ??
+    [...seen].sort((a, b) => {
+      const ai = WAKE_SEVERITY.indexOf(a);
+      const bi = WAKE_SEVERITY.indexOf(b);
+      // A reason with no ranking is ordinary news; it never outranks a ranked one.
+      return (ai < 0 ? WAKE_SEVERITY.length : ai) - (bi < 0 ? WAKE_SEVERITY.length : bi);
+    })[0];
+
+  const others: string[] = [];
+  for (const r of seen) if (r !== headline && !others.includes(r)) others.push(r);
+  return { headline, others };
+}
+
+function truncate(text: string, max: number): string {
+  const clean = (text ?? "").trim().replace(/\s+/g, " ");
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
+/**
+ * The whole briefing the shepherd agent reads on a wake: where the PR stands,
+ * what is outstanding, and what it is expected to do about it.
+ *
+ * Pure, so the content is testable without a database, and rebuilt on every
+ * wake so it can never describe a state the PR has already left.
+ */
+export function buildWakePrompt(input: WakePromptInput): string {
+  const { pr } = input;
+  const url = prUrl(pr.repository, pr.number);
+  const state = pr.shepherd_state ?? foldShepherdState(pr);
+  const lines: string[] = [];
+
+  lines.push(`# Shepherding ${pr.repository} PR #${pr.number}: ${pr.title}`);
+  lines.push("");
+  lines.push(url);
+  const branch = pr.head_ref && pr.base_ref ? `${pr.head_ref} into ${pr.base_ref}` : pr.head_ref ?? "";
+  const head = pr.head_sha ? ` at ${shortSha(pr.head_sha)}` : "";
+  if (branch) lines.push(`${branch}${head}${pr.draft ? " (draft)" : ""}`);
+  lines.push(`State: ${state}`);
+  lines.push(`Woken because ${REASON_TEXT[input.reason] ?? input.reason}${input.detail ? `: ${input.detail}` : "."}`);
+  const others = input.other_reasons ?? [];
+  if (others.length) {
+    lines.push(`Also since the last wake: ${others.map((r) => REASON_TEXT[r] ?? r).join("; ")}.`);
+  }
+
+  const failing = (pr.checks ?? []).filter(
+    (c) => c.status === "completed" && c.conclusion && !["success", "neutral", "skipped"].includes(c.conclusion),
+  );
+  if (failing.length) {
+    lines.push("");
+    lines.push("## Failing checks");
+    for (const check of failing.slice(0, 12)) {
+      lines.push(`- ${checkLabel(check)}: ${check.conclusion}${check.url ? ` — ${check.url}` : ""}`);
+    }
+  }
+
+  const comments = input.comments ?? [];
+  if (comments.length) {
+    lines.push("");
+    lines.push("## Unresolved review comments");
+    for (const comment of comments.slice(0, 25)) {
+      const where = comment.file_path
+        ? ` on ${comment.file_path}${comment.line_number ? `:${comment.line_number}` : ""}`
+        : "";
+      lines.push(`- ${comment.author}${where}: ${truncate(comment.content, 400)}${comment.url ? ` — ${comment.url}` : ""}`);
+    }
+  }
+
+  const reviews = input.reviews ?? [];
+  if (reviews.length) {
+    lines.push("");
+    lines.push("## Reviews");
+    for (const review of reviews.slice(0, 15)) {
+      const body = review.body ? `: ${truncate(review.body, 300)}` : "";
+      lines.push(`- ${review.author} ${review.state}${body}`);
+    }
+  }
+
+  const decision = pr.review_decision && pr.review_decision !== "none" ? pr.review_decision : null;
+  const requested = pr.requested_reviewers ?? [];
+  if (decision || requested.length) {
+    lines.push("");
+    if (decision) lines.push(`Review decision: ${decision}.`);
+    if (requested.length) lines.push(`Requested reviewers: ${requested.join(", ")}.`);
+  }
+
+  if ((pr.behind_by ?? 0) > 0 || pr.mergeable === false || pr.mergeable_state === "dirty") {
+    lines.push("");
+    lines.push("## Merge state");
+    if ((pr.behind_by ?? 0) > 0) {
+      lines.push(`${pr.behind_by} commit${pr.behind_by === 1 ? "" : "s"} behind ${pr.base_ref ?? "the base branch"}.`);
+    }
+    if (pr.mergeable === false || pr.mergeable_state === "dirty") {
+      lines.push("The branch does not merge cleanly.");
+    } else if (pr.mergeable_state) {
+      lines.push(`GitHub reports mergeable_state ${pr.mergeable_state}.`);
+    }
+  }
+
+  const tasks = input.tasks ?? [];
+  if (tasks.length) {
+    lines.push("");
+    lines.push("## Linked work");
+    // Why: a linked task's title reaches the shepherd's wake prompt, and an
+    // imported one was written by whoever opened the issue (ct-49593).
+    for (const task of tasks.slice(0, 10)) lines.push(`- ${task.short_id} ${inlineForeignText(task.title)}`);
+  }
+
+  lines.push("");
+  lines.push("## Your job");
+  if (input.reason === "merged") {
+    lines.push("This pull request has merged. Save the verified outcome and retire its trigger.");
+    lines.push("Do not close linked tasks unless their own acceptance criteria are verified complete.");
+  } else if (input.reason === "closed") {
+    lines.push("This pull request was closed without merging. Say what happened and what remains,");
+    lines.push("then end with `cast state --status done` unless something still needs a person.");
+  } else {
+    lines.push("You own this pull request until it merges. Deal with everything outstanding above,");
+    lines.push("in one pass: fix the failing checks, answer the review comments, and push to the same");
+    lines.push("branch. When you have addressed a reviewer's point, say so on GitHub in reply to");
+    lines.push("their comment (`gh` or `cast pr comment`) so the thread shows the resolution rather");
+    lines.push("than going quiet. Being behind alone is not a reason to rebase or push. Update the");
+    lines.push("branch only for a verified merge blocker or an explicit request; resolve real conflicts.");
+    lines.push("Do not merge the pull request unless a human asked");
+    lines.push("you to. Keep `cast state` current so the card says where the PR actually stands.");
+  }
+
+  return lines.join("\n");
+}
+
+// ── The standing trigger ──
+
+/**
+ * The pull request's standing trigger, created on first need.
+ *
+ * It is an event trigger with nothing that fires it automatically: `wake` below
+ * is the only thing that ever sets its run_at. The event filter exists so the
+ * row is addressable and so a person can see, in their trigger list, which pull
+ * request it belongs to.
+ */
+export async function ensureShepherdTask(ctx: Ctx, pr: PR): Promise<Id<"agent_tasks"> | null> {
+  if (!pr.shepherd_enabled || !pr.shepherd_conversation_id || pr.state !== "open") return null;
+
+  if (pr.shepherd_task_id) {
+    const existing = await ctx.db.get(pr.shepherd_task_id);
+    if (existing) {
+      return existing.status === "scheduled" || existing.status === "running" ? pr.shepherd_task_id : null;
+    }
+  }
+
+  const conversation = await ctx.db.get(pr.shepherd_conversation_id);
+  if (!conversation) return null;
+
+  const { id } = await insertTask(ctx as any, conversation.user_id, {
+    title: `Shepherd PR #${pr.number}`,
+    prompt: buildWakePrompt({ pr, reason: "bound" }),
+    originating_conversation_id: String(pr.shepherd_conversation_id),
+    project_path: conversation.project_path,
+    schedule_type: "event",
+    event_filter: { event_type: "pr_shepherd", repository: pr.repository, pr_number: pr.number },
+    mode: "apply",
+    max_runtime_ms: SHEPHERD_MAX_RUNTIME_MS,
+  });
+
+  await ctx.db.patch(pr._id, { shepherd_task_id: id });
+  return id;
+}
+
+/** Stand the trigger down. Used when the PR ends and when a person turns it off. */
+export async function retireShepherdTask(ctx: Ctx, pr: PR, summary?: string): Promise<void> {
+  if (!pr.shepherd_task_id) return;
+  const task = await ctx.db.get(pr.shepherd_task_id);
+  if (!task || task.status === "completed" || task.status === "cancelled") return;
+  await patchTask(ctx, task, {
+    status: "completed", run_at: undefined, lease_holder: undefined, lease_expires_at: undefined,
+    ...(summary ? { last_run_summary: summary } : {}),
+  });
+}
+
+/** What the agent still has to answer for: unresolved comments and real reviews. */
+/**
+ * The review threads still waiting on the shepherd.
+ *
+ * A review comment is not a note, it is one turn in a conversation, so asking
+ * "is this comment resolved" is the wrong question. It reads every reply the
+ * session already sent as another thing to answer, because the session replies
+ * through gh as the pull request author and that sets no flag anywhere.
+ *
+ * A thread is outstanding when nobody has resolved it AND the last word in it
+ * is not the author's. The comment shown is the one that OPENED the thread,
+ * because that is the ask; the reply that answered it is not news.
+ */
+function outstandingThreads(
+  comments: any[],
+  prAuthor: string | undefined,
+): Array<{ author: string; file_path?: string; line_number?: number; content: string; url?: string }> {
+  const threads = new Map<string, any[]>();
+  for (const c of comments) {
+    // in_reply_to_id names the comment that opened the thread; a comment that
+    // opened one is its own root. Rows from before threads were recorded have
+    // neither and stand alone, which is how they behaved before.
+    const root = String(c.github_in_reply_to_id ?? c.github_comment_id ?? c._id);
+    const bucket = threads.get(root);
+    if (bucket) bucket.push(c);
+    else threads.set(root, [c]);
+  }
+
+  // A reply we mirrored to GitHub is the author speaking, whatever GitHub calls
+  // the account it went out under.
+  const isAuthor = (c: any) =>
+    !!c.codecast_origin || (!!prAuthor && c.author_github_username === prAuthor);
+
+  const out: any[] = [];
+  for (const bucket of threads.values()) {
+    const ordered = [...bucket].sort((a, b) => a.created_at - b.created_at);
+    if (ordered.some((c) => c.resolved || c.resolved_at)) continue;
+    if (isAuthor(ordered[ordered.length - 1])) continue;
+
+    // The ask is the first thing in the thread that the author did not write.
+    const ask = ordered.find((c) => !isAuthor(c)) ?? ordered[0];
+    out.push({
+      author: ask.author_github_username ?? "someone",
+      file_path: ask.file_path,
+      line_number: ask.line_number,
+      content: ask.content,
+      url: ask.html_url,
+      created_at: ask.created_at,
+    });
+  }
+
+  return out
+    .sort((a, b) => a.created_at - b.created_at)
+    .map(({ created_at: _drop, ...rest }) => rest);
+}
+
+async function gatherWakeContext(ctx: Ctx, pr: PR) {
+  // A note still pending in someone's review has not been said; the agent
+  // hears it when the review goes out, not before.
+  const comments = (await ctx.db
+    .query("review_comments")
+    .withIndex("by_pull_request", (q: any) => q.eq("pull_request_id", pr._id))
+    .collect()).filter((c: any) => !c.pending_review);
+
+  const reviews = await ctx.db
+    .query("reviews")
+    .withIndex("by_pull_request", (q: any) => q.eq("pull_request_id", pr._id))
+    .collect();
+
+  const tasks: Array<{ short_id: string; title: string }> = [];
+  for (const taskId of pr.task_ids ?? []) {
+    const task = await ctx.db.get(taskId);
+    if (task) tasks.push({ short_id: task.short_id, title: task.title });
+  }
+
+  return {
+    comments: outstandingThreads(comments, pr.author_github_username),
+    reviews: reviews
+      .sort((a: any, b: any) => (a.submitted_at ?? 0) - (b.submitted_at ?? 0))
+      .map((r: any) => ({
+        author: r.author_github_username ?? "a reviewer",
+        state: r.state,
+        body: r.body,
+        url: r.html_url,
+      })),
+    tasks,
+  };
+}
+
+/**
+ * Hand the shepherd a fresh briefing and let it run.
+ *
+ * A trigger that is mid-run cannot be re-prompted without losing the run, so
+ * the wake retries a few times instead. Rebuilding the prompt on the retry is
+ * the point: what lands is what is true when the agent is free, not what was
+ * true when the webhook arrived.
+ */
+export async function wakeShepherd(
+  ctx: Ctx,
+  prId: Id<"pull_requests">,
+  reason: string,
+  detail?: string,
+  attempt = 0,
+): Promise<{ woken: boolean; reason?: string }> {
+  const pr = (await ctx.db.get(prId)) as PR | null;
+  if (!pr) return { woken: false, reason: "no_pr" };
+  if (!pr.shepherd_enabled || !pr.shepherd_conversation_id) return { woken: false, reason: "disabled" };
+  if (pr.state !== "open") return { woken: false, reason: "terminal" };
+  if (QUIET_REASONS.has(reason) || TERMINAL_REASONS.has(reason)) return { woken: false, reason: "not_actionable" };
+
+  const taskId = await ensureShepherdTask(ctx, pr);
+  if (!taskId) return { woken: false, reason: "no_task" };
+
+  const task = await ctx.db.get(taskId);
+  if (!task) return { woken: false, reason: "no_task" };
+
+  // Remember this reason whether or not the wake lands now. A shepherd that is
+  // mid-run collects several before it is free, and the newest is rarely the
+  // most urgent one to lead with.
+  const pending = (pr.shepherd_pending_reasons ?? []).filter((r) => isCurrentWakeReason(pr, r));
+  if (!pending.includes(reason) && (attempt === 0 || isCurrentWakeReason(pr, reason))) pending.push(reason);
+  if (pending.length === 0) {
+    await ctx.db.patch(prId, { shepherd_pending_reasons: [] });
+    return { woken: false, reason: "not_actionable" };
+  }
+
+  if (task.status === "running") {
+    await ctx.db.patch(prId, { shepherd_pending_reasons: pending });
+    if (attempt >= MAX_WAKE_RETRIES) return { woken: false, reason: "still_running" };
+    await ctx.scheduler?.runAfter(WAKE_RETRY_MS, internal.prShepherd.wake, {
+      pr_id: prId,
+      reason,
+      detail,
+      attempt: attempt + 1,
+    });
+    return { woken: false, reason: "retry_scheduled" };
+  }
+
+  const { headline, others } = pickWakeReason(pending);
+
+  // Re-read immediately before building. Everything above may have written to
+  // the row, and a prompt that describes a head commit the branch has already
+  // moved past sends the shepherd after the wrong commit.
+  const fresh = ((await ctx.db.get(prId)) as PR | null) ?? pr;
+  const context = await gatherWakeContext(ctx, fresh);
+  const prompt = buildWakePrompt({
+    pr: fresh,
+    ...context,
+    reason: headline,
+    // The detail belongs to the reason that was passed in. It only describes
+    // the headline when they are the same event.
+    detail: headline === reason ? detail : undefined,
+    other_reasons: others,
+  });
+
+  await patchTask(ctx, task, {
+    prompt,
+    status: "scheduled",
+    run_at: Date.now(),
+  });
+
+  await ctx.db.patch(prId, {
+    shepherd_last_wake_at: Date.now(),
+    shepherd_last_wake_reason: headline,
+    shepherd_wake_count: (pr.shepherd_wake_count ?? 0) + 1,
+    // Handed over, so the slate is clean for whatever arrives next.
+    shepherd_pending_reasons: [],
+  });
+
+  await refreshConversationPrStatus(ctx, pr.shepherd_conversation_id);
+  return { woken: true };
+}
+
+export const wake = internalMutation({
+  args: {
+    pr_id: v.id("pull_requests"),
+    reason: v.string(),
+    detail: v.optional(v.string()),
+    attempt: v.optional(v.number()),
+    // A review's GitHub id. When codecast already handed that review to the
+    // owning session as a message, this wake has nothing left to say.
+    unless_delivered_review: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    if (args.unless_delivered_review != null) {
+      const review = await ctx.db
+        .query("reviews")
+        .withIndex("by_github_review_id", (q) => q.eq("github_review_id", args.unless_delivered_review))
+        .first();
+      if (review?.session_delivered_at) return { woken: false, reason: "delivered_directly" };
+    }
+    return await wakeShepherd(ctx, args.pr_id, args.reason, args.detail, args.attempt ?? 0);
+  },
+});
+
+/**
+ * Stand the trigger down after the final run has had its chance.
+ *
+ * Called on a delay from the merge/close wake so the agent still gets to close
+ * the work out; it waits again rather than cutting a run short.
+ */
+export const retire = internalMutation({
+  args: {
+    pr_id: v.id("pull_requests"),
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<{ retired: boolean }> => {
+    const pr = await ctx.db.get(args.pr_id);
+    if (!pr?.shepherd_task_id) return { retired: false };
+    if (pr.state === "open" && pr.shepherd_enabled) return { retired: false };
+    const task = await ctx.db.get(pr.shepherd_task_id);
+    if (!task || task.status === "completed") return { retired: false };
+
+    const attempt = args.attempt ?? 0;
+    if (task.status === "running" && attempt < MAX_RETIRE_ATTEMPTS) {
+      await ctx.scheduler.runAfter(RETIRE_RETRY_MS, internal.prShepherd.retire, {
+        pr_id: args.pr_id,
+        attempt: attempt + 1,
+      });
+      return { retired: false };
+    }
+
+    await retireShepherdTask(ctx, pr);
+    return { retired: true };
+  },
+});
+
+/** Bind a pull request to the session that will shepherd it. */
+export async function bindShepherd(
+  ctx: Ctx,
+  pr: PR,
+  conversationId: Id<"conversations"> | undefined,
+  enabled: boolean,
+): Promise<void> {
+  const patch: Record<string, any> = { shepherd_enabled: enabled && pr.state === "open", shepherd_pending_reasons: [] };
+  if (enabled && pr.shepherd_task_id) {
+    const task = await ctx.db.get(pr.shepherd_task_id);
+    if (task && task.status !== "scheduled" && task.status !== "running") patch.shepherd_task_id = undefined;
+  }
+  if (conversationId) patch.shepherd_conversation_id = conversationId;
+  await ctx.db.patch(pr._id, patch);
+
+  const updated = (await ctx.db.get(pr._id)) as PR;
+  if (updated.shepherd_enabled && updated.shepherd_conversation_id) {
+    await ensureShepherdTask(ctx, updated);
+  } else {
+    await retireShepherdTask(ctx, updated);
+  }
+  if (updated.shepherd_conversation_id) {
+    await refreshConversationPrStatus(ctx, updated.shepherd_conversation_id);
+  }
+}
+
+export const bindPRToConversation = internalMutation({
+  args: {
+    pr_id: v.id("pull_requests"),
+    conversation_id: v.id("conversations"),
+    enabled: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const pr = await ctx.db.get(args.pr_id);
+    if (!pr) return { ok: false };
+    if (args.enabled === undefined) {
+      await patchPullRequest(ctx, pr._id, {
+        shepherd_conversation_id: args.conversation_id,
+        shepherd_enabled: pr.shepherd_enabled ?? false,
+      });
+    } else {
+      await bindShepherd(ctx, pr, args.conversation_id, args.enabled);
+    }
+    return { ok: true };
+  },
+});
+
+export const setShepherd = mutation({
+  args: {
+    pr_id: v.id("pull_requests"),
+    conversation_id: v.optional(v.id("conversations")),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const pr = await ctx.db.get(args.pr_id);
+    if (!pr || !(await canAccessPullRequest(ctx, userId, pr))) throw new Error("Pull request not found");
+
+    if (args.conversation_id) {
+      const conversation = await ctx.db.get(args.conversation_id);
+      if (!conversation || !(await canAccessConversation(ctx, userId, conversation))) {
+        throw new Error("Conversation not found");
+      }
+    }
+
+    await bindShepherd(ctx, pr, args.conversation_id, args.enabled);
+    return { ok: true };
+  },
+});
+
+export const getPR = internalQuery({
+  args: { pr_id: v.id("pull_requests") },
+  handler: async (ctx, args) => await ctx.db.get(args.pr_id),
+});
+
+// ── Merge state ──
+//
+// GitHub computes "does this still merge" lazily: the first read after a push
+// answers `mergeable: null` and kicks off the computation. So this runs on a
+// delay, and re-runs itself a few times while the answer is still null.
+
+export const applyMergeState = internalMutation({
+  args: {
+    pr_id: v.id("pull_requests"),
+    mergeable: v.optional(v.union(v.boolean(), v.null())),
+    mergeable_state: v.optional(v.string()),
+    head_sha: v.optional(v.string()),
+    base_sha: v.optional(v.string()),
+    draft: v.optional(v.boolean()),
+    requested_reviewers: v.optional(v.array(v.string())),
+    behind_by: v.optional(v.number()),
+    state: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ retry: boolean }> => {
+    const before = await ctx.db.get(args.pr_id);
+    if (!before) return { retry: false };
+
+    // `mergeable: null` is not an answer, it is "ask again in a moment", and
+    // GitHub gives it after every push to the base branch. Writing it down
+    // used to drop a conflicted PR to "behind" (the fold only calls conflicts
+    // on a definite `false`), and the retry 15s later put it back, so every
+    // commit to main wrote a pr_behind/pr_conflict pair into the timeline.
+    // Each field is written only when it carries an answer, so an unknown
+    // never overwrites what GitHub last told us.
+    const patch: Record<string, any> = { merge_state_checked_at: Date.now() };
+    if (args.mergeable === true || args.mergeable === false) patch.mergeable = args.mergeable;
+    if (args.mergeable_state !== undefined && args.mergeable_state !== "unknown") {
+      patch.mergeable_state = args.mergeable_state;
+    }
+    if (args.head_sha) patch.head_sha = args.head_sha;
+    if (args.base_sha) patch.base_sha = args.base_sha;
+    if (args.draft !== undefined) patch.draft = args.draft;
+    if (args.requested_reviewers) patch.requested_reviewers = args.requested_reviewers;
+    if (args.behind_by !== undefined) patch.behind_by = args.behind_by;
+
+    const result = await patchPullRequest(ctx, args.pr_id, patch);
+    if (!result) return { retry: false };
+
+    // Only a real change is worth an event or a wake: this refresh runs on
+    // every push and every merge-state poll, and most of those change nothing.
+    if (result.stateChanged) {
+      const state = result.pr.shepherd_state;
+      const eventKind =
+        state === "conflicts" ? "pr_conflict" : state === "behind" ? "pr_behind" : "pr_ready";
+      // The prompt already spells out what each state means, so a detail that
+      // repeats it reads as a stutter ("...merges cleanly: ...merges cleanly").
+      // Say something the sentence does not already carry, or say nothing.
+      const detail =
+        state === "conflicts"
+          ? result.pr.base_ref
+            ? `against ${result.pr.base_ref}`
+            : undefined
+          : state === "behind"
+            ? `${result.pr.behind_by ?? 0} commit${result.pr.behind_by === 1 ? "" : "s"} behind ${result.pr.base_ref ?? "the base branch"}`
+            : undefined;
+
+      if (state === "conflicts" || state === "behind" || result.previousState === "conflicts" || result.previousState === "behind") {
+        await recordExternalEvent(ctx, {
+          source: "github",
+          team_id: result.pr.team_id,
+          repository: result.pr.repository,
+          kind: eventKind,
+          title:
+            state === "conflicts"
+              ? `PR #${result.pr.number} has conflicts`
+              : state === "behind"
+                ? `PR #${result.pr.number} is behind ${result.pr.base_ref ?? "its base"}`
+                : `PR #${result.pr.number} merges cleanly again`,
+          url: prUrl(result.pr.repository, result.pr.number),
+          pr_id: result.pr._id,
+          pr_number: result.pr.number,
+          branch: result.pr.head_ref,
+          conversation_id: result.pr.shepherd_conversation_id,
+          task_ids: result.pr.task_ids,
+          meta: {
+            behind_by: result.pr.behind_by,
+            mergeable_state: result.pr.mergeable_state,
+            shepherd_state: state,
+          },
+          dedupe_key: `merge_state:${result.pr._id}:${state}:${result.pr.head_sha ?? ""}:${result.pr.behind_by ?? 0}`,
+        });
+
+        await firePrTrigger(ctx, eventKind, result.pr);
+
+        await wakeShepherd(
+          ctx,
+          result.pr._id,
+          state === "conflicts" ? "conflict" : state === "behind" ? "behind" : "ready",
+          detail,
+        );
+      }
+    }
+
+    return { retry: args.mergeable === null || args.mergeable === undefined };
+  },
+});
+
+type MergeStateResult = { ok: boolean; reason?: string; retry?: boolean };
+
+/** Ask GitHub for one pull request's merge state and write it down. */
+async function fetchMergeState(
+  ctx: any,
+  prId: Id<"pull_requests">,
+  tokenFor: (pr: PR) => Promise<string | null>,
+): Promise<MergeStateResult> {
+  const pr: PR | null = await ctx.runQuery(internal.prShepherd.getPR, { pr_id: prId });
+  if (!pr) return { ok: false, reason: "no_pr" };
+  if (pr.state !== "open") return { ok: false, reason: "not_open" };
+
+  const token = await tokenFor(pr);
+  if (!token) return { ok: false, reason: "no_token" };
+
+  const [owner, repo] = pr.repository.split("/");
+  const headers = {
+    Authorization: `Bearer ${token}`,
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+  };
+
+  const response = await fetch(`${GITHUB_API_BASE}/repos/${owner}/${repo}/pulls/${pr.number}`, { headers });
+  if (!response.ok) {
+    return { ok: false, reason: `github ${response.status}` };
+  }
+  const data = await response.json();
+
+  let behindBy: number | undefined;
+  const baseRef = data.base?.ref;
+  const headRef = data.head?.ref;
+  if (baseRef && headRef) {
+    const compare = await fetch(
+      `${GITHUB_API_BASE}/repos/${owner}/${repo}/compare/${encodeURIComponent(baseRef)}...${encodeURIComponent(headRef)}`,
+      { headers },
+    );
+    if (compare.ok) {
+      const compareData = await compare.json();
+      behindBy = compareData.behind_by;
+    }
+  }
+
+  const result = await ctx.runMutation(internal.prShepherd.applyMergeState, {
+    pr_id: prId,
+    mergeable: data.mergeable ?? null,
+    mergeable_state: data.mergeable_state,
+    head_sha: data.head?.sha,
+    base_sha: data.base?.sha,
+    draft: !!data.draft,
+    requested_reviewers: (data.requested_reviewers ?? []).map((r: any) => r.login),
+    behind_by: behindBy,
+  });
+  return { ok: true, retry: result.retry };
+}
+
+export const refreshMergeState = internalAction({
+  args: {
+    pr_id: v.id("pull_requests"),
+    attempt: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<MergeStateResult> => {
+    const attempt = args.attempt ?? 0;
+    const result = await fetchMergeState(ctx, args.pr_id, (pr) =>
+      ctx.runAction(internal.prShepherd.tokenForPR, { pr_id: pr._id }),
+    );
+    if (result.retry && attempt < MAX_MERGE_STATE_ATTEMPTS) {
+      await ctx.scheduler.runAfter(mergeStateRetryMs(attempt), internal.prShepherd.refreshMergeState, {
+        pr_id: args.pr_id,
+        attempt: attempt + 1,
+      });
+    }
+    return result;
+  },
+});
+
+// A push to a base branch touches every open PR aimed at it, and a busy repo
+// has hundreds. One job per PR filled the scheduler's ten slots with GitHub
+// round trips for minutes after each merge to main (littlebird, ~212 PRs, ~425
+// jobs a push), so every other scheduled write in prod waited behind them.
+// A batch holds one slot and runs a few requests at a time.
+const MERGE_STATE_BATCH_SIZE = 100;
+const MERGE_STATE_BATCH_CONCURRENCY = 4;
+
+/** Schedule merge state refreshes for many pull requests at once. */
+export async function scheduleMergeStateRefreshes(
+  ctx: { scheduler: any },
+  prIds: Id<"pull_requests">[],
+  delayMs: number,
+): Promise<void> {
+  for (let i = 0; i < prIds.length; i += MERGE_STATE_BATCH_SIZE) {
+    await ctx.scheduler.runAfter(delayMs, internal.prShepherd.refreshMergeStates, {
+      pr_ids: prIds.slice(i, i + MERGE_STATE_BATCH_SIZE),
+      attempt: 0,
+    });
+  }
+}
+
+export const refreshMergeStates = internalAction({
+  args: {
+    pr_ids: v.array(v.id("pull_requests")),
+    attempt: v.number(),
+  },
+  handler: async (ctx, args): Promise<void> => {
+    // Every PR in a batch shares a repository, so a token found for one PR
+    // reads the rest of its team's rows. A miss is asked again per PR: the
+    // fallback looks at each PR's own linked sessions.
+    const tokens = new Map<string, Promise<string | null>>();
+    const tokenFor = async (pr: PR): Promise<string | null> => {
+      const key = String(pr.team_id ?? "");
+      const known = await tokens.get(key);
+      if (known) return known;
+      const asked = ctx.runAction(internal.prShepherd.tokenForPR, { pr_id: pr._id });
+      if (!tokens.has(key)) tokens.set(key, asked);
+      return await asked;
+    };
+
+    const queue = [...args.pr_ids];
+    const unanswered: Id<"pull_requests">[] = [];
+    const worker = async () => {
+      for (let id = queue.shift(); id; id = queue.shift()) {
+        try {
+          const result = await fetchMergeState(ctx, id, tokenFor);
+          if (result.retry) unanswered.push(id);
+        } catch (error) {
+          console.error(`[prShepherd] merge state refresh failed for ${id}:`, error);
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: MERGE_STATE_BATCH_CONCURRENCY }, worker));
+
+    if (unanswered.length > 0 && args.attempt < MAX_MERGE_STATE_ATTEMPTS) {
+      await ctx.scheduler.runAfter(mergeStateRetryMs(args.attempt), internal.prShepherd.refreshMergeStates, {
+        pr_ids: unanswered,
+        attempt: args.attempt + 1,
+      });
+    }
+  },
+});
+
+/**
+ * A repository token for this pull request. The App installation is the real
+ * credential; a linked user's token is the fallback for repositories installed
+ * before the App existed.
+ */
+export const tokenForPR = internalAction({
+  args: { pr_id: v.id("pull_requests") },
+  handler: async (ctx, args): Promise<string | null> => {
+    const pr = await ctx.runQuery(internal.prShepherd.getPR, { pr_id: args.pr_id });
+    if (!pr) return null;
+
+    const installation = await ctx.runQuery(internal.githubApp.getInstallationForRepoInTeam, {
+      repository: pr.repository,
+      team_id: pr.team_id,
+    });
+    if (installation) {
+      try {
+        const tokenResult = await ctx.runAction(internal.githubApp.getInstallationToken, {
+          installation_id: installation.installation_id,
+        });
+        return tokenResult.token;
+      } catch (error) {
+        console.error("[prShepherd] installation token failed:", error);
+      }
+    }
+
+    return await ctx.runQuery(internal.githubWebhooks.getTokenForPR, { pr_id: args.pr_id });
+  },
+});
+
+export async function closeOutShepherd(ctx: Ctx, pr: PR, reason: "merged" | "closed"): Promise<void> {
+  await ctx.db.patch(pr._id, { shepherd_enabled: false, shepherd_pending_reasons: [] });
+  await retireShepherdTask(ctx, pr,
+    `Verified ${prUrl(pr.repository, pr.number)} ${reason}; retired PR shepherding. This does not verify completion of an in-flight run or linked tasks.`);
+}

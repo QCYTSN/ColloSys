@@ -1,0 +1,64 @@
+# .codecast/line.toml: codecast's line profile (docs/architecture/line-profile.md
+# LP2). Tracked (see .gitignore), so every worktree inherits it; the shipped
+# line template reads these values and names no path of its own.
+# `cast line profile` prints the resolved profile.
+
+[line]
+project = "Codecast: Product"        # default project for signals filed here
+principles = ["docs/line/principles.md"]  # codecast's own set; the shared docs/principles.md is always read too (LP5)
+prompting = "docs/prompting.md"
+size_budget = 400                    # changed lines before a run returns to plan
+watch_days = 7
+
+# Run from the run's worktree; $vars expand in the command's own shell.
+# scripts/line.ts is codecast's side of the contract (LP4), through ./evals.
+[line.commands]
+check = "cast ws check"
+prove = "bun scripts/line.ts prove --dir $run_dir"
+eval  = "bun scripts/line.ts eval --base $default_branch --dir $run_dir"
+ship  = "bun scripts/line.ts ship --base $default_branch --tree $project_path"
+
+[line.caps]
+cards = 5                            # open cards per person, across their lines
+
+# What this repo listens to (LP3). Each finder lives where its data lives.
+[[line.finders]]
+id = "eval-drift"
+source = "evals"
+kind = ["regression", "prompt_miss"]
+fingerprint = "evals:<surface>:<gate, freeze or separated-worse>"
+runs = "./evals check --signal (packages/evals/src/signals.ts), on the eval cadence"
+
+[[line.finders]]
+id = "insight-blockers"
+source = "insight"
+kind = "bug"
+fingerprint = "insight:<session>:<blocker hash>"
+runs = "convex signals.ingestInsightBlockers, scheduled from sessionInsights when an insight names a blocker"
+
+[[line.finders]]
+id = "fix-loop"
+source = "fixloop"
+kind = "regression"
+fingerprint = "szz:<introducing sha>"
+runs = "cast line fixloop --since 7d --json, read by the fix-loop-weekly routine of the line org template, which files one signal per confirmed regression"
+
+[[line.finders]]
+id = "promises"
+source = "promise"
+kind = "bug"
+fingerprint = "promise:<review comment id>"
+runs = "convex reviewNotes.sweepOverduePromises hourly (cron 'overdue promises'): a deferred review finding past its due date and still open, once per finding"
+
+[[line.finders]]
+id = "lessons"
+source = "lesson"
+kind = "cohesion"
+fingerprint = "lesson:<task>:<note hash> (a card's Revise or Drop note), lesson:<rule slug> (cast-lessons)"
+runs = "convex lineLearn on a card answered Revise or Drop; the cast-lessons skill, weekly"
+
+# Not built: Sentry (codecast-a2, projects javascript-react and react-native).
+# No Sentry API token exists for this repo or its hosts, only DSNs, so the
+# one way to read issues is a signed-in browser tab, and a finder scraping a
+# person's tab is not one the line can rely on. A Sentry finder starts with
+# an org auth token (scope event:read) kept as a Convex env var.

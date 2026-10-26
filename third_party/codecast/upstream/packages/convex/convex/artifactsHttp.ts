@@ -1,0 +1,1313 @@
+// HTTP layer for published artifacts: everything that needs Web Crypto or
+// ctx.storage.store lives here as httpActions; http.ts just routes to these.
+// Data logic is artifacts.ts, presentation is artifactPages.ts.
+
+import { httpAction, action } from "./_generated/server";
+import { internal, api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import {
+  MAX_ARTIFACT_BYTES,
+  newSlug,
+  newSecret,
+  artifactUrl,
+  lineDiff,
+  accessSummary,
+} from "./artifacts";
+import {
+  brandArtifactHtml,
+  passwordGatePage,
+  emailGatePage,
+  expiredPage,
+  sourcePage,
+  diffPage,
+  editorPage,
+} from "./artifactPages";
+import { renderMarkdownDocument, restyleMarkdownDocument } from "./artifactMarkdown";
+import { mediaBucketFromEnv, r2Presign } from "./lib/r2";
+import { CAST_PLAYER_JS } from "./lib/castPlayer";
+import { CAST_MOTION_JS } from "./lib/castMotion";
+import { CAST_DATA_JS } from "./lib/castData";
+import { pageUsesData } from "@codecast/shared/contracts/pageData";
+import { servePageData, type ValidatedQuery } from "./pageData";
+import { HYPERFRAMES_RUNTIME, pageHasHyperframesRuntime, pageIsMotion, pageServingOrigin, pageUsesPlayer } from "@codecast/shared/contracts";
+import { injectPageTheme } from "@codecast/shared/render";
+import { sha256Hex, passwordHash, kTokenFor, eTokenFor } from "./lib/artifactGates";
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
+type ActionCtx = Parameters<Parameters<typeof httpAction>[0]>[0];
+
+// historyBySlug's return is `any` across the generated `internal` cycle, so
+// the version rows have to be named here or every `.map` is an implicit any.
+type HistoryVersion = {
+  version: number;
+  title: string;
+  size: number;
+  published_at: number;
+  edited_by: string | null;
+  storage_id: Id<"_storage">;
+  source_storage_id?: Id<"_storage">;
+  kind?: string;
+};
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json", ...CORS },
+  });
+}
+
+// Rate limit for the unauthenticated artifact endpoints (comment, unlock,
+// email-unlock). Returns a 429 to short-circuit, else null; FAILS OPEN so a
+// limiter glitch never blocks legitimate viewers.
+//
+// Keyed by SLUG, not by IP. Behind the self-hosted proxy mesh the client
+// address this deployment observes is an internal 100.64.0.x that rotates per
+// request, so an IP key silently multiplies the real limit by the number of
+// proxy instances (measured: 8 posts in a row all passed a "6/min" IP limit).
+// The slug is also the honest unit of abuse — it bounds how much a single
+// artifact can inject into its owner's session, whatever the source.
+async function slugRateLimited(
+  ctx: ActionCtx,
+  slug: string,
+  name: string,
+  max: number,
+  windowMs: number,
+): Promise<Response | null> {
+  // A malformed slug can never match a real artifact, so reject it before it
+  // becomes a rate-limit key — otherwise each garbage slug mints its own
+  // never-throttled counter row.
+  if (!/^[A-Za-z0-9]{6,32}$/.test(slug)) {
+    return new Response(JSON.stringify({ error: "Not found" }), {
+      status: 404,
+      headers: { "Content-Type": "application/json", ...CORS },
+    });
+  }
+  try {
+    const res = (await ctx.runMutation(internal.ipRateLimit.bump, {
+      key: `${name}:${slug}`,
+      max,
+      window_ms: windowMs,
+    })) as { ok: boolean; retry_after_ms?: number };
+    if (!res.ok) {
+      return new Response(JSON.stringify({ error: "Too many requests — slow down and try again shortly." }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": String(Math.ceil((res.retry_after_ms ?? windowMs) / 1000)),
+          ...CORS,
+        },
+      });
+    }
+  } catch {
+    // Fail CLOSED, unlike the auth limiter in http.ts. That one protects
+    // sign-in, where a limiter blip locking out the fleet is worse than the
+    // abuse. Here the trade runs the other way: a rejected comment or password
+    // attempt costs a legitimate viewer one retry, while failing open during
+    // contention means failing open during exactly the flood this exists to
+    // stop — and heavy write contention on one counter row is what a flood
+    // against a single artifact looks like.
+    return new Response(JSON.stringify({ error: "Temporarily unavailable — please retry." }), {
+      status: 503,
+      headers: { "Content-Type": "application/json", "Retry-After": "5", ...CORS },
+    });
+  }
+  return null;
+}
+
+export const corsPreflight = httpAction(async () => new Response(null, { status: 204, headers: CORS }));
+
+/** The public https origin of this deployment. TLS terminates at the proxy in
+ * front of us, so request.url says http — force https for any non-local host
+ * or in-page fetches get blocked as mixed content. */
+function apiBaseFrom(request: Request): string {
+  const url = new URL(request.url);
+  return /^(localhost|127\.)/.test(url.hostname) ? url.origin : `https://${url.host}`;
+}
+
+const CONTENT_TYPES: Record<string, string> = {
+  html: "text/html; charset=utf-8",
+  htm: "text/html; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  mjs: "text/javascript; charset=utf-8",
+  json: "application/json",
+  txt: "text/plain; charset=utf-8",
+  md: "text/plain; charset=utf-8",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+  ico: "image/x-icon",
+  woff: "font/woff",
+  woff2: "font/woff2",
+  ttf: "font/ttf",
+  otf: "font/otf",
+  mp4: "video/mp4",
+  webm: "video/webm",
+  mov: "video/quicktime",
+  m4v: "video/mp4",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  ogg: "audio/ogg",
+  wav: "audio/wav",
+  pdf: "application/pdf",
+  wasm: "application/wasm",
+  csv: "text/csv; charset=utf-8",
+};
+
+function contentTypeFor(path: string): string {
+  const ext = path.split(".").pop()?.toLowerCase() ?? "";
+  return CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
+
+/** Normalize a bundle-relative path; null = rejected. Blocks traversal,
+ * absolute paths, our reserved `_v/` versioned-asset namespace, and the
+ * page's `_data` route. */
+export function normalizeAssetPath(raw: string): string | null {
+  const path = raw.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/{2,}/g, "/");
+  if (!path || path.startsWith("/") || path.startsWith("_v/") || path === "_data" || path.startsWith("_data/") || path.includes("..") || path.includes("\0")) return null;
+  if (path.length > 512) return null;
+  return path;
+}
+
+function b64ToBytes(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
+
+
+/** Inject <base> right after <head> for bundle docs so relative asset URLs
+ * resolve under the slug (and under _v/N/ for past versions). */
+function injectBase(html: string, href: string): string {
+  if (/<base\s/i.test(html)) return html;
+  const headMatch = html.match(/<head[^>]*>/i);
+  if (!headMatch) return `<base href="${href}">` + html;
+  const at = html.indexOf(headMatch[0]) + headMatch[0].length;
+  return html.slice(0, at) + `<base href="${href}">` + html.slice(at);
+}
+
+type AccessInput = {
+  password?: string | null;
+  email_gate?: boolean;
+  expires_in_ms?: number | null;
+  edit_mode?: string;
+  show_session?: boolean;
+  comments?: boolean;
+};
+
+/** Plain access flags → the pre-hashed patch the mutations accept. */
+async function buildAccessSet(
+  access: AccessInput,
+  slug: string,
+  existingEditUrl: string | null,
+): Promise<Record<string, unknown>> {
+  const set: Record<string, unknown> = {};
+  if (access.password !== undefined) {
+    set.password_hash = access.password === null || access.password === "" ? null : await passwordHash(access.password, slug);
+  }
+  if (access.email_gate !== undefined) set.email_gate = !!access.email_gate;
+  if (access.expires_in_ms !== undefined) {
+    set.expires_at = access.expires_in_ms === null ? null : Date.now() + Math.max(60_000, access.expires_in_ms);
+  }
+  if (access.edit_mode !== undefined) {
+    if (!["owner", "link", "team"].includes(access.edit_mode)) throw new Error(`Invalid edit_mode "${access.edit_mode}"`);
+    set.edit_mode = access.edit_mode;
+    if (access.edit_mode === "link" && !existingEditUrl) set.edit_key = newSecret();
+  }
+  if (access.show_session !== undefined) set.hide_session = !access.show_session;
+  if (access.comments !== undefined) set.comments_disabled = !access.comments;
+  return set;
+}
+
+// ---------------------------------------------------------------------------
+// POST /cli/artifacts/publish
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Media: video and audio live on R2, not in the bundle. The CLI uploads each
+// file through a presigned URL keyed by its content hash, then publishes a
+// small pointer asset at the file's bundle path; serving that path redirects
+// to the R2 copy, which answers range requests. Keys are content hashes, so
+// the public URL is only known to someone who has the file or the page.
+// ---------------------------------------------------------------------------
+
+export const MEDIA_POINTER_TYPE = "application/vnd.cast.media+json";
+const MEDIA_EXT = /^(mp4|webm|mov|m4v|mp3|m4a|ogg|wav)$/;
+const MEDIA_MAX_BYTES = 2 * 1024 * 1024 * 1024;
+
+/** A media URL this deployment minted (so a pointer can never redirect elsewhere). */
+function isOwnMediaUrl(url: unknown): url is string {
+  const cfg = mediaBucketFromEnv();
+  if (typeof url !== "string" || !cfg) return false;
+  const prefix = `${cfg.publicBase}/media/`;
+  return url.startsWith(prefix) && /^[a-f0-9]{64}\.[a-z0-9]{2,4}$/.test(url.slice(prefix.length));
+}
+
+/** The filename a ?download= request saves a media asset as: the asked name
+ * reduced to safe characters, keeping the asset's own extension, or null when
+ * nothing was asked. Safe to put inside a quoted Content-Disposition. */
+export function mediaDownloadName(asked: string | null, assetPath: string): string | null {
+  if (asked === null) return null;
+  const ext = assetPath.match(/\.([a-z0-9]{2,4})$/i)?.[1]?.toLowerCase() ?? "bin";
+  const base = asked.replace(/\.[a-z0-9]{2,4}$/i, "").replace(/[^\w.-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "").slice(0, 80);
+  return `${base || assetPath.split("/").pop()!.replace(/\.[^.]+$/, "") || "download"}.${ext}`;
+}
+
+export const mediaSign = httpAction(async (ctx, request) => {
+  try {
+    const { api_token, sha256, size, ext } = await request.json();
+    const who = api_token ? await ctx.runQuery(internal.artifacts.verify, { api_token }) : null;
+    if (!who) return json({ error: "Unauthorized" }, 401);
+    if (typeof sha256 !== "string" || !/^[a-f0-9]{64}$/.test(sha256)) return json({ error: "Bad sha256" }, 400);
+    if (typeof ext !== "string" || !MEDIA_EXT.test(ext)) return json({ error: `Unsupported media type .${ext}` }, 400);
+    if (typeof size !== "number" || size <= 0 || size > MEDIA_MAX_BYTES) return json({ error: "Media files must be under 2GB" }, 413);
+    const cfg = mediaBucketFromEnv();
+    if (!cfg) return json({ error: "Media hosting is not configured on this server" }, 501);
+    const key = `media/${sha256}.${ext}`;
+    const sign = (method: "HEAD" | "PUT", expiresSeconds: number) => r2Presign(cfg, method, key, expiresSeconds);
+    const url = `${cfg.publicBase}/${key}`;
+    // Same bytes already stored: nothing to upload.
+    const head = await fetch(await sign("HEAD", 60), { method: "HEAD" });
+    if (head.ok && Number(head.headers.get("content-length")) === size) return json({ url, exists: true });
+    return json({ url, exists: false, upload_url: await sign("PUT", 3600), content_type: contentTypeFor(`x.${ext}`) });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Internal error" }, 500);
+  }
+});
+
+export const playerJs = httpAction(async () =>
+  new Response(CAST_PLAYER_JS, {
+    status: 200,
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" },
+  }),
+);
+
+export const motionJs = httpAction(async () =>
+  new Response(CAST_MOTION_JS, {
+    status: 200,
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" },
+  }),
+);
+
+/** A HyperFrames composition gets the pinned runtime and the motion player.
+ * The runtime goes first in <head>, so window.__timelines exists before the
+ * composition's own scripts register into it; the player is deferred. */
+export function injectMotion(html: string, apiBase: string): string {
+  if (!pageIsMotion(html) || /\/cli\/motion\.js/.test(html)) return html;
+  const runtime = pageHasHyperframesRuntime(html)
+    ? ""
+    : `<script src="${HYPERFRAMES_RUNTIME.url}" integrity="${HYPERFRAMES_RUNTIME.integrity}" crossorigin="anonymous"></script>`;
+  const tags = `${runtime}<script src="${pageServingOrigin(apiBase)}/cli/motion.js" defer></script>`;
+  const head = html.match(/<head[^>]*>/i);
+  if (!head) return tags + html;
+  const at = html.indexOf(head[0]) + head[0].length;
+  return html.slice(0, at) + tags + html.slice(at);
+}
+
+export const dataJs = httpAction(async () =>
+  new Response(CAST_DATA_JS, {
+    status: 200,
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=300", "Access-Control-Allow-Origin": "*" },
+  }),
+);
+
+/** Pages that read live data get the data runtime first in <head>, so window.cast exists before the page's own scripts; it carries the page's data URL, gate tokens included. */
+export function injectData(html: string, dataUrl: string, apiBase: string): string {
+  if (!pageUsesData(html) || /\/cli\/data\.js/.test(html)) return html;
+  const tag = `<script src="${pageServingOrigin(apiBase)}/cli/data.js" data-endpoint="${dataUrl.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></script>`;
+  const head = html.match(/<head[^>]*>/i);
+  if (!head) return tag + html;
+  const at = html.indexOf(head[0]) + head[0].length;
+  return html.slice(0, at) + tag + html.slice(at);
+}
+
+/** A page's content hash with its live query set folded in: publish and rollback agree on it. */
+async function withDataHash(contentHash: string, setJson: string): Promise<string> {
+  return setJson ? await sha256Hex(`${contentHash}\ndata:${setJson}`) : contentHash;
+}
+
+/** Pages with <cast-player> or a <video> get the player script, from the host that served them. */
+function injectPlayer(html: string, apiBase: string): string {
+  if (!pageUsesPlayer(html) || /\/cli\/player\.js/.test(html)) return html;
+  const tag = `<script src="${pageServingOrigin(apiBase)}/cli/player.js" defer></script>`;
+  const head = html.match(/<\/head>/i);
+  return head ? html.replace(/<\/head>/i, `${tag}</head>`) : tag + html;
+}
+
+export const publish = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const { api_token, content, title, source_path, force_new, kind: rawKind, files, session_ref, access, thumb_b64, task, plan, data } = body;
+    if (!api_token || !title) return json({ error: "Missing api_token or title" }, 400);
+    const kind = rawKind === "markdown" || rawKind === "bundle" ? rawKind : "html";
+    if (kind !== "bundle" && typeof content !== "string") return json({ error: "Missing content" }, 400);
+    if (kind === "bundle" && (!Array.isArray(files) || !files.length)) return json({ error: "Bundle publish needs files[]" }, 400);
+
+    const who = await ctx.runQuery(internal.artifacts.verify, { api_token });
+    if (!who) return json({ error: "Unauthorized" }, 401);
+
+    // Resolve the row this publish updates (slug is the password-hash salt, so
+    // it must exist before hashing). Create path: pre-mint slug + owner_key.
+    const existing =
+      !force_new && source_path
+        ? await ctx.runQuery(internal.artifacts.byUserPath, { user_id: who.user_id, source_path })
+        : null;
+    let slug = existing?.slug;
+    let ownerKey = existing?.owner_key;
+    if (!slug) {
+      slug = newSlug();
+      while (await ctx.runQuery(internal.artifacts.slugTaken, { slug })) slug = newSlug();
+      ownerKey = newSecret();
+    }
+
+    // --- Build the document + hash per kind ---
+    let docHtml: string;
+    let contentHash: string;
+    let sourceText: string | undefined;
+    let assetInputs: Array<{ path: string; bytes: Uint8Array; content_type: string }> = [];
+
+    if (kind === "markdown") {
+      sourceText = content as string;
+      contentHash = await sha256Hex(sourceText);
+      docHtml = await renderMarkdownDocument(sourceText, title);
+    } else if (kind === "bundle") {
+      const seen = new Set<string>();
+      let entryHtml: string | null = null;
+      let entryPath: string | null = null;
+      const htmlCandidates: string[] = [];
+      let total = 0;
+      for (const f of files) {
+        const path = typeof f?.path === "string" ? normalizeAssetPath(f.path) : null;
+        if (!path) return json({ error: `Invalid bundle path: ${JSON.stringify(f?.path ?? null)}` }, 400);
+        if (seen.has(path)) return json({ error: `Duplicate bundle path: ${path}` }, 400);
+        seen.add(path);
+        if (f.media_url !== undefined) {
+          if (!isOwnMediaUrl(f.media_url)) return json({ error: `Bad media URL for ${path}` }, 400);
+          const pointer = JSON.stringify({ url: f.media_url, size: typeof f.size === "number" ? f.size : null, type: contentTypeFor(path) });
+          assetInputs.push({ path, bytes: new TextEncoder().encode(pointer), content_type: MEDIA_POINTER_TYPE });
+          continue;
+        }
+        if (typeof f.content_b64 !== "string") return json({ error: `Missing content for ${path}` }, 400);
+        const bytes = b64ToBytes(f.content_b64);
+        total += bytes.byteLength;
+        if (/\.html?$/i.test(path)) htmlCandidates.push(path);
+        assetInputs.push({ path, bytes, content_type: contentTypeFor(path) });
+      }
+      if (total > MAX_ARTIFACT_BYTES) {
+        return json({ error: `Bundle is ${(total / 1024 / 1024).toFixed(1)}MB — the limit is 8MB total.` }, 413);
+      }
+      entryPath = htmlCandidates.includes("index.html")
+        ? "index.html"
+        : htmlCandidates.length === 1
+          ? htmlCandidates[0]
+          : null;
+      if (!entryPath) {
+        return json({ error: "Bundle needs an index.html (or exactly one .html file) as the entry page" }, 400);
+      }
+      const entry = assetInputs.find((a) => a.path === entryPath)!;
+      entryHtml = new TextDecoder().decode(entry.bytes);
+      assetInputs = assetInputs.filter((a) => a.path !== entryPath);
+      // Hash over the canonical file list so any file change bumps a version.
+      const parts: string[] = [];
+      parts.push(`${entryPath}:${await sha256Hex(entryHtml)}`);
+      for (const a of assetInputs.slice().sort((x, y) => (x.path < y.path ? -1 : 1))) {
+        const hex = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", a.bytes as unknown as ArrayBuffer)), (b) =>
+          b.toString(16).padStart(2, "0"),
+        ).join("");
+        parts.push(`${a.path}:${hex}`);
+      }
+      contentHash = await sha256Hex(parts.join("\n"));
+      docHtml = entryHtml;
+    } else {
+      docHtml = content as string;
+      contentHash = await sha256Hex(docHtml);
+    }
+
+    const size = new TextEncoder().encode(docHtml).byteLength;
+    if (size > MAX_ARTIFACT_BYTES) {
+      return json({ error: `Artifact is ${(size / 1024 / 1024).toFixed(1)}MB — the limit is 8MB. Inline fewer assets or split the page.` }, 413);
+    }
+
+    // Access flags → hashed set (needs slug).
+    let accessSet: Record<string, unknown> | undefined;
+    if (access && typeof access === "object") {
+      const existingEditUrl = existing?.edit_mode === "link" && existing?.edit_key ? "set" : null;
+      try {
+        accessSet = await buildAccessSet(access as AccessInput, slug, existingEditUrl);
+      } catch (e) {
+        return json({ error: e instanceof Error ? e.message : "Invalid access flags" }, 400);
+      }
+    }
+
+    // Live data (cast-data.json): checked against the readers and the
+    // publisher's access before anything is stored, and part of the content
+    // hash, so a changed declaration is a new version and an unchanged one
+    // stays on the fast path.
+    let dataSet: { workspace: string; queries: ValidatedQuery[] } | null = null;
+    if (data !== undefined && data !== null) {
+      const checked = await ctx.runQuery(internal.pageData.validateDeclaration, {
+        owner: who.user_id,
+        declaration: data,
+        order: data && typeof data === "object" && data.queries && typeof data.queries === "object" ? Object.keys(data.queries) : undefined,
+        conversation_id: typeof session_ref === "string" && session_ref ? session_ref : undefined,
+        project_path: typeof source_path === "string" && source_path ? source_path : undefined,
+      });
+      if (!checked.ok) return json({ error: `cast-data.json: ${checked.error}` }, 400);
+      dataSet = { workspace: checked.workspace, queries: checked.queries };
+      contentHash = await withDataHash(contentHash, JSON.stringify(dataSet));
+    }
+
+    // Unchanged fast path — common under --watch: no blob stores at all.
+    if (existing && existing.content_hash === contentHash && !thumb_b64) {
+      if (accessSet && Object.keys(accessSet).length) {
+        await ctx.runMutation(internal.artifacts.applyManage, { artifact_id: existing._id, set: accessSet });
+      }
+      const url = artifactUrl(existing.slug);
+      return json({
+        slug: existing.slug,
+        url,
+        version: existing.version,
+        updated: true,
+        unchanged: true,
+        manage_url: ownerKey ? `${url}#o=${ownerKey}` : url,
+        ...(dataSet ? { data: { workspace: dataSet.workspace, queries: dataSet.queries.length } } : {}),
+      });
+    }
+
+    // Provenance.
+    let sessionShortId: string | undefined;
+    let sessionConversationId: string | undefined;
+    if (typeof session_ref === "string" && session_ref) {
+      const resolved = await ctx.runQuery(internal.artifacts.resolveSessionRef, { ref: session_ref, user_id: who.user_id });
+      if (resolved) {
+        sessionShortId = resolved.short_id;
+        sessionConversationId = resolved.conversation_id;
+      }
+    }
+
+    // Evidence (the-line.md L6): --task / --plan, else the publishing
+    // session's active task. Resolved before the blobs so a bad ref costs
+    // nothing; a bad ref is the caller's mistake, not a server error.
+    const evidence = await ctx.runQuery(internal.artifacts.resolveEvidence, {
+      user_id: who.user_id,
+      task: typeof task === "string" && task ? task : undefined,
+      plan: typeof plan === "string" && plan ? plan : undefined,
+      session_conversation_id: sessionConversationId as never,
+    });
+    if (evidence.error || !evidence.binding) return json({ error: evidence.error ?? "Could not resolve task" }, 404);
+    const binding = evidence.binding;
+
+    // --- Store blobs ---
+    const storageId = await ctx.storage.store(new Blob([docHtml], { type: "text/html; charset=utf-8" }));
+    const sourceStorageId =
+      sourceText !== undefined
+        ? await ctx.storage.store(new Blob([sourceText], { type: "text/markdown; charset=utf-8" }))
+        : undefined;
+    const assets = [];
+    for (const a of assetInputs) {
+      const id = await ctx.storage.store(new Blob([a.bytes as unknown as ArrayBuffer], { type: a.content_type }));
+      assets.push({ path: a.path, storage_id: id, content_type: a.content_type, size: a.bytes.byteLength });
+    }
+    let thumbStorageId;
+    if (typeof thumb_b64 === "string" && thumb_b64 && thumb_b64.length < 3 * 1024 * 1024) {
+      try {
+        const bytes = b64ToBytes(thumb_b64);
+        thumbStorageId = await ctx.storage.store(new Blob([bytes as unknown as ArrayBuffer], { type: "image/png" }));
+      } catch {
+        /* bad thumb never blocks a publish */
+      }
+    }
+
+    const result = await ctx.runMutation(internal.artifacts.upsertFromPublish, {
+      user_id: who.user_id,
+      storage_id: storageId,
+      title,
+      size,
+      source_path: source_path || undefined,
+      force_new: !!force_new,
+      content_hash: contentHash,
+      kind,
+      source_storage_id: sourceStorageId,
+      session_short_id: sessionShortId,
+      session_conversation_id: sessionConversationId as never,
+      slug,
+      owner_key: ownerKey,
+      access: accessSet as never,
+      assets: assets as never,
+      thumb_storage_id: thumbStorageId,
+      task_id: binding.task_id,
+      plan_id: binding.plan_id,
+      station: binding.station,
+    });
+    // A republish replaces the page's query set; a page without one has none.
+    await ctx.runMutation(internal.pageData.replaceQueries, {
+      slug: result.slug,
+      owner: who.user_id,
+      version: result.version,
+      set_json: dataSet ? JSON.stringify(dataSet) : "",
+    });
+    return json({
+      ...result,
+      ...(dataSet ? { data: { workspace: dataSet.workspace, queries: dataSet.queries.length } } : {}),
+      manage_url: result.owner_key ? `${result.url}#o=${result.owner_key}` : result.url,
+      ...(binding.task_id || binding.plan_id
+        ? { evidence: { task: binding.task_short_id ?? null, plan: binding.plan_short_id ?? null, station: binding.station ?? null } }
+        : {}),
+    });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Internal error" }, 500);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Gate endpoints
+// ---------------------------------------------------------------------------
+
+export const unlock = httpAction(async (ctx, request) => {
+  try {
+    const { slug, password } = await request.json();
+    if (!slug || typeof password !== "string") return json({ error: "Missing slug or password" }, 400);
+    // Online guessing bound: short "share with a client" passwords are the
+    // realistic case, so the hash comparison alone is not the whole defense.
+    const limited = await slugRateLimited(ctx, slug, "artifact-unlock", 12, 60_000);
+    if (limited) return limited;
+    const artifact = await ctx.runQuery(internal.artifacts.bySlug, { slug });
+    if (!artifact?.password_hash) return json({ error: "Not found" }, 404);
+    const hash = await passwordHash(password, slug);
+    if (hash !== artifact.password_hash) return json({ error: "Wrong password" }, 403);
+    return json({ k: await kTokenFor(artifact.password_hash, slug) });
+  } catch {
+    return json({ error: "Bad request" }, 400);
+  }
+});
+
+export const emailUnlock = httpAction(async (ctx, request) => {
+  try {
+    const { slug, email } = await request.json();
+    const limited = await slugRateLimited(ctx, slug, "artifact-email-unlock", 20, 60_000);
+    if (limited) return limited;
+    if (!slug || typeof email !== "string" || !email.includes("@") || email.length > 254) {
+      return json({ error: "Enter a valid email" }, 400);
+    }
+    const artifact = await ctx.runQuery(internal.artifacts.bySlug, { slug });
+    if (!artifact?.email_gate || !artifact.owner_key) return json({ error: "Not found" }, 404);
+    await ctx.runMutation(internal.artifacts.recordViewerEmail, { slug, email });
+    return json({ e: await eTokenFor(artifact.owner_key, slug) });
+  } catch {
+    return json({ error: "Bad request" }, 400);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Manage (owner_key auth, callable from the served page)
+// ---------------------------------------------------------------------------
+
+export const manage = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const { slug, owner_key, set, rollback_to, resolve_comment_id, delete_comment_id } = body;
+    if (!slug || !owner_key) return json({ error: "Missing slug or owner_key" }, 400);
+    const panel = await ctx.runQuery(internal.artifacts.ownerPanel, { slug, owner_key });
+    if (!panel) return json({ error: "Not found" }, 403);
+
+    if (set && typeof set === "object") {
+      const accessSet = await buildAccessSet(set as AccessInput, slug, panel.edit_url ? "set" : null);
+      if (typeof set.title === "string" && set.title.trim()) accessSet.title = set.title.trim();
+      await ctx.runMutation(internal.artifacts.applyManage, { artifact_id: panel.artifact_id, set: accessSet as never });
+    }
+    if (resolve_comment_id || delete_comment_id) {
+      await ctx.runMutation(internal.artifacts.applyManage, {
+        artifact_id: panel.artifact_id,
+        resolve_comment_id: resolve_comment_id as never,
+        delete_comment_id: delete_comment_id as never,
+      });
+    }
+    if (typeof rollback_to === "number") {
+      const err = await performRollback(ctx, slug, rollback_to);
+      if (err) return json({ error: err }, 400);
+    }
+    const fresh = await ctx.runQuery(internal.artifacts.ownerPanel, { slug, owner_key });
+    return json({ ok: true, ...fresh });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Rollback — promote a past version to a NEW current version, copying its
+// blobs (blob-ownership invariant: no row ever shares a storage_id).
+// ---------------------------------------------------------------------------
+
+
+async function performRollback(ctx: ActionCtx, slug: string, targetVersion: number): Promise<string | null> {
+  const art = await ctx.runQuery(internal.artifacts.historyBySlug, { slug });
+  if (!art) return "Not found";
+  if (targetVersion === art.version) return `v${targetVersion} is already current`;
+  const past = art.versions.find((x: { version: number }) => x.version === targetVersion);
+  if (!past) return `Version ${targetVersion} is no longer available (history keeps the last 20)`;
+
+  const mainBlob = await ctx.storage.get(past.storage_id);
+  if (!mainBlob) return "Version content missing";
+  const mainText = await mainBlob.text();
+  const newMain = await ctx.storage.store(new Blob([mainText], { type: "text/html; charset=utf-8" }));
+
+  let newSource;
+  let sourceText: string | undefined;
+  if (past.source_storage_id) {
+    const src = await ctx.storage.get(past.source_storage_id);
+    if (src) {
+      sourceText = await src.text();
+      newSource = await ctx.storage.store(new Blob([sourceText], { type: "text/markdown; charset=utf-8" }));
+    }
+  }
+
+  const pastAssets = await ctx.runQuery(internal.artifacts.assetsForVersion, {
+    artifact_id: art._id,
+    version: targetVersion,
+  });
+  const assets = [];
+  const assetHashes: string[] = [];
+  for (const a of pastAssets) {
+    const blob = await ctx.storage.get(a.storage_id);
+    if (!blob) continue;
+    const buf = await blob.arrayBuffer();
+    const id = await ctx.storage.store(new Blob([buf], { type: a.content_type }));
+    assets.push({ path: a.path, storage_id: id, content_type: a.content_type, size: a.size });
+    const hex = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", buf)), (b) => b.toString(16).padStart(2, "0")).join("");
+    assetHashes.push(`${a.path}:${hex}`);
+  }
+
+  // Recompute the content hash the same way publish would, so a later
+  // identical republish of the restored content no-ops correctly.
+  let contentHash: string;
+  const kind = past.kind ?? "html";
+  if (kind === "markdown" && sourceText !== undefined) {
+    contentHash = await sha256Hex(sourceText);
+  } else if (kind === "bundle") {
+    const parts = [`index.html:${await sha256Hex(mainText)}`, ...assetHashes.sort()];
+    contentHash = await sha256Hex(parts.join("\n"));
+  } else {
+    contentHash = await sha256Hex(mainText);
+  }
+  // The restored version's live queries come back with it.
+  const setJson: string | null = await ctx.runQuery(internal.pageData.setAt, { artifact_id: art._id, version: targetVersion });
+  if (setJson) contentHash = await withDataHash(contentHash, setJson);
+
+  const appended = await ctx.runMutation(internal.artifacts.appendVersion, {
+    artifact_id: art._id,
+    storage_id: newMain,
+    size: past.size,
+    title: past.title,
+    kind,
+    source_storage_id: newSource,
+    content_hash: contentHash,
+    edited_by: `rollback to v${targetVersion}`,
+    assets: assets as never,
+  });
+  await ctx.runMutation(internal.pageData.restoreSet, { artifact_id: art._id, from_version: targetVersion, to_version: appended.version });
+  return null;
+}
+
+export const rollback = httpAction(async (ctx, request) => {
+  try {
+    const { api_token, target, version } = await request.json();
+    if (!api_token || !target || typeof version !== "number") {
+      return json({ error: "Missing api_token, target, or version" }, 400);
+    }
+    const resolved = await ctx.runQuery(internal.artifacts.resolveTargetForCLI, { api_token, target });
+    if ("error" in resolved && resolved.error) return json({ error: resolved.error }, 403);
+    const artifact = (resolved as { artifact: { slug: string } }).artifact;
+    if (!artifact) return json({ error: `No page matches "${target}"` }, 404);
+    const err = await performRollback(ctx, artifact.slug, version);
+    if (err) return json({ error: err }, 400);
+    const fresh = await ctx.runQuery(internal.artifacts.bySlug, { slug: artifact.slug });
+    return json({ slug: artifact.slug, version: fresh?.version, url: artifactUrl(artifact.slug) });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Link/owner editing — save publishes a new version
+// ---------------------------------------------------------------------------
+
+/** Shared edit-version pipeline for the link editor and the web editor:
+ * render+hash per kind, size check, unchanged short-circuit (which deletes the
+ * just-stored markdown source blob), bundle asset carry-forward as blob copies
+ * (ownership invariant), appendVersion. Auth and edited_by resolution stay
+ * with the callers. */
+export async function applyEditVersion(
+  ctx: ActionCtx,
+  artifact: { _id: Id<"artifacts">; version: number; title: string; content_hash?: string; kind?: string },
+  content: string,
+  editedBy: string | undefined,
+): Promise<{ version: number; unchanged?: boolean } | { error: string }> {
+  const kind = artifact.kind ?? "html";
+
+  let docHtml: string;
+  let contentHash: string;
+  let sourceStorageId;
+  if (kind === "markdown") {
+    contentHash = await sha256Hex(content);
+    docHtml = await renderMarkdownDocument(content, artifact.title);
+    sourceStorageId = await ctx.storage.store(new Blob([content], { type: "text/markdown; charset=utf-8" }));
+  } else {
+    docHtml = content;
+    contentHash = await sha256Hex(docHtml);
+  }
+  const size = new TextEncoder().encode(docHtml).byteLength;
+  if (size > MAX_ARTIFACT_BYTES) return { error: "Content exceeds the 8MB limit" };
+  if (artifact.content_hash === contentHash && kind !== "bundle") {
+    if (sourceStorageId) await ctx.storage.delete(sourceStorageId).catch(() => {});
+    return { version: artifact.version, unchanged: true };
+  }
+
+  const storageId = await ctx.storage.store(new Blob([docHtml], { type: "text/html; charset=utf-8" }));
+
+  // Bundles: the editor edits the entry page; assets carry forward as blob
+  // copies (ownership invariant).
+  const assets = [];
+  if (kind === "bundle") {
+    const current = await ctx.runQuery(internal.artifacts.assetsForVersion, {
+      artifact_id: artifact._id,
+      version: artifact.version,
+    });
+    for (const a of current) {
+      const blob = await ctx.storage.get(a.storage_id);
+      if (!blob) continue;
+      const buf = await blob.arrayBuffer();
+      const id = await ctx.storage.store(new Blob([buf], { type: a.content_type }));
+      assets.push({ path: a.path, storage_id: id, content_type: a.content_type, size: a.size });
+    }
+  }
+
+  const result: { version: number } = await ctx.runMutation(internal.artifacts.appendVersion, {
+    artifact_id: artifact._id,
+    storage_id: storageId,
+    size,
+    kind,
+    source_storage_id: sourceStorageId,
+    content_hash: contentHash,
+    edited_by: editedBy,
+    assets: assets as never,
+  });
+  return { version: result.version };
+}
+
+export const edit = httpAction(async (ctx, request) => {
+  try {
+    const { slug, key, content, editor_name } = await request.json();
+    if (!slug || !key || typeof content !== "string") return json({ error: "Missing slug, key, or content" }, 400);
+    const auth = await ctx.runQuery(internal.artifacts.editTarget, { slug, key });
+    if (!auth) return json({ error: "This link doesn't grant editing" }, 403);
+
+    const editedBy = auth.is_owner ? undefined : (typeof editor_name === "string" && editor_name.trim() ? editor_name.trim().slice(0, 80) : "link editor");
+    const outcome = await applyEditVersion(ctx, auth.artifact, content, editedBy);
+    if ("error" in outcome) return json({ error: outcome.error }, 413);
+    return json(outcome);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Web team editing — an authed convex action (the signed-in gallery calls it
+// directly, so no keys ever reach a teammate). Owner always may edit; a
+// teammate only when the artifact's edit_mode is "team" and they share a team.
+// ---------------------------------------------------------------------------
+
+export const editForWeb = action({
+  args: { slug: v.string(), content: v.string(), editor_name: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ version?: number; unchanged?: boolean; error?: string }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { error: "Not signed in" };
+    const auth = await ctx.runQuery(internal.artifacts.teamEditAuth, { slug: args.slug, editor_user_id: userId });
+    if (!auth) return { error: "You don't have edit access to this artifact" };
+
+    const editedBy = auth.is_owner ? undefined : (args.editor_name?.trim().slice(0, 80) || auth.editor_name);
+    return await applyEditVersion(ctx, auth.artifact, args.content, editedBy);
+  },
+});
+
+// Source text for the authed web editor (teammates can't use ?src=raw on a
+// password-gated artifact — this path is authed instead of token-gated).
+export const sourceForWeb = action({
+  args: { slug: v.string() },
+  handler: async (ctx, args): Promise<{ source?: string; kind?: string; version?: number; error?: string }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { error: "Not signed in" };
+    const auth = await ctx.runQuery(internal.artifacts.teamEditAuth, { slug: args.slug, editor_user_id: userId });
+    if (!auth) return { error: "You don't have edit access to this artifact" };
+    const artifact = auth.artifact;
+    const kind = artifact.kind ?? "html";
+    const id = kind === "markdown" && artifact.source_storage_id ? artifact.source_storage_id : artifact.storage_id;
+    const blob = await ctx.storage.get(id);
+    if (!blob) return { error: "Source missing" };
+    return { source: await blob.text(), kind, version: artifact.version };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Comment + view passthroughs (public mutations behind CORS)
+// ---------------------------------------------------------------------------
+
+export const comment = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    // "Send all": flush stored-but-undelivered comments to the session.
+    // Owner-only — the mutation checks the key.
+    if (body.deliver_pending === true) {
+      const limited = await slugRateLimited(ctx, String(body.slug ?? ""), "artifact-flush", 12, 60_000);
+      if (limited) return limited;
+      const flushed = await ctx.runMutation(api.artifacts.deliverPendingComments, {
+        slug: String(body.slug ?? ""),
+        owner_key: typeof body.owner_key === "string" ? body.owner_key : undefined,
+      });
+      return json(flushed);
+    }
+    // No limiter here: submitComments counts the window itself, in the same
+    // transaction as the insert. A pre-check at this layer would be a second
+    // transaction, spend the budget twice, and still not be atomic.
+    const result = await ctx.runMutation(api.artifacts.submitComments, {
+      slug: String(body.slug ?? ""),
+      // The gates the page cleared, echoed back for the mutation to re-check.
+      k: typeof body.k === "string" ? body.k : undefined,
+      e: typeof body.e === "string" ? body.e : undefined,
+      author_name: String(body.author_name ?? ""),
+      author_email: typeof body.author_email === "string" ? body.author_email : undefined,
+      version: typeof body.version === "number" ? body.version : 0,
+      // "Send to agent", per batch and per comment. The mutation honors it
+      // only for the owner and verified teammates; anyone else's comments
+      // are stored as discussion whatever the request says.
+      deliver: typeof body.deliver === "boolean" ? body.deliver : undefined,
+      owner_key: typeof body.owner_key === "string" ? body.owner_key : undefined,
+      identity_token: typeof body.identity_token === "string" ? body.identity_token : undefined,
+      parent_id: typeof body.parent_id === "string" ? body.parent_id : undefined,
+      comments: Array.isArray(body.comments)
+        ? body.comments.map((c: { text?: unknown; anchor?: unknown; deliver?: unknown }) => ({
+            text: String(c?.text ?? ""),
+            anchor: typeof c?.anchor === "string" ? c.anchor : undefined,
+            deliver: typeof c?.deliver === "boolean" ? c.deliver : undefined,
+          }))
+        : [],
+    });
+    return json(result);
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+  }
+});
+
+// Who is this identity token, on this page? Returns name/avatar for the
+// "commenting as" chip and the @mention roster when the holder is the owner
+// or a teammate. The token is the whole auth; anything else gets null back.
+export const identity = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    const limited = await slugRateLimited(ctx, String(body.slug ?? ""), "artifact-identity", 30, 60_000);
+    if (limited) return limited;
+    const info = await ctx.runQuery(internal.artifacts.commenterContext, {
+      slug: String(body.slug ?? ""),
+      token: String(body.token ?? ""),
+    });
+    return json(info ?? { error: "Unknown identity" });
+  } catch (error) {
+    return json({ error: error instanceof Error ? error.message : "Bad request" }, 400);
+  }
+});
+
+export const view = httpAction(async (ctx, request) => {
+  try {
+    const body = await request.json();
+    await ctx.runMutation(api.artifacts.recordView, {
+      slug: String(body.slug ?? ""),
+      email: typeof body.email === "string" ? body.email : undefined,
+      k: typeof body.k === "string" ? body.k : undefined,
+      e: typeof body.e === "string" ? body.e : undefined,
+    });
+    return json({ ok: true });
+  } catch {
+    return json({ ok: false });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /cli/a/<slug>[/<asset>] — the serve route with gates and modes
+// ---------------------------------------------------------------------------
+
+const notFound = (msg: string) =>
+  new Response(msg, { status: 404, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+
+// The sandbox CSP is what keeps published content from ever acting with real
+// convex.codecast.sh privileges. It must ride on EVERY response that a browser
+// could treat as a document — including bundle assets, where a secondary
+// .html/.svg file inside an upload is directly navigable. nosniff stops a
+// mislabeled asset from being sniffed into one.
+const ARTIFACT_SECURITY_HEADERS = {
+  "Content-Security-Policy":
+    "sandbox allow-scripts allow-forms allow-modals allow-popups allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock",
+  "X-Content-Type-Options": "nosniff",
+  // Gate tokens (?k=, ?e=) live in the query string, so never let them ride a
+  // Referer header out to whatever a published page links to.
+  "Referrer-Policy": "no-referrer",
+  "X-Robots-Tag": "noindex",
+};
+
+const htmlResponse = (html: string, status: number, cache: string) =>
+  new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      ...ARTIFACT_SECURITY_HEADERS,
+      "Cache-Control": cache,
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+
+// How long a browser or CDN may still answer from cache after the owner adds
+// a password, revokes an edit link, sets an expiry or deletes the page. Bytes
+// a viewer already has cannot be recalled by anyone; what this bounds is the
+// next network response. 60s fresh plus 300s stale-while-revalidate, so six
+// minutes in the worst case, for content that needed no authorization.
+//
+// Historical versions and versioned assets used to carry max-age=3600 with a
+// day of stale-while-revalidate, on the reasoning that a numbered version is
+// immutable. Its CONTENT is; its availability is not, and that policy put the
+// revocation bound a day out. They use the same six-minute policy now. The
+// edge already revalidates everything at 60s, so this mostly costs browser
+// re-requests on reload.
+export const REVOCATION_BOUND_MS = 360_000;
+const CACHE_PUBLIC = "public, max-age=60, stale-while-revalidate=300";
+// Anything that needed a gate token to obtain, and anything reflecting gate
+// state that the owner can change. A shared cache must never hold these.
+const CACHE_PROTECTED = "private, no-store";
+// Path-shape only (the bundle trailing-slash redirect): true whatever the
+// gates say, and it carries no content.
+const CACHE_SHAPE = "public, max-age=60";
+
+/** The policy for a body served off this artifact. Protected the moment a
+ * gate stands in front of it; otherwise public, but never past its expiry. */
+export function cachePolicy(
+  a: { password_hash?: string | null; email_gate?: boolean; expires_at?: number | null },
+  now = Date.now(),
+): string {
+  if (a.password_hash || a.email_gate) return CACHE_PROTECTED;
+  if (!a.expires_at) return CACHE_PUBLIC;
+  const left = a.expires_at - now;
+  if (left <= 0) return CACHE_PROTECTED;
+  if (left >= REVOCATION_BOUND_MS) return CACHE_PUBLIC;
+  // Inside the bound: cache no further than the moment the page stops
+  // existing, and no stale window past it.
+  return `public, max-age=${Math.floor(left / 1000)}`;
+}
+
+export const serve = httpAction(async (ctx, request) => {
+  const url = new URL(request.url);
+  const rest = url.pathname.replace(/^\/cli\/a\//, "");
+  const [slug, ...tailParts] = rest.split("/");
+  const tail = tailParts.join("/");
+  if (!slug) return notFound("Page not found");
+  const apiBase = apiBaseFrom(request);
+  const q = url.searchParams;
+
+  const artifact = await ctx.runQuery(internal.artifacts.bySlug, { slug });
+  if (!artifact) return notFound("Page not found");
+  const kind = artifact.kind ?? "html";
+  const shareUrl = artifactUrl(artifact.slug);
+
+  // --- Gates (order: expiry → password → email wall) ---
+  if (artifact.expires_at && Date.now() > artifact.expires_at) {
+    return htmlResponse(expiredPage({ title: artifact.title }), 410, CACHE_PROTECTED);
+  }
+  let kToken = "";
+  if (artifact.password_hash) {
+    kToken = await kTokenFor(artifact.password_hash, slug);
+    if (q.get("k") !== kToken) {
+      if (q.get("meta") === "1") return json({ error: "Locked" }, 403);
+      if (q.get("thumb") === "1") return notFound("Not found");
+      return htmlResponse(passwordGatePage({ slug, title: artifact.title, apiBase, shareUrl }), 200, CACHE_PROTECTED);
+    }
+  }
+  if (artifact.email_gate && artifact.owner_key) {
+    const eToken = await eTokenFor(artifact.owner_key, slug);
+    // The email wall is a capture step, not secrecy: meta stays open, thumb
+    // stays hidden (no visual leak in unfurls).
+    if (q.get("e") !== eToken && q.get("meta") !== "1") {
+      if (q.get("thumb") === "1") return notFound("Not found");
+      return htmlResponse(emailGatePage({ slug, title: artifact.title, apiBase, shareUrl }), 200, CACHE_PROTECTED);
+    }
+  }
+
+  // --- <page>/_data[/<id>] — the page's live query results, behind the same gates ---
+  if (tail === "_data" || tail.startsWith("_data/")) return await servePageData(ctx, artifact._id, tail.slice("_data".length));
+
+  // --- ?meta=1 — version/state JSON for the in-page bar (never cached) ---
+  if (q.get("meta") === "1") {
+    const art = await ctx.runQuery(internal.artifacts.historyBySlug, { slug });
+    if (!art) return notFound("Page not found");
+    const agent = await ctx.runQuery(internal.artifacts.agentStateBySlug, { slug });
+    return new Response(
+      JSON.stringify({
+        version: art.version,
+        updated_at: art.updated_at,
+        kind,
+        views: art.views,
+        comment_count: art.comments_disabled ? 0 : artifact.comment_count,
+        comments: art.comments_disabled ? [] : artifact.open_comments,
+        session: art.session_short_id && !art.hide_session ? { short_id: art.session_short_id, conversation_id: artifact.session_conversation_id ?? null, title: artifact.session_title, short_title: artifact.session_short_title } : null,
+        // The publishing session's live state for the agent chip: state is a
+        // work state (working / needs_input / done / dormant / idle), since
+        // when it last moved, awaiting_since when a comment sent to the agent
+        // has not been answered by a newer version yet.
+        agent,
+        gated: { password: !!art.password_hash, email: !!art.email_gate },
+        versions: (art.versions as HistoryVersion[]).map((x) => ({
+          version: x.version,
+          title: x.title,
+          size: x.size,
+          published_at: x.published_at,
+          edited_by: x.edited_by,
+        })),
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Referrer-Policy": "no-referrer",
+          "Cache-Control": "no-store",
+          "Access-Control-Allow-Origin": "*",
+        },
+      },
+    );
+  }
+
+  // --- ?thumb=1 (gated artifacts never serve it — checked above) ---
+  if (q.get("thumb") === "1") {
+    if (!artifact.thumb_storage_id) return notFound("No thumbnail");
+    const blob = await ctx.storage.get(artifact.thumb_storage_id);
+    if (!blob) return notFound("No thumbnail");
+    return new Response(blob, {
+      status: 200,
+      headers: {
+        "Content-Type": "image/png",
+        ...ARTIFACT_SECURITY_HEADERS,
+        "Cache-Control": cachePolicy(artifact),
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
+  // --- Asset paths (current or versioned via _v/N/...) ---
+  if (tail) {
+    let version = artifact.version;
+    let path = tail;
+    const versioned = tail.match(/^_v\/(\d+)\/(.+)$/);
+    if (versioned) {
+      version = parseInt(versioned[1], 10);
+      path = versioned[2];
+    }
+    const asset = await ctx.runQuery(internal.artifacts.assetByPath, { artifact_id: artifact._id, version, path });
+    if (!asset) return notFound("Not found");
+    const blob = await ctx.storage.get(asset.storage_id);
+    if (!blob) return notFound("Not found");
+    if (asset.content_type === MEDIA_POINTER_TYPE) {
+      const { url: mediaUrl } = JSON.parse(await blob.text()) as { url: string };
+      if (!isOwnMediaUrl(mediaUrl)) return notFound("Not found");
+      // ?download=<name> saves the file instead of playing it: a short-lived
+      // signed URL that asks R2 to answer as an attachment. (A download
+      // attribute does nothing on a link to another origin.)
+      const download = mediaDownloadName(q.get("download"), path);
+      const cfg = download ? mediaBucketFromEnv() : null;
+      if (download && cfg) {
+        const key = mediaUrl.slice(`${cfg.publicBase}/`.length);
+        const signed = await r2Presign(cfg, "GET", key, 3600, undefined, {
+          "response-content-disposition": `attachment; filename="${download}"`,
+        });
+        return new Response(null, { status: 302, headers: { Location: signed, "Cache-Control": "private, no-store", "Access-Control-Allow-Origin": "*" } });
+      }
+      return new Response(null, { status: 302, headers: { Location: mediaUrl, "Cache-Control": cachePolicy(artifact), "Access-Control-Allow-Origin": "*" } });
+    }
+    return new Response(blob, {
+      status: 200,
+      headers: {
+        "Content-Type": asset.content_type,
+        ...ARTIFACT_SECURITY_HEADERS,
+        "Cache-Control": cachePolicy(artifact),
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }
+
+  // Bundles need a trailing slash so the document's relative URLs resolve
+  // under the slug. (The edge worker rewrites the Location back to its host.)
+  if (kind === "bundle" && !url.pathname.endsWith("/")) {
+    return new Response(null, {
+      status: 301,
+      headers: { Location: `${url.pathname}/${url.search}`, "Cache-Control": CACHE_SHAPE },
+    });
+  }
+
+  const withHistory = async () => await ctx.runQuery(internal.artifacts.historyBySlug, { slug });
+
+  // --- ?diff=A..B ---
+  const diffParam = q.get("diff");
+  if (diffParam) {
+    const m = diffParam.match(/^(\d+)\.\.(\d+)$/);
+    if (!m) return notFound("Bad diff range (use ?diff=2..5)");
+    const [a, b] = [parseInt(m[1], 10), parseInt(m[2], 10)];
+    const art = await withHistory();
+    if (!art) return notFound("Page not found");
+    const va = (art.versions as HistoryVersion[]).find((x) => x.version === a);
+    const vb = (art.versions as HistoryVersion[]).find((x) => x.version === b);
+    if (!va || !vb) return notFound("One of those versions is no longer available (history keeps the last 20)");
+    const load = async (row: typeof va) => {
+      // Diff the meaningful source: raw markdown for markdown artifacts.
+      const id = art.kind === "markdown" && row.source_storage_id ? row.source_storage_id : row.storage_id;
+      const blob = await ctx.storage.get(id);
+      return blob ? await blob.text() : "";
+    };
+    const [textA, textB] = [await load(va), await load(vb)];
+    if (textA.length > 600_000 || textB.length > 600_000) return notFound("These versions are too large to diff in the browser");
+    const { ops } = lineDiff(textA, textB);
+    return htmlResponse(
+      diffPage({ slug, title: artifact.title, a, b, ops, apiBase, shareUrl }),
+      200,
+      cachePolicy(artifact),
+    );
+  }
+
+  // --- version resolution for doc/src/edit ---
+  const vParam = q.get("v");
+  const wanted = vParam && /^\d+$/.test(vParam) ? parseInt(vParam, 10) : null;
+  let doc = {
+    storage_id: artifact.storage_id,
+    source_storage_id: artifact.source_storage_id,
+    title: artifact.title,
+    updated_at: artifact.updated_at,
+    version: artifact.version,
+  };
+  if (wanted !== null && wanted !== artifact.version) {
+    const art = await withHistory();
+    const past = (art?.versions as HistoryVersion[] | undefined)?.find((x) => x.version === wanted);
+    if (!past) return notFound(`Version ${wanted} of this artifact is no longer available`);
+    doc = {
+      storage_id: past.storage_id,
+      source_storage_id: past.source_storage_id,
+      title: past.title,
+      updated_at: past.published_at,
+      version: past.version,
+    };
+  }
+
+  const loadText = async (id: typeof doc.storage_id) => {
+    const blob = await ctx.storage.get(id);
+    return blob ? await blob.text() : null;
+  };
+
+  // --- ?src=raw | ?src=1 ---
+  const srcParam = q.get("src");
+  if (srcParam) {
+    const sourceId = kind === "markdown" && doc.source_storage_id ? doc.source_storage_id : doc.storage_id;
+    const source = await loadText(sourceId);
+    if (source === null) return notFound("Source missing");
+    if (srcParam === "raw") {
+      return new Response(source, {
+        status: 200,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          ...ARTIFACT_SECURITY_HEADERS,
+          "Cache-Control": cachePolicy(artifact),
+          "Access-Control-Allow-Origin": "*",
+        },
+      });
+    }
+    return htmlResponse(
+      sourcePage({
+        slug,
+        title: doc.title,
+        source,
+        kind,
+        version: doc.version,
+        apiBase,
+        shareUrl,
+        canEdit: artifact.edit_mode === "link" || artifact.edit_mode === "team",
+      }),
+      200,
+      cachePolicy(artifact),
+    );
+  }
+
+  // --- ?edit=1 (always current version) ---
+  if (q.get("edit") === "1") {
+    const sourceId = kind === "markdown" && artifact.source_storage_id ? artifact.source_storage_id : artifact.storage_id;
+    const source = await loadText(sourceId);
+    if (source === null) return notFound("Source missing");
+    return htmlResponse(
+      editorPage({ slug, title: artifact.title, kind, source, version: artifact.version, apiBase, shareUrl }),
+      200,
+      "no-store",
+    );
+  }
+
+  // --- the document itself ---
+  const raw = await loadText(doc.storage_id);
+  if (raw === null) return notFound("Artifact content missing");
+  let html = kind === "markdown" ? restyleMarkdownDocument(raw, doc.title) : raw;
+  if (kind === "bundle") {
+    html = injectBase(html, doc.version < artifact.version ? `_v/${doc.version}/` : "./");
+  }
+  if (kind !== "markdown") html = injectPageTheme(html);
+  html = injectPlayer(html, apiBase);
+  html = injectMotion(html, apiBase);
+  {
+    const gate = new URLSearchParams();
+    if (kToken) gate.set("k", kToken);
+    if (artifact.email_gate && q.get("e")) gate.set("e", q.get("e")!);
+    const qs = gate.toString();
+    html = injectData(html, `${apiBase}/cli/a/${artifact.slug}/_data${qs ? `?${qs}` : ""}`, apiBase);
+  }
+  // A card's live thumbnail: the page alone. No bar means no view beacon and
+  // no comment polling, so a gallery of previews counts nothing as a view.
+  if (q.get("preview") === "1") return htmlResponse(html, 200, cachePolicy(artifact));
+  // Bake the validated gate tokens into the meta URL so the bar's polling
+  // clears the same gates the document did.
+  const metaTokens = `${kToken ? `&k=${kToken}` : ""}${artifact.email_gate && q.get("e") ? `&e=${q.get("e")}` : ""}`;
+  const branded = brandArtifactHtml(html, {
+    title: doc.title,
+    author: artifact.author_name,
+    updatedAt: doc.updated_at,
+    shareUrl,
+    version: doc.version,
+    currentVersion: artifact.version,
+    metaUrl: `${apiBase}/cli/a/${artifact.slug}?meta=1${metaTokens}`,
+    apiBase,
+    slug: artifact.slug,
+    kind,
+    sessionShortId: artifact.hide_session ? null : (artifact.session_short_id ?? null),
+    sessionConversationId: artifact.hide_session ? null : (artifact.session_conversation_id ?? null),
+    sessionTitle: artifact.hide_session ? null : artifact.session_title,
+    views: artifact.views,
+    commentCount: artifact.comments_disabled ? 0 : artifact.comment_count,
+    commentsEnabled: !artifact.comments_disabled,
+    gated: { password: !!artifact.password_hash, email: !!artifact.email_gate },
+    editMode: artifact.edit_mode ?? "owner",
+    live: q.get("live") === "1",
+    hasThumb: !!artifact.thumb_storage_id,
+    hasAgent: !!artifact.session_conversation_id,
+  });
+  return htmlResponse(branded, 200, cachePolicy(artifact));
+});

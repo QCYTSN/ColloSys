@@ -1,0 +1,81 @@
+import { Sparkles, X } from "lucide-react";
+import { useTrackedStore } from "../../store/inboxStore";
+import { agentRoomName, findSessionRow, NEW_AGENT_NAME } from "../../lib/calls/findSessionRow";
+import { identitySig } from "../../lib/sessionIdentity";
+import { SessionFace } from "../identity";
+
+// A live transcript route rendered as a chip: what kind, where, removable by
+// anyone in the huddle. Shared by the call stage's thread and the call page so a feed
+// reads the same wherever it appears. The label follows the store, so a
+// session added before its row lands takes its name when it does; a caller
+// that already knows the name passes `label`.
+function routeLabel(st: any, route: { kind: string; target: string }): string {
+  if (route.kind === "slack") return `#${route.target.slice(0, 12)}`;
+  if (route.kind === "session") {
+    const row = findSessionRow(st, route.target);
+    return row ? agentRoomName(row) : NEW_AGENT_NAME;
+  }
+  const doc = (st.docs ?? {})[route.target];
+  return doc?.title || doc?.display_title || "doc";
+}
+
+export function FeedChip({
+  route,
+  label: given,
+  fallback,
+  removable,
+  onRemove,
+  onOpen,
+  title,
+}: {
+  route: { kind: string; target: string; mode: string };
+  label?: string;
+  /** The name to show while the store has no row for the session. */
+  fallback?: string;
+  removable: boolean;
+  onRemove?: () => void;
+  /** Makes the name a button that opens the target. */
+  onOpen?: () => void;
+  title?: string;
+}) {
+  const st = useTrackedStore([
+    (s) => routeLabel(s, route),
+    (s) => (route.kind === "session" ? identitySig(findSessionRow(s, route.target)) : ""),
+  ]);
+  const agent = route.kind === "session";
+  const row = agent ? findSessionRow(st, route.target) : null;
+  const label = (given ?? (agent && !row && fallback ? fallback : routeLabel(st, route))).slice(0, 26);
+  return (
+    <span
+      className="flex items-center gap-1.5 rounded-full bg-sol-bg-highlight px-2 py-0.5 font-mono text-[10.5px] leading-4 text-sol-text-muted"
+      title={title}
+    >
+      {agent ? (
+        row ? (
+          <SessionFace row={row} size={14} className="shrink-0" />
+        ) : (
+          <Sparkles className="h-2.5 w-2.5 shrink-0 text-sol-violet" />
+        )
+      ) : (
+        <span className={`h-1.5 w-1.5 rounded-full ${route.kind === "doc" ? "bg-sol-yellow" : "bg-sol-cyan"}`} />
+      )}
+      {onOpen ? (
+        <button type="button" onClick={onOpen} className="max-w-[130px] truncate hover:text-sol-text">
+          {label}
+        </button>
+      ) : (
+        <span className="max-w-[130px] truncate">{label}</span>
+      )}
+      {removable && (
+        <button
+          type="button"
+          onClick={() => onRemove?.()}
+          className="fc-remove text-sol-text-muted hover:text-sol-red"
+          title={agent ? `Remove ${label} from the room` : "Stop this feed"}
+        >
+          <X className="h-2.5 w-2.5" />
+        </button>
+      )}
+    </span>
+  );
+}

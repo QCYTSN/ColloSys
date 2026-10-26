@@ -1,0 +1,535 @@
+#!/usr/bin/env bun
+// THE harness for a prompt dry run: a headless `claude -p` that grades a prompt
+// (the org analyzer, a role's standing text, a wake frame) and can never reach
+// a person's inbox.
+//
+//   bun packages/cli/scripts/prompt-dry-run.ts --run <dir> --prompt <file> --model <id>
+//        [--max-turns 80] [--tools Bash,Read,Write,Edit] [--guard <dir>] [--serve <dir>] [--then <file>]
+//        [--account <profile>] [--max-output-tokens N] [--claude-md <file>] [--cwd <dir>] [--read-only [--allow-port N]...]
+//   bun packages/cli/scripts/prompt-dry-run.ts --run <dir> --prompt <file> --model <id> --call
+//        [--system <file>] [--max-output-tokens N]
+//
+// `--model` is required: an unpinned run takes the account default, and two
+// runs on different accounts are not comparable.
+//
+// `--call` grades a single model call rather than an agent: the prompt file's
+// text IS the user message (on stdin), the system prompt is the --system file
+// or one neutral line, there are no tools and one turn. It keeps every piece
+// of isolation below, so an eval of a prod prompt carries no Claude Code
+// context the prod call lacks. `--max-output-tokens N` sets
+// CLAUDE_CODE_MAX_OUTPUT_TOKENS for the child only, the closest a run gets to
+// prod's max_tokens. args.json in the run dir records the knobs the run used.
+//
+// Why a harness at all. The codecast daemon syncs EVERY transcript under
+// ~/.claude/projects as a session, whether or not the SessionStart hook ran
+// (syncScope.ts refuses paths by shape only), so a bare `claude -p` with hooks
+// off, detached from the terminal and its transcript deleted afterwards still
+// shows in the founder's feed for as long as it runs. Four sessions leaked
+// dry runs that way on four days before the cause was found (2026-09-19).
+//
+// What this does instead, in order of what it protects against:
+//  1. A private CLAUDE_CONFIG_DIR under the run directory. The transcript lands
+//     there, outside the watched tree, and the directory holds no settings and
+//     no hooks; `--setting-sources project` loads none from the machine either.
+//     The keychain item is scoped to the config dir, so the login is read from
+//     the machine's item (ccKeychain.ts, the reader the CLI already has) and
+//     handed to the child as CLAUDE_CODE_OAUTH_TOKEN in its environment only:
+//     no file ever carries it. The directory is removed when the run ends.
+//  2. CODECAST_DIR points at an empty directory, so a real `cast` the agent
+//     finds cannot post, send or pin anything: one built from this tree hands
+//     the call to the guard (3), any other answers "Not authenticated", and
+//     the eval reads such a run as one that left its world (evals dryRun.ts).
+//  3. `cast` on PATH is the guard beside this script (prompt-dry-run-bin/cast,
+//     or the directory given as --guard), put first on PATH again before
+//     every Bash command through CLAUDE_ENV_FILE, since the user's profile
+//     would otherwise shadow it, and the target of a `cast` the agent reaches
+//     some other way (src/main.ts sends it there): reads pass through with the real
+//     state directory restored, writes are refused and logged, and
+//     `--serve <dir>` answers reads from files there (the legacy org files,
+//     and any argv captured under reads/ by its key), refusing a read that
+//     `frozen` lists and that was not captured, so a run grades the prompt
+//     against a record and never against a moving workspace (a `*` line
+//     freezes every read). A `--help` prints the CLI's help under a state
+//     directory of its own. calls.log marks each call SERVED, UNSERVED, LIVE,
+//     HELP or REFUSED.
+//  4. No controlling terminal (start_new_session), no tmux variables, none of
+//     the launching session's identity (CODECAST_SESSION_ID and friends).
+//  5. An agent run's scratch is its own (ct-56832). The model picks fixed
+//     paths like /tmp/org_inputs.json, so two runs in flight read each other's
+//     files. On macOS the agent's whole process tree runs under sandbox-exec
+//     with every file under /tmp and /var/tmp unreadable and unwritable, the
+//     run dir excepted, while TMPDIR and CLAUDE_CODE_TMPDIR (Claude Code's
+//     own scratch, which ignores TMPDIR and defaults to /tmp) point at
+//     <run>/tmp. A write to /tmp fails with "Operation not permitted" and the
+//     agent moves to $TMPDIR or its cwd.
+//  6. The same sandbox hides every sign-in a run could write with: the
+//     codecast state directory (its token, the daemon's loopback token) and
+//     the convex CLI's login are unreadable, the guard cannot be rewritten,
+//     and nothing outside the run can be driven from it (a tmux socket, Apple
+//     events). So a route around the guard (unsetting CODECAST_DIR, `bun
+//     main.ts`, curl) finds nothing to sign in with. Live reads go to a
+//     broker in this process (DRY_RUN_BROKER), which runs the guard outside
+//     the sandbox; it classifies the argv again and runs only reads. On
+//     2026-10-05 two agents left running after their harness was killed read
+//     the guard's source, went around it with the real state directory, and
+//     wrote proposals to prod; every layer here answers one step of that.
+//  7. Before the agent starts, the guard must answer a help call in the
+//     agent's own sandbox and env, or the run does not start. An agent run
+//     where sandbox-exec cannot apply (another OS, an already sandboxed
+//     parent) does not start either; `--isolation-check` answers that alone
+//     (exit 0 isolated, 3 not). A run dir holds one live run (harness.pid),
+//     and the agent's process group dies with the harness: on a signal, and
+//     through a watchdog when the harness is killed outright.
+//
+// Output, in the run directory: out.json (the claude result), reply.txt (its
+// final message and cost), said.txt and said.json (every assistant message of
+// the turn, in order, as text with a rule between them and as a JSON array: a
+// run that keeps working after the message it meant to send ends on a
+// correction, and the result alone loses the message; two samples did on
+// 2026-09-24), stream.jsonl (the raw stream), exit.txt, took.txt, calls.log
+// (every cast call the guard saw), and live-reads/ (each read that went to the
+// live workspace, under its served-read key). The prompt file goes to claude
+// on stdin and is the opening user message itself, as prod delivers a frame,
+// so a prompt of any size works; the harness note (what to write instead of
+// posting) belongs in that file, not here.
+//
+// `--then <file>` is a later turn: once the previous result is in, the file's
+// text is sent as the next message into the same session (claude --resume,
+// same private config dir). Repeat it for more turns, in order; turn N writes
+// outN.json, replyN.txt and saidN.json, and calls.log gets a `# turn N` line
+// before its calls. It is how a conversational prompt is graded past its
+// opening, since a dry run cannot hear a person, and how a standing session's
+// later wakes are replayed after its opening. A turn that fails ends the run.
+// The config dir is removed after the last turn.
+//
+// `--cwd <dir>` runs the agent in that directory (default: the run dir), so a
+// replayed station reads the checkout it would have read. `--read-only` makes
+// the sandbox refuse every file write outside the run dir (and /dev, and the
+// per-user temp root Claude Code and bun keep caches in), and every connection
+// but the loopback: the model is reached through an egress proxy here that
+// opens tunnels to Anthropic alone, so a station holding a gh or git sign-in
+// still cannot open a pull request or push. A replay in a real checkout
+// leaves it, and everything it could reach, exactly as it was: the line
+// workspace's Try runs that way (line-workspace.md LW4, cli lineTry.ts). A
+// `--cwd` inside the run dir is the run's own scratch and stays writable, so
+// a replay can work in a clone of a branch (cli lineReplay.ts) and leave the
+// repository it came from untouched. `--allow-port <n>` opens one more way
+// out under --read-only, to any host on that port: for a database whose only
+// sign-in the run can read is a read-only one (the launcher hides the rest
+// with DRY_RUN_HIDE_REGEX). 443 is never opened that way.
+//
+// `--claude-md <file>` installs the file as the run's user-level CLAUDE.md
+// (in the private config dir, where ~/.claude/CLAUDE.md would be) and lets
+// the agent load user-scope sources, so an agent run carries the global
+// instructions under test the way a person's session does. The config dir
+// holds nothing else, so no other user setting reaches the run.
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+import { spawn, spawnSync } from "node:child_process";
+import * as net from "node:net";
+import { NEUTRAL_SYSTEM, callArgs, callEnv, callReplies, isolatedEnv, loginToken, profileToken } from "../src/subscriptionCall.ts";
+
+function arg(name: string, fallback?: string): string | undefined {
+  const i = process.argv.indexOf(`--${name}`);
+  return i >= 0 ? process.argv[i + 1] : fallback;
+}
+
+/** The directories that hold a sign-in a run must never use: the codecast
+ *  state directory (its token, the daemon's loopback token) and the convex
+ *  CLI's login. A run's agent cannot read them, so no route it finds around
+ *  the guard (unsetting CODECAST_DIR, a direct `bun main.ts`, curl with a
+ *  token) can write anywhere; its live reads go through the broker below. */
+function credentialDirs(): string[] {
+  const home = process.env.HOME || os.homedir();
+  return [...new Set([process.env.CODECAST_DIR || path.join(home, ".codecast"), path.join(home, ".codecast"), path.join(home, ".convex")])];
+}
+
+/** Every file under the shared temp dirs is off limits; the run dir and the
+ *  directories the run reads from stay reachable even when they sit there.
+ *  The credential dirs are unreadable, the guard cannot be rewritten, and no
+ *  process outside the run can be driven from it (a tmux server's socket
+ *  under /tmp, Apple events to Terminal). Paths arrive as -D parameters, so no
+ *  path is ever quoted into the profile. */
+function scratchProfile(hidden: number, readOnly = false): string {
+  return [
+    "(version 1)",
+    "(allow default)",
+    ...(readOnly ? [
+      '(deny file-write* (subpath "/"))', '(allow file-write* (subpath "/dev") (regex #"^/private/var/folders/"))',
+      // Only the loopback: the broker and the egress proxy (startEgressProxy) live there,
+      // and each --allow-port (a read-only database the launcher gave the run the only sign-in to).
+      "(deny network-outbound (remote ip))", '(allow network-outbound (remote ip "localhost:*"))',
+      ...allowedPorts().map((port) => `(allow network-outbound (remote ip "*:${port}"))`),
+    ] : []),
+    '(deny file-read* file-write* (regex #"^/private/(var/)?tmp/"))',
+    '(deny network-outbound (remote unix-socket (path-regex #"^/private/(var/)?tmp/")))',
+    "(deny appleevent-send)",
+    '(allow file-read* file-write* (subpath (param "RUN_DIR")))',
+    '(allow file-read* (subpath (param "GUARD_DIR")) (subpath (param "SERVE_DIR")))',
+    '(deny file-write* (subpath (param "GUARD_DIR")))',
+    ...Array.from({ length: hidden }, (_, i) => `(deny file-read* file-write* (subpath (param "HIDDEN_${i}")))`),
+    // DRY_RUN_HIDE_REGEX: one path pattern the agent must not read (every .env of a
+    // checkout, say). The launcher writes it, never the replayed work; no quote may appear in it.
+    ...(process.env.DRY_RUN_HIDE_REGEX && !process.env.DRY_RUN_HIDE_REGEX.includes('"') ? [`(deny file-read* file-write* (regex #"${process.env.DRY_RUN_HIDE_REGEX}"))`] : []),
+  ].join("\n");
+}
+
+/** The ports a --read-only run may also connect out on (`--allow-port <n>`, repeatable). */
+function allowedPorts(): number[] {
+  const ports: number[] = [];
+  process.argv.forEach((a, i) => {
+    if (a !== "--allow-port") return;
+    const n = Number(process.argv[i + 1]);
+    if (!Number.isInteger(n) || n <= 0 || n > 65535 || n === 443) refuse(`--allow-port takes a port other than 443, not ${process.argv[i + 1]}`);
+    ports.push(n);
+  });
+  return ports;
+}
+
+/** The argv prefix that runs a command with private scratch, and the env it needs. */
+function scratchSandbox(run: string, readable: { guard: string; serve?: string }, readOnly = false) {
+  const scratch = path.join(run, "tmp");
+  fs.mkdirSync(scratch, { recursive: true, mode: 0o700 });
+  const real = (p: string) => (fs.existsSync(p) ? fs.realpathSync(p) : p);
+  // DRY_RUN_HIDE: more paths (colon separated) the agent must not read, such as a
+  // checkout's real .env or a cloud login, when the replayed work runs project code.
+  const hidden = [...credentialDirs(), ...(process.env.DRY_RUN_HIDE ?? "").split(":").filter(Boolean)].map(real);
+  const prefix = [
+    "sandbox-exec", "-D", `RUN_DIR=${real(run)}`, "-D", `GUARD_DIR=${real(readable.guard)}`, "-D", `SERVE_DIR=${real(readable.serve ?? run)}`,
+    ...hidden.flatMap((dir, i) => ["-D", `HIDDEN_${i}=${dir}`]),
+    "-p", scratchProfile(hidden.length, readOnly),
+  ];
+  return { prefix, hidden, env: { TMPDIR: `${scratch}/`, TMP: scratch, TEMP: scratch, CLAUDE_CODE_TMPDIR: scratch } };
+}
+
+/** Whether the sandbox applies here and does what it claims: a write to /tmp
+ *  is refused while one to the run's scratch lands. Null when it does, else why not. */
+function scratchIsolationGap(run: string, guard: string, readOnlyIn?: string): string | null {
+  if (process.platform !== "darwin") return `no sandbox-exec on ${process.platform}`;
+  const sb = scratchSandbox(run, { guard }, !!readOnlyIn);
+  // With --read-only, a write in the agent's directory and a connection off the machine must be refused too;
+  // a directory inside the run dir is the run's own scratch (a replay's clone), writable on purpose.
+  const scratchCwd = !!readOnlyIn && `${readOnlyIn}${path.sep}`.startsWith(`${fs.realpathSync(run)}${path.sep}`);
+  const ro = readOnlyIn ? `${scratchCwd ? "" : `q="$RO_DIR/.dry-run-probe-$$"; if ( : > "$q" ) 2>/dev/null; then rm -f "$q"; exit 6; fi; `}if /usr/bin/nc -z -G 3 1.1.1.1 443 >/dev/null 2>&1; then exit 7; fi; ` : "";
+  const probe = `${ro}p=/tmp/.dry-run-probe-$$; if ( : > "$p" ) 2>/dev/null; then rm -f "$p"; exit 3; fi; : > "$TMPDIR/probe" || exit 4; rm -f "$TMPDIR/probe"; for d in "$@"; do [ -e "$d" ] && ls "$d" >/dev/null 2>&1 && exit 5; done; exit 0`;
+  const r = spawnSync(sb.prefix[0], [...sb.prefix.slice(1), "/bin/sh", "-c", probe, "probe", ...sb.hidden], { env: { ...process.env, ...sb.env, ...(readOnlyIn ? { RO_DIR: readOnlyIn } : {}) }, encoding: "utf8" });
+  if (r.status === 0) return null;
+  if (r.status === 6) return "sandbox-exec ran but the agent's directory stayed writable";
+  if (r.status === 7) return "sandbox-exec ran but a connection off the machine went through";
+  if (r.status === 3) return "sandbox-exec ran but /tmp stayed writable";
+  if (r.status === 4) return "sandbox-exec refused the run's own scratch dir";
+  if (r.status === 5) return "sandbox-exec ran but the sign-in directories stayed readable";
+  return `sandbox-exec would not apply: ${(r.stderr || r.error?.message || `exit ${r.status}`).trim()}`;
+}
+
+if (process.argv.includes("--isolation-check")) {
+  const probeRun = fs.mkdtempSync(path.join(fs.realpathSync(process.env.TMPDIR || "/tmp"), "dry-run-isolation-"));
+  const gap = scratchIsolationGap(probeRun, path.resolve(arg("guard") ?? path.join(import.meta.dir, "prompt-dry-run-bin")));
+  fs.rmSync(probeRun, { recursive: true, force: true });
+  console.log(gap ? `not isolated: ${gap}` : "isolated");
+  process.exit(gap ? 3 : 0);
+}
+
+const runDir = path.resolve(arg("run") ?? "");
+const promptFile = path.resolve(arg("prompt") ?? "");
+function refuse(message: string): never {
+  console.error(message);
+  process.exit(2);
+}
+if (!arg("run") || !arg("prompt") || !fs.existsSync(promptFile)) {
+  refuse("usage: prompt-dry-run.ts --run <dir> --prompt <file> --model <id> [--call [--system <file>]] [--max-output-tokens N] [--max-turns N] [--tools A,B] [--guard <dir>] [--serve <dir>] [--account <profile>] [--then <file>]... [--claude-md <file>]");
+}
+const model = arg("model");
+if (!model || model.startsWith("--")) refuse("--model is required: an unpinned run takes the account default and cannot be compared");
+const call = process.argv.includes("--call");
+if (call) {
+  for (const f of ["then", "tools", "max-turns"]) if (process.argv.includes(`--${f}`)) refuse(`--${f} does not apply to --call: a call is one turn with no tools`);
+} else if (process.argv.includes("--system")) refuse("--system applies only to --call");
+const systemFile = arg("system") ? path.resolve(arg("system")!) : undefined;
+if (systemFile && !fs.existsSync(systemFile)) refuse(`--system: no such file ${systemFile}`);
+const maxOutputTokens = arg("max-output-tokens");
+if (maxOutputTokens !== undefined && !/^[1-9]\d*$/.test(maxOutputTokens)) refuse(`--max-output-tokens wants a positive integer (got ${maxOutputTokens})`);
+const maxTurns = call ? "1" : arg("max-turns", "80")!;
+const tools = call ? [] : (arg("tools", "Bash,Read,Write,Edit") ?? "").split(",").filter(Boolean);
+const guardDir = path.resolve(arg("guard") ?? path.join(import.meta.dir, "prompt-dry-run-bin"));
+const serveDir = arg("serve") ? path.resolve(arg("serve")!) : undefined;
+const thenFiles = process.argv.flatMap((a, i) => (a === "--then" && process.argv[i + 1] ? [path.resolve(process.argv[i + 1])] : []));
+for (const f of thenFiles) if (!fs.existsSync(f)) refuse(`--then: no such file ${f}`);
+const claudeMdFile = arg("claude-md") ? path.resolve(arg("claude-md")!) : undefined;
+const readOnly = process.argv.includes("--read-only");
+const agentCwd = arg("cwd") ? path.resolve(arg("cwd")!) : undefined;
+if (agentCwd && !fs.existsSync(agentCwd)) refuse(`--cwd: no such directory ${agentCwd}`);
+if (readOnly && call) refuse("--read-only does not apply to --call: a call has no tools to write with");
+if (claudeMdFile && call) refuse("--claude-md does not apply to --call: a call carries no CLAUDE.md");
+if (claudeMdFile && !fs.existsSync(claudeMdFile)) refuse(`--claude-md: no such file ${claudeMdFile}`);
+
+fs.mkdirSync(runDir, { recursive: true });
+// One run per run dir. A run started over a live one deletes the live one's
+// config dir and env file, and that agent goes on with no guard first on its
+// PATH (2026-10-05: two such agents wrote proposals to prod).
+const pidFile = path.join(runDir, "harness.pid");
+const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch (err: any) { return err?.code === "EPERM"; } };
+const holder = fs.existsSync(pidFile) ? Number(fs.readFileSync(pidFile, "utf8").trim()) : 0;
+if (holder && holder !== process.pid && alive(holder)) refuse(`${runDir} belongs to a run still alive (harness pid ${holder}); stop it or pick another --run`);
+fs.writeFileSync(pidFile, `${process.pid}\n`);
+const configDir = path.join(runDir, ".claude");
+const noCast = path.join(runDir, ".nocast");
+fs.rmSync(configDir, { recursive: true, force: true });
+fs.mkdirSync(configDir, { recursive: true });
+fs.mkdirSync(noCast, { recursive: true });
+if (claudeMdFile) fs.copyFileSync(claudeMdFile, path.join(configDir, "CLAUDE.md"));
+
+// A --call run has no tools, so nothing in it can write scratch or reach a
+// sign-in. An agent run without its sandbox could read the codecast sign-in
+// and write around the guard, so it does not start.
+const isolationGap = call ? null : scratchIsolationGap(runDir, guardDir, readOnly ? fs.realpathSync(agentCwd ?? os.homedir()) : undefined);
+if (isolationGap) { fs.rmSync(pidFile, { force: true }); refuse(`an agent run needs its sandbox, and this machine cannot give it one (${isolationGap}): without it the agent could read the codecast sign-in and write around the guard`); }
+const sandbox = call ? null : scratchSandbox(runDir, { guard: guardDir, serve: serveDir }, readOnly);
+const isolation = call ? null : "sandbox-exec";
+
+fs.writeFileSync(path.join(runDir, "args.json"), JSON.stringify({ model, call, maxOutputTokens: maxOutputTokens ? Number(maxOutputTokens) : null, tools, maxTurns: Number(maxTurns), serve: serveDir ?? null, guard: guardDir, isolation, claudeMd: claudeMdFile ?? null, cwd: agentCwd ?? null, readOnly }, null, 1) + "\n");
+
+// The child env (src/subscriptionCall.ts isolatedEnv): none of the launching
+// session's identity, the login as CLAUDE_CODE_OAUTH_TOKEN alone, and
+// CLAUDE_CODE_MAX_OUTPUT_TOKENS only from --max-output-tokens, never
+// inherited, so args.json says every cap the run had. A call carries no model
+// key either: claude bills an ANTHROPIC_API_KEY ahead of the login. An agent
+// run keeps the shell's keys, since what it replays may need them.
+const env = isolatedEnv({ configDir, token: arg("account") ? profileToken(arg("account")!) : loginToken(), stripModelKeys: call, ...(maxOutputTokens ? { maxOutputTokens: Number(maxOutputTokens) } : {}) });
+env.CODECAST_DIR = noCast;
+env.RUN_DIR = runDir;
+if (serveDir) env.DRY_RUN_SERVE_DIR = serveDir;
+env.PATH = `${guardDir}:${env.PATH ?? ""}`;
+// The Bash tool runs each command over a snapshot of the user's shell, and a
+// snapshot cut short under load carries no PATH line, so the command sources
+// the profile and its `~/.local/bin` puts the real cast first (7 of 8 parallel
+// runs at load 650, 2026-10-02). Claude Code sources CLAUDE_ENV_FILE before
+// every command, after the profile, so the guard is first on every call.
+const envFile = path.join(configDir, "dry-run-env.sh");
+fs.writeFileSync(envFile, `export PATH='${guardDir.replace(/'/g, `'\\''`)}':"$PATH"\n`);
+env.CLAUDE_ENV_FILE = envFile;
+// A `cast` reached around the guard anyway, by an absolute path or a login
+// shell, finds the empty state directory and hands the call to the guard
+// (src/main.ts), so no call leaves the served world whatever PATH it took.
+env.DRY_RUN_GUARD = path.join(guardDir, "cast");
+env.DRY_RUN_EMPTY_CODECAST_DIR = noCast;
+if (sandbox) Object.assign(env, sandbox.env);
+
+/**
+ * Live reads, run outside the sandbox. The agent cannot read the sign-in, so
+ * its guard hands each live read here (DRY_RUN_BROKER) and this runs the
+ * guard again with the real state directory. That guard classifies the argv
+ * itself, so only a read ever runs with the sign-in, whoever calls the broker.
+ * The broker lives as long as this process: an agent that outlives its
+ * harness reaches nothing live at all.
+ */
+function startBroker(): string {
+  const brokerEnv = { ...env, DRY_RUN_LIVE_READ: "1", DRY_RUN_BROKER: "", DRY_RUN_REAL_CODECAST_DIR: process.env.CODECAST_DIR ?? "" };
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    idleTimeout: 0,
+    async fetch(req) {
+      const argv = Buffer.from(await req.arrayBuffer()).toString("utf8").split("\0");
+      if (argv[argv.length - 1] === "") argv.pop();
+      // The read runs where the agent stood, so a command that resolves its
+      // workspace from the directory (a repo's line profile) answers as it would there.
+      const asked = req.headers.get("x-dry-run-cwd") ?? "";
+      const cwd = asked && fs.existsSync(asked) && fs.statSync(asked).isDirectory() ? asked : runDir;
+      const p = Bun.spawn(["bash", path.join(guardDir, "cast"), ...argv], { env: brokerEnv, cwd, stdin: "ignore", stdout: "ignore", stderr: "pipe" });
+      const said = await new Response(p.stderr).text();
+      await p.exited;
+      return new Response(said);
+    },
+  });
+  return `http://127.0.0.1:${server.port}/read`;
+}
+if (!call) env.DRY_RUN_BROKER = startBroker();
+
+/** The hosts a --read-only agent may open a tunnel to: the model's API and Claude Code's own sign-in. */
+const EGRESS_ALLOWED = /^(?:[a-z0-9-]+\.)*(?:anthropic\.com|claude\.ai)$/i;
+
+/**
+ * The one way off the machine a --read-only agent has: an HTTP CONNECT proxy
+ * on the loopback that opens tunnels to Anthropic on 443 and answers anything
+ * else 403. The sandbox refuses every other connection, so gh, a git remote
+ * or curl reach nothing whatever sign-in they hold; tools that read the proxy
+ * env are told no, the rest are refused by the kernel. Lives as long as this
+ * process, like the broker.
+ */
+async function startEgressProxy(): Promise<string> {
+  const server = net.createServer((client) => {
+    client.once("data", (head) => {
+      const line = head.toString("latin1").split("\r\n", 1)[0];
+      const m = /^CONNECT ([^\s:]+):(\d+) HTTP\/1\.[01]$/.exec(line);
+      if (!m || m[2] !== "443" || !EGRESS_ALLOWED.test(m[1])) {
+        client.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        return;
+      }
+      const upstream = net.connect(443, m[1], () => {
+        client.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+        upstream.pipe(client);
+        client.pipe(upstream);
+      });
+      upstream.on("error", () => client.destroy());
+      client.on("error", () => upstream.destroy());
+    });
+    client.on("error", () => {});
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+}
+if (readOnly && !call) {
+  const proxy = await startEgressProxy();
+  for (const k of ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy", "ALL_PROXY", "all_proxy"]) env[k] = proxy;
+  // The broker is on the loopback, and nothing else is reachable there anyway.
+  env.NO_PROXY = env.no_proxy = "127.0.0.1,localhost";
+}
+
+/**
+ * The guard answers before any agent starts. A guard that cannot reach the
+ * real CLI (a here-string the sandbox refused, 2026-10-05) leaves an agent
+ * with nothing that works but routes around it, so the run stops here: the
+ * guard must answer a help call, in the agent's own sandbox and environment.
+ */
+function guardPreflight(): string | null {
+  const dir = path.join(runDir, ".preflight");
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const probe = 'cast task --help >/dev/null || exit 10; grep -q "^HELP task --help" "$RUN_DIR/calls.log" || exit 11';
+  const r = spawnSync(sandbox!.prefix[0], [...sandbox!.prefix.slice(1), "bash", "-c", probe], { env: { ...env, RUN_DIR: dir }, encoding: "utf8", timeout: 120_000 });
+  fs.rmSync(dir, { recursive: true, force: true });
+  if (r.status === 0) return null;
+  if (r.status === 11) return "a cast call did not reach the guard";
+  return `the guard could not answer cast task --help: ${(r.stderr || r.error?.message || `exit ${r.status}`).trim().slice(0, 400)}`;
+}
+const guardGap = call ? null : guardPreflight();
+if (guardGap) { fs.rmSync(pidFile, { force: true }); refuse(`the dry run's guard is not usable, so no agent starts: ${guardGap}`); }
+// A prod call has no thinking, no CLAUDE.md and no memory. What claude still
+// adds on a subscription login is fixed: an SDK identity line in the system
+// prompt and three short reminders (environment, model, date) before the
+// prompt, about 175 input tokens (measured 2026-10-01 on 2.1.286).
+// CLAUDE_CODE_SIMPLE would drop them but refuses OAuth.
+if (call) Object.assign(env, callEnv(false));
+
+const started = Date.now();
+
+// The agent runs in a process group of its own (detached), so stopping this
+// harness never stops it by itself: killing the harness's bun on 2026-10-05
+// left two agents running, and both wrote to prod. A signal to the harness
+// takes the agent's group down with it, and a watchdog outside the harness
+// does the same when the harness dies by SIGKILL.
+let liveChild: number | null = null;
+const killGroup = (pid: number, sig: NodeJS.Signals) => { try { process.kill(-pid, sig); } catch { /* gone */ } };
+for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(sig, () => {
+    if (liveChild) killGroup(liveChild, "SIGTERM");
+    fs.rmSync(pidFile, { force: true });
+    process.exit(sig === "SIGINT" ? 130 : 143);
+  });
+}
+const WATCHDOG = 'while kill -0 "$1" 2>/dev/null; do sleep 2; done; kill -TERM -"$2" 2>/dev/null; sleep 5; kill -KILL -"$2" 2>/dev/null';
+function watchChild(pid: number | undefined) {
+  if (!pid) return null;
+  const w = spawn("/bin/sh", ["-c", WATCHDOG, "watchdog", String(process.pid), String(pid)], { detached: true, stdio: "ignore" });
+  w.unref();
+  return w;
+}
+
+/** One turn of the run: the opening (the prompt file on stdin as the whole
+ *  user message, in --call mode as in an agent run), or a reply resumed into
+ *  the same session (`promptText`). Writes <name>.json and <name>.txt;
+ *  resolves with the exit code and the session id the result names. */
+function runTurn(name: string, promptText?: string, resume?: string): Promise<{ code: number; sessionId?: string }> {
+  return new Promise((resolve) => {
+    const streamPath = path.join(runDir, name === "out" ? "stream.jsonl" : `${name.replace(/^out/, "stream")}.jsonl`);
+    const out = fs.openSync(streamPath, "w");
+    const err = fs.openSync(path.join(runDir, name === "out" ? "err.txt" : `${name}.err.txt`), "w");
+    const stdin = promptText === undefined ? fs.openSync(promptFile, "r") : "ignore";
+    // A call's flags are the subscription call's own (src/subscriptionCall.ts callArgs).
+    // --strict-mcp-config in an agent run too: a .mcp.json in any parent of the run dir
+    // (the home folder's, say) otherwise starts its servers inside every rep.
+    const turn = call
+      ? callArgs({ model: model!, ...(systemFile ? { systemFile } : { systemText: NEUTRAL_SYSTEM }) })
+      : [
+          "--setting-sources", claudeMdFile ? "user,project" : "project",
+          ...(resume ? ["--resume", resume] : []), "-p", ...(promptText === undefined ? [] : [promptText]), "--allowedTools", ...tools, "--dangerously-skip-permissions", "--strict-mcp-config",
+          "--max-turns", maxTurns,
+          "--model", model!,
+          "--output-format", "stream-json", "--verbose",
+        ];
+    const command = [...(sandbox?.prefix ?? []), "claude"];
+    const child = spawn(command[0], [...command.slice(1), ...turn], { cwd: agentCwd ?? runDir, env, stdio: [stdin, out, err], detached: true });
+    const watchdog = watchChild(child.pid);
+    liveChild = child.pid ?? null;
+    child.on("exit", (exitCode) => {
+      liveChild = null;
+      try { watchdog?.kill(); } catch { /* already gone */ }
+      fs.closeSync(out); fs.closeSync(err);
+      if (typeof stdin === "number") fs.closeSync(stdin);
+      let code = exitCode ?? 1;
+      let reply = "(no result)";
+      let sessionId: string | undefined;
+      let said: string[] = [];
+      try {
+        // The stream is one JSON object per line: assistant messages as they
+        // are produced, then the result. out.json keeps the result alone, the
+        // shape every reader of these runs already parses.
+        let result: any = null;
+        const events: any[] = [];
+        for (const line of fs.readFileSync(streamPath, "utf8").split("\n")) {
+          if (!line.trim()) continue;
+          let d: any; try { d = JSON.parse(line); } catch { continue; }
+          events.push(d);
+          if (d.type === "result") result = d;
+          else if (d.type === "assistant") for (const c of d.message?.content ?? []) if (c.type === "text" && c.text?.trim()) said.push(c.text.trim());
+        }
+        // A reply cut at max_tokens makes claude resume the turn ("Output token
+        // limit hit", up to three times) and then end on an error. Prod gets the
+        // first reply only, so that is what out.json reports: its text,
+        // stop_reason and usage. Cost and modelUsage stay the run's real spend.
+        const replies = call ? callReplies(events) : [];
+        if (result && replies.length > 1 && replies[0].stop_reason === "max_tokens") {
+          const first = replies[0];
+          result = { ...result, result: first.text, stop_reason: first.stop_reason, usage: first.usage, is_error: false, num_turns: 1, resumed_past_cap: replies.length - 1 };
+          said = [first.text.trim()];
+          code = 0;
+        }
+        if (result) {
+          fs.writeFileSync(path.join(runDir, `${name}.json`), JSON.stringify(result, null, 1));
+          reply = `${result.result ?? ""}\n\n[cost_usd=${result.total_cost_usd} turns=${result.num_turns} is_error=${result.is_error}]`;
+          sessionId = result.session_id;
+        }
+      } catch { /* claude wrote no stream: the err file says why */ }
+      fs.writeFileSync(path.join(runDir, name === "out" ? "reply.txt" : name.replace(/^out/, "reply") + ".txt"), reply + "\n");
+      const saidBase = path.join(runDir, name === "out" ? "said" : name.replace(/^out/, "said"));
+      fs.writeFileSync(`${saidBase}.txt`, said.join("\n\n────────\n\n") + "\n");
+      fs.writeFileSync(`${saidBase}.json`, JSON.stringify(said));
+      resolve({ code, sessionId });
+    });
+  });
+}
+
+const first = await runTurn("out");
+let code = first.code;
+let sessionId = first.sessionId;
+for (const [i, file] of thenFiles.entries()) {
+  const n = i + 2;
+  if (code !== 0 || !sessionId) {
+    fs.writeFileSync(path.join(runDir, `reply${n}.txt`), `(no turn ${n}: turn ${n - 1} exit ${code}, session ${sessionId ?? "unknown"})\n`);
+    break;
+  }
+  fs.appendFileSync(path.join(runDir, "calls.log"), `# turn ${n}\n`);
+  const next = await runTurn(`out${n}`, fs.readFileSync(file, "utf8").trim(), sessionId);
+  code = next.code;
+  sessionId = next.sessionId ?? sessionId;
+}
+fs.writeFileSync(path.join(runDir, "exit.txt"), `${code}\n`);
+fs.writeFileSync(path.join(runDir, "took.txt"), `${Math.round((Date.now() - started) / 1000)}s\n`);
+// The transcript and everything else claude wrote for this run go with the
+// private config dir; nothing of it ever sat under ~/.claude/projects.
+fs.rmSync(configDir, { recursive: true, force: true });
+fs.rmSync(pidFile, { force: true });
+console.log(`done ${path.basename(runDir)} (${Math.round((Date.now() - started) / 1000)}s, exit ${code})`);
+process.exit(code);

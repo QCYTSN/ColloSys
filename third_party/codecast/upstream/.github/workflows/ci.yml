@@ -1,0 +1,643 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # Why a job and not `on.pull_request.paths`: path filters drop the checks
+  # from the run entirely, so a branch protection rule waiting on `verify`
+  # would wait forever. This classifies the diff once, every job gates on its
+  # own boolean, and `verify` asserts each job matched its boolean (ct-49562).
+  code_paths:
+    name: classify changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      cli: ${{ steps.scope.outputs.cli }}
+      web: ${{ steps.scope.outputs.web }}
+      convex: ${{ steps.scope.outputs.convex }}
+      shared: ${{ steps.scope.outputs.shared }}
+      platform: ${{ steps.scope.outputs.platform }}
+      electron: ${{ steps.scope.outputs.electron }}
+      mobile: ${{ steps.scope.outputs.mobile }}
+      extension: ${{ steps.scope.outputs.extension }}
+      docs: ${{ steps.scope.outputs.docs }}
+      run_build: ${{ steps.scope.outputs.run_build }}
+      run_typecheck: ${{ steps.scope.outputs.run_typecheck }}
+      run_lint: ${{ steps.scope.outputs.run_lint }}
+      run_test_convex: ${{ steps.scope.outputs.run_test_convex }}
+      run_test_web: ${{ steps.scope.outputs.run_test_web }}
+      run_test_cli: ${{ steps.scope.outputs.run_test_cli }}
+      run_test_computer: ${{ steps.computer_scope.outputs.run_test_computer }}
+      run_test_platform: ${{ steps.scope.outputs.run_test_platform }}
+      run_test_shared: ${{ steps.scope.outputs.run_test_shared }}
+      run_test_mobile: ${{ steps.scope.outputs.run_test_mobile }}
+      run_test_electron: ${{ steps.scope.outputs.run_test_electron }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # The merge-base diff needs the full history but none of the historic
+          # file contents, so fetch the commit graph and leave the blobs on the
+          # server.
+          fetch-depth: 0
+          filter: blob:none
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          deps: none
+
+      # No `bun install`: the classifier has no dependencies.
+      - name: Classify changed paths
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          # Both empty on a push to main, which then classifies as an empty
+          # diff and runs everything.
+          CHANGED=""
+          if [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ]; then
+            # --no-renames: a rename reports only the destination, so a file
+            # moved out of a package would hide the change to that package.
+            CHANGED="$(git diff --name-only --no-renames --diff-filter=ACDMR --merge-base "$BASE_SHA" "$HEAD_SHA" || true)"
+          fi
+          echo "Changed paths:"
+          printf '%s\n' "$CHANGED"
+          printf '%s\n' "$CHANGED" | bun scripts/ci/changed-path-scope.ts | tee -a "$GITHUB_OUTPUT"
+
+      - name: Classify computer changes
+        id: computer_scope
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          # A failed diff (a force push leaves `before` unreachable, the first
+          # push sends zeros) yields an empty list, which the classifier treats
+          # as "run the helper lane", the same fail-closed rule as the scope
+          # step above.
+          CHANGED=""
+          if [ -n "$PR_BASE_SHA" ] && [ -n "$PR_HEAD_SHA" ]; then
+            CHANGED="$(git diff --name-only --no-renames --merge-base "$PR_BASE_SHA" "$PR_HEAD_SHA" || true)"
+          elif [ -n "$PUSH_BEFORE_SHA" ]; then
+            CHANGED="$(git diff --name-only --no-renames "$PUSH_BEFORE_SHA" "$PUSH_SHA" || true)"
+          fi
+          printf '%s\n' "$CHANGED" | bun scripts/ci/changed-path-scope.ts --computer-only | tee -a "$GITHUB_OUTPUT"
+
+  # Pins ci.yml against its classifier: the job list, the gates, and the
+  # verify assertions. Ungated — it is the check that proves the gates.
+  ci-contract:
+    name: ci workflow contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          deps: none
+
+      - name: Unit tests (ci scripts + workflow contract)
+        run: bun test scripts/ci/
+
+  build:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_build == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Build
+        run: bun run build
+
+  typecheck:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_typecheck == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      # Each package's own `typecheck` script, which runs the same programs
+      # .codecast/check.toml points `cast check` at. cli's widens rootDir to the
+      # repo root because it imports the convex generated api. web's also runs
+      # the sim program (its app tsconfig excludes tests), and evals is its own
+      # program over its code plus the convex and cli files it imports, and
+      # playground is its shell plus its own Convex deployment's functions.
+      - name: Typecheck (cli + web + sim + convex + evals + playground)
+        run: bun run typecheck --filter=@codecast/cli --filter=@codecast/web --filter=@codecast/convex --filter=@codecast/evals --filter=@codecast/playground
+
+  lint:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Lint (eslint flat config)
+        run: bun run lint
+
+  test-convex:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_convex == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Unit tests (convex package)
+        working-directory: packages/convex
+        run: bun test convex/ scripts/
+
+  test-web:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_web == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Unit tests (web package)
+        working-directory: packages/web
+        # --isolate: a fresh global per file. bun otherwise runs the whole suite
+        # in one process, where `mock.module` substitutions are permanent and a
+        # jsdom window installed on globalThis outlives the file that made it.
+        # One mount test then decides what hundreds of later files see, so a
+        # test passes alone and fails in the suite depending on file order.
+        # Four shards, one process each, run one after another: bun keeps every
+        # isolated file's global alive until its process exits (a file that
+        # imports the store holds ~8 MB after a full GC), so the whole suite in
+        # one process climbed past 11 GB, stalled in memory pressure and was
+        # terminated (exit 143) mid-file. A shard ends its process and frees it.
+        # SIM_OUT: where the multiplayer sim writes each run's report and
+        # events (docs/architecture/sync-sim.md), uploaded below on failure.
+        env:
+          SIM_OUT: ${{ runner.temp }}/sim
+        run: |
+          status=0
+          for shard in 1 2 3 4; do
+            echo "test-web shard $shard/4"
+            bun test --isolate --shard=$shard/4 || status=1
+          done
+          exit $status
+
+      - name: Upload sim artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sim-artifacts
+          path: ${{ runner.temp }}/sim
+          if-no-files-found: ignore
+          retention-days: 14
+
+  test-cli:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_cli == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # fetch-depth 2 is what the injection-path filter below needs to diff a
+      # push; a pull_request fetches its base branch itself.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+
+      - name: Install tmux (e2e tests need a real tmux server)
+        run: sudo apt-get update && sudo apt-get install -y tmux
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Unit tests (cli package)
+        working-directory: packages/cli
+        # Exclude the e2e suite — it has its own step with --rerun-each for
+        # resilience against tmux-resource flake under CI runner load.
+        # DAEMON_BUILD_ID_CHECK turns on the daemon build id stamp check, which
+        # walks the whole daemon import closure. Off locally so the normal test
+        # loop stays fast.
+        # --isolate: a fresh global per file, for the same reason the web suite
+        # has it — `mock.module` substitutions are permanent in one process and
+        # a test that passes alone then fails in the suite depending on order.
+        env:
+          DAEMON_BUILD_ID_CHECK: "1"
+        run: bun test src/ --isolate --bail=5
+
+      # The eval home (packages/evals). Its tests make no network or model
+      # calls; real replays run only from ./evals on a laptop.
+      - name: Unit tests (evals package)
+        working-directory: packages/evals
+        run: bun test src/
+
+      - name: E2E messaging pipeline (real tmux + fake-claude shim)
+        working-directory: packages/cli
+        # Up to 3 full-suite attempts to absorb tmux-resource flake from
+        # running 10 fresh sessions back-to-back on a contended runner.
+        # Real regressions fail all 3 attempts; transient flake is filtered.
+        # If you see this retry step gating frequently, treat that as a
+        # signal to harden the test isolation, not as the desired norm.
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            echo "::group::E2E attempt $attempt"
+            if bun test src/messaging.e2e.test.ts --timeout=60000; then
+              echo "::endgroup::"
+              echo "E2E passed on attempt $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::E2E attempt $attempt failed; retrying"
+            tmux kill-server 2>/dev/null || true
+            sleep 2
+          done
+          echo "::error::E2E failed all 3 attempts — likely a real regression"
+          exit 1
+      # The injection path is the most fragile code in the daemon, so a change
+      # to it runs the injection suites (ct-49536). What runs HERE is the half
+      # that needs no agent binary: the Enter gate and submit verification
+      # against composer frames captured from live panes. The other half (the
+      # per-client stale-draft cases, the deaf pane and the two doubling cases,
+      # ct-49753 and ct-49841) drives real client TUIs, and every one of those
+      # cells self-skips because this runner has no agent installed. They need
+      # no secrets (the harness points each client at a local fake endpoint),
+      # but they are not cheap to install: claude keeps its real HOME to dodge
+      # the onboarding wizard a fresh one re-runs, which a runner has never
+      # been through, and a pinned client drifts from the frames the harness
+      # expects. So the real-client half is coverage only on a machine that
+      # has the clients; the step logs which ones it found so a green here is
+      # never read as more than it is. The cold-boot, mid-turn and resume cells
+      # live in messaging.e2e.test.ts against the fake-claude shim and already
+      # ran in the step above.
+      # The job's own checkout above (fetch-depth 2) is the repository this
+      # diffs; a second checkout here would clean the workspace and throw away
+      # the installed dependencies the matrix runs against.
+      - name: Detect injection-path changes
+        id: injection
+        # The two-dot diff against the base tip is deliberately generous: a
+        # branch behind main reports main's files as changed too. Over-running
+        # the matrix costs a few minutes; missing an injection change costs a
+        # regression nobody caught.
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+            changed=$(git diff --name-only FETCH_HEAD HEAD || true)
+          else
+            changed=$(git diff --name-only HEAD~1 HEAD || true)
+          fi
+          if echo "$changed" | grep -qE '^(packages/cli/src/(daemon\.ts|tmuxPaste\.ts)|packages/shared/contracts/agentClients\.ts)$'; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "changed injection paths: $(echo "$changed" | grep -cE '^(packages/cli/src/(daemon\.ts|tmuxPaste\.ts)|packages/shared/contracts/agentClients\.ts)$' || true)"
+
+      - name: Injection suites (captured frames; real-client cells skip without agent binaries)
+        if: steps.injection.outputs.run == 'true'
+        working-directory: packages/cli
+        # Same three-attempt shape as the E2E step above, and for the same
+        # reason: spawning agent TUIs back-to-back on a contended runner is
+        # resource flake, a real injection regression fails all three.
+        # The log line asks the harness itself (matrixClientAvailable, the
+        # probe every real-client cell skips on), so it cannot disagree with
+        # what the tests decide. The explicit exit is needed because the
+        # harness imports the daemon, which leaves handles open.
+        run: |
+          set -e
+          # shellcheck disable=SC2016 # the ${...} below is a JS template, not bash
+          bun -e '
+            const { MATRIX_CLIENTS, matrixClientAvailable } = await import("./src/test-helpers/messagingHarness.ts");
+            const found = MATRIX_CLIENTS.filter(matrixClientAvailable);
+            const absent = MATRIX_CLIENTS.filter((client) => !found.includes(client));
+            console.log(`real-client cells run for: [${found.join(", ")}]; self-skip for: [${absent.join(", ")}]`);
+            if (found.length === 0) console.log("::notice::Injection suites: no agent binary on this runner, so every real-client cell skipped. Only the captured-frame suites ran.");
+            process.exit(0);
+          '
+          for attempt in 1 2 3; do
+            echo "::group::Injection suites attempt $attempt"
+            if bun test src/daemon.inject-clear.test.ts src/daemon.inject-enter-gate.test.ts src/daemon.inject-submit-verify.test.ts src/daemon.inject-deaf-pane.test.ts src/daemon.inject-double-paste.test.ts --timeout=240000; then
+              echo "::endgroup::"
+              echo "Injection suites passed on attempt $attempt"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "::warning::Injection suites attempt $attempt failed; retrying"
+            tmux kill-server 2>/dev/null || true
+            sleep 2
+          done
+          echo "::error::Injection suites failed all 3 attempts — likely a real regression"
+          exit 1
+
+  # platform/packages is the vendored mirror of the shared @platform/* packages,
+  # and it is what Railway, the CLI release workflow and the desktop build ship
+  # from. Until now nothing ran its tests and nothing checked it for drift, so a
+  # broken mirror merged green (ct-49675).
+  test-platform:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_platform == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+        with:
+          deps: cache
+
+      # Before the installs below, which write a bun.lock into each mirrored
+      # package. `--check` diffs against ~/src/platform, which no runner has;
+      # `--check-manifest` re-hashes the mirror against
+      # platform/vendor-manifest.txt and re-reads the dep lines the mirror was
+      # generated from. That catches a hand-edited mirror, a package adopted
+      # without a re-vendor, and a dep pointing outside the checkout. A mirror
+      # that is only STALE against a newer canonical repo is not visible from
+      # here, and cannot be: the canonical repo is not on the runner.
+      - name: Vendored mirror integrity
+        run: scripts/vendor-platform.sh --check-manifest
+
+      - name: Unit tests (vendored platform packages)
+        # The mirror is a workspace of its own (platform/package.json, written
+        # by the vendor run from the canonical repo's root), not a member of
+        # this repo's. --test installs it there once, as the canonical repo
+        # installs, so a package's @platform peer resolves to its mirrored
+        # sibling instead of npm and the suites get the shared test tooling.
+        # It runs every package's tests, names each red one, and fails a run
+        # in which no suite was found.
+        run: scripts/vendor-platform.sh --test
+
+  # The whole shared package. Its contracts are read by the CLI, the daemon,
+  # Convex and the browser, so a regression here is a regression everywhere:
+  # the capability layer, and the shared inbox projection with its golden hash
+  # gate (tied to INBOX_PROJECTION_VERSION), digest vector and property suite,
+  # which the validation plan in docs/architecture/sync-convergence.md rests on
+  # running on every merge. Its own job rather than steps inside test-web, so it
+  # can gate on what it reads (see JOB_AREAS in scripts/ci/changed-path-scope.ts).
+  test-shared:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_shared == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Unit tests (shared package)
+        working-directory: packages/shared
+        run: bun test
+
+  # The mobile app's guard tests are what stand between an OTA update and a
+  # binary that cannot run it: nativeDeps.guard (no static import of a native
+  # package outside the frozen baseline), bundleGraph.guard (no unresolvable
+  # alias or web route on the native import graph) and metro.config.test.cjs
+  # (one copy of every package the bundle names). The lib tests ride along.
+  test-mobile:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_mobile == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # canvasShell.test.ts renders the WebView document in jsdom under a real
+      # `node`, and jsdom 30 (through undici 8) needs Node 22; the runner's
+      # default Node is older and dies on load.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Unit and guard tests (mobile package)
+        working-directory: packages/mobile
+        # --isolate: identity.test.tsx replaces react-native with mock.module,
+        # which is permanent in one process, the same hazard test-web has.
+        run: bun test --isolate
+
+  # The desktop shell's node:test suites. Most load main.js against a recorder
+  # (mainTestRig.js); preload.sandbox.test.js starts a real Electron, which on
+  # Linux needs a display, hence xvfb. The packaged-app test is macOS only and
+  # skips here.
+  test-electron:
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_electron == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # The suites run under node --test, and appWindows.test.js require()s an
+      # ES module, so pin a Node that does that without a flag.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+
+      - uses: ./.github/actions/setup-bun
+
+      # Ubuntu 24.04 lets AppArmor deny unprivileged user namespaces, which
+      # Chromium's sandbox needs, and Electron then aborts at launch rather than
+      # run unsandboxed. Lift that restriction for this runner only.
+      - name: Allow the Electron sandbox, and a display for it
+        run: |
+          set -euo pipefail
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          if ! command -v xvfb-run >/dev/null; then
+            sudo apt-get update && sudo apt-get install -y xvfb
+          fi
+
+      - name: Unit tests (electron package)
+        working-directory: packages/electron
+        run: xvfb-run -a bun run test
+
+  # `cast computer` needs a Mac, a Swift toolchain and a real signed bundle, so
+  # none of it can run on the ubuntu lanes above. ADVISORY on purpose: it is
+  # outside `verify`, and `continue-on-error` keeps a red here from failing the
+  # run. It becomes a gate after ten green runs in a row (design 16, ct-49523).
+  #
+  # It runs the ungranted half only. The granted half needs Accessibility and
+  # Screen Recording on the helper bundle, which is a TCC grant a human gives by
+  # hand at a fixed path; `src/computer/granted.e2e.test.ts` self-skips here and
+  # says so.
+  #
+  # It also runs the cli test files whose cases skip anywhere but darwin, which
+  # the ubuntu test-cli job therefore runs as empty shells.
+  computer-macos:
+    name: cast computer + macOS-only cli tests (macOS, advisory)
+    needs: [code_paths]
+    if: needs.code_paths.outputs.run_test_cli == 'true'
+    continue-on-error: true
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - uses: ./.github/actions/setup-bun
+
+      - name: Swift unit tests (helper core)
+        if: needs.code_paths.outputs.run_test_computer == 'true'
+        working-directory: packages/cli/native/computer-use-macos
+        run: swift test
+
+      - name: Build and sign the computer helper
+        if: needs.code_paths.outputs.run_test_computer == 'true'
+        working-directory: packages/cli
+        # No Developer ID certificate on a runner, so the helper signs ad hoc.
+        # That is the from-source case the design already describes: it runs,
+        # and its TCC grant would not survive a rebuild — which costs nothing
+        # here, because this lane never grants anything.
+        #
+        # One thing this lane therefore CANNOT catch: a signature gate that
+        # rejects Developer ID builds only. `inspectSignature` returns early on
+        # an ad-hoc signature, so ct-49662 — which failed every release build
+        # and no from-source one — was invisible from here and had to be found
+        # on a Mac holding the certificate. Anything in that class still needs
+        # `bun scripts/computer-verify.ts build` run with CODECAST_SIGN_IDENTITY
+        # set, by hand, before a release.
+        env:
+          CODECAST_SKIP_SIGN: "1"
+        run: bun scripts/computer-verify.ts build --out "$RUNNER_TEMP/helper.tar"
+
+      - name: Unit and e2e tests (cast computer, ungranted half)
+        if: needs.code_paths.outputs.run_test_computer == 'true'
+        working-directory: packages/cli
+        # Both variables point at the same build: the e2e suites take a bundle,
+        # the materialization tests take the payload it came from.
+        env:
+          CODECAST_COMPUTER_HELPER_TAR: ${{ runner.temp }}/helper.tar
+          CODECAST_COMPUTER_HELPER_APP: ${{ runner.temp }}/unpacked/codecast computer.app
+        run: bun run test:computer
+
+      # The terminal liveness case needs a tmux server as well as darwin.
+      - name: Install tmux
+        if: ${{ !cancelled() }}
+        run: brew install tmux
+
+      - name: Unit and e2e tests (cli files that only run on darwin)
+        # Its own verdict whatever the cast computer steps above did.
+        if: ${{ !cancelled() }}
+        working-directory: packages/cli
+        # Every cli test file with a case that skips anywhere but darwin, outside
+        # src/computer/ (the step above). The ci contract test finds them by
+        # their skip and fails until each is listed here. --timeout: the browser
+        # branding cases compile and copy app bundles, which overruns bun's 5s
+        # default on a loaded machine. --isolate for the same reason test-cli
+        # uses it.
+        run: >-
+          bun test --isolate --timeout=60000
+          src/browser/appIdentity.native.test.ts
+          src/browser/bridge/host.test.ts
+          src/ccAccounts.background.test.ts
+          src/ccKeychain.callers.test.ts
+          src/cloud/reach.test.ts
+          src/daemon.process-terminal.e2e.test.ts
+          src/daemon.watchdog-supervision.test.ts
+          src/desktopUpdate.test.ts
+          src/disclaim.test.ts
+          src/heicImage.test.ts
+          src/remote/device.async.test.ts
+          src/resourceMonitor.parseEtime.test.ts
+          src/resourceMonitor.test.ts
+          src/sim/sim.test.ts
+          src/supervision.recovery.e2e.test.ts
+          src/tmuxSessionServer.e2e.test.ts
+          src/workers/scanWatcher.test.ts
+
+  # The one check to require on main. It runs whatever the gates did, so a
+  # skipped job can never read as a pass: each result must be exactly `success`
+  # when its boolean was true and exactly `skipped` when it was false.
+  verify:
+    name: verify
+    if: always()
+    needs:
+      - code_paths
+      - ci-contract
+      - build
+      - typecheck
+      - lint
+      - test-convex
+      - test-web
+      - test-cli
+      - test-platform
+      - test-shared
+      - test-mobile
+      - test-electron
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every check
+        env:
+          CODE_PATHS: ${{ needs.code_paths.result }}
+          CI_CONTRACT: ${{ needs.ci-contract.result }}
+          BUILD: ${{ needs.build.result }}
+          BUILD_SHOULD_RUN: ${{ needs.code_paths.outputs.run_build }}
+          TYPECHECK: ${{ needs.typecheck.result }}
+          TYPECHECK_SHOULD_RUN: ${{ needs.code_paths.outputs.run_typecheck }}
+          LINT: ${{ needs.lint.result }}
+          LINT_SHOULD_RUN: ${{ needs.code_paths.outputs.run_lint }}
+          TEST_CONVEX: ${{ needs.test-convex.result }}
+          TEST_CONVEX_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_convex }}
+          TEST_WEB: ${{ needs.test-web.result }}
+          TEST_WEB_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_web }}
+          TEST_CLI: ${{ needs.test-cli.result }}
+          TEST_CLI_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_cli }}
+          TEST_PLATFORM: ${{ needs.test-platform.result }}
+          TEST_PLATFORM_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_platform }}
+          TEST_SHARED: ${{ needs.test-shared.result }}
+          TEST_SHARED_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_shared }}
+          TEST_MOBILE: ${{ needs.test-mobile.result }}
+          TEST_MOBILE_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_mobile }}
+          TEST_ELECTRON: ${{ needs.test-electron.result }}
+          TEST_ELECTRON_SHOULD_RUN: ${{ needs.code_paths.outputs.run_test_electron }}
+        run: |
+          failed=0
+          # The two ungated jobs: if either did not succeed, the gates below
+          # were computed by code nobody verified.
+          if [ "$CODE_PATHS" != "success" ]; then
+            echo "code_paths: expected success, got $CODE_PATHS"
+            failed=1
+          fi
+          if [ "$CI_CONTRACT" != "success" ]; then
+            echo "ci-contract: expected success, got $CI_CONTRACT"
+            failed=1
+          fi
+          check_job() {
+            name="$1" result="$2" should="$3"
+            if [ "$should" = "true" ]; then
+              if [ "$result" != "success" ]; then
+                echo "$name: expected success, got $result"
+                failed=1
+              fi
+            elif [ "$result" != "skipped" ]; then
+              echo "$name: expected skipped, got $result"
+              failed=1
+            fi
+          }
+          check_job build "$BUILD" "$BUILD_SHOULD_RUN"
+          check_job typecheck "$TYPECHECK" "$TYPECHECK_SHOULD_RUN"
+          check_job lint "$LINT" "$LINT_SHOULD_RUN"
+          check_job test-convex "$TEST_CONVEX" "$TEST_CONVEX_SHOULD_RUN"
+          check_job test-web "$TEST_WEB" "$TEST_WEB_SHOULD_RUN"
+          check_job test-cli "$TEST_CLI" "$TEST_CLI_SHOULD_RUN"
+          check_job test-platform "$TEST_PLATFORM" "$TEST_PLATFORM_SHOULD_RUN"
+          check_job test-shared "$TEST_SHARED" "$TEST_SHARED_SHOULD_RUN"
+          check_job test-mobile "$TEST_MOBILE" "$TEST_MOBILE_SHOULD_RUN"
+          check_job test-electron "$TEST_ELECTRON" "$TEST_ELECTRON_SHOULD_RUN"
+          exit "$failed"

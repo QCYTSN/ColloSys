@@ -1,0 +1,1662 @@
+import { SeatKillDialog } from "./org/SeatKillDialog";
+import { HuddleStartHost } from "./calls/HuddleStartHost";
+import { ReactNode, useState, useCallback, useRef, useMemo, memo, createContext, useContext, lazy, Suspense } from "react";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { useDragGatedLayoutPersist } from "../hooks/useDragGatedLayoutPersist";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { preloadHostedPages } from "../lib/hostedPreload";
+import { useIsPhone } from "../hooks/useIsPhone";
+import { installOpenIntent, detachCurrentView } from "../lib/openIntent";
+import { usePathname, useRouter } from "next/navigation";
+import { useLocation } from "react-router";
+import { isNonTabRoute } from "../src/compat/tabRouting";
+import { PANE_EMBED, appDocumentTitle } from "../lib/browserPane";
+import { withApplyingViewHistory, sameFilterExtras, type InboxViewSnapshot } from "../lib/inboxViewHistory";
+import { RecentlyViewedMenu } from "./RecentlyViewedMenu";
+import { useMutation } from "convex/react";
+import { useAuthGate } from "@platform/auth/web";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { Panel, Group, Separator, usePanelRef } from "react-resizable-panels";
+import { UserMenu } from "./UserMenu";
+import { Sidebar } from "./Sidebar";
+import { MobileDrawer } from "./MobileDrawer";
+import { GlobalSearch } from "./GlobalSearch";
+import { NotificationBell } from "./NotificationBell";
+import { TeamSwitcher } from "./TeamSwitcher";
+import { useBarlessShell } from "../hooks/useBarlessShell";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { ComposeHost } from "./ComposeHost";
+import { subscribeComposeOptimistic } from "../lib/composeBridge";
+import { NEW_SESSION_EVENT } from "../lib/utils";
+import { SquarePen, PanelLeft, PanelRight, Menu, MessageSquare, SquareTerminal, ChevronLeft, ChevronRight } from "lucide-react";
+import { SetupPromptBanner } from "./SetupPromptBanner";
+import { TeamDomainBanner } from "./TeamDomainBanner";
+import { TriageBar } from "./triage/TriageBar";
+import { TriageNuxGate } from "./triage/TriageNux";
+import { TourLayer, ToursPanel } from "../tours";
+import { NewSnippetsBanner } from "./NewSnippetsBanner";
+import { OrgIntroAnywhere } from "./org/OrgIntroAnywhere";
+import { ThemeIntroAnywhere } from "./theme/ThemeIntroAnywhere";
+import { NativeAppBanner } from "./NativeAppBanner";
+import { CliOfflineBanner } from "./CliOfflineBanner";
+import { ResourcePressureGauge, ResourcePressureFallback } from "./resources/ResourcePressureGauge";
+import { useSyncMachineResources } from "../hooks/useResourceMonitor";
+import { NotificationNudgeBanner } from "./NotificationNudgeBanner";
+import { TeamSharingNudgeBanner } from "./TeamSharingNudgeBanner";
+import { SharingSetupBanner } from "./SharingSetupBanner";
+import { DeviceSetupDialog } from "./permissions/DeviceSetupDialog";
+import { ConnectionBanner } from "./ConnectionBanner";
+import { StorageHealthBanner } from "./StorageHealthBanner";
+import { StatusNoticeStack } from "./StatusNoticeStack";
+import { DaemonStatusChip } from "./DaemonStatusChip";
+import { LocalDeviceProbe } from "../hooks/useLocalDeviceId";
+import { AccountUsageChip } from "./AccountUsageChip";
+import { useWallet } from "../hooks/useWallet";
+import { TopbarButton, TopbarChip, TopbarTray } from "./TopbarButton";
+import { NewMenu } from "./NewMenu";
+import { TopbarRow } from "./TopbarRow";
+import { PhoneCallStrip } from "./calls/PhoneCallStrip";
+import { HeaderPins, AnchorPanel } from "./anchor/AnchorPanel";
+import { useSyncAnchors } from "../hooks/useSyncAnchors";
+import { useSyncTeamExternalEvents } from "../hooks/useSyncExternalEvents";
+import { useSyncIssueSyncSources } from "../hooks/useSyncIssueSyncSources";
+import { useAdoptTimezone } from "../hooks/useAdoptTimezone";
+import { useSyncAgentDefinitions } from "../hooks/useSyncAgentDefinitions";
+import { useSyncInitiatives } from "../hooks/useInitiatives";
+import { useSyncOrgProposals } from "../hooks/useSyncOrgProposals";
+import { useSyncOrgTreeFeeder } from "../hooks/useSyncOrgTree";
+import { useWorkspaceFeature } from "../lib/teamFeatures";
+import { useSyncSettings } from "../hooks/useSyncSettings";
+import { useIsSyncHost, useSyncReplication } from "../hooks/useSyncRole";
+import { useSessionCommandResults } from "../hooks/useSessionCommands";
+import { useEnsureDispatch } from "../hooks/useEnsureDispatch";
+import { usePendingMessageCoverage } from "../hooks/usePendingMessageCoverage";
+import { SyncStatusChip } from "./SyncStatusChip";
+import { TmuxMissingBanner } from "./TmuxMissingBanner";
+import { FindBar } from "./FindBar";
+import { KeyboardShortcutsPanel, ShortcutTooltip } from "./KeyboardShortcutsHelp";
+import { AppLoader, SlowBootNote } from "./AppLoader";
+import { freshHomeLaunchPending, settleFreshHomeLaunch } from "../store/viewNav";
+import { useInboxStore, useTrackedStore, sessionsWakeSig, pendingSendWakeSig, getProjectName, resolveShowOld, selectSessionRailOpen, selectCommentRailOpen, selectSessionRailUserClosed, selectNavCollapsed, bucketProjectPath, ownCheckoutPath, placeInboxRows, resolveSimpleView, resolveInboxCompact, resolveVisualStyle, filterInboxScope, isSub } from "../store/inboxStore";
+import { newConversationAgentType } from "../lib/defaultAgent";
+import { ConnectToast } from "./simple/ConnectNotice";
+import { Surface, hiddenPageRedirect, useHostedMode, useModeWords, useSurface, useSurfaceMode } from "../lib/surfaces";
+import { useNewResultsCount } from "../hooks/useNeedsInputCount";
+import { agentFleetCounts } from "../lib/liveness";
+import { useCoarseNow } from "../hooks/useCoarseNow";
+import { pathOnMyMachines } from "../lib/machinePicker";
+import { liveMachineRoster } from "../hooks/useSyncDevices";
+import { useShortcutAction, useShortcutContext, useGlobalShortcutActions } from "../shortcuts";
+import { useFollowMode } from "../hooks/useFollowMode";
+import { FollowPill } from "./presence/FollowPill";
+import { usePrefetch } from "../hooks/usePrefetch";
+import { desktopHeaderClass, setupDesktopDrag, isElectron, borrowsTabShell, isStandaloneCommunityPath } from "../lib/desktop";
+import { SessionListPanel } from "./GlobalSessionPanel";
+import { StageRail } from "./stage/StageRail";
+import { FilePathMenuHost } from "./FilePathMenuHost";
+import { LinkMenuHost } from "./LinkMenuHost";
+import { EdgePeek } from "./EdgePeek";
+import { useSyncCore } from "../hooks/useSyncCore";
+import { useChatChannelsSync, useChatUnread } from "../hooks/useChatSync";
+import { useThreadUnreadSync } from "../hooks/useThreadsSync";
+import { ProfileSignInDialogHost } from "./ProfileSignInDialog";
+import { useChatToasts } from "../hooks/useChatToasts";
+import { ChatPrefetchFeeder } from "../hooks/useChatPrefetch";
+import { useSyncDocs } from "../hooks/useSyncDocs";
+import { isInboxSessionView, pageOwnsRailHighlight, railPointerOnNavigate, sessionFocusKind } from "../lib/inboxRouting";
+import { useOpenSession } from "../hooks/useOpenSession";
+import { RecentSwitcherHost } from "./RecentSwitcher";
+import { UndoTimelineHost } from "./undo/UndoTimeline";
+import { TabBar, AttachTabButton } from "./TabBar";
+import { AppWindowBar } from "./desktop/AppWindowBar";
+import { HostedSectionKeys } from "./HostedSectionKeys";
+import { useAppWindowRegistry } from "../hooks/useAppWindowRegistry";
+import { DESKTOP_APPS, desktopAppWindow, routeElsewhere } from "../lib/desktopApps";
+import { routerNavigate } from "../lib/tabRoutes";
+import { tabTitle } from "../lib/tabTitle";
+import { activeWorkspaceKey } from "../lib/workspaceScope";
+import { pathLabel, poppedTabPath } from "../lib/pathLabel";
+import { leavesOf } from "../store/stageSplit";
+import { TabContent } from "./TabContent";
+import { BreadcrumbBar } from "./BreadcrumbBar";
+import { TerminalDock } from "./terminal/TerminalDock";
+import { VaultQuickSwitcherDock } from "./vault/VaultQuickSwitcherDock";
+import { isFullWidthRoute, PageShell } from "../lib/pageLayout";
+import { useTipActions } from "../tips";
+import { GlobalCloseGuardDialog } from "./CloseGuardDialog";
+import { useLocalAuth } from "../lib/localAuth";
+import { ModRuntimes } from "./mods/ModRuntimes";
+import { useSyncMods } from "../lib/mods/useMods";
+
+const CommandPalette = lazy(() =>
+  import("./CommandPalette").then((module) => ({ default: module.CommandPalette })),
+);
+const SettingsModal = lazy(() =>
+  import("./settings/SettingsModal").then((module) => ({ default: module.SettingsModal })),
+);
+const PeopleWallModal = lazy(() =>
+  import("./people/PeopleWallModal").then((module) => ({ default: module.PeopleWallModal })),
+);
+const TeamAvatarBar = lazy(() =>
+  import("./TeamAvatarBar").then((module) => ({ default: module.TeamAvatarBar })),
+);
+const CallSyncEffects = lazy(() =>
+  import("./calls/CallSyncEffects").then((module) => ({ default: module.CallSyncEffects })),
+);
+const CallDock = lazy(() =>
+  import("./calls/CallDock").then((module) => ({ default: module.CallDock })),
+);
+const RecordingPill = lazy(() =>
+  import("./calls/RecordingPill").then((module) => ({ default: module.RecordingPill })),
+);
+const ElsewhereCallPill = lazy(() =>
+  import("./calls/ElsewhereCallPill").then((module) => ({ default: module.ElsewhereCallPill })),
+);
+
+interface DashboardLayoutProps {
+  children: ReactNode;
+  hideSidebar?: boolean;
+  // Public conversation links have no principal cache to hydrate. The shell
+  // opts them into the chrome-less guest branch once auth has settled.
+  allowUnhydratedGuest?: boolean;
+}
+
+const DEFAULT_LAYOUT = { sidebar: 25, main: 75 };
+// One handle for every split in the app (see .cc-split in globals.css).
+const separatorClass = "cc-split";
+
+// Stash on globalThis so the context identity survives Vite HMR reloads —
+// without this, a hot-updated inner DashboardLayout reads a fresh context
+// (default false) instead of the still-mounted outer's Provider (true),
+// causing the full layout to render twice.
+const _g = globalThis as Record<string, unknown>;
+const DashboardNestCtx: React.Context<boolean> =
+  (_g.__DashboardNestCtx as React.Context<boolean>) ??
+  (_g.__DashboardNestCtx = createContext(false));
+
+// The "N agents running" badge is the ONLY thing in the dashboard shell that
+// needs the full sessions map. Keeping its subscription here (rather than in
+// DashboardLayoutInner) means a streaming session heartbeat re-renders just
+// this tiny button instead of the entire shell (Sidebar, CommandPalette,
+// keyboard panel, main content) on every tick.
+const ActiveAgentsBadge = memo(function ActiveAgentsBadge({ isOnInboxPage }: { isOnInboxPage: boolean }) {
+  const openSession = useOpenSession();
+  const s = useTrackedStore([
+    // Wake on STRUCTURAL change (bucket/order/identity), never on the ~1s
+    // liveness heartbeat: the raw s.sessions ref flips on every tick, and this
+    // badge was measured re-running the whole classification over the
+    // never-prune cache ~3x/sec at ~50ms a pass. The body still reads
+    // s.sessions for data; these signatures only gate the re-render. Same for
+    // pendingMessages — only the pending-send MEMBERSHIP matters here.
+    // See store/wakeSig.ts and the identical gate on SessionListPanel.
+    s => sessionsWakeSig(s.sessions),
+    s => s.sessionsWithQueuedMessages,
+    s => s.blockedReviveRequestedAt,
+    s => pendingSendWakeSig(s.pendingMessages),
+    s => s.currentUser?._id,
+    s => resolveShowOld(s.clientState.ui),
+  ]);
+  // The chokepoint's time-driven flips (trust TTL, revive expiry, the epoch)
+  // ride its deadline signature — keep them alive with a coarse clock, exactly
+  // like SessionListPanel (see useCoarseNow / store/wakeSig.ts).
+  const coarseNow = useCoarseNow(15_000);
+  // Ambient "active agents" count stays MINE-scoped regardless of inbox scope: a
+  // teammate row can linger in the shared cache after a team-board visit, but the
+  // dock badge counts YOUR working sessions, not the team's. The placement
+  // chokepoint (placeInboxRows, sync-convergence C5) forced to "mine" runs the
+  // scope filter and the shared working-set selection internally, so a stale
+  // "working" card outside it can never inflate the badge.
+  const meId = s.currentUser?._id?.toString?.() ?? null;
+  // Deps are the wake signatures (memoized by ref — free to re-call here), not
+  // the raw s.sessions/s.pendingMessages refs those flip on every heartbeat.
+  const working = useMemo(
+    () => placeInboxRows(s, { scope: "mine", now: coarseNow }).working,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionsWakeSig(s.sessions), meId, s.sessionsWithQueuedMessages, s.blockedReviveRequestedAt, pendingSendWakeSig(s.pendingMessages), resolveShowOld(s.clientState.ui), coarseNow],
+  );
+  // The hover breakdown: every agent of mine with a process behind it,
+  // subagents included, by the same live rule the dots and buckets read.
+  const fleet = useMemo(
+    () => agentFleetCounts(Object.values(filterInboxScope(s.sessions, "mine", meId)), isSub, coarseNow),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionsWakeSig(s.sessions), meId, coarseNow],
+  );
+  if (working.length === 0) return null;
+  const activeAgentCount = working.length;
+  // The placement chokepoint's working set is the badge's number; an agent it
+  // counts is awake even if the fleet rule has not caught up to it yet.
+  const awakeAgents = Math.max(fleet.sessions.awake, activeAgentCount);
+  const n = (count: number, noun: string) => `${count} ${noun}${count !== 1 ? "s" : ""}`;
+  return (
+    <ShortcutTooltip label={
+      <div className="flex flex-col gap-0.5">
+        <span>{activeAgentCount + fleet.subagents.working} working: {n(activeAgentCount, "agent")} + {n(fleet.subagents.working, "subagent")}</span>
+        <span className="text-sol-text-muted">{awakeAgents + fleet.subagents.awake} awake: {n(awakeAgents, "agent")} + {n(fleet.subagents.awake, "subagent")}</span>
+      </div>
+    }>
+      <TopbarChip
+        onClick={() => {
+          const store = useInboxStore.getState();
+          if (!selectSessionRailOpen(store)) store.toggleSidePanel();
+          if (working[0]) openSession(working[0]._id);
+        }}
+        aria-label={`${activeAgentCount} agent${activeAgentCount !== 1 ? 's' : ''} running`}
+      >
+        {/* The count alone; the tooltip spells out what it counts. */}
+        <span className="text-sol-text">{activeAgentCount}</span>
+      </TopbarChip>
+    </ShortcutTooltip>
+  );
+});
+
+const noop = () => {};
+
+export function DashboardLayout(props: DashboardLayoutProps) {
+  const isNested = useContext(DashboardNestCtx);
+  const authGate = useAuthGate(useLocalAuth);
+  // Hold the boot loader until the IDB hydration pass lands (clientStateInitialized
+  // flips true even when the cache is empty or unreadable, so this can't hang).
+  // Without it, React's first frame races loadCache(): the shell mounts on an
+  // empty store and paints zero-session null states ("No sessions") for a beat
+  // before cached content pops in. AppLoader is pixel-identical to the static
+  // #boot-shell in index.html, so the user sees one continuous loader → content.
+  const hydrated = useInboxStore((s) => s.clientStateInitialized);
+  const isSettledGuest = props.allowUnhydratedGuest &&
+    authGate === "guest";
+  if (isNested) return <>{props.children}</>;
+  // A settled anonymous share viewer intentionally has no principal store, so
+  // `clientStateInitialized` will remain false forever. Let only that explicit
+  // route reach DashboardLayoutInner's read-only guest branch.
+  if (!hydrated && !isSettledGuest) {
+    // A Chat or Work window booting cold wears its bar from the first frame:
+    // without it the window has no name and no surface to drag by until the
+    // cache has hydrated. Fixed over the loader, so the loader does not move.
+    const coldApp = desktopAppWindow();
+    return (
+      <>
+        {coldApp && (
+          <div className="fixed inset-x-0 top-0 z-10">
+            <AppWindowBar app={coldApp} />
+          </div>
+        )}
+        <AppLoader deferIndicator />
+        <SlowBootNote />
+      </>
+    );
+  }
+  // The undo card's host sits above DashboardLayoutInner's branch returns:
+  // its doorways (⌘⌥Z, the held peek, a toast's History) are installed by
+  // useGlobalShortcutActions in every branch, a browser pane's page and the
+  // guest frame included, and an open card with nothing on screen silences
+  // every undo toast.
+  return (
+    <DashboardNestCtx.Provider value={true}>
+      <DashboardLayoutInner {...props} />
+      <UndoTimelineHost />
+    </DashboardNestCtx.Provider>
+  );
+}
+
+// Eager background-sync hooks isolated into their own component so a failing
+// Convex query (e.g. an OOMing list query) throws HERE and is caught by the
+// inline <ErrorBoundary> that wraps this in DashboardLayoutInner — degrading to
+// "this data didn't prefetch" instead of taking down the entire dashboard.
+// None of these power the core shell/conversation view; they warm stores.
+// The global feeder set — everything that subscribes workspace-wide server
+// data into the store. Mounted only while this window is the sync host (or its
+// own solo host); a follower window receives the same slice over replication
+// instead (store/syncReplication.ts), so mounting these there would only
+// duplicate every subscription.
+function HostFeeders() {
+  // The tasks delta cursor machine: its empty deltas re-rendered the whole
+  // layout when it lived in DashboardLayoutInner.
+  usePrefetch();
+  useSyncDocs();
+  // THE feeder mount set (useSyncCore, sync-convergence C5): live window,
+  // liveness overlay, recovery probes, team feeders, sync-log applier, the
+  // decision queue and labels — one hook both platforms mount, so web and
+  // mobile replicas are fed identically.
+  useSyncCore("web");
+  // Chat's channel rail runs app-wide, not on the chat page: the sidebar badge,
+  // the document title and the arrival toasts all read it, and a toast that only
+  // fires while chat is open is a toast nobody needs.
+  useChatChannelsSync();
+  // The Threads badge: one scalar, every workspace, not chat-gated — comment
+  // and task threads exist whether or not the team has chat on.
+  useThreadUnreadSync();
+  // The anchors collection feeds the header chip, the slide-over, the inbox's
+  // anchor marks and chat's DM naming — one subscription for the whole shell.
+  useSyncAnchors();
+  // The team's git activity: the team feed reads it, and so does any page that
+  // wants recent events without opening a scope of its own.
+  useSyncTeamExternalEvents();
+  // Imported Linear/GitHub containers. Small, workspace-wide and read by the
+  // integrations panel and any project surface that shows where its tasks
+  // came from — one subscription rather than one per opened card.
+  useSyncIssueSyncSources();
+  // Codecast mods: every mod the viewer can see; ModRuntimes runs the enabled ones.
+  useSyncMods();
+  // A profile with no timezone takes this device's (team day cuts, local clocks).
+  useAdoptTimezone();
+  // Hosted mode's wallet: the rail's meter, Plan and the composer's held
+  // month all read it, in every window, so the host feeds it whether or not
+  // its own rail shows the meter.
+  useWallet(useHostedMode());
+  // The workspace's agent definitions and chains: the compose "as" chooser,
+  // the settings library and the spawn actions all read them.
+  useSyncAgentDefinitions();
+  // The workspace's initiatives: few rows, read by the list, a project's
+  // line, the task board's axis and every `in-N` pill.
+  useSyncInitiatives();
+  // The rail's Org count (Waits on you) reads the org on every page: the
+  // proposals, and the roles that map a decision's conversation to the role
+  // that asked (org.roles, which reads no session, so it re-runs only when
+  // the org changes). Without these a fresh device or a workspace switch
+  // counts no decisions until Org is opened.
+  const orgOn = useWorkspaceFeature("org");
+  useSyncOrgProposals(orgOn);
+  useSyncOrgTreeFeeder(undefined, orgOn);
+  useSyncSettings();
+  // Machine resource reports: the pressure notice and /resources read them.
+  useSyncMachineResources();
+  return null;
+}
+
+/** The store's feeders and write wiring for one window. Every shell that
+ *  renders store data mounts this: the dashboard, and /welcome
+ *  (components/simple/LaneSync), which passes `windowEffects={false}` because
+ *  call rings, chat toasts and mods belong to the full app's window. */
+export function DashboardSyncEffects({ windowEffects = !PANE_EMBED }: { windowEffects?: boolean } = {}) {
+  // Cross-window replication: elect a sync host, follow one, or run solo.
+  // Everything below the feeder gate still runs in every window — toasts,
+  // calls and badges READ the store, which replication keeps fed.
+  useSyncReplication(true);
+  // Dispatch wiring is NOT a feeder: a follower still sends its own writes to
+  // the server (replication only mirrors state). Ungated, in every window —
+  // without this a follower's actions would park in the outbox until the
+  // window happened to be promoted.
+  useEnsureDispatch();
+  usePendingMessageCoverage();
+  const isSyncHost = useIsSyncHost();
+  return <>
+    {/* A browser pane's page shows a route; it is not a window. Toasts, the
+        title badge and the call surfaces belong to the window AROUND it, and a
+        second copy inside a pane doubles all three — the badge worst of all,
+        since it rewrites the document title the pane reads for its strip.
+        A component boundary rather than a conditional hook: PANE_EMBED cannot
+        change while the document lives, but the rule stays visible. */}
+    {windowEffects ? <WindowOnlyEffects /> : null}
+    <SessionCommandResultsFeeder />
+    <LocalDeviceProbe />
+    {isSyncHost ? <HostFeeders /> : null}
+    {isSyncHost ? <ChatPrefetchFeeder /> : null}
+  </>;
+}
+
+/** Settles this window's daemon commands (restart, move, switch, hibernate)
+ *  wherever they were asked from. The collection is per-window, so every
+ *  window feeds its own: never host-gated. Its own component, so a new
+ *  request re-renders only this. */
+function SessionCommandResultsFeeder() {
+  useSessionCommandResults();
+  return null;
+}
+
+/** What belongs to a window rather than to a route: unread toasts, the title
+ *  badge, the call surfaces. */
+function WindowOnlyEffects() {
+  useChatToasts();
+  return <><Suspense fallback={null}><CallSyncEffects /></Suspense><SeatKillDialog /><HuddleStartHost /><ProfileSignInDialogHost /><ModRuntimes /><ConnectToast /></>;
+}
+
+// The window's OS title: the surface, then the specific thing it shows,
+// "Codecast Chat | design", "Codecast Inbox | Fix the auth race". Window
+// switchers (Mission Control, the Window menu, AltTab) list windows by this
+// title, so the main window and every popped out one name what they show.
+// One writer for the whole title: a second writer re-asserting its own part
+// on a timer is how the title used to flicker between two names.
+//
+// Unread mentions lead it. Only mentions: an unread COUNT turns every busy
+// afternoon into a number that never reaches zero, and being named is the one
+// thing worth interrupting a different app for.
+function useWindowTitle(path: string) {
+  const { mentions } = useChatUnread();
+  // Hosted mode also leads with results not yet read: a count that reaches
+  // zero as the person reads them, unlike a developer's busy fleet.
+  const hosted = useHostedMode();
+  const newResults = useNewResultsCount(hosted && !PANE_EMBED);
+  const title = useInboxStore((s) => {
+    const label = pathLabel(path, s.clientState.ui);
+    // An inbox window titles by the session it is SHOWING (the store pointer);
+    // the URL's ?s= deep link is the fallback inside tabTitle.
+    const inboxish = path.startsWith("/inbox") || path.startsWith("/conversation");
+    const sessionId = inboxish ? s.currentSessionId ?? undefined : undefined;
+    // The same arguments the tab strip passes, so a tab and its window name a
+    // goal, role, project or person the same way.
+    const rest = tabTitle({ id: "window", path, sessionId, title: "", createdAt: 0 }, s.sessions, s.chatChannels, s.teamMembers, s.currentUser?._id, s.initiatives, activeWorkspaceKey(s.clientState.ui?.active_team_id, s.currentUser?._id), s);
+    // An object on the Org screen sits on the Org surface once its name is
+    // known ("Codecast Org | Win the private network"); its kind and handle
+    // ("Goal in-1") stand in only until the store holds the row.
+    const surface = path.startsWith("/org/") && rest !== label ? "Org" : label;
+    // Hosted mode names an open conversation by its title alone, as a
+    // browser tab names a page; the surface name is developer framing.
+    return appDocumentTitle(surface, rest, PANE_EMBED || (hosted && inboxish && !!rest));
+  });
+  useWatchEffect(() => {
+    const lead = PANE_EMBED ? 0 : mentions + newResults;
+    const next = lead > 0 ? `(${lead}) ${title}` : title;
+    if (document.title !== next) document.title = next;
+  }, [title, mentions, newResults]);
+}
+
+function DashboardLayoutInner({ children, hideSidebar }: DashboardLayoutProps) {
+  const isGuest = useAuthGate(useLocalAuth) === "guest";
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  // Stable handles: an inline lambda here re-rendered the (235-hook) Sidebar on
+  // every layout render.
+  const closeMobileSidebar = useCallback(() => setIsMobileSidebarOpen(false), []);
+  // The phone's sessions drawer has its own open state. The saved rail slot
+  // means "a column beside the page" and the route effects below open it on
+  // arrival; on a phone that would drop a modal over every page load, and
+  // closing it there would fold the rail on the desktop too.
+  const [isMobileSessionListOpen, setIsMobileSessionListOpen] = useState(false);
+  const s = useTrackedStore([
+    s => s.clientStateInitialized,
+    s => s.clientState.ui?.zen_mode,
+    s => s.zenNavOpen,
+    s => selectNavCollapsed(s),
+    s => s.clientState.layouts?.dashboard,
+    // Slot sizes: a workbench switch rewrites these, and the panels below
+    // apply them imperatively.
+    s => s.workspace.nav.size,
+    s => s.workspace.context.size,
+    s => s.workspace.context.pane?.kind,
+    // The terminal toggle lights while the dock is open.
+    s => s.workspace.dock.pane != null,
+    s => s.currentConversation?.source,
+    s => selectSessionRailOpen(s),
+    s => s.sidePanelSessionId,
+    s => s.currentSessionId,
+    s => s.viewingDismissedId,
+    s => selectCommentRailOpen(s),
+    s => s.clientState.ui?.comments_enabled ?? false,
+    s => resolveSimpleView(s.clientState.ui),
+    s => resolveInboxCompact(s.clientState.ui),
+    s => resolveVisualStyle(s.clientState.ui),
+    // Re-render the header toggle when comments change, so a teammate's comment on
+    // the viewed conversation surfaces the toggle even with the tools off. Subscribe
+    // to the comments map REF (O(1) Object.is compare), not a full scan: comments is
+    // low-churn (heartbeats never touch it, so the ref is stable between comment
+    // syncs), and the actual "does the viewed conversation have comments" boolean is
+    // derived below off the same ref. Scanning all comments here re-ran on every ~1s
+    // store heartbeat notification app-wide. The viewed conversation id is already a
+    // dep (currentSessionId / viewingDismissedId above).
+    s => s.comments,
+    s => s.palette.open,
+    s => s.peopleWallOpen,
+    s => s.settingsModalSection,
+    s => s.tabs.length,
+    s => s.activeTabId,
+    s => s.tabs.find(t => t.id === s.activeTabId)?.path,
+    // The leaf taking its tab's width (the org screen): the session rail folds.
+    s => s.stageWide?.tabId,
+  ]);
+  // The activity feed (/team/activity) carries the active workspace filter in its
+  // URL as `?dir=`. The sidebar lives outside the tab's search-param context, so we
+  // derive the filter here from the active tab's stored path and feed it down — this
+  // drives the "Workspaces" highlight and the new-session git-context fallback below.
+  const activeTabPath = s.tabs.find(t => t.id === s.activeTabId)?.path ?? "";
+  const directoryFilter = useMemo(() => {
+    const query = activeTabPath.split("?")[1];
+    return query ? new URLSearchParams(query).get("dir") : null;
+  }, [activeTabPath]);
+  const isZenMode = s.clientState.ui?.zen_mode ?? false;
+  const sidebarCollapsed = selectNavCollapsed(s);
+  // Zen hides the sidebar, but Ctrl+[ or the left edge peek still reach it.
+  const navHidden = isZenMode ? !s.zenNavOpen : sidebarCollapsed;
+  // This document is the Chat or Work window (lib/desktopApps): the app's
+  // own bar stands in for the top bar, and no rail or peek is drawn around
+  // its page. A hook: a window made from the warm spare becomes one after
+  // it has mounted.
+  const appWindow = useAppWindowRegistry();
+  // Hosted mode's surfaces and words (lib/surfaces.ts).
+  const terminalShown = useSurface("terminal");
+  const hostedMode = useHostedMode();
+  const words = useModeWords();
+  // Shell display modes, as classes on the shell root and on anything that
+  // portals out of it (the phone drawers), so the mode's scoped rules apply.
+  const shellModeClass = `${resolveSimpleView(s.clientState.ui) ? " simple-view" : ""}${resolveInboxCompact(s.clientState.ui) ? " inbox-compact" : ""}${hostedMode ? " hosted-mode" : ""}`;
+  // The nav slot owns the sidebar's width (so a workbench restores it with the
+  // rest of the chrome); the legacy layouts.dashboard value seeds it once for
+  // users whose width predates the slot taking ownership.
+  const rawLayout = s.clientState.layouts?.dashboard ?? (resolveVisualStyle(s.clientState.ui) === "minimal" ? { sidebar: 18, main: 82 } : DEFAULT_LAYOUT);
+  const navSize = s.workspace.nav.size ?? rawLayout.sidebar ?? 25;
+  const layout = {
+    sidebar: Math.max(10, Math.min(50, navSize)),
+    main: Math.max(30, Math.min(90, 100 - navSize)),
+  };
+  // Phone width (below 768px) as a live media query: the side rails become
+  // slide-over drawers and the resizable panels stand down.
+  const isMobile = useIsPhone();
+  const barless = useBarlessShell();
+  const phoneHosted = hostedMode && isMobile;
+  const tabStripShown = useSurface("tabStrip");
+  const pathname = usePathname();
+  // The real browser URL from react-router. `pathname` (usePathname compat) can
+  // report the active in-app tab's route instead — e.g. on Settings it returns a
+  // carried "/inbox" tab — so use this when we need to know the page that's
+  // actually mounted, not the tab the user last worked in.
+  const routerLocation = useLocation();
+  const router = useRouter();
+  // A navigation inside a tab (tabNavigate) writes the browser history
+  // directly, and react-router's location does not hear it; the active tab's
+  // path is a dep above, so this render sees the address the window shows.
+  useWindowTitle(typeof window === "undefined" ? routerLocation.pathname + routerLocation.search : window.location.pathname + window.location.search);
+  // The one route guard for pages a mode hides: the rail and the palette
+  // already leave them out (SurfaceMode.showsPage), and a typed address, an
+  // old link or the back button lands on the hosted page that does the job.
+  const surfaceMode = useSurfaceMode();
+  const hiddenRedirect = hiddenPageRedirect(routerLocation.pathname, surfaceMode);
+  useWatchEffect(() => {
+    if (hiddenRedirect) router.replace(hiddenRedirect);
+  }, [hiddenRedirect, routerLocation.pathname]);
+  // Hosted mode's pages load on idle, so moving between them is instant.
+  useWatchEffect(() => {
+    if (hostedMode) preloadHostedPages();
+  }, [hostedMode]);
+
+  const [desktopClass, setDesktopClass] = useState("");
+  const [isDesktopApp, setIsDesktopApp] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const prevWasInboxRef = useRef(false);
+  const prevPathnameRef = useRef(pathname);
+  const tipActions = useTipActions();
+
+  useMountEffect(() => {
+    setDesktopClass(desktopHeaderClass());
+    setIsDesktopApp(isElectron());
+    const timer = setTimeout(() => { setDesktopClass(desktopHeaderClass()); setIsDesktopApp(isElectron()); }, 500);
+    return () => clearTimeout(timer);
+  });
+
+  // Desktop: Cmd-click / middle-click on any in-app object opens it in a
+  // background tab; Cmd-Shift-click in a detached window (lib/openIntent). One
+  // listener for the whole shell — every link and row already routes through
+  // the chokepoints it diverts. A no-op on the web (browser keeps Cmd-click).
+  useMountEffect(() => installOpenIntent());
+
+  useWatchEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    return setupDesktopDrag(header);
+  }, [desktopClass]);
+
+  const isOnConversationPage = pathname?.includes("/conversation/") ?? false;
+  const isOnCommitPage = pathname?.includes("/commit/") ?? false;
+  const isOnPRPage = pathname?.includes("/pr/") ?? false;
+  const isOnInboxPage = isInboxSessionView(pathname, s.currentConversation?.source);
+  const isOnTasksPage = pathname === "/tasks" || (pathname?.startsWith("/tasks/") ?? false);
+  const isOnWorkflowsPage = pathname === "/workflows" || (pathname?.startsWith("/workflows/") ?? false);
+  const isOnRoutinesPage = pathname === "/routines" || (pathname?.startsWith("/routines/") ?? false);
+  const isOnTriggersPage = pathname === "/triggers" || (pathname?.startsWith("/triggers/") ?? false);
+  // /schedules = pre-rename alias for /triggers, kept for old links.
+  const isOnSchedulesPage = pathname === "/schedules" || (pathname?.startsWith("/schedules/") ?? false);
+  const isOnPlansPage = pathname === "/plans" || (pathname?.startsWith("/plans/") ?? false);
+  const isOnGoalsPage = pathname === "/goals" || (pathname?.startsWith("/goals/") ?? false);
+  const isOnCallsPage = pathname === "/calls" || (pathname?.startsWith("/calls/") ?? false);
+  const isOnDocsPage = pathname === "/docs" || (pathname?.startsWith("/docs/") ?? false);
+  const isOnCapabilitiesPage = pathname === "/capabilities";
+  const isOnFilesPage = pathname === "/files" || (pathname?.startsWith("/files/") ?? false);
+  // /vault = pre-rename alias for /files. Kept as its own flag rather than
+  // folded into the one above because the routes.manifest parity test reads the
+  // FIRST path literal of each isOn* as that flag's base — one flag naming two
+  // bases would leave /vault's full-width claim unguarded.
+  const isOnVaultPage = pathname === "/vault" || (pathname?.startsWith("/vault/") ?? false);
+  const isOnProjectsPage = pathname === "/projects" || (pathname?.startsWith("/projects/") ?? false);
+  const isOnWindowsPage = pathname === "/windows";
+  const isOnCrosstalkPage = pathname === "/crosstalk";
+  const isOnSessionMapPage = pathname === "/map";
+  // Browsing a repository: the index, its history, its source and its blame all
+  // own the whole canvas.
+  const isOnRepoPage = pathname === "/repo" || (pathname?.startsWith("/repo/") ?? false);
+  // The org tree and a scope page each own their canvas: graph plus panel, tabs plus feed.
+  const isOnOrgPage = pathname === "/org" || (pathname?.startsWith("/org/") ?? false);
+  // A mod's pane owns its header and scroll (components/mods/ModPanePage).
+  const isOnModPage = pathname?.startsWith("/m/") ?? false;
+  const isOnModObjectsPage = pathname?.startsWith("/objects/") ?? false;
+  const isOnModObjectPage = pathname?.startsWith("/o/") ?? false;
+  // The daily edition sets its own 1180px column (changes-page.md 4).
+  const isOnChangesPage = pathname === "/changes";
+  // Settings is a modal-like surface, not a working surface — selecting a session
+  // there means "I'm done configuring, take me to it", not "peek beside". Keyed off
+  // the real router URL because `pathname` lies here (returns the carried tab route).
+  const isOnSettingsPage = routerLocation.pathname.startsWith("/settings");
+  // isFullWidthRoute folds in the self-contained full-bleed pages (sessions,
+  // admin) so the non-tab path matches the tab shell; the inbox check stays
+  // explicit because it is source-aware, not just path-based.
+  const isFullWidthPage = isOnConversationPage || isOnCommitPage || isOnPRPage || isOnInboxPage || isOnTasksPage || isOnWorkflowsPage || isOnRoutinesPage || isOnTriggersPage || isOnSchedulesPage || isOnPlansPage || isOnGoalsPage || isOnCallsPage || isOnDocsPage || isOnCapabilitiesPage || isOnFilesPage || isOnVaultPage || isOnProjectsPage || isOnWindowsPage || isOnCrosstalkPage || isOnSessionMapPage || isOnRepoPage || isOnOrgPage || isOnChangesPage || isOnModPage || isOnModObjectsPage || isOnModObjectPage || isFullWidthRoute(pathname ?? "");
+
+  // The teammate comment rail is a conversation-scoped overlay, so its header
+  // toggle only makes sense when a conversation is actually on screen.
+  const isViewingConversation = isOnConversationPage || (isOnInboxPage && !!(s.currentSessionId || s.viewingDismissedId));
+  const commentRailOpen = selectCommentRailOpen(s);
+  // The comment tools are opt-in (off by default), but a conversation that already
+  // has comments still surfaces the toggle so you can open it to read + reply.
+  const commentsEnabled = s.clientState.ui?.comments_enabled ?? false;
+  const viewedConvIds = [s.currentSessionId, s.viewingDismissedId].filter(Boolean) as string[];
+  // Conversation ids that carry at least one comment, indexed once per comments-map
+  // change (not per render) so the toggle check below is an O(1) Set lookup.
+  const commentedConvIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const c of Object.values(s.comments) as { conversation_id?: string }[]) {
+      if (c.conversation_id) set.add(c.conversation_id);
+    }
+    return set;
+  }, [s.comments]);
+  const convHasComments = viewedConvIds.some((id) => commentedConvIds.has(id));
+  const showCommentsToggle = isViewingConversation && (commentsEnabled || convHasComments);
+
+
+  // The rail is ONLY ever the session list — a conversation never renders
+  // inside it (clicking a session promotes it to the stage instead; see
+  // resolveSessionSelectKind). sidePanelSessionId survives purely as the
+  // rail's highlight pointer.
+  const railOpen = selectSessionRailOpen(s);
+  // The only /settings URLs that reach this layout are the focused flow
+  // pages (create team, join team, link GitHub) — section URLs bounce into
+  // the modal before rendering here. Those flows are the one thing on
+  // screen, so the session rail stays out of them on every size: on a phone
+  // it would overlay the whole flow on arrival, on desktop it stacks
+  // unrelated inbox cards beside a focused step and pushes the centered
+  // shell off axis. The persisted rail choice still applies everywhere else.
+  // A leaf taking its tab's width (store.stageWide, the org screen) folds the
+  // rail to a thin strip (StageRail below) for as long as it is there; the
+  // rail's own open state is untouched, so leaving brings it back as it was.
+  const stageWideHere = !!s.stageWide && s.stageWide.tabId === s.activeTabId;
+  const showSessionList = railOpen && !isMobile && !isOnSettingsPage && !appWindow && !stageWideHere;
+  const showMobileSessionList = isMobileSessionListOpen && isMobile && !isOnSettingsPage && !appWindow;
+  // Right session list, collapsed: no persistent rail — a right-edge hover-peek
+  // slides the full list out, mirroring the left sidebar's collapsed behavior.
+  // Never in zen mode (same rule as the left peek): zen means nothing slides in.
+  // Keyed to showSessionList, not railOpen, so the flow pages that suppress
+  // the rail still reach the list through the edge peek.
+  const rightPeekEnabled = !showSessionList && !isMobile && !isZenMode && !appWindow;
+
+  // No route carries a conversation along as a second column any more: the
+  // page takes the full stage, and side by side is the tab's split layout,
+  // entered by a deliberate drag onto the stage (components/stage).
+
+  // On conversation pages, derive active ID from the URL so non-owner viewers
+  // (ViewerView) get correct sidebar highlighting — they don't set currentSessionId.
+  const conversationPageId = isOnConversationPage && pathname
+    ? pathname.replace('/conversation/', '').split(/[/?#]/)[0]
+    : null;
+
+  // Which pointer the rail highlights comes from the shared helper, so
+  // whatever MOVES this highlight (the workbench filter's eviction) reads the
+  // same answer.
+  const focusKind = sessionFocusKind(pathname, s.currentConversation?.source);
+  const sessionListActiveId = focusKind === "current"
+    ? (s.viewingDismissedId ?? s.currentSessionId)
+    : focusKind === "url"
+    ? (conversationPageId ?? s.currentSessionId)
+    : s.sidePanelSessionId;
+
+  // The one select-kind-aware open path (hooks/useOpenSession): in place on
+  // the inbox, leave for the inbox from every other surface. Shared with the
+  // Ctrl+Tab switcher and the Ctrl+I/Ctrl+P jump shortcuts.
+  const sessionListOnSelect = useOpenSession();
+  // In the phone drawer a pick also closes the drawer, so the session shows.
+  const selectFromMobileSessionList = useCallback((id: string) => {
+    sessionListOnSelect(id);
+    setIsMobileSessionListOpen(false);
+  }, [sessionListOnSelect]);
+
+  // Growing past the phone width swaps the drawer for the panel; an open
+  // drawer would otherwise keep its focus trap and scroll lock over a desktop
+  // layout that no longer shows it.
+  useWatchEffect(() => {
+    if (isMobile) return;
+    setIsMobileSidebarOpen(false);
+    setIsMobileSessionListOpen(false);
+  }, [isMobile]);
+
+  // The route-default effects below adjust the rail when you NAVIGATE between
+  // surfaces. A tab switch also changes `pathname` (it reports the active
+  // tab's path), but revealing an already-open tab is not navigation — the
+  // frame must stay pixel-identical — so each effect stands down when the
+  // pathname change arrived with a tab switch. The ref is updated in a
+  // separate effect declared AFTER the consumers: effects run in declaration
+  // order, so during a switch they still compare against the pre-switch tab.
+  const prevActiveTabRef = useRef(s.activeTabId);
+
+  useWatchEffect(() => {
+    const wasInbox = prevWasInboxRef.current;
+    prevWasInboxRef.current = isOnInboxPage;
+    if (prevActiveTabRef.current !== s.activeTabId) return;
+    const store = useInboxStore.getState();
+    // Entering the inbox opens the session list beside it (unless you closed
+    // it by hand). Runs on first mount too — a boot landing on /inbox seeds
+    // the rail for a fresh workspace.
+    if (!wasInbox && isOnInboxPage) {
+      if (!selectSessionRailOpen(store) && !selectSessionRailUserClosed(store)) {
+        store.toggleSidePanel();
+      }
+    }
+    if (wasInbox && !isOnInboxPage) {
+      // The Favorites view is a mode of the inbox's session list; leaving the
+      // inbox drops back to the active desk so the rail isn't stuck on the shelf.
+      if (store.showFavorites) store.setShowFavorites(false);
+      // Nothing is on the stage on /tasks, /docs and friends, so the rail shows
+      // no lit row (railPointerOnNavigate). A page that publishes the pointer
+      // itself already wrote it in this commit and is left alone.
+      if (railPointerOnNavigate(pathname, store.currentConversation?.source) === "clear") {
+        store.clearSidePanelSession();
+      }
+    }
+  }, [isOnInboxPage]);
+
+  useWatchEffect(() => {
+    const prev = prevPathnameRef.current;
+    prevPathnameRef.current = pathname;
+    if (!prev || prev === pathname) return;
+    if (prevActiveTabRef.current !== s.activeTabId) return;
+    const store = useInboxStore.getState();
+    // Same rule as leaving the inbox, and it runs before the rail-closed guard:
+    // a pointer left standing while the rail is shut lights a stale row the
+    // moment the rail is reopened on a page with no conversation on the stage.
+    if (railPointerOnNavigate(pathname, store.currentConversation?.source) === "clear") {
+      store.clearSidePanelSession();
+    }
+    if (selectSessionRailUserClosed(store)) return;
+    if (pageOwnsRailHighlight(pathname)) return;
+    const isNowConvPage = pathname?.includes("/conversation/");
+    // Arriving at a conversation page (from notification, link, etc.) — open side panel
+    if (isNowConvPage && !isOnInboxPage) {
+      const sessionId = pathname?.split("/conversation/")[1]?.split("?")[0];
+      if (sessionId) {
+        store.openSidePanel(sessionId);
+      }
+    }
+  }, [pathname, isOnInboxPage]);
+
+  // Keep LAST of the trio: the consumers above must see the pre-switch tab id.
+  useWatchEffect(() => {
+    prevActiveTabRef.current = s.activeTabId;
+  }, [s.activeTabId]);
+
+  const resolveNewSessionContext = useCallback(() => {
+    const store = useInboxStore.getState();
+    // An exclude chip ("everything but X") expresses no project preference for
+    // new sessions — only include mode constrains/seeds below.
+    const activeProjectFilter = store.chipFilterExclude ? null : store.activeProjectFilter;
+    // A label chip nulls activeProjectPath — derive the label's directory instead.
+    const activeProjectPath = store.chipFilterExclude ? null : store.activeProjectPath ?? bucketProjectPath(store);
+    // Ctrl+N clones the selected session's project path (preserving its worktree /
+    // subdirectory) — the session the user sees highlighted (sessionListActiveId).
+    // But a project-filter chip is an explicit "I'm working in this project": when
+    // one is active, the focused session only wins if it actually lives inside that
+    // project, so a stale focus from elsewhere can't pull a new session out of it.
+    // And the focused/current session can be a TEAMMATE's (team inbox), whose
+    // checkout no machine of ours has — such a path never seeds a new session.
+    // Only a LIVE roster may veto a path: the persisted roster paints chips at
+    // boot but a stale copy must not block a freshly cloned checkout.
+    const seedable = (p: string | null | undefined) => pathOnMyMachines(liveMachineRoster(store), p);
+    const selected = sessionListActiveId
+      ? (store.sessions[sessionListActiveId]
+          ?? store.conversations[sessionListActiveId])
+      : null;
+    if (
+      selected?.project_path &&
+      seedable(selected.project_path) &&
+      (!activeProjectFilter || getProjectName(selected.git_root, selected.project_path) === activeProjectFilter)
+    ) {
+      return {
+        path: selected.project_path,
+        gitRoot: selected.git_root || selected.project_path,
+        agentType: selected.agent_type,
+      };
+    }
+    const ctx = store.currentConversation;
+    // The project-filter chip the user scoped the inbox to — honor it before the
+    // URL directory filter or the last conversation's git root. Both name a
+    // project; ownCheckoutPath turns a teammate's copy of it into ours.
+    const mine = { sessions: store.sessions, recentProjects: store.recentProjects, machineRoster: liveMachineRoster(store) };
+    const chipPath = ownCheckoutPath(activeProjectPath, { ...mine, name: activeProjectFilter });
+    if (chipPath) {
+      return { path: chipPath, gitRoot: chipPath, agentType: ctx.agentType };
+    }
+    const dirPath = ownCheckoutPath(directoryFilter, mine);
+    if (dirPath) {
+      return { path: dirPath, gitRoot: dirPath === directoryFilter ? ctx.gitRoot || dirPath : dirPath, agentType: ctx.agentType };
+    }
+    const ctxRoot = seedable(ctx.gitRoot) ? ctx.gitRoot : undefined;
+    if (ctxRoot) return { path: ctxRoot, gitRoot: ctxRoot, agentType: ctx.agentType };
+    // Nothing open yet (a fresh launch): the project of the conversation this
+    // client was last in, else of the latest session with one on our machines.
+    const rootOf = (r: { git_root?: string; project_path?: string } | undefined) => r?.git_root || r?.project_path;
+    const lastFocused = store.lastFocusedConversationId ? store.sessions[store.lastFocusedConversationId] : undefined;
+    const last = seedable(rootOf(lastFocused)) ? lastFocused : Object.values(store.sessions)
+      .filter((r) => (r.message_count ?? 0) > 0 && !r.is_subagent && seedable(rootOf(r)))
+      .reduce<typeof lastFocused>((best, r) => (!best || r.updated_at > best.updated_at ? r : best), undefined);
+    const lastRoot = rootOf(last);
+    return lastRoot
+      ? { path: lastRoot, gitRoot: lastRoot, agentType: ctx.agentType ?? last?.agent_type }
+      : { path: undefined, gitRoot: undefined, agentType: ctx.agentType };
+  }, [directoryFilter, sessionListActiveId]);
+
+  // Every "New Session" affordance opens the floating compose popup (ComposeView
+  // in an overlay) — the same surface the command palette uses. ComposeView owns
+  // the blank-session create + the project/agent picker, so this is just "show
+  // the popup". Reading the action straight off the store keeps it stable.
+  const openCompose = useInboxStore((st) => st.openCompose);
+
+  // Ctrl+N opens a FULL new session in the main window (not the modal): seed a
+  // DEFERRED blank session and navigate to it. The conversation route renders the
+  // same NewSessionView for the empty timeline, and the first send self-heals the
+  // stub into a real conversation (awaitConvexId → ensureSessionCreated → rekey),
+  // so no eager create — and therefore no "create" sound — until the user sends.
+  // deferCreate + reuse means an abandoned (never-sent) open strands nothing:
+  // repeated Ctrl+N converges on the one blank for this project+agent, which the
+  // ghost sweep reaps. Isolated lives as a toggle inside NewSessionView, so it's
+  // reachable here too without a separate eager-create path. Project can be empty
+  // (the null-state ProjectSwitcher lets the user pick before sending).
+  // `main`: always into the main view, never the session rail (a fresh
+  // launch, before the route has settled on the inbox). `landing`: the fresh
+  // launch's home screen, whose blank is not shown as a starting session.
+  const handleNewFullSession = useCallback((opts?: { main?: boolean; landing?: boolean }) => {
+    const { path, gitRoot, agentType: rawAgent } = resolveNewSessionContext();
+    const store = useInboxStore.getState();
+    // The selected conversation's agent carries over; the default
+    // (lib/defaultAgent) fills in, the hosted assistant in hosted mode.
+    const agentType = newConversationAgentType(store, rawAgent);
+    const { stubId } = store.beginOptimisticSession({
+      agentType,
+      projectPath: path,
+      gitRoot: gitRoot || path || undefined,
+      deferCreate: true,
+      reuse: true,
+      landing: opts?.landing,
+      // Source project + agent from the LIVE stub at create time (not these
+      // closure values) so a project/agent switch in NewSessionView before the
+      // first send sticks — same contract as the compose popup.
+      create: (sid) => store.createSessionFromStub(sid, { agentType, projectPath: path, gitRoot: gitRoot || path || undefined }),
+    });
+    if (isOnInboxPage || isOnConversationPage || opts?.main) {
+      store.setCurrentSession(stubId);
+    } else if (selectSessionRailOpen(store)) {
+      useInboxStore.setState({ sidePanelSessionId: stubId });
+    } else {
+      router.push(`/conversation/${stubId}?focus=1`);
+    }
+  }, [resolveNewSessionContext, router, isOnInboxPage, isOnConversationPage]);
+
+  // A fresh open of the app lands on the new-session page (store/viewNav
+  // freshHomeLaunchPending), once hydration has put the store in place.
+  const clientStateInitialized = useInboxStore((st) => st.clientStateInitialized);
+  useWatchEffect(() => {
+    if (!clientStateInitialized || !freshHomeLaunchPending()) return;
+    settleFreshHomeLaunch();
+    handleNewFullSession({ main: true, landing: true });
+  }, [clientStateInitialized, handleNewFullSession]);
+
+  // Bridge for the Electron "New Session" affordances (the palette's "open full"
+  // hand-off, the app menu / dock / tray) — fired via the NEW_SESSION_EVENT DOM
+  // event / __CODECAST_NEW_SESSION. Like Ctrl+N, this opens the FULL new session
+  // in the main window (not the modal). handleNewFullSession closes over the
+  // router + route flags, so the once-mounted listener calls it through a ref
+  // kept current each render.
+  const newFullSessionRef = useRef(handleNewFullSession);
+  newFullSessionRef.current = handleNewFullSession;
+  useMountEffect(() => {
+    const open = () => newFullSessionRef.current();
+    (window as any).__CODECAST_NEW_SESSION = open;
+    window.addEventListener(NEW_SESSION_EVENT, open);
+    // File › New Window (Cmd+N): the shell asks this window to pop its current
+    // view out; the answer to "which view" lives here, not in the shell.
+    (window as any).__CODECAST_DETACH_VIEW = detachCurrentView;
+    return () => {
+      delete (window as any).__CODECAST_NEW_SESSION;
+      delete (window as any).__CODECAST_DETACH_VIEW;
+      window.removeEventListener(NEW_SESSION_EVENT, open);
+    };
+  });
+
+  // Main-window receiver for the compose popup's "send & open". The popup is a
+  // separate window/store, so it broadcasts the {conversationId, content, clientId}
+  // of the send it already dispatched; we paint the same message optimistically
+  // here so it's visible the instant we navigate onto the new conversation. The
+  // shared clientId dedupes it against the server echo (no duplicate bubble), and
+  // there's no send here — the popup owns delivery, so a missed broadcast just
+  // falls back to the server pending_messages rail (never a lost message).
+  useMountEffect(() => subscribeComposeOptimistic(({ conversationId, content, clientId }) => {
+    useInboxStore.getState().addOptimisticMessage(conversationId, content, undefined, clientId);
+  }));
+
+  // Browser back/forward within the dashboard tab shell. Tab navigations push real
+  // history entries (see tabNavigate); on popstate we mirror the URL back into the
+  // active tab so TabContent renders the matching page. Inbox session selections
+  // carry their own `{ inboxId }` history state and are reconciled by
+  // QueuePageClient's popstate listener, so they're skipped here.
+  useMountEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const popped = (e.state ?? {}) as { inboxId?: string; inboxView?: InboxViewSnapshot };
+      // Inbox view-settings entries (label/project chips, view mode) — restore
+      // the snapshot through the regular setters, guarded so they don't push
+      // history again while history itself is driving them.
+      if (popped.inboxView) {
+        const v = popped.inboxView;
+        const store = useInboxStore.getState();
+        withApplyingViewHistory(() => {
+          if (
+            v.bucket !== store.activeBucketFilter || v.project !== store.activeProjectFilter || !!v.exclude !== store.chipFilterExclude ||
+            !sameFilterExtras(v.extras, store.extraBucketFilters) || !sameFilterExtras(v.projectExtras, store.extraProjectFilters)
+          ) {
+            if (v.bucket) store.setActiveBucketFilter(v.bucket, v.exclude, v.extras);
+            else if (v.project) store.setActiveProjectFilter(v.project, v.projectPath, v.exclude, v.projectExtras);
+            else {
+              store.setActiveBucketFilter(null);
+              store.setActiveProjectFilter(null, null);
+            }
+          }
+          if (v.mode && v.mode !== store.inboxViewMode()) store.setInboxViewMode(v.mode);
+        });
+      }
+      if (isNonTabRoute(window.location.pathname)) return;
+      // An app window's history can reach past the window's own life: one
+      // claimed from the warm spare still holds the inbox it was parked on.
+      // Back onto a route another window owns hands it there and puts this
+      // window on its own home instead.
+      const here = desktopAppWindow();
+      if (here && routeElsewhere(window.location.pathname + window.location.search)) {
+        routerNavigate(DESKTOP_APPS[here].home, "replace");
+        return;
+      }
+      // A detached tab window or a browser pane's page navigates via React
+      // Router only — the shared tabs its store hydrates belong to another
+      // window, so mirroring this window's URL into the "active tab" would
+      // rewrite someone else's tab.
+      if (borrowsTabShell()) return;
+      const store = useInboxStore.getState();
+      const tab = store.tabs.find((t) => t.id === store.activeTabId);
+      if (!tab) return;
+      // History can walk back onto a route another window owns now (a chat
+      // entry from before the Chat window opened): that window shows it, and
+      // this one keeps its tab and its address as they are.
+      if (routeElsewhere(window.location.pathname + window.location.search)) {
+        window.history.replaceState({ tabNav: true, tabId: tab.id }, "", tab.path);
+        return;
+      }
+      // A session-select entry is the inbox pane's to reconcile while that
+      // pane is mounted; once the tab shows another page, the pane is gone
+      // and the tab itself must return to the inbox (poppedTabPath).
+      const panePaths = tab.layout ? leavesOf(tab.layout).map((l) => l.path) : [tab.path];
+      const full = poppedTabPath(popped, window.location.pathname, window.location.search, panePaths);
+      if (full === null) return;
+      store.updateTab(tab.id, { path: full, title: pathLabel(full) });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  });
+
+  useGlobalShortcutActions();
+  // Follow mode, both sides (the lease, the mirror, the report).
+  useFollowMode();
+  useShortcutContext('desktop', isDesktopApp);
+
+  // Ctrl+N / Ctrl+Shift+N → the new-session popup (modal overlay here; the
+  // always-on-top window on desktop). Ctrl+Alt+N and the + button → the same
+  // surface as a page in the main window.
+  useShortcutAction('session.create', () => handleNewFullSession());
+
+  // Handlers receive the dispatch source ("key" | "named"); never let it reach
+  // openCompose's initialQuery.
+  useShortcutAction('session.compose', () => openCompose());
+  useShortcutAction('session.composeDock', useInboxStore.getState().toggleComposeDock);
+
+  // Persist user-driven resizes only, once, at drag end (useDragGatedLayoutPersist).
+  // Imperative collapse and synced-in layout echoes fire onLayoutChange too —
+  // ignoring those keeps a collapsed sidebar from sticking as a 0-size layout
+  // and keeps two windows from rewriting each other's clamped values forever.
+  // The width a drag just persisted: the store echo of our own gesture, which
+  // the apply-external-width effect below must not "re-apply".
+  const navDragEchoRef = useRef<number | null>(layout.sidebar);
+  const navGroupElRef = useRef<HTMLDivElement | null>(null);
+  const handleLayoutChange = useDragGatedLayoutPersist((newLayout) => {
+    if ((newLayout.sidebar ?? 0) < 5) return;
+    navDragEchoRef.current = newLayout.sidebar || 25;
+    useInboxStore.getState().wsSetSize("nav", newLayout.sidebar || 25);
+  }, navGroupElRef);
+
+  // Stable layout shell: panels stay mounted across zen/sidebar/sidePanel toggles to
+  // avoid remounting ConversationView and its Convex subscriptions (which flash a
+  // "Loading conversation..." state). Visibility is driven imperatively.
+  const sidebarPanelRef = usePanelRef();
+  const sessionListPanelRef = usePanelRef();
+  // The Work window carries a rail of its own (the pinned rail and the Work
+  // group, lib/desktopApps `nav`); the Chat window's page carries its rail.
+  const appRail = appWindow ? DESKTOP_APPS[appWindow].nav === "sidebar" : false;
+  const sidebarHidden = appRail ? isMobile : !!hideSidebar || navHidden || isMobile || !!appWindow;
+
+  // Animated collapse/expand: panels are flex-grow sized with no built-in
+  // transition, so we enable one (globals.css `.sidebar-animating`) only for
+  // the duration of a programmatic toggle — drag-resizes stay 1:1. The class is
+  // toggled imperatively (not via React state) so it's in the DOM before
+  // collapse()/expand() writes the new flex-grow in the same task — a state-
+  // driven class would commit a render later and miss the transition. The
+  // content is frozen at its expanded pixel width via --sidebar-frozen-w so
+  // the panel slides over it instead of reflowing it while the width animates.
+  const sidebarElRef = useRef<HTMLDivElement>(null);
+  const sidebarAnimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // The collapsed/expanded state we last drove the panel to. We compare against
+  // this — not the library's isCollapsed() — so a toggle always acts, even if the
+  // library's internal size and our store state ever drift apart.
+  const sidebarAppliedRef = useRef<boolean | null>(null);
+  // True while we're imperatively collapsing/expanding the panel. The library
+  // emits a 0-size onResize during that transition; without this flag that event
+  // is misread as a user drag-to-collapse and folds the nav slot,
+  // instantly reverting an expand (the "toggle does nothing" bug).
+  const sidebarProgrammaticRef = useRef(false);
+
+  useWatchEffect(() => {
+    const ref = sidebarPanelRef.current;
+    const el = sidebarElRef.current;
+    if (!ref || !el) return;
+    if (sidebarAppliedRef.current === sidebarHidden) return;
+    const firstSync = sidebarAppliedRef.current === null;
+    sidebarAppliedRef.current = sidebarHidden;
+    // On first mount the panel already renders at the right defaultSize — just
+    // record the state and skip, so nothing animates or resizes on load.
+    if (firstSync && ref.isCollapsed() === sidebarHidden) return;
+    sidebarProgrammaticRef.current = true;
+    // Freeze content at its current pixel width so text doesn't reflow while the
+    // panel width animates (only meaningful when collapsing from a real width).
+    const width = el.getBoundingClientRect().width;
+    if (width) el.style.setProperty("--sidebar-frozen-w", `${width}px`);
+    el.classList.add("sidebar-animating");
+    if (sidebarAnimTimer.current) clearTimeout(sidebarAnimTimer.current);
+    sidebarAnimTimer.current = setTimeout(() => {
+      el.classList.remove("sidebar-animating");
+      sidebarProgrammaticRef.current = false;
+    }, 360);
+    // Expand by resizing to the persisted width (always ≥ minSize) instead of the
+    // library's expand(): its restored size can land below the collapse/min
+    // midpoint and get clamped straight back to 0, making expand a silent no-op.
+    if (sidebarHidden) ref.collapse();
+    else ref.resize(`${layout.sidebar}%`);
+  }, [sidebarHidden]);
+
+  // An external width change (a workbench switch, another window's sync) lands
+  // in the nav slot; apply it to the live panel. Our own drag already moved the
+  // panel — its store echo is skipped so the gesture never fights itself.
+  useWatchEffect(() => {
+    const ref = sidebarPanelRef.current;
+    if (!ref || sidebarHidden) return;
+    if (navDragEchoRef.current === layout.sidebar) return;
+    navDragEchoRef.current = layout.sidebar;
+    sidebarProgrammaticRef.current = true;
+    ref.resize(`${layout.sidebar}%`);
+    setTimeout(() => { sidebarProgrammaticRef.current = false; }, 50);
+  }, [layout.sidebar]);
+
+  // Hover-peek: with a side panel collapsed, touching the screen edge slides the
+  // full panel out as an overlay (state machine + markup in EdgePeek). Left edge
+  // peeks the sidebar; right edge peeks the session list (rightPeekEnabled above).
+  const peekEnabled = navHidden && !hideSidebar && !isMobile && !appWindow;
+
+  // The context slot owns the rail's width. Its size field serves whichever
+  // pane holds the edge — a percent for the session list, pixels for the
+  // comment rail — so only a plausibly-percent value is read here.
+  const ctxSize = s.workspace.context.size;
+  const HOSTED_RAIL_MAX_PX = 420;
+  const railSize = ctxSize !== undefined && ctxSize >= 5 && ctxSize <= 50 ? ctxSize : resolveVisualStyle(s.clientState.ui) === "minimal" ? 22 : 30;
+  const railDragEchoRef = useRef<number | null>(railSize);
+  const railGroupElRef = useRef<HTMLDivElement | null>(null);
+  // Only a person's drag closes the rail. The panel's own onResize also sees
+  // widths nobody chose (a programmatic resize mid-flight, a hidden ancestor
+  // measuring 0), and closing the store on those left the list docked on
+  // screen with the store saying closed, so the edge peek drew a second copy.
+  const handleRightLayoutChange = useDragGatedLayoutPersist((newLayout) => {
+    if (!showSessionList) return;
+    const size = newLayout["session-list"];
+    if (!size) {
+      useInboxStore.getState().toggleSidePanel();
+      return;
+    }
+    if (size < 5) return;
+    railDragEchoRef.current = size;
+    useInboxStore.getState().wsSetSize("context", size);
+  }, railGroupElRef);
+
+  useWatchEffect(() => {
+    const ref = sessionListPanelRef.current;
+    if (!ref) return;
+    if (showSessionList) {
+      // Resize (not expand): it both opens a collapsed panel and applies a
+      // workbench-restored width; expand() can clamp back to 0 (see the
+      // sidebar note above). Skip the echo of our own drag.
+      if (ref.isCollapsed() || railDragEchoRef.current !== railSize) {
+        railDragEchoRef.current = railSize;
+        ref.resize(`${railSize}%`);
+      }
+    } else {
+      if (!ref.isCollapsed()) ref.collapse();
+    }
+  }, [showSessionList, railSize]);
+
+  // Guest/unauthenticated: minimal layout, no top header — branding lives in the
+  // bottom bar. Always simple-view: anonymous share viewers get the calm reading
+  // chrome without owning a simple_view pref (writing one could outlive the visit
+  // and clobber a later sign-in's stamped preference). The community page in a
+  // plain browser takes the same bare frame for a signed in reader too: it is
+  // the public site's chat, not a workspace surface (lib/desktop
+  // isStandaloneCommunityPath); the page draws its own slim header.
+  if (isGuest || isStandaloneCommunityPath(routerLocation.pathname)) {
+    return (
+      <div className="bg-sol-bg flex flex-col overflow-hidden simple-view" style={{ height: '100vh' }}>
+        <div className="flex-1 min-h-0">
+          <div className="h-full">{children}</div>
+        </div>
+      </div>
+    );
+  }
+
+  // A detached tab window or a browser pane's page shows exactly its URL via
+  // React Router — no tab shell, even though the shared tabs hydrate into its
+  // store too.
+  const hasTabs = s.tabs.length > 0 && !isNonTabRoute(routerLocation.pathname) && !borrowsTabShell();
+  const content = hasTabs ? <TabContent /> : children;
+
+  // The trail sits above whatever surface is open — one bar for every page, so
+  // no surface has to grow its own. It draws nothing on a bare list page.
+  const pageBody = isFullWidthPage || hasTabs ? (
+    <div className="h-full">{content}</div>
+  ) : (
+    <PageShell pathname={pathname ?? ""}>{content}</PageShell>
+  );
+  // Framed as a browser pane's page: the route, and nothing the outer window
+  // is already drawing around it. Every hook above has run, so the shell's
+  // listeners and shortcuts are installed as usual; what this skips is chrome —
+  // the header, the tab bar, both rails, the breadcrumb and the triage bar.
+  // The sync effects stay: an embedded document still feeds its own store.
+  if (PANE_EMBED) {
+    return (
+      <div data-cc-shell data-cc-embed className={`bg-sol-bg h-dvh overflow-hidden${shellModeClass}`}>
+        <ErrorBoundary name="DashboardSync" level="inline" fallback={null}>
+          <DashboardSyncEffects />
+        </ErrorBoundary>
+        {pageBody}
+      </div>
+    );
+  }
+
+  // THE STAGE: the page, full width. Splitting it is the tab's own layout
+  // (components/stage, rendered inside TabContent), never a shell slot — the
+  // stage's element structure is identical on every surface, so a tab switch
+  // across surfaces never unmounts the page subtree.
+  const pageContent = (
+    <div className="h-full flex flex-col min-h-0">
+      <BreadcrumbBar />
+      <div className="flex-1 min-h-0">{pageBody}</div>
+      {/* The triage verbs, one home under the composer. The bar gates itself
+          to inbox session views, so it draws nothing elsewhere. Compact is a
+          corner button with no layout height. Own boundary: a bar crash must
+          cost the bar, never the stage. */}
+      <ErrorBoundary name="TriageBar" level="inline">
+        <Surface name="triageBar"><TriageBar /></Surface>
+      </ErrorBoundary>
+    </div>
+  );
+
+  // ONE right rail, and it is only ever the session list. A conversation
+  // never renders inside it — selecting a session promotes it to the stage
+  // (sessionListOnSelect → navigate), so columns cannot pile up. The Group is
+  // always rendered; the rail Panel collapses to 0 when not in use.
+  const rightArea = (
+    <div className="h-full flex">
+      <div className="flex-1 min-w-0 h-full">
+        <Group orientation="horizontal" className="h-full" elementRef={railGroupElRef} defaultLayout={{ "right-content": showSessionList ? 100 - railSize : 100, "session-list": showSessionList ? railSize : 0 }} onLayoutChange={handleRightLayoutChange}>
+          <Panel id="right-content" minSize={400}><div className="h-full">{pageContent}</div></Panel>
+          <Separator className={`${separatorClass} ${showSessionList ? "" : "invisible"}`} />
+          <Panel
+            id="session-list"
+            panelRef={sessionListPanelRef}
+            minSize={200}
+            // Hosted mode's list sits beside the conversation, not over it: a
+            // width nobody chose stops at 420px (Whisk keeps a side list under
+            // about 380), so title and time stay close. A width the person
+            // dragged to is theirs.
+            maxSize={hostedMode && ctxSize === undefined ? HOSTED_RAIL_MAX_PX : "50%"}
+            defaultSize={showSessionList ? railSize : 0}
+            collapsible
+            collapsedSize={0}
+          >
+            {!isMobile && (
+              <ErrorBoundary name="SessionList" level="panel">
+                <div className="w-full h-full border-l border-sol-border/30">
+                  <SessionListPanel
+                    onSessionSelect={sessionListOnSelect}
+                    activeSessionId={sessionListActiveId}
+                  />
+                </div>
+              </ErrorBoundary>
+            )}
+          </Panel>
+        </Group>
+      </div>
+      {stageWideHere && railOpen && !isMobile && !isOnSettingsPage && !appWindow && (
+        <StageRail side="right" title="Inbox" path="/inbox" onRestore={() => useInboxStore.getState().setStageWide(null)} />
+      )}
+    </div>
+  );
+
+  return (
+    <div data-cc-shell className={`bg-sol-bg h-dvh flex flex-col overflow-hidden${shellModeClass}`}>
+      <ErrorBoundary name="DashboardSync" level="inline" fallback={null}>
+        <DashboardSyncEffects />
+      </ErrorBoundary>
+      {/* Zen hides this header. On the desktop app each surface's own top row
+          then stands in as the titlebar — drag region + traffic-light inset —
+          via useTitlebarHead, so no strip is needed above the page. An app
+          window (Chat, Work) replaces it with the app's own bar below. */}
+      {appWindow && <AppWindowBar app={appWindow} />}
+      {hostedMode && !appWindow && <HostedSectionKeys />}
+      {/* Header spans full width */}
+      {/* Hosted mode's desktop shell has no top bar (useBarlessShell): the
+          sidebar carries its search, workspace, bell and account. */}
+      {!barless && <header data-cc-topbar ref={headerRef} className={`flex-shrink-0 border-b border-black/10 bg-sol-bg z-[100] ${desktopClass} ${isZenMode || appWindow ? "hidden" : ""} relative`}>
+        {typeof window !== "undefined" && window.location.hostname.includes("local.") && (
+          <div data-cc-local-corner className="absolute top-0 left-0 w-0 h-0 border-t-[20px] border-r-[20px] border-t-emerald-500 border-r-transparent z-30" />
+        )}
+        <TopbarRow
+          nav={<>
+            {!hideSidebar && (
+              <TopbarButton
+                onClick={() => setIsMobileSidebarOpen(!isMobileSidebarOpen)}
+                className="md:hidden"
+                active={isMobileSidebarOpen}
+                aria-label="Open menu"
+                aria-expanded={isMobileSidebarOpen}
+              >
+                <Menu />
+              </TopbarButton>
+            )}
+            <ShortcutTooltip label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"} action="sidebar.toggleLeft">
+              <TopbarButton
+                onClick={(e) => { s.setNavCollapsed(!sidebarCollapsed); tipActions.whisper('sidebar.toggleLeft', e); }}
+                desktopOnly
+              >
+                <PanelLeft />
+              </TopbarButton>
+            </ShortcutTooltip>
+            {isDesktopApp && (
+              <div className="flex items-center gap-0.5">
+                <ShortcutTooltip label="Back" action="nav.back">
+                  <TopbarButton
+                    onClick={(e) => { window.history.back(); tipActions.whisper('nav.back', e); }}
+                    aria-label="Go back"
+                  >
+                    <ChevronLeft />
+                  </TopbarButton>
+                </ShortcutTooltip>
+                <ShortcutTooltip label="Forward" action="nav.forward">
+                  <TopbarButton
+                    onClick={(e) => { window.history.forward(); tipActions.whisper('nav.forward', e); }}
+                    aria-label="Go forward"
+                  >
+                    <ChevronRight />
+                  </TopbarButton>
+                </ShortcutTooltip>
+              </div>
+            )}
+            {/* Hosted mode's bar keeps room for New conversation: the
+                conversations panel and the palette already list what is
+                recent, so the history clock is the developer's. */}
+            {!hostedMode && (
+              <ErrorBoundary name="RecentlyViewedMenu" level="inline">
+                <RecentlyViewedMenu onSelectSession={sessionListOnSelect} />
+              </ErrorBoundary>
+            )}
+          </>}
+          workspace={<>
+            <ErrorBoundary name="TeamSwitcher" level="inline">
+              <TeamSwitcher />
+            </ErrorBoundary>
+            <ErrorBoundary name="TeamAvatarBar" level="inline">
+              <Suspense fallback={null}><TeamAvatarBar /></Suspense>
+            </ErrorBoundary>
+            <ErrorBoundary name="FollowPill" level="inline">
+              <FollowPill />
+            </ErrorBoundary>
+          </>}
+          search={
+            <>
+              <ErrorBoundary name="GlobalSearch" level="inline">
+                <GlobalSearch />
+              </ErrorBoundary>
+              {/* Making something pairs with finding it. */}
+              <ErrorBoundary name="NewMenu" level="inline">
+                <NewMenu />
+              </ErrorBoundary>
+            </>
+          }
+          status={<TopbarTray>
+            {/* The sync light leads, the steady facts follow, and an alert
+                (the daemon) comes last, where the row's eye lands. */}
+            <ErrorBoundary name="SyncStatusChip" level="inline">
+              <SyncStatusChip />
+            </ErrorBoundary>
+            {/* The Claude Code account behind agent sessions: a machine fact.
+                Hosted mode's spend is the rail's meter. */}
+            <Surface name="machineChips">
+              <ErrorBoundary name="AccountUsageChip" level="inline">
+                <AccountUsageChip />
+              </ErrorBoundary>
+            </Surface>
+            {/* The running-agents pill counts a fleet; the assistant's own
+                work is the inbox's Working on it. */}
+            <Surface name="machineChips">
+              <ActiveAgentsBadge isOnInboxPage={isOnInboxPage} />
+            </Surface>
+            <Surface name="machineChips">
+              <ErrorBoundary name="DaemonStatusChip" level="inline">
+                <DaemonStatusChip />
+              </ErrorBoundary>
+            </Surface>
+          </TopbarTray>}
+          actions={<>
+            {/* Below sm the search slot, and the pill in it, fold away;
+                hosted mode keeps starting a conversation on the phone. */}
+            {hostedMode && (
+              <TopbarButton
+                onClick={() => handleNewFullSession()}
+                aria-label={words.newConversation}
+                className="sm:hidden"
+                data-cc-compose=""
+              >
+                <SquarePen />
+              </TopbarButton>
+            )}
+            <ErrorBoundary name="HeaderPins" level="inline">
+              <HeaderPins />
+            </ErrorBoundary>
+            <ErrorBoundary name="ResourcePressureGauge" level="inline" fallback={<ResourcePressureFallback />}>
+              <ResourcePressureGauge />
+            </ErrorBoundary>
+            <ErrorBoundary name="NotificationBell" level="inline">
+              <NotificationBell />
+            </ErrorBoundary>
+            <ErrorBoundary name="UserMenu" level="inline">
+              <UserMenu />
+            </ErrorBoundary>
+          </>}
+          panels={<>
+            {showCommentsToggle && !hostedMode && (
+              <ShortcutTooltip label={commentRailOpen ? "Hide comments" : "Show comments"} action="sidebar.toggleComments">
+                <TopbarButton
+                  onClick={(e) => { s.setCommentRailOpen(!commentRailOpen); tipActions.whisper('sidebar.toggleComments', e); }}
+                  active={commentRailOpen}
+                  aria-label={commentRailOpen ? "Hide comments" : "Show comments"}
+                >
+                  <MessageSquare />
+                </TopbarButton>
+              </ShortcutTooltip>
+            )}
+            {!isMobile && terminalShown && (
+              <ShortcutTooltip label="Toggle terminal" action="terminal.toggle">
+                <TopbarButton
+                  onClick={(e) => { s.setDockOpen(s.workspace.dock.pane == null); tipActions.whisper('terminal.toggle', e); }}
+                  active={s.workspace.dock.pane != null}
+                  aria-label="Toggle terminal panel"
+                  desktopOnly
+                >
+                  <SquareTerminal />
+                </TopbarButton>
+              </ShortcutTooltip>
+            )}
+            {/* Detached tab window only: merge this surface back into the
+                main window as a tab (renders null everywhere else). */}
+            <AttachTabButton />
+            {/* On a hosted phone the conversations panel is its own screen,
+                reached from the inbox, so the bar drops its toggle. */}
+            {!phoneHosted && <ShortcutTooltip label={words.conversationsPanel} action="sidebar.toggleRight">
+              <TopbarButton
+                onClick={(e) => {
+                  if (isMobile) setIsMobileSessionListOpen((open) => !open);
+                  else s.toggleSidePanel();
+                  tipActions.whisper('sidebar.toggleRight', e);
+                }}
+                aria-label={words.conversationsPanel}
+              >
+                <PanelRight />
+              </TopbarButton>
+            </ShortcutTooltip>}
+          </>}
+        />
+      </header>}
+      {/* A phone's top bar has no face row, so a call's card has its own line. */}
+      <PhoneCallStrip />
+
+      {/* Status notices (connection, storage, CLI offline, tmux missing) render
+          nothing here — they publish to StatusNoticeStack, fixed to the
+          bottom-left corner, so a status that flaps never shifts the layout
+          or covers the header, transcript or composer. The onboarding strips
+          still sit in the flow. */}
+      <ErrorBoundary name="Banners" level="inline">
+        <StatusNoticeStack />
+        <ConnectionBanner />
+        <StorageHealthBanner />
+        <Surface name="banner.nativeApp"><NativeAppBanner /></Surface>
+        <Surface name="banner.setup"><SetupPromptBanner /></Surface>
+        <TeamDomainBanner />
+        <NewSnippetsBanner />
+        <OrgIntroAnywhere />
+        <ThemeIntroAnywhere />
+        <Surface name="banner.cliOffline"><CliOfflineBanner /></Surface>
+        <Surface name="banner.tmuxMissing"><TmuxMissingBanner /></Surface>
+        <NotificationNudgeBanner />
+        <SharingSetupBanner />
+        <TeamSharingNudgeBanner />
+        <DeviceSetupDialog />
+      </ErrorBoundary>
+
+      {tabStripShown && (
+        <ErrorBoundary name="TabBar" level="inline">
+          <TabBar />
+        </ErrorBoundary>
+      )}
+
+      {/* Content area with sidebar and main. Group is always mounted; sidebar Panel
+          collapses imperatively so toggling zen/sidebar/mobile doesn't remount {rightArea}. */}
+      <div className="flex-1 min-h-0 flex relative">
+        {/* Collapsed-panel hover peeks: edge hotzone + sliding overlay. Scoped to
+            this container so they start below the header/banners, not the viewport. */}
+        <EdgePeek side="left" enabled={peekEnabled} width={280}>
+          <ErrorBoundary name="SidebarPeek" level="panel">
+            <Sidebar
+              directoryFilter={directoryFilter}
+              isMobileOpen={false}
+              onMobileClose={noop}
+            />
+          </ErrorBoundary>
+        </EdgePeek>
+        <EdgePeek side="right" enabled={rightPeekEnabled} width={320}>
+          <ErrorBoundary name="SessionListPeek" level="panel">
+            <div className="w-full h-full border-l border-sol-border/30">
+              <SessionListPanel
+                onSessionSelect={sessionListOnSelect}
+                activeSessionId={sessionListActiveId}
+              />
+            </div>
+          </ErrorBoundary>
+        </EdgePeek>
+        <div className="flex-1 min-w-0">
+          <Group
+            orientation="horizontal"
+            className="h-full"
+            defaultLayout={sidebarHidden ? { sidebar: 0, main: 100 } : layout}
+            onLayoutChange={handleLayoutChange}
+            elementRef={navGroupElRef}
+          >
+            <Panel
+              id="sidebar"
+              panelRef={sidebarPanelRef}
+              elementRef={sidebarElRef}
+              minSize={180}
+              maxSize="50%"
+              collapsible
+              collapsedSize={0}
+              defaultSize={sidebarHidden ? 0 : layout.sidebar}
+              onResize={(size) => {
+                // Persist a *user drag* down to 0 as a collapse. Ignore the 0-size
+                // events the library emits while we're imperatively expanding —
+                // those would otherwise re-fold the nav slot and instantly
+                // revert the expand (the "toggle does nothing" bug).
+                if (size.asPercentage === 0 && !sidebarHidden && !sidebarProgrammaticRef.current) {
+                  s.setNavCollapsed(true);
+                }
+              }}
+            >
+              {!isMobile && (
+                // No edge of its own: the split beside it (.cc-split) is the one
+                // hairline between the rail and the page.
+                <div className="h-full bg-sol-bg-alt overflow-auto" data-cc-sidebar-slot>
+                  <ErrorBoundary name="Sidebar" level="panel">
+                    <Sidebar
+                      directoryFilter={directoryFilter}
+                      isMobileOpen={isMobileSidebarOpen}
+                      onMobileClose={closeMobileSidebar}
+                      scope={appRail && appWindow === "work" ? "work" : undefined}
+                    />
+                  </ErrorBoundary>
+                </div>
+              )}
+            </Panel>
+            <Separator className={`${separatorClass} ${sidebarHidden ? "invisible" : ""}`} />
+            <Panel id="main" minSize={400}>{rightArea}</Panel>
+          </Group>
+        </div>
+        <KeyboardShortcutsPanel />
+        {/* The anchor slide-over: scoped to the content area so it starts
+            below the header/banners/tab bar and covers the stage, not the
+            chrome. */}
+        <ErrorBoundary name="AnchorPanel" level="panel">
+          <AnchorPanel />
+        </ErrorBoundary>
+      </div>
+
+      {/* Integrated terminal, docked across the bottom (ctrl+`). Mounts lazily
+          on first open, then stays mounted (hidden) so terminals survive
+          close/reopen. Desktop-only surface. */}
+      {!isMobile && terminalShown && (
+        <ErrorBoundary name="TerminalPanel" level="panel">
+          <TerminalDock />
+        </ErrorBoundary>
+      )}
+      {!isMobile && (
+        <ErrorBoundary name="VaultQuickSwitcher" level="panel">
+          <VaultQuickSwitcherDock />
+          <FilePathMenuHost />
+          <LinkMenuHost />
+        </ErrorBoundary>
+      )}
+
+      <ErrorBoundary name="SettingsModal" level="panel">
+        <Suspense fallback={null}><SettingsModal /></Suspense>
+      </ErrorBoundary>
+
+      {/* The wall of faces, over the main window. Mounted here rather than on a
+          route because it is a gesture, not a place: you open it, hold somebody,
+          and it goes away. It renders nothing and subscribes to nothing while
+          shut. */}
+      {s.peopleWallOpen && (
+        <ErrorBoundary name="PeopleWallModal" level="panel">
+          <Suspense fallback={null}><PeopleWallModal /></Suspense>
+        </ErrorBoundary>
+      )}
+
+      {/* Phone drawers: the nav slides in from the left, the session list from
+          the right. Each is the single render point of its rail on small
+          screens; the drawer stays mounted through its close animation. */}
+      {!hideSidebar && (
+        <MobileDrawer open={isMobileSidebarOpen && isMobile} onOpenChange={setIsMobileSidebarOpen} side="left" title="Menu" className={shellModeClass}>
+          <ErrorBoundary name="Sidebar" level="panel">
+            <Sidebar
+              directoryFilter={directoryFilter}
+              isMobileOpen
+              onMobileClose={closeMobileSidebar}
+            />
+          </ErrorBoundary>
+        </MobileDrawer>
+      )}
+      <MobileDrawer open={showMobileSessionList} onOpenChange={setIsMobileSessionListOpen} side="right" title={words.conversations} className={shellModeClass}>
+        <ErrorBoundary name="SessionList" level="panel">
+          <SessionListPanel
+            onSessionSelect={selectFromMobileSessionList}
+            activeSessionId={sessionListActiveId}
+          />
+        </ErrorBoundary>
+      </MobileDrawer>
+      {s.palette.open && (
+        <ErrorBoundary name="CommandPalette" level="inline">
+          <Suspense fallback={null}><CommandPalette /></Suspense>
+        </ErrorBoundary>
+      )}
+      <ErrorBoundary name="TriageNux" level="inline">
+        <TriageNuxGate />
+      </ErrorBoundary>
+      <ErrorBoundary name="Tours" level="inline">
+        <ToursPanel />
+        <Suspense fallback={null}><TourLayer /></Suspense>
+      </ErrorBoundary>
+      {/* The dock portals to <body>, so this wrapper is empty (and hidden)
+          until the boundary trips. A dock crash used to degrade into the
+          default inline fallback rendered here in normal flow — the bottom of
+          the shell, effectively invisible — so the call window "just
+          vanished" with no way back (Jason, 2026-08-24). The fallback is a
+          floating chip where the dock lived: retry re-renders, hang up also
+          frees the seat, and the ErrorBoundary toast still carries the trace. */}
+      <div className="fixed bottom-20 right-4 z-[160] empty:hidden rounded-lg border border-sol-border bg-sol-bg-alt shadow-xl">
+        <ErrorBoundary
+          name="Call window"
+          fallback={({ retry }) => (
+            <div className="flex items-center gap-2 px-3 py-2 text-xs">
+              <span className="text-sol-red">The call window crashed</span>
+              <button onClick={retry} className="text-sol-cyan hover:underline">
+                retry
+              </button>
+              <button
+                onClick={() => {
+                  void import("../lib/calls/callManager").then((module) => module.leaveCall());
+                  retry();
+                }}
+                className="text-sol-text-muted hover:text-sol-red hover:underline"
+              >
+                hang up
+              </button>
+            </div>
+          )}
+        >
+          <Suspense fallback={null}><CallDock /></Suspense>
+        </ErrorBoundary>
+      </div>
+      {/* The huddle the people window (or a detached tab) is hosting. The dock
+          above reads THIS window's call and correctly shows nothing, which
+          without a word left the main window looking as though no call were
+          running at all — and the first thing that invites is starting a second
+          one. It sits where the dock would, and says only where to look. */}
+      <div className="fixed bottom-20 right-4 z-[155] empty:hidden rounded-lg border border-sol-border bg-sol-bg-alt px-3 py-2 shadow-xl">
+        <Suspense fallback={null}><ElsewhereCallPill /></Suspense>
+      </div>
+      {/* A recording in progress, wherever the person has wandered to. It
+          portals to the body and renders nothing unless one is running. */}
+      <Suspense fallback={null}><RecordingPill /></Suspense>
+      <GlobalCloseGuardDialog />
+      <ComposeHost />
+      <ErrorBoundary name="FindBar" level="inline">
+        <FindBar />
+      </ErrorBoundary>
+      <RecentSwitcherHost />
+    </div>
+  );
+}

@@ -1,0 +1,572 @@
+// Account usage-limit windows: the compact per-account snapshot the daemon
+// probes from the provider's usage endpoint (percentages + reset times only —
+// never tokens) and the pure predicates every reader applies to it. Shared by
+// the Convex backend (auto-switch decision, validators), the web (meters,
+// header chip), and the CLI (`cast usage`), so a window means the same thing
+// wherever it is read.
+
+export type CcUsageWindow = { percent: number; resets_at?: number; label?: string };
+
+/** Extra usage credits (overflow spend past the plan windows). `limit`/`used`
+ *  are dollars from the provider's `extra_usage` block; absent on accounts
+ *  that have never configured extra spend. */
+export type CcExtraUsage = {
+  percent: number;
+  enabled: boolean;
+  limit?: number;
+  used?: number;
+  spend_limit_reached?: boolean;
+};
+
+export type CcUsage = {
+  fetched_at: number;
+  session?: CcUsageWindow; // rolling short window (5h / sub-24h)
+  weekly?: CcUsageWindow; // 7d, all models
+  weekly_scoped?: CcUsageWindow; // 7d, model-scoped
+  extra?: CcExtraUsage;
+  scoped?: { label: string; percent: number; resets_at?: number }[];
+  credits?: { has_credits: boolean; unlimited?: boolean; balance?: string };
+  reset_credits?: { available: number };
+  models?: { model: string; label: string; tokens: number; share: number }[];
+};
+
+/** A limit window whose reset time has already passed has ROLLED: the snapshot
+ * describes a window that no longer exists. `resets_at` is absolute, so this
+ * stays true however old the snapshot is — a 5h window read 17h ago rolled
+ * long ago, and its percent is history, not a reading. A window with no known
+ * reset time can never be proven rolled. */
+export function isWindowRolled(w: { resets_at?: number } | undefined | null, now: number): boolean {
+  return !!w && w.resets_at != null && w.resets_at <= now;
+}
+
+/** A window's utilization AS OF `now`: 0 once it has rolled, since a fresh
+ * window starts empty. The one place display and decision logic agree on what
+ * a stale snapshot still means. */
+export function livePercent(w: { percent: number; resets_at?: number }, now: number): number {
+  return isWindowRolled(w, now) ? 0 : w.percent;
+}
+
+/** The windows that cap a session: the 5h session and the all-model week,
+ *  plus any model-scoped week ("Fable") for a model in `models`. A scoped
+ *  window caps only sessions on its model, so with no `models` it stays on the
+ *  meters (labeledUsageWindows) and out of the account's standing. Counted for
+ *  every session, a pegged Fable week benched three accounts at 1-4% of their
+ *  week while auto-switch hopped an Opus fleet through accounts at 99%, each
+ *  spent within minutes (2026-10-04). */
+export function limitWindows(usage: CcUsage, models?: readonly string[]): { percent: number; resets_at?: number }[] {
+  const ids = (models ?? []).map((m) => m.toLowerCase());
+  const scoped = [usage.weekly_scoped, ...(usage.scoped ?? [])].filter(
+    (w): w is CcUsageWindow => !!w?.label && ids.some((id) => id.includes(w.label!.toLowerCase())),
+  );
+  return [usage.session, usage.weekly, ...scoped].filter((w): w is CcUsageWindow => !!w);
+}
+
+/** Each limit window an account reports, the one listing every surface
+ *  reads: `name`, what a meter row beside its bar says ("Session", "Week", a
+ *  model-scoped week by its model, "Fable"), and `label`, the name with its
+ *  span where a sentence or a list needs it ("Session (5h)", "Week (7d)",
+ *  "Fable (7d)"). A scoped window is named by its own label alone. */
+export function labeledUsageWindows(usage: CcUsage): { name: string; label: string; percent: number; resets_at?: number }[] {
+  const out: { name: string; label: string; percent: number; resets_at?: number }[] = [];
+  const add = (name: string, span: string | undefined, w?: { percent: number; resets_at?: number }) => {
+    if (w) out.push({ name, label: span ? `${name} (${span})` : name, percent: w.percent, resets_at: w.resets_at });
+  };
+  add("Session", "5h", usage.session);
+  add("Week", "7d", usage.weekly);
+  add(usage.weekly_scoped?.label ?? "Model", "7d", usage.weekly_scoped);
+  for (const s of usage.scoped ?? []) add(s.label, undefined, s);
+  return out;
+}
+
+/** The pegged window that keeps an account unusable longest (its meter
+ *  label and reset), or undefined when nothing is pegged. Several can be
+ *  pegged at once (a spent 5h session inside a spent week); the shorter one
+ *  reopening changes nothing while the longer one is still shut, so the latest
+ *  reset is the one named. */
+export function peggedWindow(usage: CcUsage | undefined | null, now: number): { label: string; resets_at?: number } | undefined {
+  if (!usage) return undefined;
+  const w = labeledUsageWindows(usage)
+    .filter((w) => !isWindowRolled(w, now) && w.percent >= 100)
+    .sort((a, b) => (b.resets_at ?? 0) - (a.resets_at ?? 0))[0];
+  return w && { label: w.label, ...(w.resets_at !== undefined ? { resets_at: w.resets_at } : {}) };
+}
+
+/**
+ * An account's plan type as people read it: ChatGPT's own names ("prolite" is
+ * Pro Lite), and any other (Claude's "max") capitalized.
+ */
+const PLAN_TYPE_LABELS: Record<string, string> = { free: "Free", go: "Go", plus: "Plus", pro: "Pro", prolite: "Pro Lite", team: "Team", business: "Business", enterprise: "Enterprise", edu: "Edu" };
+export function planTypeLabel(planType: string): string {
+  return PLAN_TYPE_LABELS[planType.toLowerCase()] ?? `${planType.charAt(0).toUpperCase()}${planType.slice(1)}`;
+}
+
+/** The meter label of the pegged window that keeps an account unusable longest (peggedWindow). */
+export function peggedWindowLabel(usage: CcUsage | undefined | null, now: number): string | undefined {
+  return peggedWindow(usage, now)?.label;
+}
+
+/** The worst (highest) utilization across an account's limit windows AS OF
+ * `now` — what a single summary meter should show. Rolled windows count as 0,
+ * so a dormant account stops reading "100%" forever. Null when no usage data
+ * exists. */
+export function worstUsagePercent(usage: CcUsage | undefined | null, now: number): number | null {
+  if (!usage) return null;
+  const windows = limitWindows(usage);
+  return windows.length ? Math.max(...windows.map((w) => livePercent(w, now))) : null;
+}
+
+/** An account with no headroom RIGHT NOW: some window is pegged and its reset
+ * is still in the future. A pegged window whose reset has passed doesn't count
+ * — the snapshot is just stale, the window has rolled. Neither does a pegged
+ * window on an account with usage credits switched on: Claude Code keeps
+ * working on credits past the plan limit ("Now using usage credits"), so the
+ * account is usable until the credit budget itself is spent. Such an account
+ * still ranks after every account with plan headroom (rankByHeadroom scores
+ * it at 100), so credits are the fallback, never the first pick. `models`
+ * adds the model-scoped weeks of the models the sessions run (limitWindows). */
+export function isUsageExhausted(usage: CcUsage | undefined | null, now: number, models?: readonly string[]): boolean {
+  if (!usage) return false;
+  if (!limitWindows(usage, models).some((w) => livePercent(w, now) >= 100)) return false;
+  return !(usage.extra?.enabled && usage.extra.percent < 100);
+}
+
+/** "resets in …" for a limit window: minute precision under an hour, hours and
+ * minutes under two days (minutes only while under ten hours — a 5h window's
+ * remaining minutes matter, a weekly one's don't), then days. */
+export function formatCountdown(msFromNow: number): string {
+  const mins = Math.max(1, Math.round(msFromNow / 60_000));
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h ${mins % 60 > 0 && hours < 10 ? `${mins % 60}m` : ""}`.trim();
+  return `${Math.round(hours / 24)}d`;
+}
+
+export function formatAgo(msAgo: number): string {
+  const mins = Math.round(msAgo / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+/** A rolled window whose snapshot was taken BEFORE the reset is not 0% used —
+ *  it is unmeasured. livePercent returns 0 so a display meter does not stay
+ *  pegged at the old 100%; a switch decision that treated that 0 as "most
+ *  headroom" hopped to accounts whose usage probe had been 401ing for hours
+ *  (the new window may already be spent). Null = unknown, same standing as
+ *  no usage data. */
+export function switchUsagePercent(usage: CcUsage | undefined | null, now: number): number | null {
+  if (!usage) return null;
+  const windows = limitWindows(usage);
+  if (!windows.length) return null;
+  for (const w of windows) {
+    if (isWindowRolled(w, now) && (w.resets_at == null || usage.fetched_at <= w.resets_at)) {
+      return null;
+    }
+  }
+  return worstUsagePercent(usage, now);
+}
+
+/** One account's standing: the SINGLE source both the usage bars and the
+ * switch decision read, so a person can predict what the switcher will do
+ * from what the meter shows. `percent` is the worst live window; `null` when
+ * the snapshot has not measured the current windows (a window rolled since the
+ * last probe) — the meter renders that as "stale" and the ranker sorts it
+ * behind every account with a known number, the SAME fact in both places
+ * rather than a confident-green meter beside a switcher that skips the
+ * account. `pegged` is a spent account (isUsageExhausted). */
+export type UsageStanding = {
+  percent: number | null;
+  pegged: boolean;
+  // percent is null because a rolled window was never re-probed (vs. no usage
+  // data at all) — the case that needs a "refresh to see room" hint.
+  stale: boolean;
+};
+
+export function usageStanding(usage: CcUsage | undefined | null, now: number): UsageStanding {
+  const percent = switchUsagePercent(usage, now);
+  return { percent, pegged: isUsageExhausted(usage, now), stale: percent === null && !!usage };
+}
+
+/** The short standing label shared by the header chip, the park card and the
+ * switch banner so all three name an account identically: "at limit" when
+ * pegged, "stale" when a rolled window is unmeasured, "no data" when nothing
+ * was ever read, else "N% used". */
+export function standingLabel(usage: CcUsage | undefined | null, now: number): string {
+  const s = usageStanding(usage, now);
+  if (s.pegged) return "at limit";
+  if (s.percent === null) return s.stale ? "stale" : "no data";
+  return `${Math.round(s.percent)}% used`;
+}
+
+/** Order accounts by how much room they have left: known headroom first
+ * (lowest worst-window percent wins), accounts with no usage data — or a
+ * snapshot that has not measured the current windows — after every known
+ * one. Eligible, just unproven. Stable for ties. Reads usageStanding, the
+ * same standing the bars render, so the top pick is the one a person would
+ * point to on the meters. */
+export function rankByHeadroom<P extends { usage?: CcUsage | null }>(profiles: readonly P[], now: number): P[] {
+  return [...profiles].sort((a, b) => headroomScore(a.usage, now) - headroomScore(b.usage, now));
+}
+
+/** The sort key behind rankByHeadroom, for callers that order something other
+ * than a flat list of profiles (a panel that groups an email's accounts, say):
+ * the worst live window's percent, and 101 when the current windows have not
+ * been measured, so an unproven account ranks behind every known number. */
+export function headroomScore(usage: CcUsage | undefined | null, now: number): number {
+  return usageStanding(usage, now).percent ?? 101;
+}
+
+/** The other accounts a limit-parked session could fall back to: every saved
+ * profile that is not the account the fleet runs on, shows no pegged window,
+ * and can carry a session: its saved login still works, or a minted
+ * setup-token is live (`login_expired_at` alone means the daemon's token
+ * refresh was refused, so a switch there lands on a dead credential and parks
+ * on an auth banner instead of un-parking anything), and is not spent for
+ * `models`, the models the sessions to move run. Best headroom first. Shared by the
+ * auto-switch decision (which further excludes profiles already tried this
+ * window) and `cast usage`, so what the CLI reports as "N accounts with
+ * headroom" is the set auto-switch would choose from. */
+export function fallbackProfiles<
+  P extends {
+    email?: string;
+    usage?: CcUsage | null;
+    login_expired_at?: number | null;
+    access_refused_at?: number | null;
+    setup_token?: { expires_at: number } | null;
+  },
+>(profiles: readonly P[], activeEmail: string | undefined, now: number, models?: readonly string[]): P[] {
+  // A dead saved login is still a target when a minted setup-token is live:
+  // the switch lands sessions on the token and never touches the login. An
+  // account whose organization refuses subscription access takes neither.
+  const reachable = (p: P) =>
+    !p.access_refused_at && (!p.login_expired_at || (!!p.setup_token && p.setup_token.expires_at > now));
+  return rankByHeadroom(
+    profiles.filter((p) => p.email && p.email !== activeEmail && reachable(p) && !isUsageExhausted(p.usage, now, models)),
+    now,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Explaining a recovery decision
+// ---------------------------------------------------------------------------
+
+/** What the recovery loop most recently did, or wants to do. Recorded by the
+ * server on every switch, proposal, continue and exhaustion so a person can
+ * read WHY the account changed instead of noticing it after the fact. */
+export type RecoveryDecision = {
+  kind: "switch" | "propose" | "continue" | "exhausted";
+  at: number;
+  target_email?: string;
+  target_name?: string;
+  target_percent?: number;
+  from_email?: string;
+  parked_count?: number;
+  pegged_window?: string;
+};
+
+/** One sentence naming what happened and why: which window pegged, how many
+ * sessions it parked, and where the loop moved (or wants to move). The single
+ * wording shared by the park card, the settings page and the CLI, so an
+ * account change is never explained two different ways. Written in past tense
+ * for what was done and future for what is proposed. */
+export function describeDecision(d: RecoveryDecision | undefined | null): string | null {
+  if (!d) return null;
+  const sessions =
+    d.parked_count && d.parked_count > 0
+      ? `${d.parked_count} session${d.parked_count === 1 ? "" : "s"}`
+      : "sessions";
+  // The cause, when the meters named a pegged window. Without one the honest
+  // statement is just that the sessions parked — never invent a reason.
+  const cause = d.pegged_window
+    ? `${d.pegged_window} hit its limit on ${d.from_email ?? "the active account"}`
+    : `${d.from_email ?? "the active account"} could not continue`;
+  const target = d.target_name ?? d.target_email;
+  const standing = d.target_percent != null ? ` (${Math.round(d.target_percent)}% used)` : "";
+  switch (d.kind) {
+    case "switch":
+      return `${cause}, parking ${sessions} — switched to ${target ?? "another account"}${standing} and continued them.`;
+    case "propose":
+      return `${cause}, parking ${sessions}. Recommended: ${target ?? "another account"}${standing} — waiting for you to approve the switch.`;
+    case "continue":
+      // The machine's login had room: sessions that parked on it, or on
+      // another account's token, continued there without moving the machine.
+      return `${sessions} parked — continued them on ${target ?? d.from_email ?? "the active account"}, which had room.`;
+    case "exhausted":
+      return `${cause}, parking ${sessions} — every saved account is spent, waiting for the earliest window to reset.`;
+  }
+}
+
+/** The four ways a machine can recover a session that stopped on its own (a
+ * usage limit, an API or connection error, an agent process that died
+ * mid-turn). "ask" recommends an account switch and waits for approval; "auto"
+ * switches without asking; "resume" never changes accounts; in all three
+ * codecast sends the session a "continue" once it can run again. "off" sends
+ * nothing: the session waits for its person. */
+export type RecoveryMode = "ask" | "auto" | "resume" | "off";
+
+/** The one recovery mode a machine is in, derived from the stored flags so the
+ * web selector, the CLI and the decision all read it the same way.
+ *
+ * "off" is the DEFAULT: codecast types into someone's session only after they
+ * chose a mode that does. Every other mode is an explicit choice: ask-first
+ * and auto-switch are their own flags, and "resume" is an explicit
+ * cc_auto_continue. Ask-first wins over a stray auto-switch flag
+ * (setRecoveryMode keeps the two exclusive, but a legacy row could carry
+ * both). */
+export function recoveryModeOf(device: {
+  cc_auto_switch?: boolean | null;
+  cc_recovery_ask?: boolean | null;
+  cc_auto_continue?: boolean | null;
+}): RecoveryMode {
+  if (device.cc_recovery_ask === true) return "ask";
+  if (device.cc_auto_switch === true) return "auto";
+  return device.cc_auto_continue === true ? "resume" : "off";
+}
+
+/** A window this full is worth naming: `cast usage` colours it and the
+ * recovery sentence says when it resets. */
+export const USAGE_WARN_PERCENT = 85;
+
+/** When the soonest window that is near its limit resets; undefined when no
+ * window is under pressure. */
+export function nextPressuredReset(usage: CcUsage | undefined | null, now: number): number | undefined {
+  if (!usage) return undefined;
+  const resets = limitWindows(usage)
+    .filter((w) => !isWindowRolled(w, now) && w.percent >= USAGE_WARN_PERCENT && w.resets_at && w.resets_at > now)
+    .map((w) => w.resets_at as number);
+  return resets.length ? Math.min(...resets) : undefined;
+}
+
+/** What one machine does when its account hits a limit, as far as the
+ * sentence below reads it. `cast usage` builds this from the local usage
+ * cache; the role page builds it from the account roster. */
+export type LimitRecoveryFacts = {
+  now: number;
+  next_reset?: number;
+  fallbacks: Array<{ name: string; worst: number | null }>;
+  recovery: { auto_switch: boolean; auto_continue: boolean; mode?: RecoveryMode } | null;
+};
+
+/** One sentence on what a limit hit means for sessions on a machine, from the
+ * recovery flags and the fallback set. Kept factual: the reader decides
+ * whether to checkpoint. One body for `cast usage` and the role page's
+ * Settings tab, so the terminal and the page never describe it differently. */
+export function describeLimitRecovery(r: LimitRecoveryFacts): string {
+  const resetNote = r.next_reset ? ` (next reset in ${formatCountdown(r.next_reset - r.now)})` : "";
+  const best = r.fallbacks[0];
+  const bestNote = best ? `best: ${best.name}${best.worst != null ? ` at ${Math.round(best.worst)}%` : ""}` : "";
+  const hop = best ? `${r.fallbacks.length} saved account(s) with headroom (${bestNote})` : "no other saved account with headroom";
+  if (!r.recovery) {
+    return `On a limit: ${hop}; recovery flags unknown (server unreachable)${resetNote}.`;
+  }
+  // Ask-first: the machine recommends and waits, so say what it will ask for
+  // rather than implying it acts on its own.
+  if (r.recovery.mode === "ask") {
+    return best
+      ? `On a limit: this machine RECOMMENDS a switch (${bestNote}) and waits for you to approve it; sessions still resume when the window resets${resetNote}.`
+      : `On a limit: this machine asks before switching, and ${hop}${resetNote}.`;
+  }
+  if (r.recovery.auto_switch && best) {
+    return `On a limit: auto-switch hops to the freshest of ${hop} and continues parked sessions${resetNote}.`;
+  }
+  if (r.recovery.auto_continue) {
+    return `On a limit: sessions park and resume on their own when the window resets${resetNote}; ${hop}${
+      r.recovery.auto_switch ? "" : " (auto-switch off)"
+    }.`;
+  }
+  return `On a limit: sessions park until you continue them (auto-switch and resume-at-reset are off)${resetNote}; ${hop}.`;
+}
+
+// ---------------------------------------------------------------------------
+// Resume pacing
+// ---------------------------------------------------------------------------
+
+/** How far apart sessions may be resumed in one burst.
+ *
+ * Every resumed session's FIRST request carries its whole context, so a revive
+ * is not N cheap messages — it is N large ones. Enough of them inside a minute
+ * trip the provider's per-minute cap, and the 429 that comes back is rendered
+ * as a usage limit: the sessions re-park, the recovery loop reads those parks
+ * as "this account is spent too", and rotates to another account to do it all
+ * again (2026-09-17: a machine moved its login five times in nineteen minutes,
+ * chasing a rate limit rather than a real quota).
+ *
+ * One value for BOTH resume paths — the paced continue and the account switch
+ * — because they are the same act, and a fast path beside a slow one only
+ * means the fast one sets the real rate. */
+export const RESUME_BURST_SPACING_MS = 20_000;
+
+/** How many sessions one pass may resume before handing the rest to the next
+ * tick. Spacing alone bounds the rate but not the burst: with fifty parked
+ * sessions a single pass still walks the whole fleet, and the tail is spending
+ * an account's window on work nobody is waiting for. */
+export const RESUME_BURST_BATCH = 3;
+
+// ---------------------------------------------------------------------------
+// What a restart costs against the limit windows
+//
+// The provider reports utilization as a percentage and nothing else: no tokens,
+// no dollars (limit_dollars/used_dollars are null on subscription plans, and the
+// rate-limit headers carry the same two numbers). So "this restart spends 14% of
+// what is left" needs a rate nobody publishes — how many tokens one percentage
+// point of a window is worth — and the only way to have it is to measure our own
+// traffic against our own meters. usageCalibration (convex) does that across the
+// whole fleet and refreshes one global rate; everything below is the pure
+// arithmetic both that job and the UI apply, so the number is derived the same
+// way wherever it is read.
+//
+// Tokens are counted in COST-WEIGHTED units, never raw, because a window does
+// not treat a token the same way twice: a cached read is a tenth of fresh input
+// and an output token is worth several. Ordinary traffic is mostly cache reads
+// while a restart is nearly all cache WRITES, so a rate calibrated on raw totals
+// would understate a restart several times over. The weights are the provider's
+// own published price ratios relative to input, which is the closest public
+// proxy for how a limit counts.
+// ---------------------------------------------------------------------------
+
+export const TOKEN_COST_WEIGHTS = { input: 1, cache_read: 0.1, cache_write: 1.25, output: 5 } as const;
+
+export type RawTokenCounts = { input?: number; cache_read?: number; cache_write?: number; output?: number };
+
+/** Billed tokens in cost-weighted units — the unit the calibration rate is in. */
+export function weightedTokens(t: RawTokenCounts): number {
+  return (
+    (t.input ?? 0) * TOKEN_COST_WEIGHTS.input +
+    (t.cache_read ?? 0) * TOKEN_COST_WEIGHTS.cache_read +
+    (t.cache_write ?? 0) * TOKEN_COST_WEIGHTS.cache_write +
+    (t.output ?? 0) * TOKEN_COST_WEIGHTS.output
+  );
+}
+
+/** What reloading a context costs in those same units. A session that comes back
+ *  cold re-sends its whole context and the provider writes the cache again, so
+ *  the reload is priced as a cache write, not as the raw token count the row
+ *  shows. */
+export function reloadCostTokens(contextTokens: number): number {
+  return contextTokens * TOKEN_COST_WEIGHTS.cache_write;
+}
+
+/** The measured rate, as the calibration job publishes it. `samples` is how many
+ *  account-windows it was fitted over — a rate from one sample is a guess, and
+ *  callers use MIN_CALIBRATION_SAMPLES to decide whether to show it at all. */
+export type UsageCalibration = {
+  /** Cost-weighted tokens per one percentage point of the 5h session window. */
+  tokens_per_percent: number;
+  samples: number;
+  updated_at: number;
+};
+
+/** Below this the rate has not been fitted over enough windows to show a person
+ *  a number; the UI falls back to naming tokens alone. */
+export const MIN_CALIBRATION_SAMPLES = 3;
+
+export function isCalibrated(c: UsageCalibration | null | undefined): c is UsageCalibration {
+  return !!c && c.tokens_per_percent > 0 && c.samples >= MIN_CALIBRATION_SAMPLES;
+}
+
+/** Cost-weighted tokens still available in a window before it pegs. Null when
+ *  the window is unknown or unmeasured (a rolled snapshot), which is a different
+ *  answer from zero: zero means spent. */
+export function remainingWindowTokens(
+  usage: CcUsage | undefined | null,
+  calibration: UsageCalibration | null | undefined,
+  now: number,
+): number | null {
+  if (!isCalibrated(calibration) || !usage?.session) return null;
+  if (isWindowRolled(usage.session, now) && usage.fetched_at <= (usage.session.resets_at ?? 0)) return null;
+  const used = livePercent(usage.session, now);
+  return Math.max(0, 100 - used) * calibration.tokens_per_percent;
+}
+
+/** The share of the window's REMAINING room a restart would spend, as a fraction.
+ *  Can exceed 1 — a restart bigger than what is left is exactly the thing worth
+ *  seeing before clicking it. Null when nothing can be said honestly. */
+export function restartShareOfRemaining(
+  contextTokens: number,
+  usage: CcUsage | undefined | null,
+  calibration: UsageCalibration | null | undefined,
+  now: number,
+): number | null {
+  const remaining = remainingWindowTokens(usage, calibration, now);
+  if (remaining === null || contextTokens <= 0) return null;
+  // A spent window has no room to divide by; the honest answer is "all of it".
+  if (remaining === 0) return Infinity;
+  return reloadCostTokens(contextTokens) / remaining;
+}
+
+type ProposalDevice = {
+  online?: boolean;
+  is_remote?: boolean;
+  active_email?: string;
+  // Either spelling: the server row uses cc_*, the web roster uses the short names.
+  cc_recovery_ask?: boolean | null;
+  cc_auto_switch?: boolean | null;
+  cc_auto_continue?: boolean | null;
+  ask_first?: boolean | null;
+  auto_switch?: boolean | null;
+  auto_continue?: boolean | null;
+  profiles?: ReadonlyArray<{
+    name?: string;
+    email?: string;
+    usage?: CcUsage | null;
+    login_expired_at?: number | null;
+  }>;
+  auto_switch_state?: { last_decision?: RecoveryDecision | null } | null;
+};
+
+function recoveryFlagsOf(d: ProposalDevice): {
+  cc_recovery_ask?: boolean | null;
+  cc_auto_switch?: boolean | null;
+  cc_auto_continue?: boolean | null;
+} | null {
+  const ask = d.cc_recovery_ask ?? d.ask_first;
+  const auto = d.cc_auto_switch ?? d.auto_switch;
+  const cont = d.cc_auto_continue ?? d.auto_continue;
+  if (ask === undefined && auto === undefined && cont === undefined) return null;
+  return { cc_recovery_ask: ask, cc_auto_switch: auto, cc_auto_continue: cont };
+}
+
+/** The account switch a machine has recommended and is waiting on, if any.
+ * Only an online primary machine can carry one out, so only those count; with
+ * several, the newest ask wins. The one reading shared by the blocked sessions
+ * banner and the per-session park card, so both surface the same question.
+ *
+ * A machine that is not in ask mode does not surface a stored ask: auto mode
+ * switches on its own, and a proposal left over from an earlier setting would
+ * ask for an approval that will never be the thing that happens.
+ *
+ * When `now` is passed and the device carries its profiles, the target is the
+ * account a fresh ranking would pick, and the percent is that account's live
+ * standing. The stored sentence is a snapshot; the meters move, and a frozen
+ * "56% used" was still on screen after that account's week had pegged. */
+export function pendingProposal(
+  devices: ReadonlyArray<ProposalDevice> | undefined | null,
+  now?: number,
+): RecoveryDecision | null {
+  let newest: RecoveryDecision | null = null;
+  for (const d of devices ?? []) {
+    if (d.online === false || d.is_remote) continue;
+    const stored = d.auto_switch_state?.last_decision;
+    if (stored?.kind !== "propose") continue;
+    const flags = recoveryFlagsOf(d);
+    if (flags && recoveryModeOf(flags) !== "ask") continue;
+    let decision = stored;
+    if (now != null && d.profiles) {
+      const best = fallbackProfiles(d.profiles, d.active_email, now)[0];
+      // Nothing left to recommend: a spent or signed-out target is not an ask.
+      if (!best?.email) continue;
+      const pct = usageStanding(best.usage, now).percent;
+      decision = {
+        ...stored,
+        target_name: best.name ?? best.email,
+        target_email: best.email,
+        target_percent: pct ?? undefined,
+        from_email: stored.from_email ?? d.active_email,
+      };
+    }
+    if (!newest || decision.at > newest.at) newest = decision;
+  }
+  return newest;
+}

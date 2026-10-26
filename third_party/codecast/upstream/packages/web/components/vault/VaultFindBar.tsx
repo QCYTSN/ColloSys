@@ -1,0 +1,109 @@
+// Find in note (Cmd+F while the vault tab is visible): highlights every match
+// inside the rendered note and steps through them. Deliberately DOM-based
+// rather than content-based — the reading view is HTML by the time you want to
+// search it, and highlighting the live nodes keeps callouts, tables, and embeds
+// searchable exactly as they appear.
+
+import { memo, useCallback, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, X } from "lucide-react";
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { KeyCap } from "../KeyboardShortcutsHelp";
+import { clearMarks, markMatches } from "../../lib/domMarks";
+
+const HIGHLIGHT = "vault-find-hit";
+const CURRENT = "vault-find-current";
+
+export const VaultFindBar = memo(function VaultFindBar({
+  scopeSelector = "[data-vault-note-scroll]",
+  onClose,
+}: {
+  scopeSelector?: string;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [count, setCount] = useState(0);
+  const [current, setCurrent] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const marksRef = useRef<HTMLElement[]>([]);
+
+  const focusMatch = useCallback((index: number) => {
+    const marks = marksRef.current;
+    if (!marks.length) return;
+    const wrapped = ((index % marks.length) + marks.length) % marks.length;
+    marks.forEach((m) => m.classList.remove(CURRENT));
+    const el = marks[wrapped];
+    el.classList.add(CURRENT);
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    setCurrent(wrapped);
+  }, []);
+
+  // Re-run the search whenever the query changes; clear on unmount so the note
+  // never keeps stale <mark> wrappers.
+  useWatchEffect(() => {
+    const root = document.querySelector(scopeSelector) as HTMLElement | null;
+    if (!root) return;
+    clearMarks(root, HIGHLIGHT);
+    const marks = markMatches(root, [query.trim()], { className: HIGHLIGHT });
+    marksRef.current = marks;
+    setCount(marks.length);
+    if (marks.length) focusMatch(0);
+    else setCurrent(0);
+    return () => clearMarks(root, HIGHLIGHT);
+  }, [query, scopeSelector, focusMatch]);
+
+  useWatchEffect(() => {
+    requestAnimationFrame(() => inputRef.current?.focus());
+  }, []);
+
+  return (
+    <div
+      className="absolute top-2 right-4 z-20 flex items-center gap-1 rounded-md border border-sol-border/50 bg-sol-card shadow-lg px-2 py-1"
+      data-owns-keys
+    >
+      <input
+        ref={inputRef}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onClose();
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            focusMatch(current + (e.shiftKey ? -1 : 1));
+          }
+        }}
+        placeholder="Find in note"
+        spellCheck={false}
+        className="w-44 bg-transparent text-[12px] text-sol-text placeholder:text-sol-text-dim outline-none"
+      />
+      <span className="text-[10px] text-sol-text-dim tabular-nums w-12 text-right">
+        {count ? `${current + 1}/${count}` : query ? "0/0" : ""}
+      </span>
+      <button
+        type="button"
+        onClick={() => focusMatch(current - 1)}
+        className="text-sol-text-dim hover:text-sol-text disabled:opacity-30"
+        disabled={!count}
+        aria-label="Previous match"
+      >
+        <ChevronUp className="w-3.5 h-3.5" />
+      </button>
+      <button
+        type="button"
+        onClick={() => focusMatch(current + 1)}
+        className="text-sol-text-dim hover:text-sol-text disabled:opacity-30"
+        disabled={!count}
+        aria-label="Next match"
+      >
+        <ChevronDown className="w-3.5 h-3.5" />
+      </button>
+      <span className="text-[10px] text-sol-text-dim ml-0.5">
+        <KeyCap size="xs">esc</KeyCap>
+      </span>
+      <button type="button" onClick={onClose} className="text-sol-text-dim hover:text-sol-text" aria-label="Close find">
+        <X className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+});

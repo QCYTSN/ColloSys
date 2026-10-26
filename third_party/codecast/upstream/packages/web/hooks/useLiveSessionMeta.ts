@@ -1,0 +1,32 @@
+import { useShallow } from "zustand/react/shallow";
+import { useInboxStore } from "../store/inboxStore";
+
+/**
+ * Live model/effort/agent (and the session id it runs as) for one conversation. Conversations win per field
+ * when set; sessions fill gaps. resolveLiveSessionId follows a stub→real rekey
+ * so a pick after create isn't lost. Shared by the header badge and the
+ * new-session launch pill so both surfaces paint from the same row.
+ */
+export function useLiveSessionMeta(conversationId: string | undefined) {
+  return useInboxStore(useShallow((s) => {
+    if (!conversationId) return undefined;
+    const id = s.resolveLiveSessionId(conversationId);
+    const sess = s.sessions[id] as
+      | { model?: string | null; effort?: string | null; agent_type?: string; session_id?: string; owner_device_id?: string | null; agent_definition?: string | null }
+      | undefined;
+    const conv = s.conversations[id] as
+      | { model?: string | null; effort?: string | null; agent_type?: string; session_id?: string; owner_device_id?: string | null; agent_definition?: string | null; cloud_agent_archived?: boolean }
+      | undefined;
+    if (!sess && !conv) return undefined;
+    return {
+      model: conv?.model !== undefined ? conv.model : sess?.model,
+      effort: conv?.effort !== undefined ? conv.effort : sess?.effort,
+      agentType: conv?.agent_type ?? sess?.agent_type,
+      sessionId: conv?.session_id ?? sess?.session_id,
+      ownerDeviceId: conv?.owner_device_id ?? sess?.owner_device_id,
+      agentDefinition: conv?.agent_definition ?? sess?.agent_definition ?? undefined,
+      /** A cloud agent session's agent archived on the provider's site. */
+      cloudAgentArchived: conv?.cloud_agent_archived === true,
+    };
+  }));
+}

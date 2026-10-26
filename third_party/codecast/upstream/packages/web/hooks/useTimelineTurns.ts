@@ -1,0 +1,229 @@
+import { useMemo, useCallback } from "react";
+import { isHiddenSystemNotice } from "../lib/conversationProcessor";
+import { isRecoveryContinueClientId } from "@codecast/shared/contracts";
+import { hasAgentSetupMarker } from "@codecast/shared/contracts";
+import { foldNudgeRuns, nudgeLabel, type NudgeRow } from "../components/sessionMessage";
+import { sameMessageAuthor } from "../lib/messageAuthors";
+import { FOLD_KEPT_USER_KINDS, isAlwaysVisibleToolCall, isHiddenStubMessage, parseCastCommand, stripSystemTags } from "../components/conversation/classify";
+import type { Message, ReceiptEntry, TimelineItem, UserMessageKind } from "../components/conversation/types";
+import { classifyUserRows, pairCommandExpansions } from "../lib/userRowKinds";
+import type { ConversationData } from "../components/conversation/types";
+
+export { foldMachineMove } from "../lib/userRowKinds";
+
+/** The session a `cast send` reached: the first bare word after the verb
+ *  (flags such as --wake may come first). Null for any other cast command. */
+export function sentToRef(cmd: { category: string; subcommand: string; args: string } | null | undefined): string | null {
+  if (!cmd || cmd.category !== "send") return null;
+  const words = [cmd.subcommand, ...cmd.args.split(/\s+/)].filter(Boolean);
+  for (const w of words) {
+    if (w.startsWith("-")) continue;
+    return /^[A-Za-z0-9]{5,}$/.test(w) ? w : null;
+  }
+  return null;
+}
+
+export function useTimelineTurns({ messages, conversation, hasMoreAbove, timeline, messageAuthors, hasMoreBelow, foldWorkingTurns }: {
+  messages: Message[];
+  conversation: ConversationData | null | undefined;
+  hasMoreAbove: boolean | undefined;
+  timeline: TimelineItem[];
+  messageAuthors: Map<string, string | undefined>;
+  hasMoreBelow: boolean | undefined;
+  foldWorkingTurns: boolean;
+}) {
+  const userMsgKindMap = useMemo(
+    () => classifyUserRows(timeline, messages, { agentType: conversation?.agent_type, parentConversationId: conversation?.parent_conversation_id, hasMoreAbove }),
+    [timeline, messages, conversation?.agent_type, conversation?.parent_conversation_id, hasMoreAbove],
+  );
+
+  // Aggregation for the condensed/compact feeds. Built once per timeline; O(n).
+  //
+  // A "turn" is one assistant response. Its boundary is a REAL user prompt — NOT
+  // every user-role message: in agentic transcripts assistant messages are
+  // separated by user-role tool-result carriers, so resetting on those would
+  // split one turn into one-per-message (the stacked-cards bug). We reset only on
+  // the user-message kinds that actually start a new exchange.
+  //
+  // CONDENSED works at SEGMENT granularity: a contiguous run of tool activity
+  // between two pieces of assistant text folds into ONE receipt rendered inline
+  // where it happened. The run's tools attach to its "owner" (the text message
+  // that opens the run, or the first tool-only message); the rest are "absorbed".
+  // A receipt keeps one entry per source message (owner first) so an opened
+  // group can render each tool under its real message identity — results,
+  // comments and share selection stay attributed to the message that ran it.
+  //
+  // COMPACT works at TURN granularity (one collapsed card per assistant run), so
+  // we also track each message's turn key, first/last message, and stats.
+  const turnAggregates = useMemo(() => {
+    const TURN_BOUNDARY_KINDS = new Set(['normal', 'direct_user', 'command', 'plan', 'session_handoff', 'session_message', 'chat_wake', 'agent_switch', 'machine_move', 'session_escalation']);
+    const turnKeyOf = new Map<string, string>();      // msgId -> turn key
+    const firstAssistOf = new Map<string, string>();  // turn key -> first assistant msgId
+    const lastTextOf = new Map<string, string>();     // turn key -> last text-bearing msgId
+    const statsOf = new Map<string, { messages: number; tools: number; preview: string }>();
+    const receiptOf = new Map<string, ReceiptEntry[]>(); // owner msgId -> folded hideable tools, per source message
+    const absorbed = new Set<string>();                // msgId folded into an earlier receipt
+    // Where a turn's message went (sentToRef above, scopes-and-feed.md F4.2), keyed
+    // by the boundary user message that opened the turn: when the next turn
+    // began (so a wake card claims only the hands started inside its window),
+    // and the sessions the agent ran `cast send` to. A window that runs off
+    // the loaded page closes at the page's last message, never at "forever".
+    const routingOf = new Map<string, { until: number | null; sentTo: string[] }>();
+    let curBoundary: string | null = null;
+    let lastLoadedAt = 0;
+    let curKey: string | null = null;
+    let ownerId: string | null = null;                 // current segment's receipt owner
+    let previousAssistant: Message | null = null;
+    // Results arrive on later user rows; a setup marker in one keeps its tool out of the receipt.
+    const setupResults = new Map<string, { content?: string }>();
+    // Scanned over messages, not the timeline: a row that only carries results is not a timeline item.
+    for (const m of messages) {
+      for (const r of m.tool_results ?? []) {
+        if (hasAgentSetupMarker(r.content)) setupResults.set(r.tool_use_id, r);
+      }
+    }
+    for (let i = 0; i < timeline.length; i++) {
+      const item = timeline[i];
+      if (item.type !== 'message') continue;
+      const msg = item.data as Message;
+      if (msg.timestamp > lastLoadedAt) lastLoadedAt = msg.timestamp;
+      if (msg.role === 'user') {
+        // Only a genuine new prompt ends the current turn; tool-result carriers,
+        // interrupts, notifications, etc. are part of the ongoing response.
+        if (TURN_BOUNDARY_KINDS.has(userMsgKindMap.get(msg._id)?.kind ?? 'normal')) {
+          curKey = null;
+          ownerId = null;
+          if (curBoundary) routingOf.get(curBoundary)!.until = msg.timestamp;
+          curBoundary = msg._id;
+          routingOf.set(msg._id, { until: null, sentTo: [] });
+        }
+        continue;
+      }
+      if (msg.role !== 'assistant') continue;
+      if (isHiddenStubMessage(msg)) continue;
+      const hasText = !!(msg.content && stripSystemTags(msg.content).trim().length > 0);
+      const tools = msg.tool_calls ?? [];
+      if (curBoundary) {
+        const routing = routingOf.get(curBoundary)!;
+        for (const tc of tools) {
+          const ref = sentToRef(parseCastCommand(tc));
+          if (ref && !routing.sentTo.includes(ref)) routing.sentTo.push(ref);
+        }
+      }
+      const hasVisible = hasText || tools.length > 0 || (!!msg.images?.length);
+      if (!hasVisible) continue;
+      if (previousAssistant && !sameMessageAuthor(previousAssistant, msg, messageAuthors)) {
+        curKey = null;
+        ownerId = null;
+      }
+      previousAssistant = msg;
+      if (curKey === null) {
+        curKey = msg._id;
+        firstAssistOf.set(curKey, msg._id);
+        statsOf.set(curKey, { messages: 0, tools: 0, preview: "" });
+      }
+      turnKeyOf.set(msg._id, curKey);
+      const stats = statsOf.get(curKey)!;
+      if (hasText) { stats.messages += 1; lastTextOf.set(curKey, msg._id); }
+      stats.tools += tools.length;
+      if (!stats.preview && hasText) {
+        stats.preview = stripSystemTags(msg.content || "").trim().split("\n")[0].slice(0, 140);
+      }
+      const hideable = tools.filter(tc => !isAlwaysVisibleToolCall(tc, setupResults.get(tc.id)));
+      const entry: ReceiptEntry = { messageId: msg._id, messageUuid: msg.message_uuid, timestamp: msg.timestamp, tools: hideable };
+      // Segment ownership: a text message opens a new segment and owns its own
+      // tools; a tool-only message folds into the current owner (or becomes one).
+      if (hasText) {
+        ownerId = msg._id;
+        receiptOf.set(msg._id, hideable.length ? [entry] : []);
+      } else if (ownerId) {
+        if (hideable.length) receiptOf.get(ownerId)!.push(entry);
+        // A message carrying an always-visible block (poll, plan write) must
+        // still render that block — fold its hideable tools into the receipt but
+        // don't absorb the message itself.
+        if (hideable.length === tools.length) absorbed.add(msg._id);
+      } else {
+        ownerId = msg._id;
+        receiptOf.set(msg._id, hideable.length ? [entry] : []);
+      }
+    }
+    if (curBoundary && hasMoreBelow) routingOf.get(curBoundary)!.until = lastLoadedAt;
+    return { turnKeyOf, firstAssistOf, lastTextOf, statsOf, receiptOf, absorbed, routingOf, setupResults };
+  }, [timeline, messages, userMsgKindMap, messageAuthors, hasMoreBelow]);
+
+  // The turn the agent is in or just finished (the last assistant message's)
+  // and where its last answer sits. Fold mode keeps an ask card only while
+  // it is open: in the live turn, with no user row after it. An answered
+  // prompt (a poll reply already sent, even one still delivering) is a
+  // dangling permission prompt to the reader and folds with the turn.
+  const liveTurn = useMemo(() => {
+    if (!foldWorkingTurns) return { key: null as string | null, lastUserIndex: -1 };
+    let key: string | null = null;
+    let lastUserIndex = -1;
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const item = timeline[i];
+      if (item.type !== 'message') continue;
+      const m = item.data as Message;
+      if (m.role === 'user' && lastUserIndex < 0) lastUserIndex = i;
+      if (m.role !== 'assistant' || key) continue;
+      key = turnAggregates.turnKeyOf.get(m._id) ?? null;
+    }
+    return { key, lastUserIndex };
+  }, [foldWorkingTurns, timeline, turnAggregates]);
+  const liveTurnKey = liveTurn.key;
+  const openAsk = useCallback((msg: Message, index: number, turnKey: string | undefined) =>
+    turnKey === liveTurn.key && index > liveTurn.lastUserIndex && !!msg.tool_calls?.some((tc) => isAlwaysVisibleToolCall(tc, turnAggregates.setupResults.get(tc.id))),
+  [liveTurn, turnAggregates]);
+
+  const commandExpansionMap = useMemo(() => pairCommandExpansions(timeline, userMsgKindMap), [timeline, userMsgKindMap]);
+
+  // Bare nudges ("continue") render as one compact line, and a run of the same
+  // nudge folds into its first row with a count. Rows that render nothing sit
+  // between two nudges without breaking the run. A nudge still pending or
+  // queued keeps the full bubble, so its delivery state stays visible.
+  const nudgeRuns = useMemo(() => {
+    const HIDDEN_USER_KINDS = new Set(['tool_results_only', 'compaction_prompt', 'noise', 'empty', 'poll_response', 'task_prompt']);
+    const rows: NudgeRow[] = timeline.map((item) => {
+      if (item.type !== 'message') return { id: String(item.data._id), nudge: null };
+      const msg = item.data as Message;
+      if (msg.role === 'system') return { id: msg._id, nudge: null, invisible: isHiddenSystemNotice(msg.content, msg.subtype) };
+      if (msg.role === 'user') {
+        const kind = userMsgKindMap.get(msg._id)?.kind ?? 'normal';
+        // A recovery's continue renders as its own line and never folds with the person's.
+        const isNudge = kind === 'normal' && !msg._isOptimistic && !msg._isQueued && !msg.images?.length && !isRecoveryContinueClientId(msg.client_id);
+        return {
+          id: msg._id,
+          nudge: isNudge ? nudgeLabel(msg.content) : null,
+          invisible: HIDDEN_USER_KINDS.has(kind) || commandExpansionMap.consumed.has(msg._id) || (foldWorkingTurns && !FOLD_KEPT_USER_KINDS.has(kind)),
+        };
+      }
+      const empty = !msg.content?.trim() && !msg.tool_calls?.length && !msg.images?.length && !msg.thinking?.trim();
+      return { id: msg._id, nudge: null, invisible: empty || isHiddenStubMessage(msg) };
+    });
+    return foldNudgeRuns(rows);
+  }, [timeline, userMsgKindMap, commandExpansionMap, foldWorkingTurns]);
+
+  const isWaitingForResponse = useMemo(() => {
+    if (!conversation || conversation.status !== "active" || timeline.length === 0 || hasMoreBelow) return false;
+    const last = timeline[timeline.length - 1];
+    if (last.type !== 'message') return false;
+    const msg = last.data as Message;
+    if (msg.role !== 'user') return false;
+    const kind = userMsgKindMap.get(msg._id);
+    if (kind?.kind === 'interrupt') return false;
+    return true;
+  }, [conversation, timeline, hasMoreBelow, userMsgKindMap]);
+
+  const isThinking = useMemo(() => {
+    if (!conversation || conversation.status !== "active" || timeline.length === 0 || hasMoreBelow) return false;
+    const last = timeline[timeline.length - 1];
+    if (last.type !== 'message') return false;
+    const msg = last.data as Message;
+    if (msg.role !== 'assistant') return false;
+    const hasThinkingContent = msg.thinking && msg.thinking.trim().length > 0;
+    const hasVisibleContent = (msg.content && stripSystemTags(msg.content).trim().length > 0) || (msg.tool_calls && msg.tool_calls.length > 0);
+    return !!(hasThinkingContent && !hasVisibleContent);
+  }, [conversation, timeline, hasMoreBelow]);
+
+  return { userMsgKindMap, turnAggregates, openAsk, commandExpansionMap, nudgeRuns, isThinking, isWaitingForResponse };
+}

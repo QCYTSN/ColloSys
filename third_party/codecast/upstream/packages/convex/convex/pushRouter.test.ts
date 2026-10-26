@@ -1,0 +1,935 @@
+import { afterEach, describe, expect, test } from "bun:test";
+import schema from "./schema";
+import {
+  enqueuePush,
+  performPushFlush,
+  summarizePushBatch,
+  isDesktopActivePresence,
+  isMachineActivePresence,
+  AWAY_DEBOUNCE_MS,
+  HOLD_WHILE_ACTIVE_MS,
+  PRESENCE_FRESH_MS,
+  INPUT_ACTIVE_MS,
+  MAX_MACHINE_HOLD_MS,
+  PUSH_RING_CAPACITY,
+  pushRingKey,
+  readMissedSince,
+  recordRoutedPush,
+  selectMissedSince,
+  type MissedPush,
+} from "./pushRouter";
+
+// ── In-memory Convex-ish ctx ─────────────────────────────────────────────────
+// Same pattern as notifications.needsInput.test.ts: a fake ctx.db faithful
+// enough to run the REAL enqueue/flush logic. withIndex checks the deployed
+// schema and matches on eq constraints; scheduler.runAfter records calls.
+
+type Rec = Record<string, any>;
+
+function createCtx(seed: Record<string, Rec[]> = {}) {
+  const tables: Record<string, Rec[]> = {};
+  const counters: Record<string, number> = {};
+  for (const [table, rows] of Object.entries(seed)) {
+    tables[table] = rows.map((r) => ({ ...r }));
+  }
+  const allRows = () => Object.values(tables).flat();
+  const scheduled: Array<{ delay: number; fn: any; args: Rec }> = [];
+
+  const db = {
+    async get(id: string) {
+      return allRows().find((r) => r._id === id) ?? null;
+    },
+    async insert(table: string, doc: Rec) {
+      counters[table] = (counters[table] ?? 0) + 1;
+      const _id = `${table}_${counters[table]}`;
+      (tables[table] ??= []).push({ _id, ...doc });
+      return _id;
+    },
+    async patch(id: string, patch: Rec) {
+      const row = allRows().find((r) => r._id === id);
+      if (!row) throw new Error(`patch: no row ${id}`);
+      Object.assign(row, patch);
+    },
+    async delete(id: string) {
+      for (const rows of Object.values(tables)) {
+        const i = rows.findIndex((r) => r._id === id);
+        if (i !== -1) {
+          rows.splice(i, 1);
+          return;
+        }
+      }
+      throw new Error(`delete: no row ${id}`);
+    },
+    query(table: string) {
+      const constraints: Array<{ field: string; val: any }> = [];
+      const q: any = {
+        eq(field: string, val: any) {
+          constraints.push({ field, val });
+          return q;
+        },
+      };
+      const run = () =>
+        (tables[table] ?? []).filter((r) =>
+          constraints.every((c) => String(r[c.field]) === String(c.val))
+        );
+      const chain: any = {
+        withIndex(name: string, builder?: (qq: any) => unknown) {
+          const definition = schema.tables[table as keyof typeof schema.tables];
+          const indexes = (definition as any)?.export().indexes ?? [];
+          if (!indexes.some((index: any) => index.indexDescriptor === name)) {
+            throw new Error(`Index ${table}.${name} not found`);
+          }
+          if (builder) builder(q);
+          return chain;
+        },
+        async collect() {
+          return run();
+        },
+        async first() {
+          return run()[0] ?? null;
+        },
+        async take(n: number) {
+          return run().slice(0, n);
+        },
+      };
+      return chain;
+    },
+  };
+
+  return {
+    db,
+    scheduler: {
+      async runAfter(delay: number, fn: any, args: Rec) {
+        scheduled.push({ delay, fn, args });
+      },
+    },
+    tables,
+    scheduled,
+  };
+}
+
+const NOW = 1_754_000_000_000;
+const realNow = Date.now;
+afterEach(() => {
+  Date.now = realNow;
+});
+function freezeTime(at: number) {
+  Date.now = () => at;
+}
+
+const USER = { _id: "users_1", push_token: "ExponentPushToken[x]", notifications_enabled: true };
+
+function activePresence(now: number): Rec {
+  return {
+    _id: "user_presence_1",
+    user_id: "users_1",
+    surface: "desktop",
+    last_seen: now - 10_000,
+    last_input_at: now - 5_000,
+    focused: true,
+    updated_at: now - 10_000,
+  };
+}
+
+// Pushes recorded by the fake scheduler (the flush's terminal Expo send has
+// delay 0 and a push_token arg; re-flushes have a user_id arg instead).
+const sentPushes = (ctx: any) => ctx.scheduled.filter((s: Rec) => s.args.push_token);
+const reflushes = (ctx: any) => ctx.scheduled.filter((s: Rec) => s.args.user_id);
+
+describe("isDesktopActivePresence", () => {
+  test("fresh heartbeat + recent input = active", () => {
+    expect(isDesktopActivePresence(activePresence(NOW) as any, NOW)).toBe(true);
+  });
+  test("stale heartbeat (sleep/closed tab) = inactive even with recent input", () => {
+    const p = { last_seen: NOW - PRESENCE_FRESH_MS - 1, last_input_at: NOW - 1000 };
+    expect(isDesktopActivePresence(p, NOW)).toBe(false);
+  });
+  test("fresh heartbeat but idle human = inactive", () => {
+    const p = { last_seen: NOW - 10_000, last_input_at: NOW - INPUT_ACTIVE_MS - 1 };
+    expect(isDesktopActivePresence(p, NOW)).toBe(false);
+  });
+  test("no presence row = inactive", () => {
+    expect(isDesktopActivePresence(null, NOW)).toBe(false);
+  });
+});
+
+describe("enqueuePush routing", () => {
+  test("desktop away: short debounce, not deferred", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    const row = ctx.tables.push_outbox[0];
+    expect(row.due_at).toBe(NOW + AWAY_DEBOUNCE_MS);
+    expect(row.deferred).toBe(false);
+    expect(ctx.scheduled[0].delay).toBe(AWAY_DEBOUNCE_MS);
+  });
+
+  test("desktop active: held for the escalation window", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER], user_presence: [activePresence(NOW)] });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    const row = ctx.tables.push_outbox[0];
+    expect(row.due_at).toBe(NOW + HOLD_WHILE_ACTIVE_MS);
+    expect(row.deferred).toBe(true);
+  });
+
+  test("no push token: nothing queued", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [{ _id: "users_1" }] });
+    await enqueuePush(ctx, { user: { _id: "users_1" } as any, title: "t", body: "b" });
+    expect(ctx.tables.push_outbox).toBeUndefined();
+  });
+});
+
+describe("performPushFlush", () => {
+  test("single due row sends verbatim and clears the outbox", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, {
+      user: USER,
+      type: "session_idle",
+      title: "Session ready",
+      body: "fix-auth is waiting",
+      data: { conversationId: "c1" },
+    });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].args.title).toBe("Session ready");
+    expect(pushes[0].args.body).toBe("fix-auth is waiting");
+    expect(pushes[0].args.data.conversationId).toBe("c1");
+    expect(ctx.tables.push_outbox.length).toBe(0);
+  });
+
+  test("a chat banner reads like a message: subtitle, chat channel, urgency", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, {
+      user: USER,
+      type: "chat_dm",
+      title: "Samvit",
+      subtitle: undefined,
+      body: "lunch?",
+      data: { channelId: "ch1", messageId: "m1" },
+    });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].args.title).toBe("Samvit");
+    expect(pushes[0].args.body).toBe("lunch?");
+    expect(pushes[0].args.channel_id).toBe("chat");
+    expect(pushes[0].args.interruption_level).toBe("time-sensitive");
+  });
+
+  test("a mention carries its channel as the subtitle; a plain reply is not time-sensitive", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, {
+      user: USER,
+      type: "chat_reply",
+      title: "Jason",
+      subtitle: "thread · #team",
+      body: "done, shipped",
+      data: {},
+    });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes[0].args.subtitle).toBe("thread · #team");
+    expect(pushes[0].args.channel_id).toBe("chat");
+    expect(pushes[0].args.interruption_level).toBeUndefined();
+  });
+
+  test("a batch drops the subtitle — counts have no one place", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, { user: USER, type: "chat_mention", title: "A", subtitle: "#team", body: "x", data: {} });
+    await enqueuePush(ctx, { user: USER, type: "chat_mention", title: "B", subtitle: "#ops", body: "y", data: {} });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].args.subtitle).toBeUndefined();
+  });
+
+  test("a storm aggregates into ONE push", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    for (let i = 0; i < 20; i++) {
+      await enqueuePush(ctx, {
+        user: USER,
+        type: "session_error",
+        title: "Session error",
+        body: `session ${i} hit the usage limit`,
+      });
+    }
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].args.title).toBe("20 notifications");
+    expect(pushes[0].args.body).toBe("20 session errors");
+    expect(pushes[0].args.data.type).toBe("aggregate");
+    expect(ctx.tables.push_outbox.length).toBe(0);
+    // Later wakeups from the storm's other 19 schedules find nothing.
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(1);
+  });
+
+  test("mixed-type storm groups by type in the body", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    const mk = (type: string) =>
+      enqueuePush(ctx, { user: USER, type, title: "t", body: "b" });
+    await mk("session_idle");
+    await mk("session_idle");
+    await mk("permission_request");
+    await mk("doc_commented");
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const pushes = sentPushes(ctx);
+    expect(pushes.length).toBe(1);
+    expect(pushes[0].args.body).toBe(
+      "2 sessions waiting for input · 1 permission request · 1 update"
+    );
+  });
+
+  test("not yet due: flush is a no-op", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER], user_presence: [activePresence(NOW)] });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS); // held row is due much later
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(0);
+    expect(ctx.tables.push_outbox.length).toBe(1);
+  });
+
+  test("reading the notification cancels the held push", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [USER],
+      user_presence: [activePresence(NOW)],
+      notifications: [{ _id: "notifications_1", recipient_user_id: "users_1", read: false }],
+    });
+    await enqueuePush(ctx, {
+      user: USER,
+      notification_id: "notifications_1",
+      type: "session_idle",
+      title: "t",
+      body: "b",
+    });
+    await ctx.db.patch("notifications_1", { read: true });
+    freezeTime(NOW + HOLD_WHILE_ACTIVE_MS);
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(0);
+    expect(ctx.tables.push_outbox.length).toBe(0);
+  });
+
+  test("unread after the hold window escalates to the phone even while active", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [USER],
+      user_presence: [activePresence(NOW)],
+      notifications: [{ _id: "notifications_1", recipient_user_id: "users_1", read: false }],
+    });
+    await enqueuePush(ctx, {
+      user: USER,
+      notification_id: "notifications_1",
+      type: "session_idle",
+      title: "t",
+      body: "b",
+    });
+    const later = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    // Still active at flush time — escalation must fire anyway.
+    await ctx.db.patch("user_presence_1", { last_seen: later - 1000, last_input_at: later - 1000 });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(1);
+  });
+
+  test("superseded (deleted) notification drops its pending push", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [USER],
+      notifications: [{ _id: "notifications_1", recipient_user_id: "users_1", read: false }],
+    });
+    await enqueuePush(ctx, {
+      user: USER,
+      notification_id: "notifications_1",
+      type: "session_idle",
+      title: "t",
+      body: "b",
+    });
+    await ctx.db.delete("notifications_1");
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(0);
+    expect(ctx.tables.push_outbox.length).toBe(0);
+  });
+
+  test("user sits down during the away debounce: one deferral, then send", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [USER] });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    // Presence appears before the debounce elapses.
+    await ctx.db.insert("user_presence", {
+      user_id: "users_1",
+      surface: "desktop",
+      last_seen: NOW + AWAY_DEBOUNCE_MS - 1000,
+      last_input_at: NOW + AWAY_DEBOUNCE_MS - 1000,
+      focused: true,
+      updated_at: NOW + AWAY_DEBOUNCE_MS - 1000,
+    });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(0);
+    const row = ctx.tables.push_outbox[0];
+    expect(row.deferred).toBe(true);
+    expect(row.due_at).toBe(NOW + AWAY_DEBOUNCE_MS + HOLD_WHILE_ACTIVE_MS);
+    expect(reflushes(ctx).length).toBeGreaterThan(1); // the deferral rescheduled
+    // At the escalated due time, still unread → send (no second deferral).
+    freezeTime(NOW + AWAY_DEBOUNCE_MS + HOLD_WHILE_ACTIVE_MS);
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(1);
+  });
+
+  test("push token revoked while pending: rows dropped silently", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [{ ...USER }] });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    await ctx.db.patch("users_1", { notifications_enabled: false });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx).length).toBe(0);
+    expect(ctx.tables.push_outbox.length).toBe(0);
+  });
+});
+
+describe("summarizePushBatch", () => {
+  test("single row passes through, keeping its deep-link data", () => {
+    const out = summarizePushBatch([
+      { type: "session_idle", title: "T", body: "B", data: { conversationId: "c" } },
+    ]);
+    expect(out).toEqual({ title: "T", body: "B", data: { conversationId: "c" } });
+  });
+  test("aggregate carries no conversation deep link", () => {
+    const out = summarizePushBatch([
+      { type: "session_idle", title: "a", body: "a" },
+      { type: "session_idle", title: "b", body: "b" },
+    ]);
+    expect(out.data.conversationId).toBeUndefined();
+    expect(out.body).toBe("2 sessions waiting for input");
+  });
+});
+
+// ── Machine-wide presence (on by default, opt-out) ───────────────────────────
+// Widens "the user is here" from "active in Codecast" to "touching this Mac at
+// all", and — unlike client presence — keeps holding rather than escalating on
+// a timer. Opted-out users must be completely unaffected.
+
+const MACHINE_USER = { ...USER, machine_wide_presence: true };
+const OPTED_OUT_USER = { ...USER, machine_wide_presence: false };
+
+function machineDevice(now: number, over: Rec = {}): Rec {
+  return {
+    _id: "devices_1",
+    user_id: "users_1",
+    device_id: "dev-1",
+    last_seen: now - 10_000,
+    last_input_at: now - 30_000,
+    ...over,
+  };
+}
+
+describe("isMachineActivePresence", () => {
+  test("live daemon + recent input = active", () => {
+    expect(isMachineActivePresence([machineDevice(NOW)] as any, NOW)).toBe(true);
+  });
+  test("no devices = away", () => {
+    expect(isMachineActivePresence([], NOW)).toBe(false);
+  });
+  test("input older than the window = away", () => {
+    const d = machineDevice(NOW, { last_input_at: NOW - INPUT_ACTIVE_MS - 1 });
+    expect(isMachineActivePresence([d] as any, NOW)).toBe(false);
+  });
+  // A slept Mac freezes its daemon, so last_input_at can still look recent.
+  // Heartbeat staleness is what catches it.
+  test("stale heartbeat = away even with recent input", () => {
+    const d = machineDevice(NOW, {
+      last_seen: NOW - PRESENCE_FRESH_MS - 1,
+      last_input_at: NOW - 1_000,
+    });
+    expect(isMachineActivePresence([d] as any, NOW)).toBe(false);
+  });
+  // nose and the hosted agent Macs are servers, not where the human sits.
+  test("remote devices never count", () => {
+    const d = machineDevice(NOW, { is_remote: true });
+    expect(isMachineActivePresence([d] as any, NOW)).toBe(false);
+  });
+  test("a device reporting no input contributes nothing", () => {
+    const d = machineDevice(NOW, { last_input_at: undefined });
+    expect(isMachineActivePresence([d] as any, NOW)).toBe(false);
+  });
+  test("one active machine is enough among idle ones", () => {
+    const devices = [
+      machineDevice(NOW, { _id: "d1", last_input_at: NOW - INPUT_ACTIVE_MS - 1 }),
+      machineDevice(NOW, { _id: "d2", is_remote: true, last_input_at: NOW - 1_000 }),
+      machineDevice(NOW, { _id: "d3", last_input_at: NOW - 1_000 }),
+    ];
+    expect(isMachineActivePresence(devices as any, NOW)).toBe(true);
+  });
+});
+
+// Codecast is open but you haven't touched it in a while — you're typing in an
+// editor. Client presence alone reads "away"; machine presence is what holds.
+function idleClientPresence(now: number): Rec {
+  return { ...activePresence(now), last_input_at: now - INPUT_ACTIVE_MS - 1 };
+}
+
+describe("machine presence routing", () => {
+  test("opted in, at the Mac but not in Codecast: held", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [idleClientPresence(NOW)],
+      devices: [machineDevice(NOW)],
+    });
+    // Sanity: client presence alone would NOT have held this.
+    expect(isDesktopActivePresence(idleClientPresence(NOW) as any, NOW)).toBe(false);
+    await enqueuePush(ctx, { user: MACHINE_USER, type: "session_idle", title: "t", body: "b" });
+    const row = ctx.tables.push_outbox[0];
+    expect(row.due_at).toBe(NOW + HOLD_WHILE_ACTIVE_MS);
+    expect(row.deferred).toBe(true);
+  });
+
+  test("opted OUT with the same active Mac: unchanged away debounce", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [OPTED_OUT_USER],
+      user_presence: [idleClientPresence(NOW)],
+      devices: [machineDevice(NOW)],
+    });
+    await enqueuePush(ctx, { user: OPTED_OUT_USER, type: "session_idle", title: "t", body: "b" });
+    const row = ctx.tables.push_outbox[0];
+    expect(row.due_at).toBe(NOW + AWAY_DEBOUNCE_MS);
+    expect(row.deferred).toBe(false);
+  });
+
+  test("flag absent (the default) behaves as opted in: held", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({
+      users: [USER],
+      user_presence: [idleClientPresence(NOW)],
+      devices: [machineDevice(NOW)],
+    });
+    await enqueuePush(ctx, { user: USER, type: "session_idle", title: "t", body: "b" });
+    const row = ctx.tables.push_outbox[0];
+    expect(row.due_at).toBe(NOW + HOLD_WHILE_ACTIVE_MS);
+    expect(row.deferred).toBe(true);
+  });
+
+  // The point of machine presence: a held push must NOT escalate to the phone just
+  // because a timer expired while the user is demonstrably still at the machine.
+  test("still at the Mac when the hold expires: re-deferred, no push", async () => {
+    const later = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [idleClientPresence(later)],
+      devices: [machineDevice(later)],
+      push_outbox: [
+        {
+          _id: "push_outbox_1",
+          user_id: "users_1",
+          type: "session_idle",
+          title: "t",
+          body: "b",
+          created_at: NOW,
+          due_at: later,
+          deferred: true,
+        },
+      ],
+    });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(0);
+    expect(ctx.tables.push_outbox).toHaveLength(1);
+    expect(ctx.tables.push_outbox[0].due_at).toBe(later + HOLD_WHILE_ACTIVE_MS);
+    expect(reflushes(ctx)).toHaveLength(1);
+  });
+
+  test("a DM at the Mac past the hold window ships — chat is not a session idle", async () => {
+    const later = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [idleClientPresence(later)],
+      devices: [machineDevice(later)],
+      push_outbox: [
+        {
+          _id: "push_outbox_1",
+          user_id: "users_1",
+          type: "chat_dm",
+          title: "Samvit",
+          body: "lunch?",
+          created_at: NOW,
+          due_at: later,
+          deferred: true,
+        },
+      ],
+    });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(1);
+    expect(sentPushes(ctx)[0].args.channel_id).toBe("chat");
+    expect(ctx.tables.push_outbox).toHaveLength(0);
+  });
+
+  // Same state, opted out: the shipped escalation still fires.
+  test("opted out, held row past its window: escalates as before", async () => {
+    const later = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    const ctx = createCtx({
+      users: [USER],
+      devices: [machineDevice(later)],
+      push_outbox: [
+        {
+          _id: "push_outbox_1",
+          user_id: "users_1",
+          type: "session_idle",
+          title: "t",
+          body: "b",
+          created_at: NOW,
+          due_at: later,
+          deferred: true,
+        },
+      ],
+    });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(1);
+    expect(ctx.tables.push_outbox).toHaveLength(0);
+  });
+
+  // Walked away: the re-defer stops and the batch ships.
+  test("opted in, machine now idle: the held batch ships", async () => {
+    const later = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      devices: [machineDevice(later, { last_input_at: later - INPUT_ACTIVE_MS - 1 })],
+      push_outbox: [
+        {
+          _id: "push_outbox_1",
+          user_id: "users_1",
+          type: "session_idle",
+          title: "t",
+          body: "b",
+          created_at: NOW,
+          due_at: later,
+          deferred: true,
+        },
+      ],
+    });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(1);
+    expect(ctx.tables.push_outbox).toHaveLength(0);
+  });
+});
+
+// ── Machine hold: the safety properties ──────────────────────────────────────
+// The three the earlier tests missed by only ever using one row and one cycle:
+// bounded scheduling, guaranteed eventual delivery, and one buzz on walk-away.
+
+function outboxRow(id: string, createdAt: number, dueAt: number): Rec {
+  return {
+    _id: id,
+    user_id: "users_1",
+    type: "session_idle",
+    title: "t",
+    body: "b",
+    created_at: createdAt,
+    due_at: dueAt,
+    deferred: true,
+  };
+}
+
+describe("machine hold safety properties", () => {
+  // Scheduling must be per-flush, not per-row: per-row makes the churn grow
+  // with how long the user sits at the desk.
+  test("20 held rows schedule exactly ONE reflush", async () => {
+    const at = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(at);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [activePresence(at)],
+      devices: [machineDevice(at)],
+      push_outbox: Array.from({ length: 20 }, (_, i) =>
+        outboxRow(`push_outbox_${i + 1}`, NOW, at),
+      ),
+    });
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(0);
+    expect(reflushes(ctx)).toHaveLength(1);
+    expect(ctx.tables.push_outbox).toHaveLength(20);
+  });
+
+  // THE property. Without a ceiling a push can be held forever — synthetic HID
+  // input (jigglers, screen sharing, UI automation) pins the machine "present"
+  // with nobody there. This test must fail if the cap is ever removed.
+  test("a held push is eventually delivered even if the Mac never goes idle", async () => {
+    let at = NOW;
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [activePresence(NOW)],
+      devices: [machineDevice(NOW)],
+      push_outbox: [outboxRow("push_outbox_1", NOW, NOW)],
+    });
+    // Machine stays active forever; walk the clock in hold-sized steps.
+    for (let i = 0; i < 40 && sentPushes(ctx).length === 0; i++) {
+      at += HOLD_WHILE_ACTIVE_MS;
+      freezeTime(at);
+      ctx.tables.user_presence[0].last_seen = at - 10_000;
+      ctx.tables.user_presence[0].last_input_at = at - 5_000;
+      ctx.tables.devices[0].last_seen = at - 10_000;
+      ctx.tables.devices[0].last_input_at = at - 5_000;
+      await performPushFlush(ctx, "users_1");
+    }
+    expect(sentPushes(ctx)).toHaveLength(1);
+    expect(at - NOW).toBeLessThanOrEqual(MAX_MACHINE_HOLD_MS + HOLD_WHILE_ACTIVE_MS);
+    expect(ctx.tables.push_outbox).toHaveLength(0);
+  });
+
+  // Rows enqueued minutes apart drift onto separate due_at phases; without
+  // collapsing them, walking away buzzes once per phase.
+  test("walking away after a long hold sends ONE aggregated push", async () => {
+    const at = NOW + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(at);
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [activePresence(at)],
+      devices: [machineDevice(at)],
+      push_outbox: [
+        outboxRow("push_outbox_1", NOW, at),
+        outboxRow("push_outbox_2", NOW + 60_000, at + 60_000),
+        outboxRow("push_outbox_3", NOW + 120_000, at + 120_000),
+      ],
+    });
+    // Still at the desk: everything holds and lands on one shared deadline.
+    await performPushFlush(ctx, "users_1");
+    const phases = new Set(ctx.tables.push_outbox.map((r: Rec) => r.due_at));
+    expect(phases.size).toBe(1);
+
+    // Now walk away: one flush, one push, covering all three.
+    const later = at + HOLD_WHILE_ACTIVE_MS;
+    freezeTime(later);
+    ctx.tables.devices[0].last_seen = later - 10_000;
+    ctx.tables.devices[0].last_input_at = later - INPUT_ACTIVE_MS - 1;
+    ctx.tables.user_presence[0].last_seen = later - 10_000;
+    ctx.tables.user_presence[0].last_input_at = later - INPUT_ACTIVE_MS - 1;
+    await performPushFlush(ctx, "users_1");
+    expect(sentPushes(ctx)).toHaveLength(1);
+    expect(sentPushes(ctx)[0].args.title).toBe("3 notifications");
+    expect(ctx.tables.push_outbox).toHaveLength(0);
+  });
+
+  // The daemon runs under launchd, independent of the app. With no live Codecast
+  // surface there is nowhere to show the notification, so holding would black it
+  // out entirely — machine presence requires a running client.
+  test("no live Codecast surface: machine presence does not hold", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [MACHINE_USER], devices: [machineDevice(NOW)] });
+    await enqueuePush(ctx, { user: MACHINE_USER, type: "session_idle", title: "t", body: "b" });
+    expect(ctx.tables.push_outbox[0].due_at).toBe(NOW + AWAY_DEBOUNCE_MS);
+    expect(ctx.tables.push_outbox[0].deferred).toBe(false);
+  });
+
+  // Client alive but its input stale (heads-down in an editor) is the whole
+  // point of the opt-in — that must still hold.
+  test("client open but idle + Mac active: holds", async () => {
+    freezeTime(NOW);
+    const stalePresence = {
+      ...activePresence(NOW),
+      last_input_at: NOW - INPUT_ACTIVE_MS - 1,
+    };
+    const ctx = createCtx({
+      users: [MACHINE_USER],
+      user_presence: [stalePresence],
+      devices: [machineDevice(NOW)],
+    });
+    await enqueuePush(ctx, { user: MACHINE_USER, type: "session_idle", title: "t", body: "b" });
+    expect(ctx.tables.push_outbox[0].due_at).toBe(NOW + HOLD_WHILE_ACTIVE_MS);
+    expect(ctx.tables.push_outbox[0].deferred).toBe(true);
+  });
+});
+
+// ── Catch-up ring (ct-49553) ────────────────────────────────────────────────
+// A phone that was offline used to recover nothing beyond the notification it
+// was last tapped from. These pin the two questions the replay turns on: is the
+// caller's seq measured against the counter it came from, and does the ring
+// stay bounded.
+
+const RING_USER = { _id: "users_1", push_token: "ExponentPushToken[x]", notifications_enabled: true };
+
+const ringUser = (ctx: { tables: Record<string, Rec[]> }) => ctx.tables.users[0] as { _id: any };
+
+function ringEntry(seq: number, epoch: string, over: Partial<MissedPush> = {}): MissedPush {
+  return {
+    key: pushRingKey(epoch, seq),
+    seq,
+    epoch,
+    title: `n${seq}`,
+    body: "b",
+    created_at: NOW + seq,
+    ...over,
+  };
+}
+
+describe("selectMissedSince", () => {
+  const ring = [ringEntry(1, "e1"), ringEntry(2, "e1"), ringEntry(3, "e1")];
+
+  test("matching epoch returns only what is newer than the watermark", () => {
+    expect(selectMissedSince(ring, { seq: 1, epoch: "e1" }).map((e) => e.seq)).toEqual([2, 3]);
+  });
+
+  test("the same watermark twice returns the same set — replay cannot re-deliver", () => {
+    const first = selectMissedSince(ring, { seq: 2, epoch: "e1" });
+    const second = selectMissedSince(ring, { seq: 2, epoch: "e1" });
+    expect(first.map((e) => e.key)).toEqual(second.map((e) => e.key));
+    expect(first.map((e) => e.seq)).toEqual([3]);
+  });
+
+  test("a watermark at the head returns nothing", () => {
+    expect(selectMissedSince(ring, { seq: 3, epoch: "e1" })).toEqual([]);
+  });
+
+  test("a watermark past the head is a counter this ring never issued", () => {
+    // The ring IS the counter, so seq 99 under the live epoch means the ring
+    // was emptied under this phone. Cutting against it would kill catch-up
+    // silently until the counter climbed back past 99.
+    expect(selectMissedSince(ring, { seq: 99, epoch: "e1" }).map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  test("mismatched epoch returns the whole ring — a seq from a dead counter cuts nothing", () => {
+    // seq 99 would swallow every entry if the epoch were ignored.
+    expect(selectMissedSince(ring, { seq: 99, epoch: "e0" }).map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  test("no epoch (a client that predates the field) keeps the seq-only cut", () => {
+    expect(selectMissedSince(ring, { seq: 1 }).map((e) => e.seq)).toEqual([2, 3]);
+  });
+});
+
+describe("recordRoutedPush", () => {
+  test("stamps a monotonic seq, an epoch and the shared key", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    const first = await recordRoutedPush(ctx as any, ringUser(ctx), { title: "a", body: "1" });
+    const second = await recordRoutedPush(ctx as any, ringUser(ctx), { title: "b", body: "2" });
+    expect(first.seq).toBe(1);
+    expect(second.seq).toBe(2);
+    expect(second.epoch).toBe(first.epoch);
+    expect(second.key).toBe(pushRingKey(second.epoch, 2));
+    // The counter is the ring's head, and the ring is durable — it survives
+    // every restart the in-memory Orca buffer could not.
+    expect(ctx.tables.push_ring.map((r: Rec) => r.seq)).toEqual([1, 2]);
+    // Nothing was written to the user doc; its churn re-renders the phone's
+    // whole tree through the auth provider's getCurrentUser subscription.
+    expect(ctx.tables.users[0].push_seq).toBeUndefined();
+  });
+
+  test("writes the recipient's personal workspace key at write time", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "a", body: "1" });
+    expect(ctx.tables.push_ring[0].workspace).toBe("user:users_1");
+  });
+
+  test("the ring is capped, evicting oldest-first while the counter keeps climbing", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    const overflow = PUSH_RING_CAPACITY + 12;
+    for (let i = 0; i < overflow; i++) {
+      await recordRoutedPush(ctx as any, ringUser(ctx), { title: `n${i}`, body: "b" });
+    }
+    const seqs = ctx.tables.push_ring.map((r: Rec) => r.seq).sort((a: number, b: number) => a - b);
+    expect(seqs.length).toBe(PUSH_RING_CAPACITY);
+    expect(seqs[0]).toBe(overflow - PUSH_RING_CAPACITY + 1);
+    expect(seqs[seqs.length - 1]).toBe(overflow);
+  });
+
+  test("a rotated epoch restarts the counter and drops the dead counter's rows", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "old", body: "b" });
+    const stale = ctx.tables.system_config[0];
+    stale.value = "rotated-epoch";
+    const after = await recordRoutedPush(ctx as any, ringUser(ctx), { title: "new", body: "b" });
+    expect(after.seq).toBe(1);
+    expect(after.epoch).toBe("rotated-epoch");
+    expect(ctx.tables.push_ring.map((r: Rec) => r.title)).toEqual(["new"]);
+  });
+});
+
+describe("readMissedSince", () => {
+  test("answers a matching epoch with newer entries and names the live epoch", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    const first = await recordRoutedPush(ctx as any, ringUser(ctx), { title: "a", body: "1" });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "b", body: "2" });
+    const missed = await readMissedSince(ctx as any, "users_1", { seq: 1, epoch: first.epoch });
+    expect(missed.epoch).toBe(first.epoch);
+    expect(missed.entries.map((e) => e.title)).toEqual(["b"]);
+  });
+
+  test("answers a stale epoch with everything retained", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "a", body: "1" });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "b", body: "2" });
+    const missed = await readMissedSince(ctx as any, "users_1", { seq: 500, epoch: "gone" });
+    expect(missed.entries.map((e) => e.title)).toEqual(["a", "b"]);
+  });
+
+  test("a row stamped to another workspace is not readable, however it was indexed", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    await recordRoutedPush(ctx as any, ringUser(ctx), { title: "mine", body: "1" });
+    ctx.tables.push_ring.push({
+      _id: "push_ring_smuggled",
+      user_id: "users_1",
+      workspace: "user:users_2",
+      epoch: ctx.tables.push_ring[0].epoch,
+      seq: 2,
+      key: "x",
+      title: "not mine",
+      body: "b",
+      created_at: NOW,
+    });
+    const missed = await readMissedSince(ctx as any, "users_1", { seq: 0 });
+    expect(missed.entries.map((e) => e.title)).toEqual(["mine"]);
+  });
+});
+
+describe("performPushFlush ring stamp", () => {
+  test("the sent payload and the retained ring row carry the same key", async () => {
+    freezeTime(NOW);
+    const ctx = createCtx({ users: [RING_USER] });
+    await enqueuePush(ctx, {
+      user: RING_USER,
+      type: "session_idle",
+      title: "Session ready",
+      body: "fix-auth is waiting",
+      data: { conversationId: "c1" },
+    });
+    freezeTime(NOW + AWAY_DEBOUNCE_MS);
+    await performPushFlush(ctx, "users_1");
+    const sent = sentPushes(ctx)[0].args;
+    const row = ctx.tables.push_ring[0];
+    expect(sent.data.notificationKey).toBe(row.key);
+    expect(sent.data.notificationSeq).toBe(row.seq);
+    expect(sent.data.notificationEpoch).toBe(row.epoch);
+    // The routing payload survives the merge — a replayed copy still deep-links.
+    expect(sent.data.conversationId).toBe("c1");
+    expect(row.data.conversationId).toBe("c1");
+  });
+});

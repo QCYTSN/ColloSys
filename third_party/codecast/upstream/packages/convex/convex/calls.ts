@@ -1,0 +1,1369 @@
+// Huddles control plane. Convex owns everything except media: rooms (leased
+// call_members rows), ringing (call_invites), authorization (callRooms.ts) and
+// LiveKit access-token minting. Media itself flows browser ↔ LiveKit; if the
+// LIVEKIT_* env vars are absent every query here still answers and the UI
+// simply hides call affordances (getCallConfig.enabled === false).
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import {
+  action,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import {
+  CALL_INVITE_TTL_MS,
+  CALL_KNOCK_TTL_MS,
+  CALL_MEMBER_STALE_MS,
+  MAX_ROOM_MEMBERS,
+  authorizeRoom,
+  authorizeRoomInviter,
+  authorizeRoomMembership,
+  clearRoomState,
+  expireRoomGrants,
+  isSeat,
+  liveMembers,
+  readRoomState,
+  upsertRoomState,
+  liveSeat,
+  openRoomDoor,
+  parseRoomKey,
+} from "./callRooms";
+import { isTeamMember } from "./privacy";
+import { requireUser } from "./lib/requireUser";
+import { channelMemberIds, isRestricted } from "./chatAccess";
+import { bucketTs } from "./presenceState";
+import { teamFeatureOffMessage, teamHasFeature } from "./teamFeatures";
+import { ensureOwnRoute, huddleAlive, idleLiveTranscriptsForRoom, resumeOrEndHuddle } from "./transcripts";
+import { liveRoomRun, noteRecordedPeople, nudgeRecordingForShare, recordingConfigured, recordingOutage, roomFilming, roomRecordingState, stopRoomRecording } from "./lib/callRecordingRuns";
+import { liveTranscriptFor, postEvent } from "./callChat";
+import { admittedGuests, guestKnocks, projectGuest } from "./callGuests";
+import { endGuestAdmissions } from "./lib/callGuestAdmission";
+import { signLivekitJwt } from "./lib/livekitJwt";
+import { livekitConfigFromEnv, removeParticipant } from "./lib/livekitServer";
+import { publicPersonLabel, teammateLabel } from "./lib/personLabel";
+import {
+  CALL_PUSH_CATEGORY,
+  CALL_PUSH_SOUND,
+  CALL_PUSH_TYPE_MISSED,
+  CALL_PUSH_TYPE_RING,
+  normalizeTranscribeLanguages,
+  channelHuddleMemberIds,
+} from "@codecast/shared/contracts";
+
+/** Seat languages the transcriber unions. Undefined means "this client did not say". */
+function stampedLanguages(raw: string[] | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const langs = normalizeTranscribeLanguages(raw);
+  return langs.length ? langs : undefined;
+}
+
+export {
+  CALL_HEARTBEAT_MS,
+  CALL_INVITE_TTL_MS,
+  CALL_KNOCK_TTL_MS,
+  CALL_MEMBER_STALE_MS,
+} from "./callRooms";
+
+function inviteAlive(inv: Doc<"call_invites">, now: number): boolean {
+  return inv.status === "ringing" && now - inv.created_at < CALL_INVITE_TTL_MS;
+}
+
+// The client-facing shape of a roster row. last_seen deliberately never
+// leaves the server (it churns every heartbeat and shows nothing the UI
+// paints); joined_at is bucketed so the row is byte-stable across pushes.
+function projectMember(m: Doc<"call_members">) {
+  return {
+    room_key: m.room_key,
+    user_id: m.user_id,
+    user_name: m.user_name,
+    user_image: m.user_image,
+    joined_at: bucketTs(m.joined_at),
+    muted: m.muted,
+    camera: m.camera,
+    sharing: m.sharing,
+    // The one bit that turns a burst into a call, for everyone in the room.
+    // Bucketed like joined_at and set once, so it never re-pushes the roster.
+    walkie_joined_at: m.walkie_joined_at ? bucketTs(m.walkie_joined_at) : undefined,
+  };
+}
+
+/**
+ * WHAT A SEAT IN THIS ROOM MEANS TO SOMEBODY OUTSIDE IT.
+ *
+ * A walkie burst seats everyone who hears it, and the seat is held for half a
+ * minute after the key comes up so an answer lands without a rejoin. Read as
+ * "in a huddle", three seconds of somebody's voice lit every teammate's
+ * roster for the whole window, and nobody outside the room could tell that
+ * from an hour in a call. The seat rows carry no intent flag, so the class is
+ * read off what the room already records:
+ *
+ *   call    a channel or session huddle (always deliberate), a people room
+ *           somebody stepped into on purpose (a walkie_joined_at stamp on
+ *           ANY live seat, since one deliberate join makes the room a call
+ *           for everyone in it), or a people room somebody was rung into
+ *           (an accepted invite of the running huddle; joinRoom cancels the
+ *           grants when the room restarts from empty).
+ *   walkie  a people room with none of those: seats a burst put there, and
+ *           the linger after it.
+ *
+ * Invites change on a ring and an answer only, so reading them here adds no
+ * churn to a roster that already re-runs at heartbeat rate.
+ */
+export type SeatClass = "call" | "walkie";
+
+export async function roomSeatClass(
+  ctx: { db: any },
+  roomKey: string,
+  liveRows: Pick<Doc<"call_members">, "walkie_joined_at">[],
+): Promise<SeatClass> {
+  if (parseRoomKey(roomKey)?.kind !== "dm") return "call";
+  if (liveRows.some((m) => !!m.walkie_joined_at)) return "call";
+  const invites: Doc<"call_invites">[] = await ctx.db
+    .query("call_invites")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey))
+    .collect();
+  return invites.some((i) => i.status === "accepted") ? "call" : "walkie";
+}
+
+// Is calling available to the caller? Two gates: the deployment must have
+// LiveKit configured (the secret never leaves env), and calls are a per-team
+// opt-in — `teams` lists which of the caller's teams have it on so clients
+// hide every call affordance for the rest. `enabled` is true when at least
+// one of the caller's teams has calls (or, signed out, when the deployment
+// is configured), so a single boolean still answers "show anything at all?".
+export const getCallConfig = query({
+  args: {},
+  handler: async (ctx) => {
+    const livekit = livekitConfigFromEnv();
+    const configured = livekit !== null;
+    const userId = await getAuthUserId(ctx);
+    let teams: string[] = [];
+    if (configured && userId) {
+      const memberships = await ctx.db
+        .query("team_memberships")
+        .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+        .collect();
+      for (const m of memberships) {
+        if (await teamHasFeature(ctx, m.team_id, "calls")) teams.push(String(m.team_id));
+      }
+    }
+    const enabled = configured && (userId ? teams.length > 0 : true);
+    return { enabled, url: enabled ? livekit?.url : undefined, teams };
+  },
+});
+
+// Occupancy for a set of rooms the caller can see (chips on channels,
+// sessions, the team strip). Rooms the caller may not join return empty
+// rather than erroring, so one bad key can't blank a whole chip row.
+export const getRoomOccupancy = query({
+  args: { room_keys: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return {};
+    const now = Date.now();
+    const keys = [...new Set(args.room_keys)].slice(0, 50);
+    const out: Record<string, ReturnType<typeof projectMember>[]> = {};
+    for (const key of keys) {
+      const auth = await authorizeRoom(ctx, userId, key);
+      if (!auth.ok) continue;
+      const rows = await ctx.db
+        .query("call_members")
+        .withIndex("by_room", (q) => q.eq("room_key", key))
+        .collect();
+      const live = liveMembers(rows, now);
+      if (live.length > 0) out[key] = live.map(projectMember);
+    }
+    return out;
+  },
+});
+
+// Everything the ring pipeline needs about ME: invites ringing at me, my own
+// outbound ring, and my current room membership. One subscription, mounted
+// app-wide (useCallSync).
+// Is this ring still ringing? Read by the phone's CallKit bridge while the
+// system ring is up, so it can end the ring the moment the call is answered,
+// declined or cancelled anywhere else. Deliberately needs no sign-in: a VoIP
+// push wakes a killed app on a LOCKED phone, where the keychain holding the
+// session is unreadable, and a check gated on auth never ran there, so the
+// phone rang its full TTL after a desktop answer. The invite id is the
+// capability (it arrived in the push), and the answer is one boolean.
+export const ringLive = query({
+  args: { invite_id: v.string() },
+  handler: async (ctx, args) => {
+    const id = ctx.db.normalizeId("call_invites", args.invite_id);
+    if (!id) return false;
+    const inv = await ctx.db.get(id);
+    return inv?.status === "ringing";
+  },
+});
+
+export const getMyCalls = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { incoming: [], outgoing: [], membership: null };
+    const now = Date.now();
+
+    const ringingAtMe = await ctx.db
+      .query("call_invites")
+      .withIndex("by_to_status", (q) =>
+        q.eq("to_user", userId).eq("status", "ringing"),
+      )
+      .collect();
+    const incoming = await Promise.all(
+      ringingAtMe.filter((i) => inviteAlive(i, now)).map(async (i) => {
+        const from = await ctx.db.get(i.from_user);
+        return {
+          _id: i._id,
+          room_key: i.room_key,
+          from_user: i.from_user,
+          from_name: teammateLabel(from),
+          from_image: from?.image ?? from?.github_avatar_url,
+          anchor_title: i.anchor_title,
+          created_at: bucketTs(i.created_at),
+        };
+      }),
+    );
+
+    const myRings = await ctx.db
+      .query("call_invites")
+      .withIndex("by_from_status", (q) =>
+        q.eq("from_user", userId).eq("status", "ringing"),
+      )
+      .collect();
+    // Recently-settled rows so the caller's row can finish the sentence:
+    // "declined" for a decline, "no answer" for a ring that hit its TTL, and
+    // "accepted" so a face that was ringing stays ringing until its seat
+    // lands a round trip later, instead of reading online in between.
+    const settled = await Promise.all(
+      (["declined", "expired", "accepted"] as const).map((status) =>
+        ctx.db
+          .query("call_invites")
+          .withIndex("by_from_status", (q) =>
+            q.eq("from_user", userId).eq("status", status),
+          )
+          .collect(),
+      ),
+    ).then((lists) => lists.flat());
+    const outgoing = await Promise.all(
+      [
+        ...myRings.filter((i) => inviteAlive(i, now)),
+        ...settled.filter((i) => (i.responded_at ?? 0) > now - 30_000),
+      ].map(async (i) => {
+        // Enriched with the callee's name so the caller's stage can say
+        // "ringing Sam…" / "Sam declined" without a second lookup (mirrors the
+        // incoming projection above).
+        const to = await ctx.db.get(i.to_user);
+        return {
+          _id: i._id,
+          room_key: i.room_key,
+          to_user: i.to_user,
+          to_name: teammateLabel(to),
+          to_image: to?.image ?? to?.github_avatar_url,
+          status: i.status,
+          created_at: bucketTs(i.created_at),
+        };
+      }),
+    );
+
+    const myRooms = await ctx.db
+      .query("call_members")
+      .withIndex("by_user", (q) => q.eq("user_id", userId))
+      .collect();
+    const live = liveMembers(myRooms, now);
+    return {
+      incoming,
+      outgoing,
+      membership: live[0] ? projectMember(live[0]) : null,
+    };
+  },
+});
+
+// Sweep a room's dead rows while we're writing to it anyway. Returns the
+// rows as they stood before the sweep: a join into an emptied room dates the
+// quiet from the leases the dead rows last refreshed.
+async function sweepRoom(ctx: any, roomKey: string, now: number): Promise<Doc<"call_members">[]> {
+  const rows = await ctx.db
+    .query("call_members")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey))
+    .collect();
+  for (const m of rows) {
+    if (now - m.last_seen >= CALL_MEMBER_STALE_MS) await ctx.db.delete(m._id);
+  }
+  return rows;
+}
+
+/**
+ * HOLD A ROOM OPEN AHEAD OF A BURST, without entering it.
+ *
+ * The media connection is the slow part of being heard — a cold LiveKit join
+ * measured up to 12.7s against 1.0s warm — so opening a DM or resting on a
+ * face connects early and publishes nothing. This row is only the record that
+ * it happened: `liveMembers` drops it, so it is not occupancy, not a grant and
+ * not the room's lease.
+ *
+ * It TAKES NOTHING, and that is the whole difference from a real join. It
+ * cannot evict a seat (a real one anywhere refuses it outright, which is what
+ * keeps a hover from hanging up a call), it cannot start a huddle (no grants
+ * expired, no lock cleared, no transcript ended), and it never stamps
+ * walkie_join. Nothing beats it either: the row goes stale in the ordinary
+ * window and the next write to the room sweeps it.
+ */
+async function holdPrewarmSeat(
+  ctx: any,
+  input: {
+    userId: Id<"users">;
+    user: Doc<"users"> | null;
+    teamId: Id<"teams">;
+    roomKey: string;
+    now: number;
+  },
+): Promise<{ room_key: string; prewarm: boolean }> {
+  const { userId, user, teamId, roomKey, now } = input;
+  const mine: Doc<"call_members">[] = await ctx.db
+    .query("call_members")
+    .withIndex("by_user", (q: any) => q.eq("user_id", userId))
+    .collect();
+  // A REAL SEAT ANYWHERE ENDS IT. Being in a room is the person's own doing;
+  // a prewarm is a guess about what they might do next, and a guess never
+  // outranks the call they are in. The client refuses this too — the answer is
+  // here as well because the cost of getting it wrong is somebody's live call.
+  if (liveMembers(mine, now).length > 0) return { room_key: roomKey, prewarm: false };
+  // A RECORDED ROOM TAKES NO GUESSES. Everyone in a recorded room is told, and
+  // a prewarm is a muted, unseated connection nobody sees on the stage, which
+  // the composite could still draw as a name tile. The client skips recorded
+  // rooms itself (roomPrewarm); the refusal lives here too so an older bundle
+  // or another client cannot slip a silent participant into a recording.
+  if (await liveRoomRun(ctx, roomKey)) return { room_key: roomKey, prewarm: false };
+  // One at a time: a second face, a second DM, and the last one is dropped.
+  for (const m of mine) {
+    if (m.room_key !== roomKey) await ctx.db.delete(m._id);
+  }
+  const existing = mine.find((m) => m.room_key === roomKey);
+  if (existing) {
+    await ctx.db.patch(existing._id, { last_seen: now, muted: true, prewarm: true });
+    return { room_key: roomKey, prewarm: true };
+  }
+  await ctx.db.insert("call_members", {
+    room_key: roomKey,
+    team_id: teamId,
+    user_id: userId,
+    user_name: publicPersonLabel(user),
+    user_image: user?.image ?? user?.github_avatar_url ?? undefined,
+    joined_at: now,
+    last_seen: now,
+    muted: true,
+    camera: false,
+    sharing: false,
+    prewarm: true,
+  });
+  return { room_key: roomKey, prewarm: true };
+}
+
+export const joinRoom = mutation({
+  args: {
+    room_key: v.string(),
+    muted: v.optional(v.boolean()),
+    // "I am stepping into this burst on purpose." Optional and additive: an
+    // older client never sends it and joins exactly as it always did. It is
+    // only ever set, never cleared — the seat itself is what ends a call, and
+    // leaving deletes the row and the stamp with it.
+    walkie_join: v.optional(v.boolean()),
+    // "I am holding the media open in case somebody talks, and I am not here."
+    // Optional and additive the same way; see holdPrewarmSeat, which is the
+    // whole of what it does.
+    prewarm: v.optional(v.boolean()),
+    // Languages this device is set to. Optional and additive: an older client
+    // never sends it and the transcriber falls back to the scribe's own list.
+    languages: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const auth = await authorizeRoom(ctx, userId, args.room_key);
+    if (!auth.ok) throw new Error(`Cannot join room: ${auth.reason}`);
+    const now = Date.now();
+    const user = await ctx.db.get(userId);
+
+    if (args.prewarm) {
+      return await holdPrewarmSeat(ctx, {
+        userId,
+        user,
+        teamId: auth.teamId,
+        roomKey: args.room_key,
+        now,
+      });
+    }
+
+    // Walking back in takes back the hang-up.
+    const hangup = await hangupOf(ctx, userId, args.room_key);
+    if (hangup) await ctx.db.delete(hangup._id);
+
+    // Sweep the room's dead rows FIRST — a rejoin after >45s away is the
+    // common case, and our own stale row must be gone before we decide
+    // whether to refresh or insert (patching a row the sweep just deleted
+    // threw "Update on nonexistent document").
+    const before = await sweepRoom(ctx, args.room_key, now);
+
+    // Taking a seat in an EMPTY room starts a NEW huddle, unless the last one
+    // emptied inside its grace (transcripts.HUDDLE_GRACE_MS): coming back
+    // after a dropped connection or a hop to another room is the same
+    // conversation, with the same record, grants, lock and switch. A new
+    // huddle kills the previous huddle's invite grants
+    // (callRooms.acceptedInviteGrant relies on this — an accepted invite
+    // means "that huddle never ended"). A guest whose huddle is still running
+    // never reaches this: the room holds a fresh lease, so it is not empty.
+    const seated = await ctx.db
+      .query("call_members")
+      .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+      .collect();
+    if (liveMembers(seated, now).length === 0 && !(await resumeOrEndHuddle(ctx, args.room_key, now, before))) {
+      await expireRoomGrants(ctx, args.room_key);
+      // A lock belongs to the huddle that set it, and so do the knocks at its
+      // door: the next huddle in this room starts open, with nobody waiting.
+      await clearRoomState(ctx, args.room_key);
+    }
+
+    // One huddle at a time: joining a room implicitly leaves every other —
+    // simultaneous rooms would mean two live mic publishes and an incoherent
+    // "in a huddle" presence signal.
+    const mine = await ctx.db
+      .query("call_members")
+      .withIndex("by_user", (q) => q.eq("user_id", userId))
+      .collect();
+    let existing: Doc<"call_members"> | null = null;
+    for (const m of mine) {
+      if (m.room_key === args.room_key) existing = m;
+      else await ctx.db.delete(m._id);
+    }
+
+    // Walking into a room being filmed puts you in its video, so you may
+    // watch it afterwards (canReadCall's recorded_people door).
+    await noteRecordedPeople(ctx, args.room_key, [userId]);
+
+    const languages = stampedLanguages(args.languages);
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        last_seen: now,
+        muted: args.muted ?? existing.muted,
+        // The FIRST deliberate step in is the one that counts: joining live and
+        // then being re-seated by a heartbeat recovery must not keep moving the
+        // moment the conversation started.
+        walkie_joined_at: args.walkie_join
+          ? (existing.walkie_joined_at ?? now)
+          : existing.walkie_joined_at,
+        // The prewarm became a person. This is the row the media connection was
+        // held on, and the join it was held for has arrived — clearing the flag
+        // is what makes the seat count, so the far side's "X hears you" turns
+        // true on the same round trip that opens the microphone.
+        prewarm: undefined,
+        // A prewarm row is stamped with the moment the connection opened, which
+        // can be a minute and a half before anybody spoke. The huddle started
+        // when the person did.
+        joined_at: existing.prewarm ? now : existing.joined_at,
+        ...(languages ? { languages } : {}),
+      });
+      return { room_key: args.room_key };
+    }
+    await ctx.db.insert("call_members", {
+      room_key: args.room_key,
+      team_id: auth.teamId,
+      user_id: userId,
+      user_name: publicPersonLabel(user),
+      user_image: user?.image ?? user?.github_avatar_url ?? undefined,
+      joined_at: now,
+      last_seen: now,
+      // Muted by default: joining is socially free (the Tandem shoulder-tap),
+      // unmuting is the deliberate act.
+      muted: args.muted ?? true,
+      camera: false,
+      sharing: false,
+      walkie_joined_at: args.walkie_join ? now : undefined,
+      languages,
+    });
+    return { room_key: args.room_key };
+  },
+});
+
+export const heartbeat = mutation({
+  args: {
+    room_key: v.string(),
+    muted: v.optional(v.boolean()),
+    camera: v.optional(v.boolean()),
+    sharing: v.optional(v.boolean()),
+    languages: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const row = await ctx.db
+      .query("call_members")
+      .withIndex("by_user_room", (q) =>
+        q.eq("user_id", userId).eq("room_key", args.room_key),
+      )
+      .unique();
+    const now = Date.now();
+    // A heartbeat for a row the sweep already removed is a no-op, not an
+    // error: the client will notice via getMyCalls and reconnect or leave.
+    if (row) {
+      // A screen share just began: if the room is recording, its own file
+      // should start now rather than at the recording loop's next look.
+      if (args.sharing === true && !row.sharing) await nudgeRecordingForShare(ctx, args.room_key);
+      const patch: Record<string, unknown> = { last_seen: now };
+      if (args.muted !== undefined) patch.muted = args.muted;
+      if (args.camera !== undefined) patch.camera = args.camera;
+      if (args.sharing !== undefined) patch.sharing = args.sharing;
+      const languages = stampedLanguages(args.languages);
+      if (languages) patch.languages = languages;
+      await ctx.db.patch(row._id, patch);
+    }
+    // THE DEAD LEAVE WITH THE LIVING'S BEAT. `liveMembers` hides a lapsed row
+    // from every reader, but the row itself stayed until the next JOIN into
+    // the room, and a room with nobody joining is exactly where a dead seat
+    // is noticed: the roster carried a face whose client was gone. Sweeping
+    // here, after our own row is fresh, puts a bound on it: a seat whose lease
+    // lapsed is deleted within one heartbeat of anyone still in the room.
+    await sweepRoom(ctx, args.room_key, now);
+    // No seat because the person pressed End somewhere else: this client
+    // hangs up too, rather than taking the seat back as after a sleep.
+    if (!row && (await hangupOf(ctx, userId, args.room_key))) return { ok: false, hungUp: true };
+    return { ok: !!row };
+  },
+});
+
+function hangupOf(ctx: any, userId: Id<"users">, roomKey: string) {
+  return ctx.db
+    .query("call_hangups")
+    .withIndex("by_user_room", (q: any) => q.eq("user_id", userId).eq("room_key", roomKey))
+    .unique();
+}
+
+async function markHangup(ctx: any, userId: Id<"users">, roomKey: string, now: number) {
+  const existing = await hangupOf(ctx, userId, roomKey);
+  if (existing) await ctx.db.patch(existing._id, { at: now });
+  else await ctx.db.insert("call_hangups", { user_id: userId, room_key: roomKey, at: now });
+}
+
+// Hanging up settles every ring the caller left outstanding for that room:
+// otherwise the callee's phone rings the full TTL for a call that no longer
+// exists — and then gets a "missed huddle" push for it.
+async function settleOutboundRings(
+  ctx: any,
+  userId: Id<"users">,
+  roomKey: string | undefined,
+  now: number,
+) {
+  const ringing = await ctx.db
+    .query("call_invites")
+    .withIndex("by_from_status", (q: any) =>
+      q.eq("from_user", userId).eq("status", "ringing"),
+    )
+    .collect();
+  for (const inv of ringing) {
+    if (!roomKey || inv.room_key === roomKey) {
+      await ctx.db.patch(inv._id, { status: "cancelled", responded_at: now });
+    }
+  }
+}
+
+export const leaveRoom = mutation({
+  // `hangup`: the person pressed End, on purpose. A reload, a closed tab or
+  // a failed join leaves without it, and only those can be a leave that is
+  // about to come back.
+  args: { room_key: v.optional(v.string()), hangup: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const now = Date.now();
+    const mine = await ctx.db
+      .query("call_members")
+      .withIndex("by_user", (q) => q.eq("user_id", userId))
+      .collect();
+    const left = new Map<string, Doc<"call_members"> | null>();
+    for (const m of mine) {
+      if (!args.room_key || m.room_key === args.room_key) {
+        await ctx.db.delete(m._id);
+        // The seat this person sat in, if they sat (a prewarm row held the
+        // media open for nobody, and leaving it empties no huddle).
+        left.set(m.room_key, isSeat(m) ? m : (left.get(m.room_key) ?? null));
+      }
+    }
+    for (const roomKey of left.keys()) await markHangup(ctx, userId, roomKey, now);
+    await settleOutboundRings(ctx, userId, args.room_key, now);
+    // The last one out starts the huddle's grace: its record ends at this
+    // moment unless somebody is back within HUDDLE_GRACE_MS, and the room
+    // itself is stamped with the moment it emptied, so the grace holds with
+    // nothing transcribing too (transcripts.withinHuddleGrace). A leave is
+    // often not a departure at all: the web leaves on beforeunload, so a
+    // reload is a leave and a join a second apart, and it must come back to
+    // the same huddle, its guests still in and its recording still running.
+    for (const [roomKey, seat] of left) {
+      const seated = await ctx.db
+        .query("call_members")
+        .withIndex("by_room", (q) => q.eq("room_key", roomKey))
+        .collect();
+      if (liveMembers(seated, now).length === 0) {
+        await idleLiveTranscriptsForRoom(ctx, roomKey, now);
+        if (seat) await upsertRoomState(ctx, roomKey, seat, { emptied_at: now }, now);
+        // Inside the grace nothing else ends here. The recording stops on
+        // its own once LiveKit's room has held no teammate for
+        // RECORDING_EMPTY_ROOM_STOP_MS, counted from RECORDING_LEFT_ROOM_HOLD_MS
+        // after this stamp so a slow reload keeps it (guests never keep it going:
+        // huddleKeepers), or with the record (transcripts.endTranscript);
+        // guests' admissions end with the huddle (transcripts.endIdleTranscript,
+        // or the minute sweep). Only a huddle already past its grace (the
+        // last person here was a prewarm, nobody sat) ends now.
+        if (!(await huddleAlive(ctx, roomKey, now))) {
+          await stopRoomRecording(ctx, roomKey, { reason: "huddle_ended" });
+          await endGuestAdmissions(ctx, roomKey);
+        } else if (args.hangup && seat) {
+          // The last teammate pressed End: no reload is coming back, so
+          // nothing is left to film but an empty room or a guest alone in
+          // it, billed by the minute. The recording stops now; the guests'
+          // admissions keep the huddle's grace, so a teammate back inside it
+          // still finds them.
+          await stopRoomRecording(ctx, roomKey, { reason: "room_empty" });
+        }
+      }
+    }
+  },
+});
+
+// Ring people into a room. One mutation, one or many recipients (`to_users`;
+// `to_user` is the historic single form and still works): a group start rings
+// everyone in one round trip, and "add people" mid-call is the same call on
+// the room you are already in. Per-recipient outcomes come back keyed by user
+// so the caller's dock can say who rang, who is on quiet hours and who is in
+// a decline cooldown.
+export const invite = mutation({
+  args: {
+    room_key: v.string(),
+    to_user: v.optional(v.id("users")),
+    to_users: v.optional(v.array(v.id("users"))),
+    anchor_title: v.optional(v.string()),
+    ring_channel: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    let recipients = [...new Set([
+      ...(args.to_user ? [args.to_user] : []),
+      ...(args.to_users ?? []),
+    ].map(String))] as Id<"users">[];
+    if (!args.ring_channel && recipients.length === 0) throw new Error("Nobody to ring");
+    if (recipients.some((id) => String(id) === String(userId))) {
+      throw new Error("Cannot ring yourself");
+    }
+    if (!args.ring_channel && recipients.length > MAX_ROOM_MEMBERS) {
+      throw new Error(`A huddle rings at most ${MAX_ROOM_MEMBERS} people at once`);
+    }
+    // The authority to ADD people is being IN the room, or being one of its
+    // own people. A live occupant may ring: they are the person a knocker is
+    // asking to be let in by, and they can already lock the door — a walk-in
+    // who could shut the room but not open it was the inconsistency this
+    // rule removes. Chain-invite stays contained by the two walls that were
+    // always doing the work: a CHANNEL room keeps membership authority
+    // (authorizeRoomInviter excludes it), so nobody walks into a channel's
+    // room and fills it with people the channel excludes; and every
+    // recipient must be a teammate, checked per row below. An unused grant
+    // is not a seat: holding one lets you join, not widen.
+    //
+    // The recipient needs no membership at all — the ring IS their grant
+    // (callRooms.acceptedInviteGrant) — but the team wall holds for them too.
+    const callerAuth = await authorizeRoomInviter(ctx, userId, args.room_key);
+    if (!callerAuth.ok) throw new Error(`Cannot invite: ${callerAuth.reason}`);
+
+    let channelTitle: string | undefined;
+    if (args.ring_channel) {
+      const room = parseRoomKey(args.room_key);
+      if (room?.kind !== "channel") throw new Error("Only channel huddles can ring a channel");
+      const channel = await ctx.db.get(room.channelId as Id<"chat_channels">);
+      if (!channel || channel.archived_at || channel.kind === "community") throw new Error("Cannot ring this channel");
+      const memberships = await ctx.db.query("team_memberships")
+        .withIndex("by_team_id", (q) => q.eq("team_id", callerAuth.teamId)).collect();
+      const teammates = (await Promise.all(memberships.map((m) => ctx.db.get(m.user_id))))
+        .filter((m): m is Doc<"users"> => m !== null);
+      const memberIds = isRestricted(channel) ? await channelMemberIds(ctx, channel._id) : undefined;
+      recipients = (channelHuddleMemberIds(channel.kind, memberIds, teammates) ?? [])
+        .filter((id) => id !== String(userId)) as Id<"users">[];
+      channelTitle = `#${channel.name}`;
+    }
+
+    const now = Date.now();
+    const from = await ctx.db.get(userId);
+    const fromName = from?.name || from?.email || "A teammate";
+    // Whoever already holds a seat needs no ring — a toast for the room you
+    // are sitting in is noise (the picker excludes them client-side; the
+    // server rule is what makes every entry point behave).
+    const seated = new Set(
+      liveMembers(
+        await ctx.db
+          .query("call_members")
+          .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+          .collect(),
+        now,
+      ).map((m) => String(m.user_id)),
+    );
+    // The ring's context line, per recipient. For a people room the server
+    // owns it: "with <everyone in the room besides you and the caller>" — a
+    // caller-written line would name the recipient to themselves, and a
+    // guest rung into a 1:1 would get no context at all. Channel and session
+    // rooms keep the caller's line ("#design", "about: <title>"), capped so
+    // a hostile length cannot sink the APNs payload.
+    const cap = (t: string | undefined) => t && t.slice(0, 140);
+    const parsed = parseRoomKey(args.room_key);
+    const roomNames = new Map<string, string>();
+    if (parsed?.kind === "dm") {
+      for (const id of parsed.users) {
+        const u = await ctx.db.get(id as Id<"users">);
+        // Split only real names — "a teammate".split would read as "a".
+        roomNames.set(id, u?.name?.trim().split(/\s+/)[0] || u?.email || "a teammate");
+      }
+    }
+    const lineFor = (toUser: Id<"users">): string | undefined => {
+      if (parsed?.kind !== "dm") return cap(channelTitle ?? args.anchor_title);
+      const others = parsed.users.filter(
+        (id) => id !== String(toUser) && id !== String(userId),
+      );
+      if (others.length === 0) return undefined;
+      return cap(`with ${others.map((id) => roomNames.get(id)).join(", ")}`);
+    };
+
+    // Every ring the caller has out or recently settled, read once for the
+    // whole batch: the cooldown check and the refresh-vs-insert decision below
+    // both filter this list per recipient.
+    const priorFromMe = await Promise.all(
+      (["ringing", "declined"] as const).map((status) =>
+        ctx.db
+          .query("call_invites")
+          .withIndex("by_from_status", (q) =>
+            q.eq("from_user", userId).eq("status", status),
+          )
+          .collect(),
+      ),
+    ).then((lists) => lists.flat());
+    // Stale rings for anyone are swept while we're here — and so are old
+    // SETTLED rows: nothing else ever deletes declined/cancelled/expired
+    // invites, and getMyCalls reads whole status buckets per run, so an
+    // unbounded history would make every ring event dearer forever. Ten
+    // minutes comfortably clears the 30s settle display and the 60s decline
+    // cooldown; accepted rows are grants and are settled (then swept here)
+    // only when their room restarts from empty.
+    const SETTLED_ROW_TTL_MS = 10 * 60_000;
+    for (const inv of priorFromMe) {
+      if (inv.status === "ringing" && !inviteAlive(inv, now)) await ctx.db.delete(inv._id);
+    }
+    const oldSettled = await Promise.all(
+      (["declined", "cancelled", "expired"] as const).map((status) =>
+        ctx.db
+          .query("call_invites")
+          .withIndex("by_from_status", (q) =>
+            q.eq("from_user", userId).eq("status", status),
+          )
+          .collect(),
+      ),
+    ).then((lists) => lists.flat());
+    for (const inv of oldSettled) {
+      if ((inv.responded_at ?? inv.created_at) < now - SETTLED_ROW_TTL_MS) {
+        await ctx.db.delete(inv._id);
+      }
+    }
+
+    const results: Array<{
+      to_user: Id<"users">;
+      busy: boolean;
+      cooldown: boolean;
+      in_room?: boolean;
+      refused?: string;
+    }> = [];
+    for (const toUser of recipients) {
+      if (seated.has(String(toUser))) {
+        results.push({ to_user: toUser, busy: false, cooldown: false, in_room: true });
+        continue;
+      }
+      if (!(await isTeamMember(ctx, toUser, callerAuth.teamId))) {
+        results.push({ to_user: toUser, busy: false, cooldown: false, refused: "not a teammate" });
+        continue;
+      }
+      results.push(await ringOne(ctx, {
+        userId,
+        toUser,
+        roomKey: args.room_key,
+        teamId: callerAuth.teamId,
+        anchorTitle: lineFor(toUser),
+        fromName,
+        fromImage: from?.image ?? from?.github_avatar_url ?? undefined,
+        priorFromMe: priorFromMe.filter((inv) => String(inv.to_user) === String(toUser)),
+        now,
+      }));
+    }
+    return { results };
+  },
+});
+
+// One recipient of a ring: cooldown, refresh-or-insert, and the phone.
+async function ringOne(
+  ctx: any,
+  opts: {
+    userId: Id<"users">;
+    toUser: Id<"users">;
+    roomKey: string;
+    teamId: Id<"teams">;
+    anchorTitle?: string;
+    fromName: string;
+    fromImage?: string;
+    priorFromMe: Doc<"call_invites">[];
+    now: number;
+  },
+): Promise<{ to_user: Id<"users">; busy: boolean; cooldown: boolean }> {
+  const { userId, toUser, roomKey, now } = opts;
+  // Decline cooldown: a fresh DECLINE means "not now" — re-ringing inside
+  // the window is refused so a looping caller cannot ring forever (each
+  // decline buys the recipient a quiet minute). Cancelled rings don't count:
+  // hanging up settles every outstanding ring as cancelled, and ending a
+  // huddle must not lock its people out of the next one.
+  const RE_RING_COOLDOWN_MS = 60_000;
+  const recentlyDeclined = opts.priorFromMe.some(
+    (inv) =>
+      inv.status === "declined" &&
+      (inv.responded_at ?? inv.created_at) > now - RE_RING_COOLDOWN_MS,
+  );
+  if (recentlyDeclined) return { to_user: toUser, busy: false, cooldown: true };
+
+  // One active ring per (from, to). Re-ringing into the SAME room refreshes
+  // the row in place (same _id, so the recipient's toast/sound dedupe holds
+  // — a delete+insert would re-fire the ring every call), and keeps
+  // created_at so hammering invite cannot extend a ring past its TTL. A ring
+  // into a DIFFERENT room is a different call: the old ring settles as
+  // cancelled and a fresh row rings properly — patching the room under a
+  // toast the recipient already saw would land their Join in the wrong room.
+  const existing = opts.priorFromMe.find(
+    (inv) => inv.status === "ringing" && inviteAlive(inv, now),
+  );
+  const target = await ctx.db.get(toUser);
+  if (existing && existing.room_key === roomKey) {
+    await ctx.db.patch(existing._id, {
+      anchor_title: opts.anchorTitle,
+    });
+    return { to_user: toUser, busy: target?.status === "busy", cooldown: false };
+  }
+  if (existing) {
+    await ctx.db.patch(existing._id, { status: "cancelled", responded_at: now });
+  }
+  const inviteId = await ctx.db.insert("call_invites", {
+    room_key: roomKey,
+    team_id: opts.teamId,
+    from_user: userId,
+    to_user: toUser,
+    status: "ringing",
+    anchor_title: opts.anchorTitle,
+    created_at: now,
+  });
+  // Ring the phone DIRECTLY — never through the pushRouter outbox: its
+  // presence holds and away-debounce outlive the 45s invite TTL, and a call
+  // is precisely the "reach them wherever they are" event the hold policy
+  // exists to suppress. Manual "busy" is the closed door here too: no push.
+  // Fresh inserts only — a re-ring refreshes the row above and the phone
+  // already rang for it.
+  // Two rings, one wins: a PushKit token means the phone runs the CallKit
+  // binary — ring through APNs VoIP so a KILLED app puts up the lock-screen
+  // call UI. Otherwise the notification ring (banner + bundled sound; a
+  // backgrounded app answers from it, a force-quit one just sees the tray).
+  // Never both: a CallKit call plus a banner is two rings for one call.
+  if (target?.voip_push_token && target.notifications_enabled && target.status !== "busy") {
+    await ctx.scheduler.runAfter(0, internal.apnsVoip.sendVoipRing, {
+      voip_push_token: target.voip_push_token,
+      user_id: toUser,
+      invite_id: String(inviteId),
+      room_key: roomKey,
+      caller_id: String(userId),
+      caller_name: opts.fromName,
+      caller_image: opts.fromImage,
+      anchor_title: opts.anchorTitle,
+    });
+  } else if (target?.push_token && target.notifications_enabled && target.status !== "busy") {
+    await ctx.scheduler.runAfter(0, internal.notifications.sendPushNotification, {
+      push_token: target.push_token,
+      title: `${opts.fromName} wants to huddle`,
+      body: opts.anchorTitle || "Tap to join the huddle",
+      sound: CALL_PUSH_SOUND,
+      category_id: CALL_PUSH_CATEGORY,
+      interruption_level: "time-sensitive",
+      // APNs drops the ring if the phone is unreachable past the invite TTL —
+      // a phone coming back online must not ring for a call that died.
+      ttl: Math.ceil(CALL_INVITE_TTL_MS / 1000),
+      data: { type: CALL_PUSH_TYPE_RING, invite_id: inviteId, room_key: roomKey },
+      user_id: toUser,
+    });
+  }
+  // The ring's afterlife: at TTL, an unanswered invite becomes a missed-call
+  // push (quiet, default sound) so a closed app learns someone tried.
+  await ctx.scheduler.runAfter(
+    CALL_INVITE_TTL_MS + 2_000,
+    internal.calls.sweepMissedInvite,
+    { invite_id: inviteId },
+  );
+  // Manual "busy" rings quietly on the recipient's side; tell the caller so
+  // their dock can say "rang quietly" instead of implying a normal ring.
+  return { to_user: toUser, busy: target?.status === "busy", cooldown: false };
+}
+
+// Runs once per fresh invite, TTL+2s after creation. An invite still "ringing"
+// past its TTL was never answered anywhere — settle it and tell the recipient
+// they were wanted. Answered/declined invites make this a no-op.
+export const sweepMissedInvite = internalMutation({
+  args: { invite_id: v.id("call_invites") },
+  handler: async (ctx, args) => {
+    const inv = await ctx.db.get(args.invite_id);
+    if (!inv || inv.status !== "ringing") return;
+    const now = Date.now();
+    if (inviteAlive(inv, now)) return; // refreshed rings keep their clock; be safe
+    await ctx.db.patch(inv._id, { status: "expired", responded_at: now });
+    const target = await ctx.db.get(inv.to_user);
+    const from = await ctx.db.get(inv.from_user);
+    if (target?.push_token && target.notifications_enabled) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendPushNotification, {
+        push_token: target.push_token,
+        title: `Missed huddle from ${from?.name || from?.email || "a teammate"}`,
+        body: inv.anchor_title || "They rang while you were away",
+        data: { type: CALL_PUSH_TYPE_MISSED, room_key: inv.room_key },
+        user_id: inv.to_user,
+      });
+    }
+  },
+});
+
+export const respondInvite = mutation({
+  args: {
+    invite_id: v.id("call_invites"),
+    accept: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const inv = await ctx.db.get(args.invite_id);
+    if (!inv || String(inv.to_user) !== String(userId)) {
+      throw new Error("Invite not found");
+    }
+    const now = Date.now();
+    // Already answered on another device: let the second device join too —
+    // stomping the row to "expired" showed "That ring expired" to someone who
+    // just accepted on their laptop.
+    if (inv.status === "accepted") return { room_key: inv.room_key, expired: false };
+    if (inv.status !== "ringing") return { room_key: inv.room_key, expired: true };
+    if (!inviteAlive(inv, now)) {
+      await ctx.db.patch(inv._id, { status: "expired", responded_at: now });
+      return { room_key: inv.room_key, expired: true };
+    }
+    await ctx.db.patch(inv._id, {
+      status: args.accept ? "accepted" : "declined",
+      responded_at: now,
+    });
+    return { room_key: inv.room_key, expired: false };
+  },
+});
+
+export const cancelInvite = mutation({
+  args: { invite_id: v.id("call_invites") },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const inv = await ctx.db.get(args.invite_id);
+    if (!inv || String(inv.from_user) !== String(userId)) return;
+    await ctx.db.patch(inv._id, { status: "cancelled", responded_at: Date.now() });
+  },
+});
+
+// ── The door: lock, knock, live rooms ─────────────────────────────────────
+// Huddles are open by default (callRooms.openRoomDoor). What follows is the
+// exception and the way back in from it: a lock, a knock at a locked door,
+// and the list that makes an occupied room visible in the first place.
+
+// Whoever is INSIDE right now owns the door — not the room's members and not
+// whoever started the huddle, both of whom may have left. Returns the seat so
+// callers reuse its billing team.
+async function requireSeated(
+  ctx: any,
+  userId: Id<"users">,
+  roomKey: string,
+  now: number,
+): Promise<Doc<"call_members">> {
+  const seat = await liveSeat(ctx, userId, roomKey, now);
+  if (!seat) throw new Error("Only someone in the huddle can do that");
+  return seat;
+}
+
+// Knocks expire like rings and nothing sweeps them on a timer: every mutation
+// that touches the door clears the dead ones and returns the rest.
+async function sweepKnocks(
+  ctx: any,
+  roomKey: string,
+  now: number,
+): Promise<Doc<"call_knocks">[]> {
+  const rows: Doc<"call_knocks">[] = await ctx.db
+    .query("call_knocks")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey))
+    .collect();
+  const alive: Doc<"call_knocks">[] = [];
+  for (const k of rows) {
+    if (now - k.created_at >= CALL_KNOCK_TTL_MS) await ctx.db.delete(k._id);
+    else alive.push(k);
+  }
+  return alive;
+}
+
+export const setRoomLocked = mutation({
+  args: { room_key: v.string(), locked: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const now = Date.now();
+    const seat = await requireSeated(ctx, userId, args.room_key, now);
+    await upsertRoomState(ctx, args.room_key, seat, { locked: args.locked }, now);
+    // Unlocking answers every knock at once: the door is simply open now, and
+    // a leftover knock would ask the room to admit someone already inside it.
+    const waiting = await sweepKnocks(ctx, args.room_key, now);
+    if (!args.locked) {
+      for (const k of waiting) await ctx.db.delete(k._id);
+    }
+    return { locked: args.locked };
+  },
+});
+
+// The huddle's transcription switch. Every huddle transcribes unless someone
+// inside says otherwise: the scribe is whichever deliberate participant's
+// client got there first (transcripts.start arbitrates), so stopping has to
+// be written on the room — a flag one client holds would just be overruled by
+// the next client to look. Anyone seated may flip it either way; turning it
+// back on is what a manual Transcribe toggle does before it starts.
+export const setRoomTranscribeOff = mutation({
+  args: { room_key: v.string(), off: v.boolean() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const now = Date.now();
+    const seat = await requireSeated(ctx, userId, args.room_key, now);
+    const wasOff = !!(await readRoomState(ctx, args.room_key))?.transcribe_off;
+    await upsertRoomState(
+      ctx,
+      args.room_key,
+      seat,
+      args.off ? { transcribe_off: true, transcribe_off_at: now } : { transcribe_off: false },
+      now,
+    );
+    // The room's thread records who pressed it, once per press: the presser
+    // is the only client that knows, since the scribe's own stop that follows
+    // runs on whichever client held the pipes. Switching it back on is told
+    // by the fresh run transcripts.start writes (a manual start).
+    if (args.off && !wasOff) {
+      await postEvent(ctx, { room_key: args.room_key, team_id: seat.team_id, user_id: userId, event: "transcribe_off" });
+    }
+    // Back on inside the same huddle: its record is still live (off is a gap,
+    // not an end), so the presser takes over as its scribe and says so. A
+    // room with no record yet gets one from the presser's own start, which
+    // writes the line itself.
+    if (!args.off && wasOff) {
+      const live = await liveTranscriptFor(ctx, args.room_key);
+      if (live) {
+        if (String(live.started_by) !== String(userId)) await ctx.db.patch(live._id, { started_by: userId });
+        // A record that only Record began owes the room its own session
+        // route; transcription on is what pays it.
+        await ensureOwnRoute(ctx, live, userId);
+        await postEvent(ctx, { room_key: args.room_key, team_id: seat.team_id, user_id: userId, event: "transcribe_on" });
+      }
+    }
+    return { transcribe_off: args.off };
+  },
+});
+
+// A knock at a locked door. Two conditions, and together they say exactly
+// "somebody who WOULD have walked in, had it not been locked": the open door
+// admits them but for the lock, and no other door does either. Admitting is
+// not new machinery — someone inside rings the knocker with `invite` and the
+// accepted-invite grant lets them in.
+export const knock = mutation({
+  args: { room_key: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const now = Date.now();
+    const teamId = await openRoomDoor(ctx, userId, args.room_key, {
+      ignoreLock: true,
+    });
+    if (!teamId) throw new Error("Cannot knock at this huddle");
+    if (!(await teamHasFeature(ctx, teamId, "calls"))) {
+      throw new Error(teamFeatureOffMessage("calls"));
+    }
+    if ((await authorizeRoom(ctx, userId, args.room_key)).ok) {
+      throw new Error("This huddle is open — just join it");
+    }
+    const waiting = await sweepKnocks(ctx, args.room_key, now);
+    const mine = waiting.find((k) => String(k.from_user) === String(userId));
+    // Refresh, never duplicate — one person at the door is one knock, and
+    // hammering it cannot flood the room's toasts (same rule as re-ringing).
+    if (mine) {
+      await ctx.db.patch(mine._id, { created_at: now });
+      return { ok: true };
+    }
+    await ctx.db.insert("call_knocks", {
+      room_key: args.room_key,
+      team_id: teamId,
+      from_user: userId,
+      created_at: now,
+    });
+    return { ok: true };
+  },
+});
+
+// Who is waiting outside MY room. Only the people inside can read it: a knock
+// is a gesture at one door, not a team-wide event. Bucketed and sorted like
+// every other room subscription so heartbeats do not re-push it.
+export const getRoomKnocks = query({
+  args: {
+    room_key: v.string(),
+    // The client knows the guest shape (kind "guest", guest_id, admitted
+    // through callGuests.admitGuest). A client from before guests never
+    // asks, and never sees a knock whose Admit it would send to `invite`.
+    guests: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const now = Date.now();
+    if (!(await liveSeat(ctx, userId, args.room_key, now))) return [];
+    // Whether THIS viewer may answer the door: the rule admitting a teammate
+    // (a ring, `invite`) and admitting a guest (callGuests.guestForDoorkeeper)
+    // both take. Somebody seated in a channel's room through an accepted ring
+    // sees who is waiting and cannot let them in, so the door shows them no
+    // buttons that would only fail. Moves only with a membership.
+    const canAnswer = (await authorizeRoomInviter(ctx, userId, args.room_key)).ok;
+    const rows = await ctx.db
+      .query("call_knocks")
+      .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+      .collect();
+    const waiting = await Promise.all(
+      rows
+        .filter((k) => now - k.created_at < CALL_KNOCK_TTL_MS)
+        .map(async (k) => {
+          const u = await ctx.db.get(k.from_user);
+          return {
+            from_user: k.from_user,
+            from_name: teammateLabel(u),
+            from_image: u?.image ?? u?.github_avatar_url ?? undefined,
+            // NOT bucketed, unlike every other timestamp on a room
+            // subscription. Bucketing exists to keep a result byte-identical
+            // across heartbeats, and this result already is: it derives only
+            // from call_knocks rows, which change only when somebody knocks.
+            // A re-knock PATCHES its row (above), so created_at is the ONLY
+            // field that moves — and the 60s bucket would round the second
+            // knock onto the first, leaving the room with no way to tell that
+            // someone tried again.
+            created_at: k.created_at,
+            kind: "person" as const,
+            can_answer: canAnswer,
+          };
+        }),
+    );
+    // Guests knock here too, in the same list, so a door shows everybody
+    // waiting at it in one place (callGuests.guestKnocks has their shape).
+    const guests = args.guests ? await guestKnocks(ctx, args.room_key, now, { canAnswer, userId }) : [];
+    return [...waiting, ...guests].sort((a, b) => String(a.from_user).localeCompare(String(b.from_user)));
+  },
+});
+
+// Every huddle running right now in one of my teams — the list that makes
+// open rooms a product rather than a permission. A LOCKED room still lists:
+// seeing it and knocking is the whole point, so membership widens the door.
+// `locked` is a fact about the ROOM and never the client's Join-versus-Knock
+// input — `can_join` is (see below).
+//
+// This is a team-wide subscription that every client holds while a huddle
+// runs, so its result must be byte-identical between heartbeats: rooms sorted
+// by key, rosters sorted by user, every timestamp bucketed (projectMember
+// already drops last_seen). See the wakeSig discipline on call_members.
+export const getLiveRooms = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const now = Date.now();
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+    const byRoom = new Map<string, Doc<"call_members">[]>();
+    for (const m of memberships) {
+      if (!(await teamHasFeature(ctx, m.team_id, "calls"))) continue;
+      const rows = await ctx.db
+        .query("call_members")
+        .withIndex("by_team", (q) => q.eq("team_id", m.team_id))
+        .collect();
+      // Stale rows are not a huddle: nothing sweeps a room nobody is writing
+      // to, so the reader filters rather than trusting the table.
+      for (const row of liveMembers(rows, now)) {
+        const list = byRoom.get(row.room_key);
+        if (list) list.push(row);
+        else byRoom.set(row.room_key, [row]);
+      }
+    }
+
+    const out = [];
+    const recordingUnavailable = byRoom.size ? ((await recordingOutage(ctx))?.reason ?? null) : null;
+    for (const roomKey of [...byRoom.keys()].sort()) {
+      const live = byRoom.get(roomKey)!;
+      const seated = live.some((m) => String(m.user_id) === String(userId));
+      const membership = await authorizeRoomMembership(ctx, userId, roomKey);
+      const listed =
+        seated ||
+        membership.ok ||
+        !!(await openRoomDoor(ctx, userId, roomKey, { ignoreLock: true }));
+      if (!listed) continue;
+      // The room is joinable either way — the team wall holds and the people
+      // inside are audible. Its LABEL is a different question: a session room
+      // whose conversation this viewer cannot see lists as "a huddle", so no
+      // title-bearing field leaves the server for it.
+      const parsed = parseRoomKey(roomKey);
+      const redacted = parsed?.kind === "session" && !membership.ok;
+      let title: string | undefined;
+      if (parsed?.kind === "session" && !redacted) {
+        const conv = await ctx.db.get(parsed.conversationId as Id<"conversations">);
+        title = conv?.title;
+      } else if (parsed?.kind === "channel") {
+        const channel = await ctx.db.get(parsed.channelId as Id<"chat_channels">);
+        title = channel?.name;
+      }
+      // Join or Knock is a question about the VIEWER, not about the room.
+      // The lock shuts the OPEN DOOR and nothing else, so a member of the
+      // room and a guest holding a live grant both still walk into a locked
+      // one. Answer it with the very authorizer `knock` guards on — knock
+      // refuses anyone authorizeRoom admits, with "just join it" — so the
+      // button a client renders can never disagree with the mutation behind
+      // it. Byte-stable like `locked`: it moves only when a lock, a
+      // membership or the room's occupancy does, never with the clock.
+      const canJoin = (await authorizeRoom(ctx, userId, roomKey)).ok;
+      const state = await readRoomState(ctx, roomKey);
+      // Burst or call, for the people outside the room (roomSeatClass). On
+      // the room and on every seat, so a reader holding one row of either
+      // shape has the answer without a second lookup.
+      const seat = await roomSeatClass(ctx, roomKey, live);
+      const recordingRun = await roomRecordingState(ctx, roomKey);
+      out.push({
+        room_key: roomKey,
+        team_id: live[0].team_id,
+        locked: !!state?.locked,
+        // The huddle said "don't transcribe": what keeps every seated client's
+        // auto-scribe from starting it again.
+        transcribe_off: !!state?.transcribe_off,
+        transcribe_off_at: state?.transcribe_off ? state.transcribe_off_at ?? state.updated_at : null,
+        // The live record's public link is on: its transcript reaches anyone
+        // holding the link as it is written. Said beside "transcribed" on the
+        // stage, as the guests' notice says it (callGuests.roomNotice).
+        words_public: !state?.transcribe_off && !!state?.words_public,
+        // Somebody pressed Record and it has not been stopped: what everyone
+        // who can see the room, inside it or about to walk in, is told.
+        // Byte-stable: it flips on a press and a stop, never with the clock.
+        recording: roomFilming(recordingRun),
+        // The run behind the flag, for whoever may be in the room: who
+        // pressed, when the room began to be filmed (the clock), and
+        // "stopping" while LiveKit finishes the file, which the flag alone
+        // cannot say. The run as roomRecordingState reads it, carried here
+        // so the room's recording has one feed and one home on the client.
+        // Withheld, like the room's title, from a viewer who can only see
+        // that the room exists. Byte-stable the same way: it moves on a
+        // press, LiveKit's first frame, a stop and the file landing.
+        recording_run: canJoin ? recordingRun : null,
+        // Whether a press could work at all on this server, so a client
+        // leaves the button out rather than offer one that fails.
+        recording_configured: recordingConfigured(),
+        // Why a configured server cannot record right now (the LiveKit plan
+        // spent its minutes), so the button says so instead of failing in
+        // front of the room. Byte-stable: set by a refusal, cleared by an
+        // accepted egress or its own scheduled lapse.
+        recording_unavailable: recordingUnavailable,
+        can_join: canJoin,
+        redacted,
+        title,
+        seat,
+        members: live
+          .slice()
+          .sort((a, b) => String(a.user_id).localeCompare(String(b.user_id)))
+          .map((m) => ({ ...projectMember(m), seat })),
+        // People from outside the team who were let in (callGuests.ts). Their
+        // own list, never mixed into `members`: a member row is a users id
+        // that every reader resolves, and a guest has none. Present by the
+        // same lease, bucketed the same way, sorted by id.
+        guests: (await admittedGuests(ctx, roomKey, now)).map(projectGuest),
+      });
+    }
+    return out;
+  },
+});
+
+// ── LiveKit access token ──────────────────────────────────────────────────
+// The media server trusts any JWT signed with LIVEKIT_API_SECRET, so this
+// action is the media-plane gate: authorization runs through the exact same
+// authorizeRoom as joinRoom, then we sign a token scoped to that one room.
+// Signed with Web Crypto HMAC-SHA256 — no server SDK dependency.
+
+export const authForToken = internalQuery({
+  args: { room_key: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const auth = await authorizeRoom(ctx, userId, args.room_key);
+    if (!auth.ok) return null;
+    const user = await ctx.db.get(userId);
+    return {
+      user_id: String(userId),
+      // The name the media server hands every participant, guests from
+      // outside the team included: a chosen name, never an address.
+      name: publicPersonLabel(user),
+      image: user?.image ?? user?.github_avatar_url ?? undefined,
+    };
+  },
+});
+
+/** May the caller put this teammate out of the room? Only someone sitting
+ *  in the call, and never themselves (that is leaving). */
+export const mayPutOut = internalQuery({
+  args: { room_key: v.string(), identity: v.string() },
+  handler: async (ctx, args): Promise<boolean> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId || args.identity === String(userId)) return false;
+    if (!ctx.db.normalizeId("users", args.identity)) return false;
+    return !!(await liveSeat(ctx, userId, args.room_key)) && (await authorizeRoom(ctx, userId, args.room_key)).ok;
+  },
+});
+
+/** Put a teammate out of the call now. Their client hears the removal and
+ *  leaves its seat (callManager's Disconnected); they may join again. */
+export const putOutOfCall = action({
+  args: { room_key: v.string(), identity: v.string() },
+  handler: async (ctx, args): Promise<void> => {
+    const cfg = livekitConfigFromEnv();
+    if (!cfg) throw new Error("Calling is not configured");
+    if (!(await ctx.runQuery(internal.calls.mayPutOut, args))) throw new Error("You can't remove them from this call");
+    await removeParticipant(cfg, args.room_key, args.identity);
+  },
+});
+
+export const mintAccessToken = action({
+  args: { room_key: v.string() },
+  handler: async (ctx, args): Promise<{ url: string; token: string }> => {
+    const livekit = livekitConfigFromEnv();
+    if (!livekit) throw new Error("Calling is not configured");
+    const { url, apiKey, apiSecret } = livekit;
+    const grant = await ctx.runQuery(internal.calls.authForToken, {
+      room_key: args.room_key,
+    });
+    if (!grant) throw new Error("Not authorized for this room");
+    const token = await signLivekitJwt({
+      apiKey,
+      apiSecret,
+      identity: grant.user_id,
+      name: grant.name,
+      room: args.room_key,
+      metadata: grant.image ? JSON.stringify({ image: grant.image }) : undefined,
+      // Short-lived: the SFU trusts the JWT alone, so a long token would keep
+      // working after team removal or the session going private. livekit-client
+      // reconnects re-mint (callManager), so 15 minutes costs nothing.
+      ttlSeconds: 15 * 60,
+    });
+    return { url, token };
+  },
+});

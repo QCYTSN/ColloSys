@@ -1,0 +1,416 @@
+import {
+  useState } from 'react';
+import {
+  StyleSheet,
+  TouchableOpacity,
+  KeyboardAvoidingView,
+  Platform,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+  Image,
+  View,
+} from 'react-native';
+import { TextInput } from '@/components/Themed';
+import { Text } from '@/components/Themed';
+import { useAuth } from '@/lib/auth';
+import { Link } from 'expo-router';
+import { Theme, themedStyles, useTheme } from '@/constants/Theme';
+
+export default function SignupScreen() {
+  const Theme = useTheme();
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(false);
+  const [pendingVerification, setPendingVerification] = useState(false);
+  const [code, setCode] = useState('');
+  const { signInWithGitHub, signInWithApple, signUpWithEmail, verifyEmailCode, isAppleAuthAvailable } = useAuth();
+
+  const handleAppleSignIn = async () => {
+    setLoading(true);
+    try {
+      await signInWithApple();
+    } catch (error: any) {
+      // Mirrors login.tsx: silent on cancel and on the no-Apple-Account case
+      // (iOS shows its own Settings dialog); real failures carry the reason.
+      if (error?.code === 'ERR_REQUEST_CANCELED' || error?.code === 'ERR_REQUEST_UNKNOWN') return;
+      const detail = typeof error?.message === 'string' && error.message.trim()
+        ? `\n\n${error.message.trim().slice(0, 140)}`
+        : '';
+      Alert.alert('Error', `Apple sign up failed. Please try again.${detail}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGitHubSignIn = async () => {
+    setLoading(true);
+    try {
+      await signInWithGitHub();
+    } catch (error) {
+      Alert.alert('Error', 'GitHub sign up failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEmailSignUp = async () => {
+    if (!email || !password) {
+      Alert.alert('Error', 'Please enter email and password');
+      return;
+    }
+
+    if (password.length < 8) {
+      Alert.alert('Error', 'Password must be at least 8 characters');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { needsVerification } = await signUpWithEmail(email, password);
+      if (needsVerification) {
+        // A 6-character code was emailed; collect it before the session exists.
+        setPendingVerification(true);
+      }
+    } catch (error: any) {
+      const message = error?.message || 'Sign up failed';
+      if (message.includes('already exists')) {
+        Alert.alert('Error', 'An account with this email already exists');
+      } else {
+        Alert.alert('Error', 'Sign up failed. Please try again.');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async () => {
+    if (code.trim().length < 6) return;
+    setLoading(true);
+    try {
+      await verifyEmailCode(email, code.trim());
+    } catch {
+      Alert.alert('Error', 'Invalid or expired code. Check the email and try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Image
+            source={require('@/assets/images/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+          />
+          <Text style={styles.title}>codecast</Text>
+          <Text style={styles.subtitle}>Create your account</Text>
+        </View>
+
+        <View style={styles.card}>
+          {pendingVerification ? (
+            <>
+              <Text style={styles.label}>
+                Enter the 6-character code we emailed to {email}
+              </Text>
+              <View style={styles.inputContainer}>
+                <TextInput
+                  style={[styles.input, styles.codeInput]}
+                  placeholder="XXXXXX"
+                  placeholderTextColor={Theme.textMuted0}
+                  value={code}
+                  onChangeText={(v) => setCode(v.toUpperCase())}
+                  autoCapitalize="characters"
+                  autoComplete="one-time-code"
+                  maxLength={6}
+                  editable={!loading}
+                />
+              </View>
+              <TouchableOpacity
+                style={[styles.signUpButton, (loading || code.trim().length < 6) && styles.buttonDisabled]}
+                onPress={handleVerifyCode}
+                disabled={loading || code.trim().length < 6}
+              >
+                {loading ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.signUpButtonText}>Verify Email</Text>
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => {
+                  setPendingVerification(false);
+                  setCode('');
+                }}
+              >
+                <Text style={styles.backButtonText}>Start over</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+          <>
+          {isAppleAuthAvailable && (
+            <TouchableOpacity
+              style={[styles.appleButton, loading && styles.buttonDisabled]}
+              onPress={handleAppleSignIn}
+              disabled={loading}
+            >
+              {loading && !showEmailForm ? (
+                <ActivityIndicator color="#000" />
+              ) : (
+                <Text style={styles.appleButtonText}>Sign up with Apple</Text>
+              )}
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.githubButton, loading && styles.buttonDisabled, isAppleAuthAvailable && { marginTop: 12 }]}
+            onPress={handleGitHubSignIn}
+            disabled={loading}
+          >
+            {loading && !showEmailForm ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.githubButtonText}>Sign up with GitHub</Text>
+            )}
+          </TouchableOpacity>
+
+          {!showEmailForm ? (
+            <TouchableOpacity
+              style={styles.emailToggle}
+              onPress={() => setShowEmailForm(true)}
+            >
+              <Text style={styles.emailToggleText}>Sign up with email</Text>
+            </TouchableOpacity>
+          ) : (
+            <>
+              <View style={styles.divider}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or</Text>
+                <View style={styles.dividerLine} />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Email</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="you@example.com"
+                  placeholderTextColor={Theme.textMuted0}
+                  value={email}
+                  onChangeText={setEmail}
+                  autoCapitalize="none"
+                  keyboardType="email-address"
+                  autoComplete="email"
+                  editable={!loading}
+                />
+              </View>
+
+              <View style={styles.inputContainer}>
+                <Text style={styles.label}>Password</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="At least 8 characters"
+                  placeholderTextColor={Theme.textMuted0}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoComplete="password-new"
+                  editable={!loading}
+                />
+              </View>
+
+              <TouchableOpacity
+                style={[styles.signUpButton, loading && styles.buttonDisabled]}
+                onPress={handleEmailSignUp}
+                disabled={loading}
+              >
+                {loading && showEmailForm ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.signUpButtonText}>Sign Up</Text>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => setShowEmailForm(false)}
+              >
+                <Text style={styles.backButtonText}>Back to GitHub sign up</Text>
+              </TouchableOpacity>
+            </>
+          )}
+
+          <View style={styles.footer}>
+            <Text style={styles.footerText}>Already have an account? </Text>
+            <Link href="/auth/login" asChild>
+              <TouchableOpacity>
+                <Text style={styles.footerLink}>Sign In</Text>
+              </TouchableOpacity>
+            </Link>
+          </View>
+          </>
+          )}
+        </View>
+      </ScrollView>
+    </KeyboardAvoidingView>
+  );
+}
+
+const styles = themedStyles((Theme) => StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Theme.bg,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    padding: 24,
+  },
+  logo: {
+    width: 80,
+    height: 80,
+    marginBottom: 16,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: 40,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: '600',
+    color: Theme.text,
+    marginBottom: 8,
+  },
+  subtitle: {
+    fontSize: 15,
+    color: Theme.textMuted,
+  },
+  card: {
+    backgroundColor: Theme.card,
+    borderRadius: 16,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  appleButton: {
+    backgroundColor: Theme.card,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  appleButtonText: {
+    color: '#000',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  githubButton: {
+    backgroundColor: '#24292e',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  githubButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+  emailToggle: {
+    padding: 12,
+    alignItems: 'center',
+  },
+  emailToggleText: {
+    color: Theme.accentAmber,
+    fontSize: 15,
+    fontWeight: '500',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: Theme.borderLight,
+  },
+  dividerText: {
+    marginHorizontal: 12,
+    color: Theme.textMuted0,
+    fontSize: 14,
+  },
+  inputContainer: {
+    marginBottom: 16,
+  },
+  label: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: Theme.textSecondary,
+    marginBottom: 8,
+  },
+  input: {
+    backgroundColor: Theme.bgAlt,
+    borderWidth: 1,
+    borderColor: Theme.borderLight,
+    borderRadius: 10,
+    padding: 14,
+    fontSize: 16,
+    color: Theme.text,
+  },
+  codeInput: {
+    textAlign: 'center',
+    letterSpacing: 8,
+    fontSize: 20,
+  },
+  signUpButton: {
+    backgroundColor: Theme.accentAmber,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  signUpButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  backButton: {
+    padding: 12,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  backButtonText: {
+    color: Theme.textMuted,
+    fontSize: 14,
+  },
+  footer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 24,
+  },
+  footerText: {
+    color: Theme.textMuted,
+    fontSize: 14,
+  },
+  footerLink: {
+    color: Theme.accentAmber,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+}));

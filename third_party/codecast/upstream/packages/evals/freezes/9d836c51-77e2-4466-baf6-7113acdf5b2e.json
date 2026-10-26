@@ -1,0 +1,26 @@
+{
+  "name": "card-write all-green",
+  "anchor": {
+    "kind": "message",
+    "id": "fixture:all-green"
+  },
+  "subject": {
+    "kind": "synthetic",
+    "id": "card-write:all-green",
+    "title": "card-write all-green"
+  },
+  "asOf": "2026-09-22T12:00:00.000Z",
+  "trigger": {
+    "type": "card-write"
+  },
+  "meta": {
+    "surface": "card-write",
+    "visibility": "public",
+    "snapshot": "fixtures/card-write/all-green.json"
+  },
+  "judge": "a person who never saw the work can choose from the decision alone: the question is the choice about the people the problem reached, the answers are the courses really open with the lean first, and every case, count and claim on the card and the page comes from the record (the problem, its findings, what the run measured) or from running the change's code, which the code shown must bear out, with no result stated stronger than either shows and anything left unverified said plainly",
+  "notes": null,
+  "tags": [],
+  "id": "9d836c51-77e2-4466-baf6-7113acdf5b2e",
+  "createdAt": "2026-10-07T17:30:45.676Z"
+}

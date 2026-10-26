@@ -1,0 +1,247 @@
+// Formats quoted text and inline comments into the markdown that gets dropped
+// into the composer as the user's next message. A quote becomes a real markdown
+// blockquote (`> ...`), which both renders as a quote in the thread and reads as
+// a quote to the agent. A comment is that blockquote followed by the user's reply.
+
+import type { OrgReplyVerdict } from "@codecast/shared/contracts/orgProposal";
+import type { CodeAnchorText } from "@codecast/shared/comments";
+
+// A person's answer to one card of an org proposal (org-staffing.md S39),
+// held in the same batch as the quotes until the next send applies it. The
+// item's `quote` is the card's sentence, so every reader of a PendingComment
+// still has words; `body` is the person's own words; `messageId` is "".
+export type PendingProposalAnswer = {
+  id: string;
+  short_id: string;
+  title: string;
+  /** SubjectCard.key; "" for an answer about the whole proposal. */
+  card: string;
+  /** Every member of the card in apply order: what the verdict sends. */
+  change_ids: string[];
+  /** The drawn seqs, ascending: what the words name. */
+  seqs: number[];
+  verdict: OrgReplyVerdict;
+  /** The number the person sees on the card, when the list numbers them. */
+  ordinal?: number;
+  /** On an approval that would take sessions over (R1): leave them where they are. */
+  leave_sessions?: boolean;
+  /** The card's or the group's title, which names the row in the tray. */
+  subject?: string;
+};
+
+export type PendingComment = {
+  id: string;
+  messageId: string;
+  blockIndex: number;
+  quote: string;
+  body: string;
+  createdAt: number;
+  // Set on diff line comments: the file and line the comment sits on, so the
+  // editor can offer posting it as a durable team comment at that anchor.
+  filePath?: string;
+  fileLine?: number;
+  /** The line's text and context, stored with the comment when it is posted. */
+  anchorLines?: CodeAnchorText;
+  // Set on a note pinned to a point of a gallery image. `quote` then holds a
+  // plain description of where the image came from, and the image itself is
+  // pointed at by its attachment number when it rides along on the send, else
+  // by its address.
+  image?: QuotedImage;
+  // Set on a note pinned to a spot of a published page framed in the thread.
+  // `quote` then holds the page and the words at that spot, which is what the
+  // agent reads; this anchor is what draws the pin back on the framed page.
+  page?: QuotedPage;
+  // Set on an answer to an org proposal card. Quote-only readers skip it
+  // (isProposalAnswer); the send applies it and writes it in words.
+  proposal?: PendingProposalAnswer;
+};
+
+/** A batch item that answers a proposal card rather than quoting a message. */
+export function isProposalAnswer(c: Pick<PendingComment, "proposal">): c is PendingComment & { proposal: PendingProposalAnswer } {
+  return !!c.proposal;
+}
+
+// `point` is where on the picture the note sits, as fractions of its width
+// and height from the top left; `width`/`height` are the picture's own pixel
+// size, so the point can also be given in pixels.
+export type QuotedImage = {
+  src: string;
+  href?: string;
+  storageId?: string;
+  point?: { x: number; y: number };
+  width?: number;
+  height?: number;
+};
+
+// `point` is the spot on the page as fractions of the document's width and
+// height; `snippet` is the text there (the selection, or the clicked element's
+// words).
+export type QuotedPage = {
+  slug: string;
+  point?: { x: number; y: number };
+  snippet?: string;
+};
+
+// Prefix every line with "> " so multi-line and structured text (lists, code)
+// stay inside one blockquote. Blank lines become a bare ">" to keep the quote
+// visually contiguous.
+export function toBlockquote(text: string): string {
+  const normalized = (text || "").replace(/\r\n?/g, "\n");
+  if (!normalized.trim()) return "";
+  const trimmed = normalized.replace(/^\s*\n|\n\s*$/g, "");
+  return trimmed
+    .split("\n")
+    .map((line) => (line.trim() ? `> ${line}` : ">"))
+    .join("\n");
+}
+
+// The inverse of toBlockquote for a plain-text body: split it into runs of
+// quoted lines (markers stripped) and the text between them, so surfaces that
+// show a message as plain text can still draw its quotes as quotes.
+export type QuoteRun = { quote: boolean; text: string };
+const QUOTE_LINE = /^ {0,3}> ?(.*)$/;
+export function splitQuoteRuns(text: string): QuoteRun[] {
+  const runs: QuoteRun[] = [];
+  for (const line of (text || "").replace(/\r\n?/g, "\n").split("\n")) {
+    const m = QUOTE_LINE.exec(line);
+    const quote = !!m;
+    const last = runs[runs.length - 1];
+    if (last && last.quote === quote) last.text += `\n${m ? m[1] : line}`;
+    else runs.push({ quote, text: m ? m[1] : line });
+  }
+  return runs
+    .map((r) => ({ quote: r.quote, text: r.text.replace(/^\s*\n|\n\s*$/g, "") }))
+    .filter((r) => r.text.trim());
+}
+
+// One quote + optional reply body.
+export function formatQuotedReply(quote: string, body?: string): string {
+  const bq = toBlockquote(quote);
+  const reply = (body || "").trim();
+  if (bq && reply) return `${bq}\n\n${reply}`;
+  return bq || reply;
+}
+
+// What an image note's blockquote says: the image and the point the note is
+// pinned to, then where the image came from. An image that rides along on the
+// send is named by its `[Image N]` attachment token and carries its pins drawn
+// on it as numbered markers, so the point is that marker's number. Otherwise
+// the image is its address as a markdown image and the point is described.
+export function imageQuoteText(c: Pick<PendingComment, "quote" | "image">, attachmentNumber?: number, marker?: number): string {
+  if (!c.image) return c.quote;
+  const head = attachmentNumber ? `[Image ${attachmentNumber}]` : c.image.href ? `![image](${c.image.href})` : "[image]";
+  const at = !c.image.point ? "" : attachmentNumber && marker ? ` at marker ${marker}` : ` ${describePoint(c.image)}`;
+  return c.quote ? `${head}${at}\n${c.quote}` : `${head}${at}`;
+}
+
+// Each pinned note's number on its picture (or published page), counted per
+// picture in the order given. The gallery's dots, the pins on a framed page and
+// the markers drawn on a sent picture all read it, so a note is the same
+// number everywhere.
+export function pinNumbers(comments: readonly Pick<PendingComment, "id" | "image" | "page">[]): Map<string, number> {
+  const perSrc = new Map<string, number>();
+  const numbers = new Map<string, number>();
+  for (const c of comments) {
+    const key = c.image?.point ? c.image.src : c.page?.point ? `page:${c.page.slug}` : null;
+    if (!key) continue;
+    const n = (perSrc.get(key) ?? 0) + 1;
+    perSrc.set(key, n);
+    numbers.set(c.id, n);
+  }
+  return numbers;
+}
+
+// "at x=412, y=230 of 1600×900 px (26% from the left, 26% from the top)", or
+// only the percentages when the picture's size is unknown.
+export function describePoint({ point, width, height }: QuotedImage): string {
+  if (!point) return "";
+  const pct = `${Math.round(point.x * 100)}% from the left, ${Math.round(point.y * 100)}% from the top`;
+  if (!width || !height) return `at ${pct}`;
+  return `at x=${Math.round(point.x * width)}, y=${Math.round(point.y * height)} of ${width}×${height} px (${pct})`;
+}
+
+// A batch of inline comments, in the order given, separated by blank lines.
+// Comments with no body still emit their quote (treated as a plain quote).
+// `attachmentNumbers` maps an image comment's id to its position among the
+// send's attached images, and `markers` to its marker number on that image.
+// A proposal answer is never a quote: its words come from proposalReplyText
+// (lib/reviewActions takeProposalAnswers), so it is skipped here.
+export function formatPendingComments(
+  comments: (Pick<PendingComment, "quote" | "body" | "image" | "proposal"> & { id?: string })[],
+  attachmentNumbers?: ReadonlyMap<string, number>,
+  markers?: ReadonlyMap<string, number>,
+): string {
+  return comments
+    .filter((c) => !isProposalAnswer(c))
+    .map((c) => formatQuotedReply(imageQuoteText(c, c.id ? attachmentNumbers?.get(c.id) : undefined, c.id ? markers?.get(c.id) : undefined), c.body))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+// Append new text to whatever is already in the composer, keeping one blank line
+// between the existing draft and the inserted quote/comment block.
+export function appendToDraft(existing: string, addition: string): string {
+  const base = (existing || "").replace(/\s+$/, "");
+  const add = (addition || "").trim();
+  if (!add) return existing || "";
+  if (!base) return add;
+  return `${base}\n\n${add}`;
+}
+
+// Wrap the user's plan annotations in directive framing for a plan rejection.
+// When you reject an ExitPlanMode plan, soft phrasing gets ignored (the agent
+// tends to re-present a barely-changed plan), so the feedback leads with a hard
+// "not approved" and explicit rules. `feedback` is the compiled annotation batch
+// (already markdown blockquotes + notes); empty falls back to a generic request.
+export function formatPlanFeedback(feedback: string): string {
+  const body = (feedback || "").trim() || "Plan changes requested.";
+  return [
+    "The plan was NOT approved. Revise it to address ALL of the feedback below before presenting a new plan.",
+    "",
+    "Rules:",
+    "- Do not re-present the same plan unchanged.",
+    "- Keep the plan title (the first `#` heading) unless explicitly asked to change it.",
+    "",
+    body,
+  ].join("\n");
+}
+
+// Wrap a doc's annotations as a feedback message sent to a chosen session. The
+// target agent may not have this doc in context, so we name it and tell the agent
+// how to edit it (docs live in the DB, not the filesystem), then list the quoted
+// notes. `feedback` is the compiled annotation batch; `extra` is optional free
+// text the user typed alongside.
+export function formatDocFeedback(
+  title: string,
+  docId: string,
+  feedback: string,
+  extra?: string,
+): string {
+  const body = (feedback || "").trim();
+  const note = (extra || "").trim();
+  const lines = [
+    `Feedback on document "${title || "Untitled"}" (doc \`${docId}\`).`,
+    `To apply edits use \`cast doc edit ${docId} --old "text to find" --new "replacement"\` (or \`--title\` to rename): this document lives in the database, not the filesystem; do not use file Read/Write/Edit.`,
+    "",
+    body || "Changes requested.",
+  ];
+  if (note) lines.push("", note);
+  return lines.join("\n");
+}
+
+// Stable ordering for a batch: group by the order each message was first
+// commented on, then by block position within a message. Keeps the compiled
+// message reading top-to-bottom like the conversation.
+export function sortPendingComments(comments: PendingComment[]): PendingComment[] {
+  const firstSeen = new Map<string, number>();
+  comments.forEach((c) => {
+    if (!firstSeen.has(c.messageId)) firstSeen.set(c.messageId, c.createdAt);
+  });
+  return [...comments].sort((a, b) => {
+    if (a.messageId !== b.messageId) {
+      return (firstSeen.get(a.messageId)! - firstSeen.get(b.messageId)!) || (a.createdAt - b.createdAt);
+    }
+    if (a.blockIndex !== b.blockIndex) return a.blockIndex - b.blockIndex;
+    return a.createdAt - b.createdAt;
+  });
+}

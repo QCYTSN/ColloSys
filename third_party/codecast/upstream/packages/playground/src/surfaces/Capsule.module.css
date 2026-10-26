@@ -1,0 +1,105 @@
+.capsule {
+  position: fixed; z-index: var(--z-capsule); display: flex; align-items: center; gap: 4px; padding: 5px;
+  border-radius: 16px; background: var(--glass); backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--edge);
+  transition: transform var(--t-move) var(--ease-out), bottom var(--t-move) var(--ease-out); animation: global(arrive) var(--t-arrive) var(--ease-out);
+  touch-action: none;
+}
+.dragging, .snapping { transition: none; }
+.dragging { box-shadow: var(--shadow-lg), 0 0 0 1px var(--edge); cursor: grabbing; }
+.grip {
+  width: 12px; height: 24px; display: grid; grid-template-columns: repeat(2, 3px); gap: 3px;
+  align-content: center; justify-content: center; cursor: grab; touch-action: none;
+}
+.grip i { width: 3px; height: 3px; border-radius: 50%; background: var(--line-2); }
+.dragging .grip { cursor: grabbing; }
+
+.people {
+  --ring: var(--glass); position: relative; display: flex; align-items: center; gap: 8px; padding: 3px 9px 3px 4px; border-radius: 11px;
+  font: 600 13px/1 var(--ui); font-feature-settings: "tnum" 1; transition: background var(--t-quick);
+}
+.people:hover { background: var(--sunk); --ring: var(--sunk); }
+/* Offline: who is here is unknown, so the count gives way to a muted mark. */
+.offline { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-3); }
+.offlineDot { width: 7px; height: 7px; flex: none; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-3); }
+.divider { width: 1px; height: 20px; margin: 0 2px; background: var(--line); }
+.tool {
+  position: relative; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 10px; color: var(--ink-2);
+  transition: background var(--t-quick), color var(--t-quick);
+}
+.tool:hover { background: var(--sunk); color: var(--ink); }
+.tool svg { width: 16px; height: 16px; }
+.errorDot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+.change {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px 0 11px; border-radius: 11px;
+  background: var(--ink); color: var(--surface); font: var(--t-label); white-space: nowrap;
+  transition: transform var(--t-press);
+}
+.change svg { width: 16px; height: 16px; }
+.change:active { transform: translateY(1px); transition-duration: 0s; }
+.people:active, .tool:active { transform: translateY(1px); }
+
+.tab {
+  position: fixed; z-index: var(--z-capsule); display: flex; flex-direction: column; align-items: center; gap: 6px;
+  width: 36px; padding: 8px 0; background: var(--glass); backdrop-filter: blur(10px);
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--edge); animation: global(fade-in) var(--t-arrive) var(--ease-out);
+}
+.left { left: 0; border-radius: 0 12px 12px 0; }
+.right { right: 0; border-radius: 12px 0 0 12px; }
+.count { font: 600 12px/1 var(--ui); font-feature-settings: "tnum" 1; }
+
+.hint, .callout {
+  position: absolute; z-index: var(--z-capsule); display: flex; flex-direction: column; gap: 5px;
+  padding: 11px 12px; border-radius: var(--r-lg); background: var(--surface); text-align: left;
+  box-shadow: var(--shadow-md), 0 0 0 1px var(--edge); animation: global(arrive) var(--t-arrive) var(--ease-out);
+}
+.hint { width: max-content; max-width: 260px; font: 500 13px/1.4 var(--ui); cursor: pointer; }
+.hint small { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font: 400 12.5px/1.4 var(--ui); color: var(--ink-2); }
+.callout { width: 268px; overflow: hidden; transition: background var(--t-quick); }
+.calloutMain { display: flex; flex-direction: column; gap: 5px; min-width: 0; text-align: left; }
+.said {
+  flex-direction: row; align-items: center; width: max-content; max-width: min(360px, calc(100vw - 40px));
+  padding: 7px 14px 7px 7px; border-radius: var(--r-md); background: var(--glass); backdrop-filter: blur(10px);
+}
+.said:hover { background: var(--surface); }
+.said .calloutMain { flex-direction: row; align-items: center; gap: 8px; font: 400 13px/1.3 var(--ui); white-space: nowrap; }
+.said b { flex: none; font-weight: 600; }
+.saidText { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.badge {
+  position: absolute; top: -6px; right: -7px; min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center;
+  border-radius: var(--r-pill); background: var(--ink); color: var(--surface); box-shadow: 0 0 0 2px var(--glass);
+  font: 600 10.5px/1 var(--ui); font-feature-settings: "tnum" 1; animation: global(fade-in) var(--t-quick) var(--ease-out);
+}
+.tab .badge { top: 2px; right: 2px; }
+.calloutHead { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.calloutTitle { font: 650 13.5px/1.2 var(--ui); }
+.liveWord { color: var(--live); }
+.calloutWho { margin-left: auto; display: flex; align-items: center; gap: 6px; min-width: 0; font: var(--t-meta); color: var(--ink-3); }
+.calloutName { min-width: 0; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.calloutClock { font: var(--t-mono); color: var(--ink-3); font-feature-settings: "tnum" 1; }
+.calloutLine {
+  font: 400 12.5px/1.35 var(--ui); color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  animation: global(arrive) var(--t-quick) var(--ease-out);
+}
+.calloutSummary {
+  font: 550 13.5px/1.4 var(--ui); color: var(--ink); overflow: hidden; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.calloutLive { display: flex; flex-direction: column; gap: 8px; }
+.tryIt { font: 400 12.5px/1.35 var(--ui); color: var(--ink-2); }
+.tryIt b { font-weight: 600; color: var(--ink); }
+.calloutActions { display: flex; align-items: center; gap: 4px; }
+.check { display: grid; place-items: center; width: 13px; height: 13px; color: var(--live); }
+.check svg { width: 13px; height: 13px; stroke-width: 2.2; }
+.bang {
+  display: grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--ink-2);
+  font: 700 9.5px/1 var(--ui); color: var(--ink-2);
+}
+@media (max-width: 767px) {
+  .tool, .people, .change { min-height: 44px; }
+  .tool { width: 44px; }
+}
+[data-corner^="b"] > :is(.hint, .callout) { bottom: calc(100% + 12px); }
+[data-corner^="t"] > :is(.hint, .callout) { top: calc(100% + 12px); }
+[data-corner$="r"] > :is(.hint, .callout) { right: 0; }
+[data-corner$="l"] > :is(.hint, .callout) { left: 0; }

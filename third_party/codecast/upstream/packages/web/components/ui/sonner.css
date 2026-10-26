@@ -1,0 +1,309 @@
+/* The app's toast (components/ui/sonner.tsx).
+ *
+ * Sonner owns where a toast sits, how the stack folds, the swipe and the
+ * enter and leave motion. This owns the face: one card in the app's tokens,
+ * a tinted chip for the type glyph, a title over a muted description, quiet
+ * pill buttons, and a close control at the top right. The close control is
+ * hidden on a timed toast until the pointer rests on it (hovering already
+ * pauses the timer, so "hold, then drop" reads as one gesture) and is always
+ * shown on a persistent one (`persistentToast` in lib/persistentToast.ts).
+ *
+ * Every selector carries `.cc-toaster[data-sonner-toaster]` so it outranks
+ * sonner's own `[data-sonner-toast][data-styled] ...` rules whatever order
+ * the two stylesheets load in. Themes are the tokens; only the shadow has a
+ * dark variant.
+ */
+
+.cc-toaster[data-sonner-toaster] {
+  --gap: 10px;
+  font-family: var(--font-ui);
+}
+
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  --toast-accent: var(--sol-text-dim);
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 10px 11px;
+  padding: 12px 14px 12px 13px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  background: var(--sol-card);
+  color: var(--sol-text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 18px;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sol-bg) 45%, transparent),
+    0 2px 6px rgba(0, 0, 0, 0.06),
+    0 14px 34px -12px rgba(0, 0, 0, 0.32);
+}
+.dark .cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] {
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sol-text) 7%, transparent),
+    0 2px 6px rgba(0, 0, 0, 0.3),
+    0 18px 40px -12px rgba(0, 0, 0, 0.7);
+}
+
+/* The typed faces: the chip, the hairline and a whisper of the same colour
+   under the card, so success and error read apart at a glance without the
+   whole card turning green or red. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-type="success"] { --toast-accent: var(--sol-green); }
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-type="error"] { --toast-accent: var(--sol-red); }
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-type="info"] { --toast-accent: var(--sol-blue); }
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-type="warning"] { --toast-accent: var(--sol-orange); }
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-type="loading"] { --toast-accent: var(--sol-cyan); }
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:is([data-type="success"], [data-type="error"], [data-type="info"], [data-type="warning"], [data-type="loading"]) {
+  border-color: color-mix(in srgb, var(--toast-accent) 38%, transparent);
+  background: color-mix(in srgb, var(--toast-accent) 4%, var(--sol-card));
+}
+
+/* The glyph chip: 22px round, tinted, centred on the first line of the title. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  margin: -2px 0 0;
+  justify-content: center;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--toast-accent) 15%, transparent);
+  color: var(--toast-accent);
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] svg {
+  margin: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-icon] .sonner-loading-wrapper {
+  position: relative;
+  inset: auto;
+  --size: 14px;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] .sonner-loading-bar {
+  background: var(--toast-accent);
+}
+
+/* Title and description. The right padding keeps the words clear of the
+   close control whether it is showing yet or not, so nothing reflows when it
+   appears. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-content] {
+  flex: 1 1 calc(100% - 33px);
+  min-width: 0;
+  gap: 3px;
+  padding-right: 18px;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-title] {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  letter-spacing: -0.005em;
+  color: var(--sol-text);
+  overflow-wrap: anywhere;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-description] {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--sol-text-muted);
+  overflow-wrap: anywhere;
+}
+/* A title with no description under it is a sentence, not a heading: most of
+   the app's toasts are one string, and a paragraph in bold reads as shouting.
+   The bold title is for the two part toast, a short line over its details. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-title]:only-child {
+  font-weight: 400;
+}
+
+/* The two answers: the action leads in the app's cyan, the cancel sits back.
+   A pair takes a row of its own under the words. The card is 356px wide, so
+   two buttons beside the sentence leave it a column a few words across; the
+   content's basis fills the first row (the card less the chip and its gap),
+   which is what sends the buttons to the second. The first one lines up with
+   the text, past the chip when there is one. A single action stays on the
+   words' row (below). */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button] {
+  flex: none;
+  height: 26px;
+  margin: 0 0 0 -3px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-content] + [data-button] {
+  margin-left: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-icon]) [data-content] + [data-button] {
+  margin-left: 33px;
+}
+/* A toast with one answer (Undo, Open, Join) is a snackbar: the words and the
+   button share one row, the button at the right edge, centred on however many
+   lines the words take. On a row of its own the button made a one line
+   sentence into a tall card that was mostly empty. Two answers still take the
+   row under the words, since side by side they would leave the sentence a
+   column a few words across. The close control moves to the row's centre,
+   past the button, in the space the card already keeps for it. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-action]):not(:has([data-cancel])) {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 11px;
+  padding-right: 36px;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-action]):not(:has([data-cancel])) [data-icon] {
+  margin: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-action]):not(:has([data-cancel])) [data-content] {
+  flex: 1 1 auto;
+  padding-right: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-action]):not(:has([data-cancel])) [data-content] + [data-button] {
+  margin-left: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:has([data-action]):not(:has([data-cancel])) [data-close-button] {
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-button]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sol-cyan) 55%, transparent);
+}
+/* The action wears the app's filled cyan button (button.css): the Toaster
+   gives it those classes, and these rules read the face back from the
+   button's custom properties because sonner's own rules outweigh button.css. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-action] {
+  color: var(--btn-ink);
+  background-color: var(--btn-fill);
+  background-image: var(--btn-sheen);
+  border-color: transparent;
+  box-shadow: var(--btn-face);
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-action]:hover {
+  background-color: var(--btn-fill-hover);
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-action]:active {
+  background-image: none;
+  box-shadow: var(--btn-face-pressed);
+}
+/* [data-button] twice over: sonner's dark theme rule for the cancel has the
+   same weight as this one and loads after it, which painted a grey fill.
+   A toast whose one action is a side door, not the answer (the "Undid"
+   toast's History), wears it the same quiet way: cc-toast-quiet-action. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-cancel][data-button],
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-quiet-action [data-action][data-button] {
+  color: var(--sol-text-muted);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--sol-border) 50%, transparent);
+  box-shadow: none;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-cancel][data-button]:hover,
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-quiet-action [data-action][data-button]:hover {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+  border-color: color-mix(in srgb, var(--sol-border) 80%, transparent);
+}
+
+/* The close control: inside the card at the top right, a ghost square that
+   fills on hover. Sonner places it half outside the top left corner; the
+   position, transform and border below undo that. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button] {
+  left: auto;
+  right: 7px;
+  top: 7px;
+  width: 22px;
+  height: 22px;
+  transform: none;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--sol-text-dim);
+  opacity: 0;
+  transition: opacity 120ms, background 120ms, color 120ms;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:hover [data-close-button],
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:focus-within [data-close-button],
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-sticky [data-close-button] {
+  opacity: 1;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"]:hover [data-close-button]:hover,
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:focus-visible {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 9%, transparent);
+  border: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"] [data-close-button]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sol-cyan) 55%, transparent);
+}
+
+/* The undo receipt (UNDO_RECEIPT_CLASS in store/undoStack.ts): what the person
+   just did, in one quiet line hugging the corner, with Undo as a word rather
+   than a button. It confirms a change they chose and keeps the way back in
+   reach without asking to be read: no card weight, no bold, no second line
+   (the note lives in the history card), no close control (it times out, and
+   a swipe still clears it). The class is doubled to outrank the snackbar
+   rules above, which match on :has(). */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt {
+  width: fit-content;
+  max-width: var(--width);
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 4px 11px;
+  min-height: 30px;
+  border-radius: 9px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent);
+  background: color-mix(in srgb, var(--sol-card) 92%, transparent);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 4px 14px -8px rgba(0, 0, 0, 0.22);
+}
+.dark .cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt {
+  box-shadow: 0 6px 16px -8px rgba(0, 0, 0, 0.6);
+}
+/* A receipt with no action (a redo, a conflict) has no button to sit beside. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt:not(:has([data-action])) {
+  padding-right: 11px;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-content] {
+  flex: 0 1 auto;
+  padding-right: 0;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-title] {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 16px;
+  color: var(--sol-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-description],
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-close-button] {
+  display: none;
+}
+/* Undo (and the History side door) as a word in the accent, tinted on hover. */
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-action][data-button] {
+  height: 22px;
+  margin: 0;
+  padding: 0 7px;
+  border-radius: 6px;
+  border: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sol-cyan);
+  background: transparent;
+  background-image: none;
+  box-shadow: none;
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-receipt [data-action][data-button]:hover {
+  background: color-mix(in srgb, var(--sol-cyan) 12%, transparent);
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-quiet-action [data-action][data-button] {
+  color: var(--sol-text-dim);
+}
+.cc-toaster[data-sonner-toaster] [data-sonner-toast][data-styled="true"].cc-toast-receipt.cc-toast-quiet-action [data-action][data-button]:hover {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+}

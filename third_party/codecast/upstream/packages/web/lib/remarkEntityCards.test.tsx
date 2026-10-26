@@ -1,0 +1,593 @@
+import { test, expect, describe, mock } from "bun:test";
+
+// The whole path runs for real — markdown → remark plugins → components —
+// with only the Convex transport faked, exactly like the references suite.
+
+const TASK_CONVEX_ID = "kx82qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_TASK = {
+  _id: TASK_CONVEX_ID,
+  short_id: "ct-46943",
+  title: "Rich object preview cards in chat: preserve the full title when shared with surrounding text",
+  description: "Preview-tier rendering for shared object references, with inline expansion.",
+  status: "in_progress",
+  priority: "high",
+  comments: [
+    { _id: "c0", author: "Ashot", text: "An earlier note", created_at: Date.now() - 7200_000, comment_type: "note" },
+    { _id: "c1", author: "Ashot", text: "Looks great so far", created_at: Date.now() - 3600_000, comment_type: "note" },
+  ],
+  plan: { short_id: "pl-476", title: "Rich inline object embeds", status: "active" },
+  updated_at: Date.now() - 120_000,
+};
+
+const PLAN_CONVEX_ID = "mx82qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_PLAN = {
+  _id: PLAN_CONVEX_ID,
+  short_id: "pl-476",
+  title: "Rich inline object embeds",
+  status: "active",
+  goal: "Shared objects render as browsable preview cards.",
+  tasks: [
+    { _id: "t1", title: "Detection plugin", status: "done" },
+    { _id: "t2", title: "Card component", status: "in_progress" },
+  ],
+  updated_at: Date.now() - 60_000,
+};
+
+const SESSION_CONVEX_ID = "jx84qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_SESSION = {
+  _id: SESSION_CONVEX_ID,
+  short_id: "jx84qtv",
+  title: "Build the card system",
+  status: "active",
+  agent_type: "claude",
+  message_count: 42,
+  subtitle: "Goal: cards for shared objects",
+  last_message_preview: "Wired the plugin into chat.",
+  last_message_role: "assistant",
+  project_path: "/Users/ashot/src/codecast",
+  updated_at: Date.now() - 30_000,
+};
+
+const DOC_CONVEX_ID = "dx82qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_DOC = {
+  _id: DOC_CONVEX_ID,
+  display_title: "Card design notes",
+  title: "Card design notes",
+  doc_type: "note",
+  content: "# Card design notes\n\nAccent per type, grid rows, expand inline.",
+  updated_at: Date.now() - 500_000,
+};
+
+const PROJECT_CONVEX_ID = "sx82qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const FAKE_PROJECT = { _id: PROJECT_CONVEX_ID, name: "Product improvements", description: "Larger inline objects throughout chat." };
+const FAKE_TRIGGER = { _id: "tx82qtvpbmmrmwcjqmhzawejsx8bq9gm", short_id: "tr-476", display_title: "Check the release", status: "active", prompt: "Read the release checks and report any failures.", trigger_type: "manual" };
+
+const MSG_CONVEX_ID = "kx91qtvpbmmrmwcjqmhzawejsx8bq9gm";
+const SHARE_TOKEN = "3f0c1b2a-7d4e-4c9a-9b1e-2a6f8c0d1e2f";
+const FAKE_MESSAGE = {
+  _id: MSG_CONVEX_ID,
+  conversation_id: SESSION_CONVEX_ID,
+  role: "assistant",
+  content: "Shipped the **card plugin**.\n\n- detection\n- rendering",
+  timestamp: Date.now() - 900_000,
+};
+const FAKE_SHARED_MESSAGE = {
+  message: FAKE_MESSAGE,
+  contextMessages: [FAKE_MESSAGE],
+  conversation: { _id: SESSION_CONVEX_ID, title: FAKE_SESSION.title, agent_type: "claude_code" },
+  conversationShareToken: null,
+  user: { name: "Ashot", image: null },
+  note: null,
+  sharedAt: Date.now() - 60_000,
+};
+
+const FAKE_PREVIEW = {
+  url: "https://github.com/ashot/codecast",
+  status: "ok",
+  title: "ashot/codecast: sessions you can share",
+  description: "The agent session sync tool.",
+  image: "https://opengraph.githubassets.com/1/ashot/codecast",
+  site_name: "GitHub",
+  favicon: "https://github.com/favicon.ico",
+  requested_at: Date.now(),
+  fetched_at: Date.now(),
+};
+
+const { getFunctionName } = await import("convex/server");
+
+const ROWS: Record<string, any[]> = {
+  "tasks:webGet": [FAKE_TASK],
+  "plans:webGet": [FAKE_PLAN],
+  "conversations:webGet": [FAKE_SESSION],
+  "agentTasks:webGet": [FAKE_TRIGGER],
+  "projects:webGet": [FAKE_PROJECT],
+  // Codecast holds no pull requests at all in this suite: every lookup answers
+  // null, which is what a repository outside the GitHub App looks like.
+  "pull_requests:webGet": [],
+};
+
+function fakeQuery(fn: unknown, args: any) {
+  if (args === "skip") return undefined;
+  const name = getFunctionName(fn as any);
+  if (name === "entities:resolveIdType") return args?.id === DOC_CONVEX_ID ? "doc" : args?.id === PROJECT_CONVEX_ID ? "project" : null;
+  if (name === "docs:webGet") return args?.id === DOC_CONVEX_ID ? FAKE_DOC : null;
+  if (name === "messages:getSharedMessage") return args?.share_token === SHARE_TOKEN ? FAKE_SHARED_MESSAGE : null;
+  if (name === "messages:webGet") return args?.id === MSG_CONVEX_ID ? FAKE_SHARED_MESSAGE : null;
+  if (name === "linkPreviews:get") return args?.url === FAKE_PREVIEW.url ? FAKE_PREVIEW : null;
+  if (name === "transcripts:webGetCallRef") return args?.ref === "cl-117" ? { _id: "k117", short_id: "cl-117", title: "Recording test coordination markers", status: "ended", turns: null, line: null } : null;
+  if (name === "replays:webGetReplay") return args?.ref === "rp-7" ? FAKE_REPLAY : null;
+  const rows = ROWS[name];
+  if (!rows) return undefined;
+  return rows.find((r) => r.short_id === args?.short_id || r._id === args?.id) ?? null;
+}
+
+// A product recording that kept its page capture.
+const FAKE_REPLAY = {
+  _id: "rx72qtvpbmmrmwcjqmhzawejsx8bq9gm",
+  short_id: "rp-7",
+  provider: "posthog",
+  source_name: "codecast-web",
+  external_id: "0199abc",
+  url: "https://shop.example.com/checkout",
+  user: { email: "ada@example.com" },
+  started_at: Date.now() - 3600_000,
+  duration_ms: 185_000,
+  counts: { clicks: 9, errors: 1, failed_requests: 2 },
+  chunks: 1,
+  dom_chunks: 2,
+  dom_bytes: 420_000,
+};
+
+const convexReact = await import("convex/react");
+mock.module("convex/react", () => ({
+  ...convexReact,
+  useQuery: fakeQuery,
+  useQueries: () => ({}),
+  useMutation: () => async () => {},
+  useAction: () => async () => ({ short_id: "rp-7", has_dom: false, cap: null, player_url: null, frame_url: "", expires_at: 0 }),
+}));
+
+const noThrow = await import("../hooks/useQueryNoThrow");
+mock.module("../hooks/useQueryNoThrow", () => ({
+  ...noThrow,
+  useQueryNoThrow: (fn: unknown, args: any) => ({ data: fakeQuery(fn, args) }),
+}));
+
+mock.module("next/link", () => ({
+  default: ({ href, children, ...props }: any) => (
+    <a href={href} {...props}>{children}</a>
+  ),
+}));
+
+const { renderToStaticMarkup } = await import("react-dom/server");
+const { MemoryRouter } = await import("react-router");
+const { default: ReactMarkdown } = await import("react-markdown");
+const { default: remarkBreaks } = await import("remark-breaks");
+const { entityRemarkPlugins } = await import("./remarkEntityIds");
+const { remarkEntityCards } = await import("./remarkEntityCards");
+const { EntityAwareLink, EntityAwareCode } = await import("../components/EntityIdPill");
+
+const MD_COMPONENTS = { a: EntityAwareLink, code: EntityAwareCode } as const;
+// Chat's shape: entity ids, single newlines as hard breaks, then the card
+// promotion pass — the same order ChatMessage registers.
+const PLUGINS = [...entityRemarkPlugins, remarkBreaks, remarkEntityCards] as any[];
+
+function render(markdown: string): string {
+  return renderToStaticMarkup(
+    <MemoryRouter>
+      <ReactMarkdown remarkPlugins={PLUGINS} components={MD_COMPONENTS as any}>
+        {markdown}
+      </ReactMarkdown>
+    </MemoryRouter>,
+  );
+}
+
+describe("shared-object detection", () => {
+  test("an id alone on its line becomes a full preview card, not a pill", () => {
+    const html = render("ct-46943");
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain('data-card-count="1"');
+    // The card previews usably before any click: title, status, snippet.
+    expect(html).toContain("Rich object preview cards in chat");
+    expect(html).toContain("Preview-tier rendering for shared object references");
+    // And it is a real card, not the inline pill chrome.
+    expect(html).not.toContain('class="not-prose entity-ref');
+  });
+
+  test("an id inside a sentence becomes a card between intact prose blocks", () => {
+    const html = render("Picked up ct-46943 this morning.");
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain("<p>Picked up </p>");
+    expect(html).toContain("<p> this morning.</p>");
+    expect(html).toContain("Rich object preview cards in chat");
+  });
+
+  // A moment's card is a picture: in running text it would cut the sentence
+  // in two (#card-embeds-test, 2026-10-03), so only a moment on a line of its
+  // own is the frame card, and one in prose is the moment pill.
+  test("a call moment in a sentence stays the inline pill; one on its own line is the frame", () => {
+    const html = render("The share moved on to the cobalt slide by cl-117@2:45 in prose.\ncl-117@2:30");
+    expect(html.match(/data-call-moment=/g)?.length).toBe(1);
+    expect(html).toContain('data-call-moment="cl-117@2:30"');
+    expect(html).toMatch(/<p>The share moved on to the cobalt slide by .*entity-ref.* in prose\.<\/p>/s);
+    expect(html).toContain('data-card-count="1"');
+  });
+
+  // A replay moment is the recorded page playing, so it follows the same
+  // rule: the player on a line of its own, the moment pill in a sentence.
+  test("a replay moment in a sentence stays the pill; one on its own line embeds the player", () => {
+    const html = render("Paying failed at rp-7@1:23 for the second time.\nrp-7@1:23");
+    expect(html.match(/data-replay-moment=/g)?.length).toBe(1);
+    expect(html).toContain('data-replay-moment="rp-7@1:23"');
+    // The pill names the page and the second, and both open the replay there.
+    expect(html).toMatch(/<p>Paying failed at .*shop\.example\.com\/checkout @1:23.* for the second time\.<\/p>/s);
+    expect(html.match(/href="\/ops\/replays\/rp-7\?t=83000"/g)?.length).toBe(2);
+  });
+
+  test("a stretch of a replay on its own line opens the player at its start", () => {
+    const html = render("rp-7@1:00-2:30");
+    expect(html).toContain('data-replay-moment="rp-7@1:00-2:30"');
+    expect(html).toContain('href="/ops/replays/rp-7?t=60000"');
+  });
+
+  test("a whole replay alone on its line is its card", () => {
+    const html = render("rp-7");
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain("shop.example.com/checkout");
+    expect(html).toContain("1 error");
+    expect(html).not.toContain("data-replay-moment");
+  });
+
+  test("a call moment inside emphasis stays inside it", () => {
+    const html = render("**watch cl-117@2:45 closely**");
+    expect(html).not.toContain("data-call-moment");
+    expect(html).toMatch(/<strong>watch .*closely<\/strong>/s);
+  });
+
+  test("prose paragraph plus a shared id paragraph: prose stays, card renders", () => {
+    const html = render("Here is the task:\n\nct-46943\n\nThoughts?");
+    expect(html).toContain("Here is the task:");
+    expect(html).toContain("Thoughts?");
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain('data-card-count="1"');
+  });
+
+  test("the screenshot shape promotes adjacent mentions followed by prose", () => {
+    const html = render("I'm confused on this one — why is it asking me?\n@[First task ct-46943]\n@[Related plan pl-476] and what about this one?");
+    expect(html).toContain('data-card-count="2"');
+    expect(html).toContain("why is it asking me?");
+    expect(html).toContain("and what about this one?");
+    expect(html).not.toMatch(/<p>\s*<div/);
+  });
+
+  test("emphasized references are lifted out without losing surrounding formatting", () => {
+    const html = render("Review **the task ct-46943 today** please.");
+    expect(html).toContain("<strong>the task </strong>");
+    expect(html).toContain("<strong> today</strong>");
+    expect(html).toContain("entity-card-row");
+    expect(html).not.toMatch(/<strong>\s*<div/);
+  });
+
+  test("object URLs get the same cards as short references", () => {
+    const html = render("Review https://codecast.sh/tasks/ct-46943 and [the plan](/plans/pl-476).");
+    expect(html.match(/entity-card-row/g)?.length).toBe(2);
+    expect(html).toContain("Rich object preview cards in chat");
+    expect(html).toContain("Rich inline object embeds");
+  });
+
+  test("code and date references remain inline", () => {
+    const html = render("Run `cast task show ct-46943` @[tomorrow date:2026-08-30].");
+    expect(html).not.toContain("entity-card-row");
+    expect(html).toContain("cast task show ct-46943");
+  });
+
+  test("several ids on adjacent lines share one card row", () => {
+    const html = render("ct-46943\npl-476");
+    const rows = html.match(/entity-card-row/g) ?? [];
+    expect(rows.length).toBe(1);
+    expect(html).toContain('data-card-count="2"');
+    expect(html).toContain("Rich object preview cards in chat");
+    expect(html).toContain("Rich inline object embeds");
+  });
+
+  test("a bullet list of ids becomes one card row", () => {
+    const html = render("- ct-46943\n- pl-476\n- jx84qtv");
+    expect(html).toContain('data-card-count="3"');
+    expect(html).not.toContain("<li");
+    expect(html).toContain("Build the card system");
+  });
+
+  test("a list with prose items keeps its list structure and expands references", () => {
+    const html = render("- ct-46943 needs review\n- pl-476");
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain("<li");
+    expect(html).toContain("needs review");
+  });
+
+  test("a date reference alone never becomes a card", () => {
+    const html = render("@[tomorrow date:2026-08-30]");
+    expect(html).not.toContain("entity-card-row");
+  });
+
+  test("an unresolvable id degrades to plain text, not a broken card", () => {
+    const html = render("ct-99999");
+    expect(html).toContain("ct-99999");
+    expect(html).not.toContain("Loading");
+  });
+
+  test("a quoted share renders the card inside the blockquote", () => {
+    // Quoting someone's share re-shares it — the card carries into the quote
+    // (a div inside a blockquote is valid flow content).
+    const html = render("> ct-46943");
+    expect(html).toContain("<blockquote");
+    expect(html).toContain("entity-card-row");
+  });
+
+  test("a hand-typed card payload cannot smuggle a card onto other surfaces", () => {
+    // EntityAwareLink is shared by every markdown surface; only links this
+    // plugin rewrote (marker class) may render cards. A `[card:1:…](url)`
+    // typed into a doc or task description renders through pipelines WITHOUT
+    // remarkEntityCards — it must stay an ordinary link, never a block card
+    // inside a <p>.
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <ReactMarkdown remarkPlugins={entityRemarkPlugins as any[]} components={MD_COMPONENTS as any}>
+          {"See [card:1:ct-46943](https://example.com) for details."}
+        </ReactMarkdown>
+      </MemoryRouter>,
+    );
+    expect(html).not.toContain("entity-card");
+    expect(html).toContain("card:1:ct-46943");
+  });
+});
+
+describe("card previews per type", () => {
+  test("collapsed cards keep the complete title", () => {
+    expect(render("ct-46943")).toContain(FAKE_TASK.title);
+  });
+
+  test("all six object types become cards when mentioned together in prose", () => {
+    const html = render(`Review ct-46943 pl-476 jx84qtv doc:${DOC_CONVEX_ID} tr-476 ${PROJECT_CONVEX_ID} today.`);
+    expect(html).toContain('data-card-count="6"');
+    expect(html).toContain("Check the release");
+    expect(html).toContain("Product improvements");
+  });
+  test("a session card is the inbox card: title, summary, user line, project footer", () => {
+    const html = render("jx84qtv");
+    expect(html).toContain("Build the card system");
+    expect(html).toContain("Goal:");
+    // The blue `>` last-user-message line, straight from the inbox card.
+    expect(html).toContain("Wired the plugin into chat.");
+    // Project chip derived from project_path, colored like inbox labels.
+    expect(html).toContain("codecast");
+    // Flat inbox look — no accent header strip on session cards.
+    expect(html).not.toContain("bg-sol-blue/10 dark:bg-sol-blue");
+  });
+
+  test("a plan card shows goal and progress", () => {
+    const html = render("pl-476");
+    expect(html).toContain("Shared objects render as browsable preview cards.");
+    expect(html).toContain("1/2");
+  });
+
+  test("a doc card shows a real content preview", () => {
+    const html = render(`doc:${DOC_CONVEX_ID}`);
+    expect(html).toContain("Card design notes");
+    expect(html).toContain("Accent per type, grid rows, expand inline.");
+  });
+
+  test("a collapsed task shows its LATEST comment; older ones wait for expand", () => {
+    const html = render("ct-46943");
+    expect(html).toContain("Looks great so far");
+    expect(html).not.toContain("An earlier note");
+  });
+});
+
+describe("published pages shared from Slack", () => {
+  const slug = "FFbZwRRWhePH";
+  const url = `https://a.codecast.sh/${slug}`;
+
+  test("the imported page link renders one live embed beside its Slack unfurl", () => {
+    const html = render(`[a.codecast.sh/${slug}](${url})\n\n> *codecast* · **[Union — The Needs-Finding Machine (North Star demo)](${url})**\n>\n> A page published by Aivery with codecast`);
+    expect(html.match(/<iframe\b/g)).toHaveLength(1);
+    expect(html).toContain(`/cli/a/${slug}?theme=`);
+    expect(html).toContain('sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"');
+    expect(html).not.toContain(`>a.codecast.sh/${slug}<`);
+  });
+
+  test("an authored caption survives and a page in prose stays a pill", () => {
+    expect(render(`[North Star demo](${url})`)).toContain("North Star demo");
+    expect(render(`See [North Star demo](${url}) today.`)).not.toContain("<iframe");
+  });
+});
+
+describe("shared conversation messages", () => {
+  const shareUrl = `https://codecast.sh/share/message/${SHARE_TOKEN}`;
+  const inPlaceUrl = `https://codecast.sh/conversation/${SESSION_CONVEX_ID}#msg-${MSG_CONVEX_ID}`;
+
+  test("Slack URL labels render the same rich message card", () => {
+    for (const label of [
+      `codecast.sh/share/message/${SHARE_TOKEN}`,
+      "codecast.sh/share/message/…",
+      "codecast.sh/share/message/...",
+      "https://codecast.sh/share/message/…",
+    ]) {
+      const html = render(`[${label}](${shareUrl})`);
+      expect(html).toContain("entity-card-row");
+      expect(html).toContain("card plugin</strong>");
+      expect(html).not.toContain(`>${label}<`);
+    }
+  });
+
+  test("a different URL label is not mistaken for the destination", () => {
+    const html = render(`[codecast.sh/share/message/other…](${shareUrl})`);
+    expect(html).not.toContain("entity-card-row");
+    expect(html).toContain("codecast.sh/share/message/other…");
+  });
+
+  test("a share link alone on its line is a card that renders the message rich", () => {
+    const html = render(shareUrl);
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain('data-card-count="1"');
+    // The session it came from, who wrote it, and the message body as markdown.
+    expect(html).toContain("Build the card system");
+    expect(html).toContain("Claude");
+    expect(html).toContain("card plugin</strong>");
+    expect(html).toContain("<li");
+    // Not the raw link.
+    expect(html).not.toContain(`>${shareUrl}<`);
+  });
+
+  test("a message deep link into the conversation is the same card", () => {
+    const html = render(inPlaceUrl);
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain("card plugin</strong>");
+    expect(html).toContain(`href="/conversation/${SESSION_CONVEX_ID}#msg-${MSG_CONVEX_ID}"`);
+  });
+
+  test("a note above the link (its own paragraph, as forwardToChat sends it) keeps the note as prose and the card below it", () => {
+    const html = render(`Look at this one\n\n${shareUrl}`);
+    expect(html).toContain("Look at this one");
+    expect(html).toContain("entity-card-row");
+  });
+
+  test("a share link inside a sentence becomes a card with the surrounding prose", () => {
+    const html = render(`As I said in ${shareUrl} yesterday.`);
+    expect(html).toContain("entity-card-row");
+    expect(html).toContain("<p>As I said in </p>");
+    expect(html).toContain("<p> yesterday.</p>");
+    expect(html).toContain("card plugin</strong>");
+  });
+
+  test("a link the author gave their own words keeps them", () => {
+    const html = render(`[the fix](${shareUrl})`);
+    expect(html).not.toContain("entity-card-row");
+    expect(html).toContain("the fix");
+  });
+
+  test("an unknown token is not available, not a broken card", () => {
+    const html = render("https://codecast.sh/share/message/no-such-token-here");
+    expect(html).toContain("Not available to you.");
+  });
+});
+
+
+describe("pull request references in chat", () => {
+  test("a pull request named by number alone stays inline text, never a card or a payload", () => {
+    // Chat has no repository to complete `#3263` from, and the card path must
+    // not leak the `pr:` carrier the plugin wrote for the conversation view.
+    const html = render("- #3263\n- PR 3262");
+    expect(html).not.toContain("pr:");
+    expect(html).not.toContain("entity-card");
+    expect(html).toContain("#3263");
+    expect(html).toContain("PR 3262");
+  });
+
+  test("a GitHub pull request link alone on its line, unknown to codecast, is the certain pill", () => {
+    const html = render("https://github.com/Union-AI/union-mobile/pull/3263");
+    expect(html).toContain('class="not-prose entity-ref');
+    expect(html).toContain('href="/pr/union-ai/union-mobile/3263"');
+    expect(html).not.toContain("not available");
+  });
+
+  test("a bare owner/repo#N alone on its line, unknown to codecast, is the text it was", () => {
+    const html = render("union-ai/union-mobile#3263");
+    expect(html).not.toContain("entity-ref");
+    expect(html).toContain("union-ai/union-mobile#3263");
+  });
+});
+
+describe("a transcript promotes a staffing proposal alone", () => {
+  // An agent's message body (messageMarkdown ASSISTANT_MD_REMARK) registers
+  // the plugin with `types: ["proposal"]`: an `op-N` on its own line draws
+  // the proposal live (org-staffing.md S24), while a lone task id keeps the
+  // inline pill a transcript always gave it.
+  const TRANSCRIPT = [...entityRemarkPlugins, [remarkEntityCards, { types: ["proposal"], aloneOnly: true }]] as any[];
+  const renderTranscript = (markdown: string) => renderToStaticMarkup(
+    <MemoryRouter>
+      <ReactMarkdown remarkPlugins={TRANSCRIPT} components={MD_COMPONENTS as any}>{markdown}</ReactMarkdown>
+    </MemoryRouter>,
+  );
+
+  test("op-N on its own line is a card row", () => {
+    const html = renderTranscript("Here is the change.\n\nop-5\n\nSay the word.");
+    expect(html).toContain('class="entity-card-row"');
+    expect(html).toContain("Here is the change.");
+  });
+
+  test("op-N inside a sentence stays the inline pill; the sentence is not split around a card", () => {
+    // cl-117@5:19 mid-sentence in an agent's message became a frame card that
+    // cut "And inline, ... reads as a pill." in two (2026-10-03).
+    const html = renderTranscript("Proposed it in op-5 and it waits on you.");
+    expect(html).not.toContain("entity-card-row");
+    expect(html).toContain("entity-ref");
+    expect(html).toMatch(/<p>Proposed it in .*and it waits on you\.<\/p>/);
+  });
+
+  test("a lone task id stays the inline pill", () => {
+    const html = renderTranscript("Filed it.\n\nct-46943");
+    expect(html).not.toContain("entity-card-row");
+    expect(html).toContain("entity-ref");
+    expect(html).toContain("Rich object preview cards in chat");
+  });
+
+  // One change of a proposal (`op-5#2`) is a proposal reference too: alone on
+  // its line it is that change's card, and the payload keeps the number.
+  test("op-N#seq on its own line is a card row that carries the whole reference", () => {
+    const html = renderTranscript("Start with this one.\n\nop-5#2\n\nSay the word.");
+    expect(html).toContain('class="entity-card-row"');
+    expect(html).toContain('data-card-count="1"');
+    expect(html).toContain("Start with this one.");
+    // With no renderer the plugin's own output shows: one link, payload whole.
+    const raw = renderToStaticMarkup(<ReactMarkdown remarkPlugins={TRANSCRIPT}>{"op-5#2"}</ReactMarkdown>);
+    expect(raw).toContain(">card:1:op-5#2</a>");
+    expect(raw.match(/<a/g)?.length).toBe(1);
+  });
+
+  test("op-N#seq inside a sentence stays one inline pill", () => {
+    const html = renderTranscript("Start with op-5#2 and it waits on you.");
+    expect(html).not.toContain("entity-card-row");
+    expect(html.match(/entity-ref/g)?.length).toBe(html.match(/class="not-prose entity-ref/g)?.length);
+    expect(html.match(/class="not-prose entity-ref/g)?.length).toBe(1);
+    expect(html).toMatch(/<p>Start with .*and it waits on you\.<\/p>/);
+    // The number is part of the reference, never loose text after the pill.
+    expect(html).not.toMatch(/<\/a>#2|<\/span>#2/);
+  });
+});
+
+describe("web link previews", () => {
+  const url = FAKE_PREVIEW.url;
+
+  test("a link on its own line under prose renders the page's preview card", () => {
+    const html = render(`Look at this:\n${url}`);
+    expect(html).toContain("<p>Look at this:</p>");
+    expect(html).toContain(FAKE_PREVIEW.title);
+    expect(html).toContain(FAKE_PREVIEW.description);
+    expect(html).toContain("github.com · GitHub");
+    expect(html).toContain(`src="${FAKE_PREVIEW.image}"`);
+    expect(html).not.toMatch(/<p>\s*<span class="not-prose/);
+  });
+
+  test("a page not read yet is a card carrying its address", () => {
+    const html = render("https://example.com/post/42");
+    expect(html).toContain("example.com/post/42");
+    expect(html).toContain("not-prose");
+  });
+
+  test("a link inside a sentence, a list of links and an object URL stay links", () => {
+    expect(render(`See ${url} today.`)).not.toContain(FAKE_PREVIEW.title);
+    expect(render(`- ${url}\n- https://example.com`)).not.toContain(FAKE_PREVIEW.title);
+    expect(render("https://codecast.sh/tasks/ct-46943")).not.toContain("not-prose my-2");
+  });
+
+  test("a Slack message's own unfurl is the preview: no second card", () => {
+    const html = render(`${url}\n\n> *GitHub* · **[ashot/codecast](${url})**`);
+    expect(html).not.toContain(FAKE_PREVIEW.title);
+  });
+
+  test("an authored caption rides under the card", () => {
+    const html = render(`[the repo](${url})`);
+    expect(html).toContain(FAKE_PREVIEW.title);
+    expect(html).toContain("the repo");
+  });
+});

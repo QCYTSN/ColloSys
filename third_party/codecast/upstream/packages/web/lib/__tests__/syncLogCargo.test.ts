@@ -1,0 +1,116 @@
+import { describe, expect, test } from "bun:test";
+import { ENRICH_TRIGGER_FIELDS, planCargoApply, projectCountTouched } from "../syncLogCargo";
+
+// Pure adapter from raw log cargo to store row fields (sync-log-cargo E6/E7).
+
+describe("planCargoApply — tasks/docs/plans/projects", () => {
+  test("raw fields land as-is; unset passes through", () => {
+    const p = planCargoApply("tasks", { patch: { title: "t", status: "done" }, unset: ["closed_at"] }, { _id: "t1" });
+    expect(p.fields).toEqual({ title: "t", status: "done" });
+    expect(p.unset).toEqual(["closed_at"]);
+    expect(p.refetch).toBe(false);
+  });
+  test("partial cargo and enrichment triggers request a refetch, fields still apply", () => {
+    expect(planCargoApply("tasks", { patch: { title: "x" }, partial: true }, {}).refetch).toBe(true);
+    const p = planCargoApply("tasks", { patch: { plan_id: "p9" } }, {});
+    expect(p.fields).toEqual({ plan_id: "p9" });
+    expect(p.refetch).toBe(true);
+    expect(ENRICH_TRIGGER_FIELDS.docs.has("plan_id")).toBe(true);
+  });
+  test("a trigger field re-shipped with its UNCHANGED value does not refetch (coalesced/full cargo)", () => {
+    const existing = { _id: "t1", plan_id: "p9", title: "old" };
+    expect(planCargoApply("tasks", { patch: { plan_id: "p9", title: "new" }, full: true }, existing).refetch).toBe(false);
+    expect(planCargoApply("tasks", { patch: { plan_id: "p10", title: "new" } }, existing).refetch).toBe(true);
+    expect(planCargoApply("tasks", { patch: {}, unset: ["plan_id"] }, existing).refetch).toBe(true);
+    expect(planCargoApply("tasks", { patch: {}, unset: ["plan_id"] }, { _id: "t1" }).refetch).toBe(false);
+  });
+  test("tasks: session_count derives from conversation_ids; last_comment_at (a joined comment) refetches", () => {
+    expect(planCargoApply("tasks", { patch: { conversation_ids: ["a", "b"] } }, {}).fields.session_count).toBe(2);
+    expect(planCargoApply("tasks", { patch: { updated_at: 5, last_comment_at: 5 } }, {}).refetch).toBe(true);
+    expect(planCargoApply("tasks", { patch: { updated_at: 5, title: "t" } }, {}).refetch).toBe(false);
+  });
+  test("docs: an omitted content change refetches only for plan-mode docs (display_title derives from the body)", () => {
+    expect(planCargoApply("docs", { patch: {}, omitted: ["content"] }, { source: "plan_mode" }).refetch).toBe(true);
+    expect(planCargoApply("docs", { patch: {}, omitted: ["content"] }, { source: "manual" }).refetch).toBe(false);
+  });
+  test("docs/plans: team_id derives from workspace (the list channels stamp the effective team)", () => {
+    expect(planCargoApply("docs", { patch: { workspace: "team:T" } }, {}).fields.team_id).toBe("T");
+    const personal = planCargoApply("plans", { patch: { workspace: "user:u1" } }, {});
+    expect(personal.fields.team_id).toBeUndefined();
+    expect(personal.unset).toContain("team_id");
+  });
+});
+
+describe("planCargoApply — sessions adapter", () => {
+  test("fact fields are never written (the liveness overlay is the single writer)", () => {
+    const p = planCargoApply("sessions", { patch: { title: "t", updated_at: 9, message_count: 3, agent_status: "working" } }, { updated_at: 1 });
+    expect(p.fields).toEqual({ title: "t" });
+  });
+  test("renames and null normalization", () => {
+    const p = planCargoApply("sessions", {
+      patch: { has_pending_messages: true, unresolved_comment_count: 2, last_message_preview: "hi", loop_state: { status: "stopped" } },
+      unset: ["subtitle"],
+    }, {});
+    expect(p.fields).toMatchObject({ has_pending: true, open_comment_threads: 2, last_user_message: "hi", loop_state: null, subtitle: null });
+    expect(p.unset).toEqual([]); // sessions null instead of delete
+  });
+  test("derived twins recompute from the merged row with the shared helpers", () => {
+    const existing = { updated_at: 100, inbox_rest: "dormant", inbox_rest_at: null };
+    let p = planCargoApply("sessions", { patch: { inbox_pinned_at: 5 } }, existing);
+    expect(p.fields.is_pinned).toBe(true);
+    p = planCargoApply("sessions", { patch: { inbox_pinned_at: null } }, existing);
+    expect(p.fields.is_pinned).toBe(false);
+    p = planCargoApply("sessions", { patch: { inbox_rest_at: 200 } }, existing);
+    expect(p.fields.user_rest).toBe("dormant"); // 200 >= updated_at 100
+    p = planCargoApply("sessions", { patch: { inbox_rest_at: 50 } }, existing);
+    expect(p.fields.user_rest).toBe(null);
+    p = planCargoApply("sessions", { patch: { settle_verdict: "done", settle_verdict_at: 150 } }, existing);
+    expect(p.fields.settle_verdict).toBe("done");
+    p = planCargoApply("sessions", { patch: { settle_verdict: "done", settle_verdict_at: 50 } }, existing);
+    expect(p.fields.settle_verdict).toBeNull();
+    p = planCargoApply("sessions", { patch: { inbox_deferred_at: 150 } }, existing);
+    expect(p.fields.is_deferred).toBe(true);
+  });
+  // ct-56050: a raw column the base feeders never write rode in on cargo and
+  // the next list or byIds push removed it, so the row flapped.
+  test("only the inbox row's fields land; other raw columns are dropped, twins still derive", () => {
+    const p = planCargoApply("sessions", {
+      patch: { title: "t", title_gen_scheduled_at: 9, persistent: true, short_id: "jx7abcd", title_is_custom: true, pending_kill_generation: 1, settle_verdict: "done", settle_verdict_at: 150, inbox_deferred_at: 150 },
+      unset: ["last_message_role", "subtitle"],
+    }, { updated_at: 100 });
+    expect(p.fields).toEqual({ title: "t", subtitle: null, settle_verdict: "done", inbox_deferred_at: 150, is_deferred: true });
+  });
+  test("a status that byIds would omit forces the refetch that prunes it", () => {
+    expect(planCargoApply("sessions", { patch: { status: "deleted" } }, {}).refetch).toBe(true);
+    expect(planCargoApply("sessions", { patch: { status: "active" } }, {}).refetch).toBe(false);
+    expect(planCargoApply("sessions", { patch: { status: "completed" } }, {}).refetch).toBe(false);
+    expect(planCargoApply("sessions", { patch: { title: "x" } }, {}).refetch).toBe(false);
+  });
+});
+
+describe("projectCountTouched — which held projects a member change can re-count", () => {
+  const t = (op: string, patch?: any, unset?: string[]) => ({ op, patch, unset });
+  test("a title edit moves no count", () => {
+    expect(projectCountTouched("tasks", t("upsert", { title: "x" }), { project_id: "p1", status: "open" })).toEqual([]);
+  });
+  test("a task status change re-counts its project; a doc status change does not", () => {
+    expect(projectCountTouched("tasks", t("upsert", { status: "done" }), { project_id: "p1", status: "open" })).toEqual(["p1"]);
+    expect(projectCountTouched("plans", t("upsert", { status: "done" }), { project_id: "p1", status: "active" })).toEqual(["p1"]);
+    expect(projectCountTouched("docs", t("upsert", { status: "done" }), { project_id: "p1", status: "open" })).toEqual([]);
+  });
+  test("a re-shipped unchanged status (coalesced cargo) moves no count", () => {
+    expect(projectCountTouched("tasks", t("upsert", { status: "open", title: "y" }), { project_id: "p1", status: "open" })).toEqual([]);
+  });
+  test("a create, a delete and an unset each touch the one project they name", () => {
+    expect(projectCountTouched("tasks", t("upsert", { project_id: "p2", status: "open" }), undefined)).toEqual(["p2"]);
+    expect(projectCountTouched("docs", t("delete"), { project_id: "p1" })).toEqual(["p1"]);
+    expect(projectCountTouched("tasks", t("upsert", {}, ["project_id"]), { project_id: "p1" })).toEqual(["p1"]);
+  });
+  test("a project move touches both sides", () => {
+    expect(projectCountTouched("tasks", t("upsert", { project_id: "p2" }), { project_id: "p1", status: "open" }).sort()).toEqual(["p1", "p2"]);
+  });
+  test("projects and sessions never trigger", () => {
+    expect(projectCountTouched("projects", t("upsert", { status: "x" }), { status: "y" })).toEqual([]);
+    expect(projectCountTouched("sessions", t("delete"), { project_id: "p1" })).toEqual([]);
+  });
+});

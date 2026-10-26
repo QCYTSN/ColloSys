@@ -1,0 +1,245 @@
+// The one implementation of "connect / disconnect this app", shared by the
+// /settings/integrations page and the older /capabilities Apps tab.
+//
+// The catalog is `APP_DESCRIPTORS` (shared contracts) and connection state is
+// `appConnections.listConnections`; neither is duplicated here. What lives here
+// is the wiring both surfaces need and used to each own a copy of: which
+// existing connect flow a provider runs, which disconnect action takes its id,
+// and the render identity (icon + accent) a web surface draws it with.
+//
+// Deliberately logo-less: a kind icon in an accent tile plus the name in strong
+// type, never a third-party logo asset.
+
+import { isDesktopShell, openExternalUrl } from "./desktop";
+import { describeConnectorError } from "./connectorReturn";
+import { useState, type ComponentType, type CSSProperties } from "react";
+import { useAction, useMutation } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { Bug, ChartLine, GitPullRequest, ListChecks, Mail, MessagesSquare, NotebookText, Plug } from "lucide-react";
+import {
+  isAppInstallationApp,
+  type AppConnectionScope,
+  type AppConnectionStatus,
+  type AppDescriptor,
+  type AppId,
+} from "@codecast/shared/contracts";
+import { formatRelative } from "./utils";
+import { useInboxStore, type IssueProvider, type TaskExternal } from "../store/inboxStore";
+import type { GoogleGrant, GoogleReturnPath } from "@codecast/convex/convex/googleOAuth";
+
+const api = _api as any;
+
+/** Icons are drawn in their app's accent, so the type has to allow a style.
+ *  Every value here is a lucide icon, which takes both. */
+type AppIcon = ComponentType<{ className?: string; style?: CSSProperties }>;
+
+/** Per-app render identity. Web-only on purpose — the shared descriptor stays
+ *  free of render concerns. */
+export const APP_LOOK: Record<AppId, { icon: AppIcon; accent: string }> = {
+  slack: { icon: MessagesSquare, accent: "var(--sol-magenta)" },
+  github: { icon: GitPullRequest, accent: "var(--sol-violet)" },
+  gmail: { icon: Mail, accent: "var(--sol-red)" },
+  linear: { icon: ListChecks, accent: "var(--sol-blue)" },
+  notion: { icon: NotebookText, accent: "var(--sol-yellow)" },
+  sentry: { icon: Bug, accent: "var(--sol-orange)" },
+  posthog: { icon: ChartLine, accent: "var(--sol-cyan)" },
+  app: { icon: Plug, accent: "var(--sol-green)" },
+};
+
+/** Apps whose sources the issue sync UI hangs off (docs/architecture/issue-sync.md S9). */
+export const ISSUE_SYNC_APPS: readonly AppId[] = ["github", "linear"];
+
+/** How a provider is named in prose. */
+export const ISSUE_PROVIDER_NAME: Record<IssueProvider, string> = {
+  linear: "Linear",
+  github: "GitHub",
+};
+
+/** The hover title every surface puts on a task's provider identity: which
+ *  provider, how fresh, and the sync error when there is one. */
+export function issueSyncTitle(external: TaskExternal): string {
+  const base = `${ISSUE_PROVIDER_NAME[external.provider]} issue, synced ${formatRelative(external.synced_at)}`;
+  return external.last_error ? `${base}. Sync error: ${external.last_error}` : base;
+}
+
+export type AppConnectionActions = {
+  connect: () => Promise<void>;
+  /** token-paste apps: validate and store a pasted token with its settings.
+   *  Resolves true when the connection was stored; a refusal lands in `error`. */
+  connectToken: (token: string, config: Record<string, string>) => Promise<boolean>;
+  /** Runs the revoke. Confirmation belongs to the caller's UI, not here. */
+  disconnect: () => Promise<void>;
+  busy: boolean;
+  /**
+   * The last refusal, in plain words: a reason code goes through the
+   * connectors' one table (shared/contracts/connectorReasons.ts), and
+   * a sentence passes through. A connect action that answers `{ok:false,error}`
+   * is usually the server saying an env var pair is missing, kept as-is because
+   * "not configured" without naming the variable sends the reader looking in
+   * the wrong place.
+   */
+  error: string | null;
+  setError: (message: string | null) => void;
+};
+
+/** Open a connect URL the server minted. On the web `sameTab` opens it in
+ *  place: a tab opened once the URL arrives is outside the tap's user
+ *  activation, and phone browsers block it silently. The desktop app always
+ *  hands it to the system browser. */
+export function openConnectUrl(url: string, sameTab = false): void {
+  if (sameTab && !isDesktopShell()) window.location.assign(url);
+  else openExternalUrl(url);
+}
+
+/**
+ * The machinery every connect gesture shares: a busy flag, the last refusal
+ * in plain words (describeConnectorError), `attempt` to run a step holding
+ * both, and `openMinted` to open the authorize URL a server minted or report
+ * why it minted none. useAppConnection and the mail connect through Whisk
+ * (components/simple/useLaneMail.ts) both build on it.
+ */
+export function useConnectGesture() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  /** Run `fn`, holding the busy flag and reporting whatever it throws. */
+  const attempt = async (fn: () => Promise<void>, fallback: string) => {
+    setError(null);
+    setBusy(true);
+    try {
+      await fn();
+    } catch (e: any) {
+      setError(e?.message ?? fallback);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Report a `{ ok: false, error }` answer; true when the step succeeded. */
+  const settle = (res: { ok?: boolean; error?: string } | null | undefined, fallback: string) => {
+    if (res?.ok) return true;
+    setError(res?.error ?? fallback);
+    return false;
+  };
+
+  /** Open an authorize URL the server minted, or report why it minted none. */
+  const openMinted = async (
+    mint: () => Promise<{ ok?: boolean; url?: string; error?: string } | null>,
+    fallback: string,
+    { sameTab = false }: { sameTab?: boolean } = {},
+  ) => {
+    const res = await mint();
+    if (settle(res && { ...res, ok: !!(res.ok && res.url) }, fallback)) openConnectUrl(res!.url!, sameTab);
+  };
+
+  return { busy, error: error && describeConnectorError(error), setError, attempt, settle, openMinted };
+}
+
+/**
+ * The connect and disconnect gestures for one app at one scope. Every branch
+ * calls a flow that already exists server-side: Slack's getInstallUrl,
+ * googleOAuth's getConnectUrl/disconnect, the generic oauthConnectors pair for
+ * Linear and Notion, tokenConnectors.connectWithToken for a pasted token
+ * (Sentry, PostHog, an app), githubApp.getInstallUrl and
+ * githubApp.deleteInstallation. `scope` says which workspace the connection
+ * binds to — the team being looked at, or the person themself.
+ */
+export function useAppConnection(
+  descriptor: AppDescriptor,
+  connection: AppConnectionStatus | undefined,
+  scope: AppConnectionScope = "team",
+  /** Google only: the grants to ask for beyond read access, the page the
+   *  callback lands on (googleOAuth.ts GOOGLE_RETURN_PATHS), and whether the
+   *  consent screen opens in this tab rather than a new one. */
+  google: { grants?: GoogleGrant[]; returnTo?: GoogleReturnPath; sameTab?: boolean } = {},
+): AppConnectionActions {
+  const getSlackUrl = useAction(api.slack.getInstallUrl);
+  const getGoogleUrl = useAction(api.googleOAuth.getConnectUrl);
+  const disconnectGoogle = useAction(api.googleOAuth.disconnect);
+  const getConnectorUrl = useAction(api.oauthConnectors.getConnectUrl);
+  const connectWithToken = useAction(api.tokenConnectors.connectWithToken);
+  const disconnectConnector = useAction(api.oauthConnectors.disconnect);
+  const deleteGithubInstallation = useMutation(api.githubApp.deleteInstallation);
+  const getGithubInstallUrl = useAction(api.githubApp.getInstallUrl);
+  const { busy, error, setError, attempt, openMinted } = useConnectGesture();
+
+  const connected = connection?.status === "connected" ? connection : null;
+
+  const connect = async () => {
+    if (descriptor.connectKind === "github-app-install") {
+      // The server mints the URL, because the install's `state` is now an
+      // intent bound to the authenticated caller — a URL a client could build
+      // for itself is the authority the install callback used to trust.
+      await attempt(
+        () => openMinted(() => getGithubInstallUrl({ scope }), "Couldn't start the GitHub App install"),
+        "Couldn't reach GitHub",
+      );
+      return;
+    }
+    if (descriptor.connectKind !== "oauth-popup") return;
+
+    await attempt(async () => {
+      if (descriptor.id === "gmail") {
+        // Readonly scope only on first connect; the send grant is a later ask,
+        // unless the caller asks for its grants up front (the simple lane).
+        await openMinted(
+          () => getGoogleUrl({
+            ...(google.grants?.length ? { grant: google.grants } : {}),
+            ...(google.returnTo ? { return_to: google.returnTo } : {}),
+          }),
+          "Couldn't start the Google connection",
+          { sameTab: google.sameTab },
+        );
+      } else if (descriptor.id === "linear" || descriptor.id === "notion") {
+        // The generic connector: one flow, provider and scope in the signed state.
+        await openMinted(
+          () => getConnectorUrl({ provider: descriptor.id, scope }),
+          `Couldn't start the ${descriptor.name} connection`,
+        );
+      } else {
+        // Slack's "Add to Slack": the popup lands on /slack/connect
+        // authenticated and comes back here. A team install binds to the team
+        // (admins only); a personal one needs a personal anchor first — the
+        // server says so.
+        await openMinted(
+          () => getSlackUrl({
+            scope_type: scope === "team" ? "team" : "user",
+            return_to: "/settings/integrations",
+            origin: window.location.origin,
+          } as any),
+          "Couldn't start the Slack connection",
+        );
+      }
+    }, `Couldn't reach ${descriptor.name}`);
+  };
+
+  const connectToken = async (token: string, config: Record<string, string>) => {
+    let stored = false;
+    await attempt(async () => {
+      // A team connection names its team: the workspace being looked at, read
+      // from the canonical pointer at the moment of the write.
+      const team = scope === "team" ? useInboxStore.getState().clientState.ui?.active_team_id ?? undefined : undefined;
+      const res = await connectWithToken({ provider: descriptor.id, token, config, scope, ...(team ? { team: String(team) } : {}) });
+      if (res?.ok) stored = true;
+      else setError(res?.error ?? `Couldn't connect ${descriptor.name}`);
+    }, `Couldn't reach ${descriptor.name}`);
+    return stored;
+  };
+
+  const disconnect = async () => {
+    const installationId = connected?.disconnect_id;
+    if (!installationId) return;
+    await attempt(async () => {
+      // Every app_installations row, OAuth or pasted token, revokes the same way.
+      if (isAppInstallationApp(descriptor.id)) {
+        await disconnectConnector({ installation_id: installationId });
+      } else if (descriptor.id === "gmail") {
+        await disconnectGoogle({ installation_id: installationId });
+      } else {
+        await deleteGithubInstallation({ installation_id: installationId as any });
+      }
+    }, `Couldn't disconnect ${descriptor.name}`);
+  };
+
+  return { connect, connectToken, disconnect, busy, error, setError };
+}

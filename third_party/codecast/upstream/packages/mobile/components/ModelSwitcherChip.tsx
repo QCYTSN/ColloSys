@@ -1,0 +1,126 @@
+import {
+  useState } from 'react';
+import { Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
+import { Text } from '@/components/Themed';
+import { Feather } from '@expo/vector-icons';
+import { AGENT_MODEL_CONFIG, cloudAgentLaunch, cloudAgentLaunchWords, launchRailOptions, liveRailOptions, modelAgentKey } from '@codecast/shared/contracts';
+import { canControlModel, commitModelChange, modelOptionKey, modelFitsAgent, effortGlyph } from '@codecast/web/lib/modelSwitch';
+import { ModelEffortSheet } from '@/components/ModelEffortSheet';
+import { Theme, chipShell, chipText, chipQuiet, CHROME_FONT_CAP } from '../constants/Theme';
+import { themedStyles, useTheme } from '@/constants/Theme';
+
+// Session-header model/effort chip + bottom-sheet switcher — the mobile
+// counterpart of the web's HeaderModelControl / LaunchModelPill. Same two
+// rails via the shared commitModelChange (blank session → reconfigureSession
+// relaunch flags; live claude session → `/model` / `/effort` sent as ordinary
+// messages). Read-only contexts (teammates' sessions, agents without a rail,
+// a cloud agent's session, whose provider picks the model: canControlModel,
+// the web's rule) render a static chip.
+export function ModelSwitcherChip({
+  conversationId,
+  sessionId,
+  agentType,
+  model,
+  effort,
+  messageCount,
+  canEdit,
+  showToast,
+}: {
+  conversationId: string;
+  sessionId: string | undefined;
+  agentType: string | undefined;
+  model: string | undefined;
+  effort: string | undefined | null;
+  messageCount: number | undefined;
+  canEdit: boolean;
+  showToast: (msg: string) => void;
+}) {
+  const Theme = useTheme();
+  const [sheetVisible, setSheetVisible] = useState(false);
+
+  const blank = (messageCount ?? 0) === 0;
+  const cfg = AGENT_MODEL_CONFIG[modelAgentKey(agentType)];
+  const controllable = canControlModel(agentType, sessionId, model);
+  const interactive = !!cfg && controllable && canEdit && (blank || cfg.midSession);
+  // A cloud launch is named by what it asked of the provider ("ask · 2 attempts"), as on the web.
+  const launch = cloudAgentLaunch(agentType, model);
+
+  const fits = modelFitsAgent(model, agentType);
+  const modelKey = modelOptionKey(fits ? model : undefined, agentType);
+  const opt = cfg?.models.find((m) => m.key === modelKey);
+  // Known models get their picker label ("Opus"); custom/unknown ids fall
+  // back to the raw id minus the claude- prefix. A leftover from another
+  // agent (after an in-place switch) is not the current model.
+  const label = launch
+    ? cloudAgentLaunchWords(launch).join(' · ')
+    : fits && model
+      ? (opt && opt.key !== 'default' ? opt.label : model.replace(/^claude-/, ''))
+      : 'Model';
+  const glyph = controllable ? effortGlyph(effort) : '';
+
+  if (!label || (!model && !interactive)) return null;
+
+  const chip = (
+    <View style={styles.chip}>
+      <Feather name="cpu" size={10} color={Theme.cyan} />
+      <Text style={styles.chipText} numberOfLines={1} maxFontSizeMultiplier={CHROME_FONT_CAP}>{label}</Text>
+      {!!glyph && <Text style={styles.chipGlyph}>{glyph}</Text>}
+      {interactive && <Feather name="chevron-down" size={9} color={Theme.textDim} />}
+    </View>
+  );
+
+  if (!interactive) return chip;
+
+  const commit = (sel: { model?: string; effort?: string }) => {
+    void commitModelChange({
+      conversationId,
+      agentType,
+      current: { model: model ?? null, effort: effort ?? null },
+      sel,
+      blank,
+      notify: showToast,
+    });
+  };
+
+  // Blank session: the launch rail (effort gains the "default" stop) — one
+  // definition shared with the new-session sheet. A live session: all models,
+  // no default stop.
+  const rail = blank ? launchRailOptions(cfg) : liveRailOptions(cfg);
+
+  return (
+    <>
+      <Pressable onPress={() => setSheetVisible(true)} hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}>
+        {chip}
+      </Pressable>
+      <ModelEffortSheet
+        visible={sheetVisible}
+        onClose={() => setSheetVisible(false)}
+        models={rail.models}
+        efforts={rail.efforts}
+        modelKey={modelKey}
+        effortKey={effort ?? null}
+        onSelect={commit}
+      />
+    </>
+  );
+}
+
+const styles = themedStyles((Theme) => StyleSheet.create({
+  // The session header's shared chip shell, neutral like its neighbors.
+  chip: {
+    ...chipShell,
+    ...chipQuiet(Theme),
+  },
+  chipText: {
+    ...chipText,
+    color: Theme.textMuted,
+  },
+  chipGlyph: {
+    fontSize: 10,
+    color: Theme.textMuted,
+    opacity: 0.8,
+  },
+}));

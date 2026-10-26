@@ -1,0 +1,449 @@
+import { useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useAction } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { toast } from "sonner";
+import {
+  Check,
+  CircleDot,
+  Copy,
+  ExternalLink,
+  GitMerge,
+  GitPullRequest,
+  GitPullRequestClosed,
+  GitPullRequestDraft,
+  Pencil,
+  Radio,
+  Tag,
+  UserRound,
+} from "lucide-react";
+import { RepoWindowControl } from "../repo/RepoWindowControl";
+import { CommentAvatar } from "../comments/CommentAvatar";
+import { EntityIdPill } from "../EntityIdPill";
+import { PRLinked, PRReviewers } from "./PRLinked";
+import { copyToClipboard, relTimeShort } from "../../lib/utils";
+import { withShortcut } from "../../shortcuts/registry";
+import {
+  accentSoft,
+  accentVar,
+  shepherdStyle,
+  type ExternalEventAccent,
+} from "../../lib/externalEvents";
+import {
+  PR_STATE_META,
+  foldChecks,
+  mergeStateMeta,
+  prStateKey,
+  reviewDecisionMeta,
+  type PrReviewRow,
+  type PrStateKey,
+} from "../../lib/prView";
+
+// The header band: who, what, where it is going, and whether it can land.
+// Everything here is one line of reading, the detail lives in the tabs. The
+// verbs (review, merge, the rest) sit on the top row, above the title, so the
+// title keeps the full width of the pane. They come in through `actions`.
+
+const api = _api as any;
+
+/** The title, editable in place by anyone who may edit the pull request.
+ *  `editNonce` bumps when the overflow menu asks for the same editor. */
+function EditableTitle({ pr, editNonce = 0 }: { pr: any; editNonce?: number }) {
+  const edit = useAction(api.prCli.edit);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<string>(pr.title);
+  const [seen, setSeen] = useState(editNonce);
+  if (editNonce !== seen) {
+    setSeen(editNonce);
+    if (editNonce > 0) {
+      setDraft(pr.title);
+      setEditing(true);
+    }
+  }
+  if (!editing) {
+    return (
+      <h1 className="pr-title group/title font-serif text-[26px] leading-tight text-sol-text">
+        {pr.title}
+        <button
+          type="button"
+          className="ml-2 inline-flex align-middle text-sol-text-dim opacity-0 group-hover/title:opacity-100 hover:text-sol-text transition-opacity"
+          title="Edit the title"
+          onClick={() => { setDraft(pr.title); setEditing(true); }}
+        >
+          <Pencil className="w-3.5 h-3.5" />
+        </button>
+      </h1>
+    );
+  }
+  return (
+    <form
+      className="pr-title flex items-center gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const title = draft.trim();
+        setEditing(false);
+        if (!title || title === pr.title) return;
+        const result = await edit({ repository: pr.repository, number: pr.number, title });
+        if (result?.error) toast.error(result.error);
+        else toast.success("Title changed");
+      }}
+    >
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") setEditing(false); }}
+        className="pr-title-input w-full bg-transparent font-serif text-[26px] leading-tight text-sol-text border-b border-sol-cyan/60 focus:outline-none"
+      />
+      <button type="submit" className="cc-comment-btn">Save</button>
+    </form>
+  );
+}
+
+/** GitHub's labels, in their own colours, and who the pull request is assigned to. */
+function MetaChips({ pr }: { pr: any }) {
+  const labels: { name: string; color?: string }[] = pr.labels ?? [];
+  const assignees: string[] = pr.assignees ?? [];
+  if (labels.length === 0 && assignees.length === 0) return null;
+  return (
+    <>
+      {labels.map((label) => (
+        <span
+          key={label.name}
+          className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px]"
+          style={label.color ? { borderColor: `#${label.color}80`, color: `#${label.color}`, background: `#${label.color}14` } : undefined}
+        >
+          <Tag className="w-3 h-3 opacity-70" />
+          {label.name}
+        </span>
+      ))}
+      {assignees.map((login) => (
+        <span key={login} className="inline-flex items-center gap-1 rounded-full border border-sol-border/50 px-2 py-0.5 text-[11px] text-sol-text-muted" title="Assigned">
+          <UserRound className="w-3 h-3 opacity-70" />
+          {login}
+        </span>
+      ))}
+    </>
+  );
+}
+
+const STATE_ICON: Record<PrStateKey, typeof GitPullRequest> = {
+  open: GitPullRequest,
+  draft: GitPullRequestDraft,
+  merged: GitMerge,
+  closed: GitPullRequestClosed,
+};
+
+function Chip({
+  accent,
+  children,
+  title,
+}: {
+  accent: ExternalEventAccent;
+  children: React.ReactNode;
+  title?: string;
+}) {
+  return (
+    <span
+      title={title}
+      className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium"
+      style={{
+        color: accentVar(accent),
+        borderColor: accentSoft(accent, 35),
+        background: accentSoft(accent, 12),
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function CopyRef({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="pr-branch group inline-flex items-center gap-1.5 max-w-full rounded-md border border-sol-border/40 bg-sol-bg-alt/50 px-2 py-0.5 font-mono text-[11px] text-sol-text-muted hover:border-sol-border hover:text-sol-text transition-colors"
+      title="Copy the branch names"
+      onClick={async () => {
+        await copyToClipboard(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1600);
+      }}
+    >
+      <span className="truncate">{text}</span>
+      {copied ? (
+        <Check className="w-3 h-3 text-sol-green" />
+      ) : (
+        <Copy className="w-3 h-3 opacity-0 group-hover:opacity-60 transition-opacity" />
+      )}
+    </button>
+  );
+}
+
+/** One status figure. With `href` or `onClick` it is the way into its detail
+ *  (the checks view, the diff, the first open thread). */
+function Figure({ label, children, href, onClick, title }: {
+  label: string;
+  children: React.ReactNode;
+  href?: string;
+  onClick?: () => void;
+  title?: string;
+}) {
+  const body = (
+    <>
+      <span className="text-[10px] uppercase tracking-wider text-sol-text-dim group-hover/fig:text-sol-text-muted transition-colors">{label}</span>
+      <span className="text-[12px] text-sol-text flex items-center gap-2">{children}</span>
+    </>
+  );
+  const cls = "group/fig flex flex-col gap-1 rounded-md -mx-1.5 -my-1 px-1.5 py-1 hover:bg-sol-bg-alt/60 transition-colors";
+  if (href) return <Link href={href} className={cls} title={title}>{body}</Link>;
+  if (onClick) return <button type="button" onClick={onClick} className={`${cls} text-left`} title={title}>{body}</button>;
+  return <div className="flex flex-col gap-1">{body}</div>;
+}
+
+/** The checks bar: one segment per outcome, widths animated in on load. */
+function ChecksBar({ checks }: { checks: any[] | undefined }) {
+  const fold = foldChecks(checks);
+  if (fold.total === 0) return <span className="text-sol-text-dim">No checks</span>;
+  const pct = (n: number) => `${(n / fold.total) * 100}%`;
+  return (
+    <span className="flex items-center gap-2 min-w-0">
+      <span className="pr-seg-track w-24">
+        <span className="pr-seg" style={{ width: pct(fold.passed), background: accentVar("green") }} />
+        <span className="pr-seg" style={{ width: pct(fold.failed), background: accentVar("red") }} />
+        <span className="pr-seg" style={{ width: pct(fold.pending), background: accentVar("yellow") }} />
+        <span className="pr-seg" style={{ width: pct(fold.skipped), background: accentVar("muted") }} />
+      </span>
+      <span className="whitespace-nowrap">
+        {fold.failed > 0 && <span className="text-sol-red">{fold.failed} failed </span>}
+        {fold.pending > 0 && <span className="text-sol-yellow">{fold.pending} running </span>}
+        <span className="text-sol-text-muted">{fold.passed} passed</span>
+      </span>
+    </span>
+  );
+}
+
+const SHEPHERD_EXPLAINED =
+  "The shepherd is the agent session that owns this pull request until it merges. It is woken when a review, a check or the base branch changes, and acts on it.";
+
+/**
+ * Shepherd: the session that owns this PR until it merges. One labeled line:
+ * which session, what it is working toward, and whether changes wake it.
+ */
+function ShepherdControl({
+  pr,
+  sessionChoices,
+  onSetShepherd,
+}: {
+  pr: any;
+  sessionChoices: { id: string; title: string }[];
+  onSetShepherd: (conversationId: string | undefined, enabled: boolean) => void;
+}) {
+  const [picking, setPicking] = useState(false);
+  const bound = pr.shepherd_conversation_id as string | undefined;
+  const style = shepherdStyle(pr.shepherd_state);
+  const awake = pr.shepherd_enabled === true;
+  const open = prStateKey(pr) === "open" || prStateKey(pr) === "draft";
+
+  if (!bound) {
+    if (!open) return null;
+    return (
+      <div className="flex items-center gap-2 flex-wrap max-w-full">
+        <button
+          type="button"
+          className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-sol-border px-2.5 py-0.5 text-[11px] text-sol-text-muted hover:text-sol-text hover:border-sol-cyan/50 transition-colors"
+          title={SHEPHERD_EXPLAINED}
+          onClick={() => setPicking((v) => !v)}
+        >
+          <Radio className="w-3 h-3" />
+          Assign a shepherd session
+        </button>
+        {picking && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {sessionChoices.length === 0 ? (
+              <span className="text-[11px] text-sol-text-dim">No session has worked on this pull request yet</span>
+            ) : (
+              sessionChoices.map((session) => (
+                <button
+                  key={session.id}
+                  type="button"
+                  className="rounded-full border border-sol-border/50 px-2 py-0.5 text-[11px] text-sol-text-muted hover:text-sol-cyan hover:border-sol-cyan/40 transition-colors max-w-[220px] truncate"
+                  onClick={() => {
+                    onSetShepherd(session.id, true);
+                    setPicking(false);
+                  }}
+                >
+                  {session.title}
+                </button>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="inline-flex items-center gap-2 max-w-full rounded-full border border-sol-border/50 bg-sol-bg-alt/40 pl-2.5 pr-1 py-0.5 text-[11px] flex-wrap"
+      title={pr.shepherd_last_wake_at
+        ? `${SHEPHERD_EXPLAINED}\n\nLast woke ${relTimeShort(pr.shepherd_last_wake_at)} ago${pr.shepherd_last_wake_reason ? `: ${pr.shepherd_last_wake_reason}` : ""} (${pr.shepherd_wake_count ?? 1} in all).`
+        : SHEPHERD_EXPLAINED}
+    >
+      <span className="inline-flex items-center gap-1.5 text-sol-text-dim">
+        <Radio className="w-3 h-3" style={{ color: accentVar(style.accent) }} />
+        Shepherd
+      </span>
+      <span className="min-w-0 max-w-[16rem] truncate">
+        <EntityIdPill type="session" id={bound} fallback={sessionChoices.find((c) => c.id === bound)?.title ?? "Agent session"} />
+      </span>
+      {open && <span style={{ color: accentVar(style.accent) }}>{style.phrase}</span>}
+      {open && (
+        <button
+          type="button"
+          role="switch"
+          aria-checked={awake}
+          onClick={() => onSetShepherd(bound, !awake)}
+          className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 transition-colors ${
+            awake ? "bg-sol-green/10 text-sol-green hover:bg-sol-green/20" : "bg-sol-bg-alt text-sol-text-dim hover:text-sol-text"
+          }`}
+          title={awake ? "Changes to this pull request wake the session. Click to pause." : "Paused: changes do not wake the session. Click to resume."}
+        >
+          <span className={`h-1.5 w-1.5 rounded-full ${awake ? "bg-sol-green" : "bg-sol-text-dim"}`} />
+          {awake ? "Wakes on changes" : "Paused"}
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function PRHeader({
+  pr,
+  repository,
+  number,
+  openComments,
+  sessionChoices,
+  onSetShepherd,
+  actions,
+  reviews = [],
+  linkedSessionIds = [],
+  checksHref,
+  filesHref,
+  onOpenComments,
+}: {
+  /** Where the figures lead: the checks view, the diff, the first open thread. */
+  checksHref?: string;
+  filesHref?: string;
+  onOpenComments?: () => void;
+  pr: any;
+  repository: string;
+  number: number;
+  openComments: number;
+  reviews?: PrReviewRow[];
+  linkedSessionIds?: string[];
+  sessionChoices: { id: string; title: string }[];
+  onSetShepherd: (conversationId: string | undefined, enabled: boolean) => void;
+  /** The verbs: review, merge, and the rest. A function receives the way to
+   *  open the title editor, which lives in this header. */
+  actions?: ReactNode | ((controls: { editTitle: () => void }) => ReactNode);
+}) {
+  const stateKey = prStateKey(pr);
+  const state = PR_STATE_META[stateKey];
+  const StateIcon = STATE_ICON[stateKey];
+  const merge = mergeStateMeta(pr);
+  const decision = reviewDecisionMeta(pr.review_decision);
+  const [owner, repo] = repository.split("/");
+  const [editNonce, setEditNonce] = useState(0);
+  const editTitle = () => setEditNonce((n) => n + 1);
+  const verbs = typeof actions === "function" ? actions({ editTitle }) : actions;
+
+  return (
+    <header className="pr-band border-b border-sol-border/60 px-5 pt-4 pb-3 shrink-0">
+      <div className="pr-rise pr-head text-[11px] text-sol-text-dim" style={{ ["--d" as string]: "0ms" }}>
+        <span className="inline-flex items-center gap-2 min-w-0">
+          <span className="font-mono">{owner}</span>
+          <span className="opacity-40">/</span>
+          <span className="font-mono text-sol-text-muted truncate">{repo}</span>
+          <span className="opacity-40">/</span>
+          <span className="font-mono text-sol-text-muted">#{number}</span>
+          <a
+            href={`https://github.com/${repository}/pull/${number}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center text-sol-text-dim hover:text-sol-cyan transition-colors"
+            title="Open on GitHub"
+          >
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        </span>
+        <div className="pr-head-actions">
+          {verbs && <span className="flex items-center gap-1.5 flex-wrap">{verbs}</span>}
+          <RepoWindowControl />
+        </div>
+      </div>
+
+      <div className="pr-rise mt-1.5" style={{ ["--d" as string]: "60ms" }}>
+        <EditableTitle pr={pr} editNonce={editNonce} />
+      </div>
+
+      <div className="pr-rise mt-2.5 flex items-center gap-3 flex-wrap" style={{ ["--d" as string]: "120ms" }}>
+        {/* Where it stands, first: a status, read before who and where. */}
+        <Chip accent={state.accent}>
+          <StateIcon className="w-3.5 h-3.5" />
+          {state.label}
+        </Chip>
+        <span className="flex items-center gap-1.5 text-[12px] text-sol-text-muted">
+          <CommentAvatar
+            name={pr.author_github_username ?? "?"}
+            image={pr.author_avatar_url}
+            size={18}
+          />
+          {pr.author_github_username}
+        </span>
+        {pr.head_ref && pr.base_ref && <CopyRef text={`${pr.head_ref} -> ${pr.base_ref}`} />}
+        <MetaChips pr={pr} />
+        <ShepherdControl pr={pr} sessionChoices={sessionChoices} onSetShepherd={onSetShepherd} />
+        <PRLinked pr={pr} sessionIds={linkedSessionIds} />
+      </div>
+
+      <div
+        className="pr-rise pr-figures mt-3 flex items-start flex-wrap gap-x-8 gap-y-3 text-[12px]"
+        style={{ ["--d" as string]: "180ms" }}
+      >
+        <Figure label="Checks" href={checksHref} title="Open the checks">
+          <ChecksBar checks={pr.checks} />
+        </Figure>
+        <Figure label="Review">
+          {decision && <span style={{ color: accentVar(decision.accent) }}>{decision.label}</span>}
+          {PRReviewers({ pr, reviews }) ?? (!decision && <span className="text-sol-text-dim">Nobody has reviewed yet</span>)}
+        </Figure>
+        <Figure label="Merge">
+          {merge ? (
+            <span style={{ color: accentVar(merge.accent) }}>{merge.label}</span>
+          ) : stateKey === "merged" || stateKey === "closed" ? (
+            <span style={{ color: accentVar(state.accent) }}>{state.label}</span>
+          ) : (
+            <span className="text-sol-text-dim">GitHub has not said yet</span>
+          )}
+        </Figure>
+        <Figure label="Open comments" onClick={openComments > 0 ? onOpenComments : undefined} title={withShortcut("Go to the first open thread", "pr.nextThread")}>
+          <span className={openComments > 0 ? "text-sol-yellow" : "text-sol-text-muted"}>
+            <CircleDot className="w-3 h-3 inline mr-1 -mt-px" />
+            {openComments}
+          </span>
+        </Figure>
+        <Figure label="Diff" href={filesHref} title="Open the changed files">
+          <span className="font-mono">
+            <span className="text-sol-green">+{pr.additions ?? 0}</span>
+            <span className="mx-1 text-sol-text-dim/40">/</span>
+            <span className="text-sol-red">-{pr.deletions ?? 0}</span>
+            <span className="ml-2 text-sol-text-dim">
+              {pr.changed_files ?? pr.files?.length ?? 0} files
+            </span>
+          </span>
+        </Figure>
+      </div>
+    </header>
+  );
+}

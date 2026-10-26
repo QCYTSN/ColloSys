@@ -1,0 +1,26 @@
+{
+  "name": "card-write unscored-line-change",
+  "anchor": {
+    "kind": "message",
+    "id": "fixture:unscored-line-change"
+  },
+  "subject": {
+    "kind": "synthetic",
+    "id": "card-write:unscored-line-change",
+    "title": "card-write unscored-line-change"
+  },
+  "asOf": "2026-10-07T12:00:00.000Z",
+  "trigger": {
+    "type": "card-write"
+  },
+  "meta": {
+    "surface": "card-write",
+    "visibility": "public",
+    "snapshot": "fixtures/card-write/unscored-line-change.json"
+  },
+  "judge": "a person who never saw the work can choose from the decision alone: the question is the choice about the people the problem reached, the answers are the courses really open with the lean first, and every case, count and claim on the card and the page comes from the record (the problem, its findings, what the run measured) or from running the change's code, which the code shown must bear out, with no result stated stronger than either shows and anything left unverified said plainly",
+  "notes": null,
+  "tags": [],
+  "id": "ddee68b5-c410-4cb0-bf7d-812fb6ff2e8e",
+  "createdAt": "2026-10-07T17:30:45.829Z"
+}

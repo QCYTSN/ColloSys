@@ -1,0 +1,166 @@
+import type { SlackMirrorState } from "@codecast/convex/convex/lib/slackMirror";
+// View models for the chat surface.
+//
+// Deliberately independent of the store row shapes. The presentational
+// components take these and nothing else, so they render identically from a
+// fixture, from an optimistic stub and from a synced server row — and so the
+// whole surface can be designed and screenshot-verified before the store exists.
+
+import type { ChatMentionRef, ChatVoiceStatus } from "@codecast/shared/chat";
+
+export type ChatAuthor = {
+  id: string;
+  name: string;
+  avatarUrl?: string;
+  /** The anchor and any other standing agent member. Renders with the agent
+   *  chip and the violet identity instead of a photo. */
+  isAgent?: boolean;
+  /** Handle used for @mentions, without the @. */
+  handle?: string;
+  /** Present when a codecast SESSION typed the line while running as its human
+   *  (row origin "agent"): the message personifies the session — its agent's
+   *  logo as the face, its title as the name — with the human as a dim "via"
+   *  credit. `id` is the session id, for opening it where the client can. */
+  session?: { id: string; agentType: string; via?: string };
+  /** A Slack person (or Slack app) with no codecast account: the row's author
+   *  is the workspace's bridge identity and this is the snapshot of who really
+   *  wrote it. Renders their face, never the bridge's, plus the Slack mark. */
+  slack?: { isBot?: boolean; /** Their Slack user id — the grouping identity (shared authorGroupKey). */ userId?: string };
+  /** Present when the author is a role's standing agent: `name` is the role's
+   *  person like name, and this is its face, its title and its page. */
+  role?: { shortId: string; handle: string; avatar?: string | null; title: string };
+};
+
+export type ChatReaction = {
+  emoji: string;
+  count: number;
+  /** Whether the viewer is one of the reactors — drives the active pill. */
+  mine: boolean;
+  /** Names for the tooltip, already ordered. */
+  names?: string[];
+};
+
+/** Lifecycle of an agent's reply, mirroring comments.agent_status so the two
+ *  surfaces behave the same way. */
+// "listening" / "passed" exist server-side (a silent wake in a followed thread
+// and the anchor's choice to stay quiet); the server never returns those rows,
+// so a client only ever renders the four visible states.
+export type ChatAgentStatus = "thinking" | "streaming" | "done" | "error" | "listening" | "passed";
+
+export type ChatAttachmentView = {
+  /** Empty while the image is still uploading; `preview_url` paints meanwhile. */
+  storage_id: string;
+  name?: string;
+  mime?: string;
+  width?: number;
+  height?: number;
+  preview_url?: string;
+};
+
+/** What an attachment is, from its mime: every surface that draws, plays or
+ *  prefetches attachments branches on this one answer. No mime is an image,
+ *  which is what every upload was before mimes were recorded. */
+export type ChatAttachmentKind = "image" | "video" | "audio";
+export function attachmentKind(att: { mime?: string }): ChatAttachmentKind {
+  if (att.mime?.startsWith("audio/")) return "audio";
+  if (att.mime?.startsWith("video/")) return "video";
+  return "image";
+}
+
+export type ChatMessageView = {
+  id: string;
+  author: ChatAuthor;
+  /** Slack provenance: "inbound" was written in Slack and mirrored here,
+   *  "outbound" is ours and also lives in Slack. `permalink` opens it there. */
+  slack?: { direction: "inbound" | "outbound"; permalink?: string };
+  /** The author kept this line out of the channel's Slack mirror. */
+  localOnly?: boolean;
+  /** Markdown. */
+  content: string;
+  /** Uploaded images, rendered as a grid under the text. */
+  attachments?: ChatAttachmentView[];
+  createdAt: number;
+  editedAt?: number;
+  deletedAt?: number;
+  mentionsMe?: boolean;
+  /** The server's resolved mentions: people, roles and sessions. The role
+   *  and session entries are what turn an `@handle` in the body into a pill
+   *  (lib/remarkChatMentions) — an unresolved handle stays plain text. */
+  mentionRefs?: ChatMentionRef[];
+  /** A role or session named here was over its hourly cap and not woken. */
+  mentionFolded?: boolean;
+  reactions?: ChatReaction[];
+  agentStatus?: ChatAgentStatus;
+  /** Set on a thread REPLY. In the channel timeline it only ever appears on a
+   *  broadcast reply ("also send to #channel"), where it drives the small
+   *  "replied to a thread" context line that opens the thread. */
+  threadRootId?: string;
+  /** Thread rollup, present only on a root message that has replies. */
+  replyCount?: number;
+  lastReplyAt?: number;
+  replyFaces?: { id: string; name: string; avatarUrl?: string; isAgent?: boolean; role?: ChatAuthor["role"] }[];
+  /** An agent turn in flight (or failed) inside this root's thread, so the
+   *  affordance can say "thinking…" without the panel open. */
+  threadAgentStatus?: "thinking" | "streaming" | "error";
+  /** Push-to-talk. Present only on a walkie burst, which renders as a voice
+   *  bubble instead of a markdown body: pulsing while the sender is still
+   *  holding the key, a play button once the recording has landed. `content` is
+   *  the transcript in both states — the words ARE the message, so reading is
+   *  always enough and the audio is the optional half. */
+  voice?: {
+    status: ChatVoiceStatus;
+    durationMs?: number;
+    /** The call room the burst was spoken into: what a live bubble joins. */
+    roomKey?: string;
+    /** The live recognizer came back empty and the server is recovering the
+     *  words from the recording. A delay, never a loss — the bubble says so
+     *  instead of showing a blank that reads as silence. */
+    transcribing?: boolean;
+    /** No `voice` on the row: this is an ordinary message whose attachment
+     *  happens to be audio. It is a voice note either way, and rendering it as
+     *  file tiles was diagnosis 7 of pl-431. */
+    inferred?: boolean;
+  };
+  /** A huddle digest: `content` is the summary the server wrote when the call
+   *  ended, and this names the transcript so the row can unfold the whole
+   *  speaker-attributed conversation under it. */
+  call?: { transcriptId: string };
+  /** Optimistic, not yet echoed by the server. Renders like a sent row; the
+   *  flag is kept for callers that reason about the outbox. */
+  pending?: boolean;
+  failed?: boolean;
+  /** Why the send was refused, in the server's words. Only ever set with `failed`. */
+  failReason?: string;
+};
+
+/** A role or session inside a room (convex chat.ts ChannelAgentRef). */
+export type ChatChannelAgentRef =
+  | { kind: "role"; role_id: string; short_id: string }
+  | { kind: "session"; conversation_id: string; short_id: string };
+
+export type ChatChannelView = {
+  id: string;
+  name: string;
+  /** Absent = public. Shapes the icon, the naming, and what the menu offers.
+   *  "agents": a public room roles and sessions post in — a bot icon, and a
+   *  header line naming the roles listening. */
+  kind?: "public" | "private" | "dm" | "agents" | "community";
+  /** The OTHER parties of a DM (viewer excluded) — the naming source. */
+  dmMemberIds?: string[];
+  /** Roster of a restricted room, viewer included (the members panel). */
+  memberIds?: string[];
+  /** Roles and sessions inside the room (any kind but a DM). */
+  agents?: ChatChannelAgentRef[];
+  topic?: string;
+  unreadCount?: number;
+  /** Mentions of you specifically. This is the count allowed to shout. */
+  mentionCount?: number;
+  muted?: boolean;
+  isPrivate?: boolean;
+  /** The channel's team — the mention scope for its composer. */
+  teamId?: string;
+  /** Present when the channel mirrors a Slack channel. The channel already
+   *  wears the Slack channel's name, so the rows show the Slack mark as its
+   *  label and the tooltip says how the mirror is doing. */
+  slack?: { name: string; state: SlackMirrorState };
+};

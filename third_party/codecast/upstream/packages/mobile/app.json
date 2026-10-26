@@ -1,0 +1,249 @@
+{
+  "expo": {
+    "name": "Codecast",
+    "slug": "codecast",
+    "platforms": [
+      "ios",
+      "android"
+    ],
+    "version": "1.0.5",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "codecast",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "owner": "ashotp",
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ashotp.codecast",
+      "appleTeamId": "WRG9THCK9Q",
+      "usesAppleSignIn": true,
+      "associatedDomains": [
+        "applinks:codecast.sh",
+        "applinks:www.codecast.sh"
+      ],
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "audio",
+          "remote-notification",
+          "voip"
+        ],
+        "NSFaceIDUsageDescription": "Codecast uses Face ID to unlock the app and keep your workspace private. For example, you can require Face ID before the app opens your team's conversations.",
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "Codecast uses the camera to take a photo you attach to a message, and to share your live video with teammates when you turn your camera on during a team huddle (a live voice and video call).",
+        "NSMicrophoneUsageDescription": "Codecast uses the microphone for two things you start yourself. In a team huddle (a live voice and video call) it transmits your voice to teammates. When you press record, it captures the meeting in the room so Codecast can write you a transcript and a summary; that recording is yours alone and no teammate can open it. Audio is never captured at any other time.",
+        "NSPhotoLibraryUsageDescription": "Codecast uses your photo library so you can attach photos and screenshots to messages. For example, you can attach a screenshot of a bug to a task you send to your coding agent or teammates. Only the photos you select are uploaded.",
+        "NSSupportsLiveActivities": true,
+        "NSSupportsLiveActivitiesFrequentUpdates": true
+      },
+      "entitlements": {
+        "com.apple.developer.usernotifications.time-sensitive": true
+      }
+    },
+    "android": {
+      "package": "com.ashotp.codecast",
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/session"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/conversation"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/task"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/plan"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/doc"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/share"
+            },
+            {
+              "scheme": "https",
+              "host": "codecast.sh",
+              "pathPrefix": "/join"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/session"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/conversation"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/task"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/plan"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/doc"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/share"
+            },
+            {
+              "scheme": "https",
+              "host": "www.codecast.sh",
+              "pathPrefix": "/join"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true,
+      "predictiveBackGestureEnabled": false,
+      "googleServicesFile": "./google-services.json",
+      "permissions": [
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.POST_NOTIFICATIONS"
+      ]
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/a2698c27-7e77-4406-aae2-063844898e60"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.0"
+          }
+        }
+      ],
+      "@livekit/react-native-expo-plugin",
+      "expo-router",
+      "expo-updates",
+      "expo-secure-store",
+      "expo-local-authentication",
+      "expo-apple-authentication",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/images/icon.png",
+          "color": "#d97706",
+          "sounds": [
+            "./assets/sounds/chat.caf",
+            "./assets/sounds/huddle-ring.caf"
+          ]
+        }
+      ],
+      [
+        "@sentry/react-native/expo",
+        {
+          "organization": "codecast-a2",
+          "project": "react-native"
+        }
+      ],
+      "expo-sqlite",
+      "expo-audio",
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "./assets/fonts/JetBrainsMono-Regular.ttf",
+            "./assets/fonts/JetBrainsMono-Medium.ttf",
+            "./assets/fonts/JetBrainsMono-SemiBold.ttf",
+            "./assets/fonts/JetBrainsMono-Bold.ttf",
+            "./assets/fonts/JetBrainsMono-Italic.ttf",
+            "./assets/fonts/InstrumentSans-Regular.ttf",
+            "./assets/fonts/InstrumentSans-Medium.ttf",
+            "./assets/fonts/InstrumentSans-SemiBold.ttf",
+            "./assets/fonts/InstrumentSans-Bold.ttf",
+            "./assets/fonts/Newsreader-Regular.ttf",
+            "./assets/fonts/Newsreader-Medium.ttf",
+            "./assets/fonts/Newsreader-SemiBold.ttf",
+            "./assets/fonts/Newsreader-Italic.ttf",
+            "./node_modules/@expo/vector-icons/build/vendor/react-native-vector-icons/Fonts/FontAwesome.ttf"
+          ]
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Codecast uses the camera to take a photo you attach to a message, and to share your live video with teammates when you turn your camera on during a team huddle (a live voice and video call).",
+          "photosPermission": "Codecast uses your photo library so you can attach photos and screenshots to messages. For example, you can attach a screenshot of a bug to a task you send to your coding agent or teammates. Only the photos you select are uploaded."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Codecast uses your photo library so you can attach photos and screenshots to messages. For example, you can attach a screenshot of a bug to a task you send to your coding agent or teammates. Only the photos you select are uploaded.",
+          "savePhotosPermission": false
+        }
+      ],
+      [
+        "expo-callkit-telecom",
+        {
+          "sounds": [
+            "./assets/sounds/huddle-ring.caf"
+          ],
+          "defaultRingtoneIos": "huddle-ring.caf",
+          "incomingCallTimeout": 45,
+          "fulfillAnswerCallTimeout": 30
+        }
+      ],
+      "@bacons/apple-targets"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a2698c27-7e77-4406-aae2-063844898e60"
+      }
+    }
+  }
+}

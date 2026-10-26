@@ -1,0 +1,166 @@
+// THE sanctioned way to enumerate a workspace-scoped store collection.
+//
+// The store caches rows from every workspace the user has viewed (and IDB
+// persists them), so a raw `Object.values(s.tasks)` in a component leaks
+// another team's rows the moment the active team changes. This hook applies
+// the ONE boundary rule (lib/workspaceScope inWorkspace) against a workspace
+// key computed once from the canonical pointers, so no call site builds the
+// key by hand or forgets the filter. Enumerations of tasks / plans / docs /
+// projects in components go through here — the lint test in
+// lib/__tests__/workspaceEnumeration.test.ts fails on raw enumeration.
+//
+// Re-render discipline (CLAUDE.md store rules): never subscribe an
+// always-mounted component to a whole high-churn collection. This hook
+// subscribes to a wake signature: workspace MEMBERSHIP (which row ids are in
+// the active workspace) plus a per-row FIELD projection — `updated_at` by
+// default, so any real edit (status, title, priority) repaints the caller,
+// while unrelated store churn does not. Callers can pass their own narrower
+// projection (see GlobalSessionPanel needsAttentionSig), or `null` for
+// membership-only when they truly render no row fields.
+import { useMemo } from "react";
+import { useInboxStore, useTrackedStore } from "../store/inboxStore";
+import { activeWorkspaceKeyOf, inWorkspace, type WorkspaceKey } from "../lib/workspaceScope";
+import { collectionRowListed, type WorkspaceScopedStoreKey } from "../store/clientSyncRegistry";
+import { useWorkspaceScope } from "./useWorkspaceScope";
+
+// Derived from the registry: a collection declares `workspaceScoped: true`
+// and this hook accepts it — no second list to keep in step.
+export type WorkspaceScopedTable = WorkspaceScopedStoreKey;
+
+export { activeWorkspaceKeyOf };
+
+/** The viewer's active workspace key, from the canonical pointers. Null while
+ *  the viewer is unknown — everything reads empty (fail closed), never all. */
+export function useActiveWorkspaceKey(): WorkspaceKey | null {
+  // A surface with a workspace of its own (WorkspaceScopeProvider) reads that one.
+  const scope = useWorkspaceScope();
+  const active = useInboxStore(activeWorkspaceKeyOf);
+  return scope ?? active;
+}
+
+// Membership signature: which row ids are in the workspace. Memoized on
+// (collection ref, key, field-sig fn) so unrelated store writes cost nothing.
+// The store reuses a collection's identity when nothing in it changed, so this
+// scan (10k+ rows for tasks/docs) runs once per real change, not once per
+// store notification per subscriber.
+type SigEntry = { table?: WorkspaceScopedTable; sig: string };
+const sigCache = new WeakMap<object, Map<((row: any) => string) | null, Map<WorkspaceKey | null, SigEntry>>>();
+// `table` names the collection, whose registry `listed` rule (a soft-deleted
+// row stays held but leaves lists) applies here too.
+export function membershipSig(
+  collection: Record<string, any>,
+  key: WorkspaceKey | null,
+  fieldSig: ((row: any) => string) | null = null,
+  table?: WorkspaceScopedTable,
+): string {
+  let perFn = sigCache.get(collection);
+  let perKey = perFn?.get(fieldSig);
+  const hit = perKey?.get(key);
+  if (hit && hit.table === table) return hit.sig;
+  const listed = table ? collectionRowListed(table) : undefined;
+  const ids: string[] = [];
+  let extra = "";
+  if (key) {
+    for (const id in collection) {
+      const row = collection[id];
+      if (!inWorkspace(row, key)) continue;
+      if (listed && !listed(row)) continue;
+      ids.push(id);
+      if (fieldSig) extra += fieldSig(row) + "\n";
+    }
+  }
+  const sig = fieldSig ? ids.join("\n") + "\u0000" + extra : ids.join("\n");
+  if (!perFn) { perFn = new Map(); sigCache.set(collection, perFn); }
+  if (!perKey) { perKey = new Map(); perFn.set(fieldSig, perKey); }
+  perKey.set(key, { table, sig });
+  return sig;
+}
+
+// Default field signature: `updated_at`, which every optimistic write and
+// every server mutation bumps on a real edit. This makes a field change
+// (status, title, priority) repaint list surfaces by default — none of the
+// collections this hook serves carry heartbeat-style churn fields, so there
+// is nothing noisy to exclude. A mark-done that only flipped the store used
+// to stay invisible on /tasks until some row entered or left the workspace.
+export function defaultFieldSig(row: any): string {
+  return String(row?.updated_at ?? "");
+}
+
+/**
+ * The rows of `table` a list shows in workspace `key`: in the workspace,
+ * listed by the collection's registry rule, and filed under their own _id.
+ * Rows filed under a store key that isn't their own _id are dropped (e.g. a
+ * task detail-query copy keyed by its URL short id, planted by pre-fix
+ * builds). Every sync channel keys rows by _id, so such a copy never receives
+ * updates — rendered, it's a phantom frozen at stale field values beside (or
+ * instead of) the live row. Stubs pass: keyed by their temp _id.
+ */
+const workspaceRowsCache = new WeakMap<object, Map<string, unknown[]>>();
+
+export function workspaceRows<T = any>(table: WorkspaceScopedTable, coll: Record<string, T>, key: WorkspaceKey | null): T[] {
+  if (!key) return [];
+  let cached = workspaceRowsCache.get(coll);
+  const cacheKey = `${table}\0${key}`;
+  const hit = cached?.get(cacheKey);
+  if (hit) return hit.slice() as T[];
+  const listed = collectionRowListed(table);
+  const rows: T[] = [];
+  for (const id in coll) {
+    if (!Object.hasOwn(coll, id)) continue;
+    const row = coll[id];
+    if (id !== String((row as any)?._id) || (listed && !listed(row))) continue;
+    if (inWorkspace(row as any, key)) rows.push(row);
+  }
+  if (!cached) { cached = new Map(); workspaceRowsCache.set(coll, cached); }
+  cached.set(cacheKey, rows);
+  return rows.slice();
+}
+
+/**
+ * The rows of `table` that belong to the active workspace. Re-renders when
+ * membership changes OR a row is edited (updated_at, by default). Pass `sig`
+ * for a custom projection of the fields you render, or `null` to opt out of
+ * field reactivity entirely (membership-only, the old behavior).
+ */
+export function useWorkspaceCollection<T = any>(
+  table: WorkspaceScopedTable,
+  sig?: ((row: T) => string) | null,
+  /** A record's own workspace key, for a surface that reads where the record
+   *  lives (a project opened from another team) instead of the active one. */
+  workspace?: WorkspaceKey | null,
+): T[] {
+  const fieldSig = sig === null ? null : (sig ?? (defaultFieldSig as (row: T) => string));
+  const scope = useWorkspaceScope();
+  const keyOf = (st: Parameters<typeof activeWorkspaceKeyOf>[0]) => workspace || scope || activeWorkspaceKeyOf(st);
+  const s = useTrackedStore([
+    (st) => keyOf(st),
+    (st) => membershipSig((st as any)[table], keyOf(st), fieldSig, table),
+  ]);
+  const key = keyOf(s);
+  const coll = (s as any)[table] as Record<string, T>;
+  const memberSig = membershipSig(coll, key, fieldSig, table);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- memberSig stands in for the churny collection ref
+  return useMemo(
+    () => workspaceRows(table, coll, key),
+    [memberSig, key, fieldSig ? coll : null],
+  );
+}
+
+/**
+ * The rows of `table` in any of `keys`, for a surface that lists across the
+ * workspaces the viewer reads at once (the line's For you). Each key keeps the
+ * one boundary rule; an empty list reads nothing.
+ */
+export function useWorkspacesCollection<T = any>(
+  table: WorkspaceScopedTable,
+  sig: ((row: T) => string) | null | undefined,
+  keys: readonly (WorkspaceKey | null)[],
+): T[] {
+  const fieldSig = sig === null ? null : (sig ?? (defaultFieldSig as (row: T) => string));
+  const list = useMemo(() => [...new Set(keys.filter((k): k is WorkspaceKey => !!k))].sort(), [keys.join("\n")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const s = useTrackedStore([(st) => list.map((k) => membershipSig((st as any)[table], k, fieldSig, table)).join("\u0001")]);
+  const coll = (s as any)[table] as Record<string, T>;
+  const memberSig = list.map((k) => membershipSig(coll, k, fieldSig, table)).join("\u0001");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- memberSig stands in for the churny collection ref
+  return useMemo(() => list.flatMap((k) => workspaceRows(table, coll, k)), [memberSig, list, fieldSig ? coll : null]);
+}

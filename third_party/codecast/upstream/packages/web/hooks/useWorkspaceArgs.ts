@@ -1,0 +1,75 @@
+import { useInboxStore, isConvexId } from "../store/inboxStore";
+import { Id } from "@codecast/convex/convex/_generated/dataModel";
+import { useWorkspaceScope } from "./useWorkspaceScope";
+
+export type WorkspaceArgs =
+  | { team_id: Id<"teams">; workspace: "team"; project_path?: string }
+  | { workspace: "personal"; project_path?: string }
+  | "skip";
+
+/**
+ * The bare {workspace, team_id} pair, without the active project_path.
+ * Stamp it onto a created record so it lands in the workspace being viewed
+ * (team views are an exact team match — an unstamped record would only show
+ * in the personal view), or pass it to workspace-wide queries that must not
+ * be scoped to the active project.
+ */
+export function workspaceStamp(
+  args: WorkspaceArgs
+): { workspace: "team"; team_id: Id<"teams"> } | { workspace: "personal" } | Record<string, never> {
+  if (args === "skip") return {};
+  return args.workspace === "team"
+    ? { workspace: "team", team_id: args.team_id }
+    : { workspace: "personal" };
+}
+
+export function useWorkspaceArgs(): WorkspaceArgs {
+  // A surface with a workspace of its own (WorkspaceScopeProvider) queries that one.
+  const scope = useWorkspaceScope();
+  const pointer = useInboxStore(
+    (s) => s.clientState.ui?.active_team_id
+  ) as Id<"teams"> | undefined;
+  const activeTeamId = scope ? (scope.startsWith("team:") ? (scope.slice(5) as Id<"teams">) : undefined) : pointer;
+  // An exclude-mode chip ("everything but this project") must not scope
+  // Tasks/Plans/Docs queries — only an include filter expresses "I'm working
+  // in this project". Without this guard, excluding a project would narrow
+  // those panes to ONLY it, the inverse of the chip.
+  const activeProjectPath = useInboxStore(
+    (s) => (s.chipFilterExclude ? null : s.activeProjectPath)
+  );
+  const initialized = useInboxStore((s) => s.clientStateInitialized);
+
+  if (!initialized) return "skip";
+
+  // A just-created team holds an optimistic stub id until the server echoes
+  // (inboxStore.createTeam). A stub is not an Id<"teams">; passing it would
+  // throw ArgumentValidationError. Skip for the sub-second window instead —
+  // the new team has no server rows yet anyway.
+  if (activeTeamId && !isConvexId(String(activeTeamId))) return "skip";
+
+  if (activeTeamId) {
+    return {
+      team_id: activeTeamId,
+      workspace: "team" as const,
+      ...(activeProjectPath ? { project_path: activeProjectPath } : {}),
+    };
+  }
+  return {
+    workspace: "personal" as const,
+    ...(activeProjectPath ? { project_path: activeProjectPath } : {}),
+  };
+}
+
+/**
+ * A feeder's workspace, as the `team_id` its query takes: the named key when a
+ * surface reads a record's own workspace (a project opened from another team),
+ * else the active one. `key` is a stored access key ("team:<id>" | "user:<id>");
+ * a personal key queries with no team. "skip" until the active workspace is known.
+ */
+export function useFeederWorkspace(key?: string | null): { args: { team_id?: Id<"teams"> } | "skip"; key: string | null } {
+  const ws = useWorkspaceArgs();
+  const viewerId = useInboxStore((s) => (s.currentUser?._id ? String(s.currentUser._id) : null));
+  if (key) return { args: key.startsWith("team:") ? { team_id: key.slice(5) as Id<"teams"> } : {}, key };
+  if (ws === "skip") return { args: "skip", key: null };
+  return ws.workspace === "team" ? { args: { team_id: ws.team_id }, key: `team:${ws.team_id}` } : { args: {}, key: viewerId ? `user:${viewerId}` : null };
+}

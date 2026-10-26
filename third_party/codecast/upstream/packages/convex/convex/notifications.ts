@@ -1,0 +1,1223 @@
+import { mutation, query, internalAction, internalMutation } from "./functions";
+import { routeUpHears, routeUpWaitingSession } from "./agentTasks";
+import {
+  openTasksVouchForWaiting,
+  isAssignedAwayFromOwnerSet,
+  IDLE_DIGEST_WINDOW_MS,
+  summarizeIdleDigest,
+  isHostedAgentType,
+} from "@codecast/shared/contracts";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import { enqueuePush, readMissedSince } from "./pushRouter";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { verifyApiToken } from "./apiTokens";
+import { isConversationTeamVisible } from "./privacy";
+import { ENTITY_TYPE, NOTIFICATION_TYPE } from "./lib/notificationTypes";
+import { isAgentSpawnedConversation, isSubagentConversation } from "./ccAccountsShared";
+import { listSessionOwnerIds } from "./sessionOwners";
+import {
+  trustedAgentStatus,
+  deriveSessionActivity,
+  classifyWorkState,
+  type WorkState,
+  needsInputKind,
+  subagentIsProducing,
+  userRestOf,
+  isSettleVerdictCurrent,
+  HEARTBEAT_ALIVE_MS,
+  restoreToInbox,
+} from "./inboxFilters";
+import { loadArmedTriggerHomes, isArmedTriggerHome, isArmedLoopHome } from "./dormancy";
+import { displayNotificationActor, rewriteNotificationMessage } from "./lib/notificationActor";
+import { identityFieldsOf } from "./lib/sessionIdentityFields";
+import { clearPushTokenIfCurrent, reportPushFailures } from "./pushReceipts";
+
+export const sendPushNotification = internalAction({
+  args: {
+    push_token: v.string(),
+    title: v.string(),
+    // iOS second line — "#team", "thread · #team". Android folds it into the
+    // title since it has no subtitle slot.
+    subtitle: v.optional(v.string()),
+    body: v.string(),
+    data: v.optional(v.any()),
+    // Android notification channel ("chat" gets its own sound/importance).
+    channel_id: v.optional(v.string()),
+    // iOS: "time-sensitive" for messages addressed to the person, so they
+    // banner through Focus summaries the way a message should.
+    interruption_level: v.optional(v.string()),
+    // App icon badge — the bell's own unread count, so phone and app agree.
+    badge: v.optional(v.number()),
+    // For receipt hygiene: whose token this is, so a DeviceNotRegistered
+    // ticket can clear it instead of eating every future push silently.
+    user_id: v.optional(v.id('users')),
+    // Bundled iOS sound file ("huddle-ring.caf" rings a closed app) — the
+    // file must ship in the app binary's Resources for the name to resolve.
+    sound: v.optional(v.string()),
+    // iOS actionable-notification category (the app registers matching
+    // actions, e.g. Join/Decline on "huddle_ring").
+    category_id: v.optional(v.string()),
+    // Expo push TTL in seconds: undeliverable pushes are dropped after this
+    // (a ring for a 45s call must not land minutes later).
+    ttl: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const message = {
+      to: args.push_token,
+      // 'default' until a native build ships the bundled chat sound; then the
+      // chat channel flips to 'chat.caf' (asset + plugin config already in the
+      // mobile app — see packages/mobile/app.json).
+      sound: args.sound ?? 'default',
+      ...(args.category_id ? { categoryId: args.category_id } : {}),
+      ...(args.ttl !== undefined ? { ttl: args.ttl } : {}),
+      title: args.title,
+      ...(args.subtitle ? { subtitle: args.subtitle } : {}),
+      body: args.body,
+      data: args.data || {},
+      priority: 'high',
+      ...(args.channel_id ? { channelId: args.channel_id } : {}),
+      ...(args.interruption_level ? { interruptionLevel: args.interruption_level } : {}),
+      ...(args.badge !== undefined ? { badge: args.badge } : {}),
+    };
+
+    try {
+      const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        method: 'POST',
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(message),
+      });
+
+      const responseData = await response.json();
+      // A ticket only says Expo took the message. A dead token clears now
+      // (DeviceNotRegistered); an accepted ticket waits for its receipt
+      // (pushReceipts.ts), where a broken credential shows; any other
+      // refusal is reported straight away.
+      const ticket = responseData?.data;
+      const single = Array.isArray(ticket) ? ticket[0] : ticket;
+      const code = single?.status === 'error' ? single?.details?.error ?? 'Unknown' : null;
+      if (single?.status === 'ok' && single.id) {
+        await ctx.runMutation(internal.pushReceipts.recordTicket, {
+          ticket_id: single.id,
+          push_token: args.push_token,
+          ...(args.user_id ? { user_id: args.user_id } : {}),
+        });
+      } else if (code === 'DeviceNotRegistered') {
+        if (args.user_id) {
+          await ctx.runMutation(internal.notifications.clearDeadPushToken, {
+            user_id: args.user_id,
+            push_token: args.push_token,
+          });
+        }
+      } else if (code) {
+        await reportPushFailures(ctx, [{ code, count: 1, sample: single?.message ?? code }]);
+      }
+      return responseData;
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+      throw error;
+    }
+  },
+});
+
+// The token the ticket declared dead — cleared only if the user still carries
+// THAT token, so a re-registration that raced the ticket is never wiped.
+export const clearDeadPushToken = internalMutation({
+  args: { user_id: v.id('users'), push_token: v.string() },
+  handler: async (ctx, args) => {
+    await clearPushTokenIfCurrent(ctx, args.user_id, args.push_token);
+  },
+});
+
+export const notifyTeamSessionStart = internalMutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    user_id: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation || !conversation.team_id) {
+      return;
+    }
+
+    // Never notify about agent-spawned sessions — only human-initiated ones.
+    if (isAgentSpawnedConversation(conversation)) {
+      return;
+    }
+
+    // Fire time = registration + a 60s grace delay (see createConversation),
+    // so of this budget ~4min covers registration lag.
+    const STALE_MS = 5 * 60 * 1000;
+    if (conversation.started_at && Date.now() - conversation.started_at > STALE_MS) {
+      return;
+    }
+
+    if (!(await isConversationTeamVisible(ctx, conversation))) {
+      return;
+    }
+
+    const user = await ctx.db.get(args.user_id);
+    if (!user) {
+      return;
+    }
+
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_team_id", (q: any) => q.eq("team_id", conversation.team_id))
+      .collect();
+    const memberUsers = await Promise.all(
+      memberships
+        .filter((m: any) => m.user_id.toString() !== args.user_id.toString())
+        .map((m: any) => ctx.db.get(m.user_id))
+    );
+    const teamMembers = memberUsers.filter((u: any): u is NonNullable<typeof u> => u !== null);
+
+    const actorName = user.name || user.email || "Someone";
+    let body = conversation.title || conversation.project_path?.split("/").pop() || "New session";
+    if (!conversation.title) {
+      const firstMsg = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_timestamp", (q: any) => q.eq("conversation_id", args.conversation_id))
+        .order("asc")
+        .first();
+      if (firstMsg?.content) {
+        body = firstMsg.content.slice(0, 200);
+      }
+    }
+
+    const THROTTLE_MS = 15 * 60 * 1000;
+    const now = Date.now();
+
+    for (const member of teamMembers) {
+      if (member.muted_members?.includes(args.user_id)) {
+        continue;
+      }
+      if (member.notification_preferences?.team_session_start === false) {
+        continue;
+      }
+
+      const notifId = await ctx.db.insert("notifications", {
+        recipient_user_id: member._id,
+        type: "team_session_start",
+        actor_user_id: args.user_id,
+        conversation_id: args.conversation_id,
+        message: body,
+        read: false,
+        created_at: now,
+      });
+
+      if (member.push_token && member.notifications_enabled) {
+        const recentNotifs = await ctx.db
+          .query("notifications")
+          .withIndex("by_recipient_created", (q: any) =>
+            q.eq("recipient_user_id", member._id).gte("created_at", now - THROTTLE_MS)
+          )
+          .collect();
+        const alreadyPushed = recentNotifs.some(
+          (n: any) =>
+            n.type === "team_session_start" &&
+            n.actor_user_id?.toString() === args.user_id.toString() &&
+            n.conversation_id?.toString() !== args.conversation_id.toString()
+        );
+
+        if (!alreadyPushed) {
+          await enqueuePush(ctx, {
+            user: member,
+            notification_id: notifId,
+            type: "team_session_start",
+            title: `${actorName} started coding`,
+            body,
+            data: {
+              conversationId: args.conversation_id,
+              type: 'team_session_start',
+            },
+          });
+        }
+      }
+    }
+  },
+});
+
+// internal: had zero callers and was a public mutation that let anyone deliver
+// an arbitrary-text notification to any user (spam/phishing). Real notifications
+// are created by the internal mutations and server-side inserts in this file and
+// in agentTasks/notificationRouter.
+// The unions come from notificationRouter, which is where they are declared for
+// `emit`. Two hand-maintained copies of the same list is how this one fell three
+// types behind and would have rejected a caller writing a legitimate row.
+export const create = internalMutation({
+  args: {
+    recipient_user_id: v.id("users"),
+    type: NOTIFICATION_TYPE,
+    actor_user_id: v.optional(v.id("users")),
+    comment_id: v.optional(v.id("comments")),
+    conversation_id: v.optional(v.id("conversations")),
+    entity_type: v.optional(ENTITY_TYPE),
+    entity_id: v.optional(v.string()),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const recipient = await ctx.db.get(args.recipient_user_id);
+    if (!recipient) {
+      throw new Error("Recipient not found");
+    }
+
+    const prefs = recipient.notification_preferences;
+    if (args.type === "mention" && prefs && !prefs.mention) {
+      return null;
+    }
+
+    // Skip if recipient has muted this actor
+    if (args.actor_user_id && recipient.muted_members?.includes(args.actor_user_id)) {
+      return null;
+    }
+
+    const notificationId = await ctx.db.insert("notifications", {
+      recipient_user_id: args.recipient_user_id,
+      type: args.type,
+      actor_user_id: args.actor_user_id,
+      comment_id: args.comment_id,
+      conversation_id: args.conversation_id,
+      entity_type: args.entity_type,
+      entity_id: args.entity_id,
+      message: args.message,
+      read: false,
+      created_at: Date.now(),
+    });
+
+    return notificationId;
+  },
+});
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return [];
+    }
+
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient_created", (q) => q.eq("recipient_user_id", userId))
+      .order("desc")
+      .take(50);
+
+    const enriched = await Promise.all(
+      notifications.map(async (notification) => {
+        const actor = notification.actor_user_id
+          ? await ctx.db.get(notification.actor_user_id)
+          : null;
+        const conversation = notification.conversation_id
+          ? await ctx.db.get(notification.conversation_id)
+          : null;
+        // A chat line's author is not always the user on the row: Slack inbound
+        // lines are stored under the workspace bridge (the snapshot, or for old
+        // rows the message's external_author, is who posted), and a line a
+        // session typed is stored under its human (the session is who spoke).
+        const message = notification.chat_message_id
+          ? await ctx.db.get(notification.chat_message_id)
+          : null;
+        const face = displayNotificationActor(notification, actor, message);
+        return {
+          ...notification,
+          message: rewriteNotificationMessage(notification.message, face.name, actor?.name),
+          actor: actor ? {
+            _id: actor._id,
+            name: face.name,
+            github_username: actor.github_username,
+            github_avatar_url: face.avatar,
+          } : null,
+          actor_session: face.session,
+          conversation: conversation ? {
+            _id: conversation._id,
+            title: conversation.title,
+            project_path: conversation.project_path,
+            agent_type: conversation.agent_type,
+            // Who the session is (docs/architecture/session-characters.md S1),
+            // so the row's session chip wears the same face as its card.
+            ...(await identityFieldsOf(conversation, (id: any) => ctx.db.get(id))),
+          } : null,
+        };
+      })
+    );
+
+    return enriched;
+  },
+});
+
+export const getMissedSince = query({
+  args: { seq: v.number(), epoch: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { epoch: null, entries: [] };
+    return await readMissedSince(ctx, userId, args);
+  },
+});
+
+export const getUnreadCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return 0;
+    }
+
+    const unreadNotifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient_read", (q) =>
+        q.eq("recipient_user_id", userId).eq("read", false)
+      )
+      .collect();
+
+    return unreadNotifications.length;
+  },
+});
+
+export const markAsRead = mutation({
+  args: {
+    notificationId: v.id("notifications"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const notification = await ctx.db.get(args.notificationId);
+    if (!notification) {
+      throw new Error("Notification not found");
+    }
+
+    if (notification.recipient_user_id !== userId) {
+      throw new Error("Unauthorized");
+    }
+
+    await ctx.db.patch(args.notificationId, { read: true });
+  },
+});
+
+export const markAllAsRead = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const unreadNotifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient_read", (q) =>
+        q.eq("recipient_user_id", userId).eq("read", false)
+      )
+      .collect();
+
+    await Promise.all(
+      unreadNotifications.map((notification) =>
+        ctx.db.patch(notification._id, { read: true })
+      )
+    );
+  },
+});
+
+type SessionNotifType =
+  | "session_idle"
+  | "permission_request"
+  | "session_error"
+  | "session_assigned";
+
+function sessionNotifOptedOut(
+  prefs: Record<string, any> | undefined,
+  type: SessionNotifType,
+): boolean {
+  if (type === "session_idle") return prefs?.session_idle === false;
+  if (type === "session_error") return prefs?.session_error === false;
+  // Opt-out, not opt-in: being handed a session is something you need to know
+  // about, so it's on unless explicitly disabled.
+  if (type === "session_assigned") return prefs?.session_assigned === false;
+  return !!prefs && !prefs.permission_request;
+}
+
+// Session-STATE types describe what the session is currently doing (waiting,
+// blocked on a permission, errored) — as opposed to discrete events like
+// "assigned to you" or a comment. A state supersedes the previous one, so the
+// notification list keeps at most ONE of these per (recipient, conversation):
+// stacking a "ready" row for every turn of an active back-and-forth is noise.
+const SESSION_STATE_TYPES = new Set<string>([
+  "session_idle",
+  "permission_request",
+  "session_error",
+]);
+
+// ── The needs-input digest ───────────────────────────────────────────────────
+//
+// One alert an hour, not one per session. A fleet of sessions settling over an
+// afternoon used to raise a desktop banner and a phone push EACH, because every
+// settle writes its own notification row and the banner is driven off row
+// arrivals. The rows are worth keeping — each one is the clickable record of a
+// session waiting — so the fold-up happens to the ALERT, not to the list: rows
+// written while a window is open carry `quiet`, which the desktop banner and
+// the push both skip, and one aggregate row at the window's end carries the
+// alert for all of them.
+//
+// The first settle in a quiet hour still alerts at once and OPENS the window,
+// so a lone session waiting on you is as immediate as it ever was. Alerts are
+// therefore always at least a window apart. On by default; the switch is
+// `session_idle_digest` (absent reads as ON).
+// The window and the wording live in the shared contracts, so the fold-up the
+// phone shows and the one the web bell renders are the same fold-up.
+export { IDLE_DIGEST_WINDOW_MS, summarizeIdleDigest };
+
+export function idleDigestOn(prefs: Record<string, any> | undefined): boolean {
+  return prefs?.session_idle_digest !== false;
+}
+
+/** Display name for a session in the aggregate line. */
+function sessionLabelOf(conv: any): string {
+  return conv?.title?.trim() || conv?.project_path?.split("/").pop() || "Session";
+}
+
+// Insert the notification row + push for ONE recipient, honoring their prefs.
+// Shared by the api-token mutation below (daemon-driven permission/error
+// notifications) and the server-side needs-input check.
+export async function deliverSessionNotification(
+  ctx: any,
+  recipientId: any,
+  conversationId: any,
+  type: SessionNotifType,
+  title: string,
+  message: string,
+  // The digest's own delivery sets this: the fold-up alert must not be folded
+  // up again.
+  opts?: { bypassDigest?: boolean },
+): Promise<boolean> {
+  const user = await ctx.db.get(recipientId);
+  if (!user) return false;
+  if (sessionNotifOptedOut(user.notification_preferences as any, type)) return false;
+
+  // Open window → this row joins the fold-up and stays quiet. Closed window →
+  // it alerts now and opens the next one.
+  let quiet = false;
+  if (type === "session_idle" && !opts?.bypassDigest && idleDigestOn(user.notification_preferences)) {
+    const now = Date.now();
+    const state = user.idle_digest_state;
+    const windowEndsAt = (state?.last_alerted_at ?? 0) + IDLE_DIGEST_WINDOW_MS;
+    if (now >= windowEndsAt) {
+      await ctx.db.patch(user._id, { idle_digest_state: { last_alerted_at: now } });
+    } else {
+      quiet = true;
+      // One flush per window. A stamp in the past is a window whose fold-up
+      // already ran, so the next quiet row arms the next one.
+      if (!state?.flush_due_at || state.flush_due_at <= now) {
+        await ctx.db.patch(user._id, {
+          idle_digest_state: { last_alerted_at: state?.last_alerted_at ?? 0, flush_due_at: windowEndsAt },
+        });
+        await ctx.scheduler.runAfter(windowEndsAt - now, internal.notifications.idleDigestFlush, {
+          user_id: user._id,
+        });
+      }
+    }
+  }
+
+  // Replace, don't stack: a new state row supersedes the conversation's old
+  // one. Delete + insert (rather than patch) so the row gets a fresh _id —
+  // the desktop's native-banner watcher treats an unseen _id as "new", which
+  // keeps one banner per episode while the in-app list stays at one row.
+  if (SESSION_STATE_TYPES.has(type)) {
+    const prior = (await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient_conversation", (q: any) =>
+        q.eq("recipient_user_id", recipientId).eq("conversation_id", conversationId),
+      )
+      .collect()).filter((n: any) => SESSION_STATE_TYPES.has(n.type));
+
+    // A quiet row supersedes IN PLACE. Delete-and-insert is how an alerting
+    // row earns a fresh _id (the desktop watcher reads an unseen _id as "new"),
+    // and a quiet row wants exactly the opposite. It also must not orphan the
+    // earlier row's staged push: the outbox drops a push whose notification is
+    // gone, so a second settle minutes after the first used to silently cancel
+    // the alert the first one had already earned.
+    if (quiet && prior.length > 0) {
+      const newest = prior.reduce((a: any, b: any) => (b.created_at > a.created_at ? b : a));
+      for (const n of prior) {
+        if (n._id !== newest._id) await ctx.db.delete(n._id);
+      }
+      await ctx.db.patch(newest._id, {
+        type,
+        message,
+        read: false,
+        created_at: Date.now(),
+        quiet: true,
+      });
+      return true;
+    }
+    for (const n of prior) await ctx.db.delete(n._id);
+  }
+
+  const notifId = await ctx.db.insert("notifications", {
+    recipient_user_id: recipientId,
+    type,
+    conversation_id: conversationId,
+    message,
+    read: false,
+    created_at: Date.now(),
+    ...(quiet ? { quiet: true } : {}),
+  });
+
+  if (!quiet && user.push_token && user.notifications_enabled) {
+    await enqueuePush(ctx, {
+      user,
+      notification_id: notifId,
+      type,
+      title,
+      body: message,
+      data: {
+        conversationId,
+        type,
+      },
+    });
+  }
+  return true;
+}
+
+// The runner (user_id) plus every OWNER. An owner is a human actually waiting on
+// this session (a Mr Bot fix session parking with "ready to ship?"), so mirror
+// the notification to them — same prefs gates, their own row+push. Reads the
+// canonical owner SET: a session can have several owners, and they all need to
+// hear about it, not just the one cached in owner_user_id.
+export async function deliverSessionNotificationToParties(
+  ctx: any,
+  conversation: { _id: any; user_id: any; owner_user_id?: any },
+  type: SessionNotifType,
+  title: string,
+  message: string,
+): Promise<boolean> {
+  // Recipients are the UNION of the canonical owner set and the owner_user_id
+  // cache. The cache is a safety net, not a second source of truth: a legacy row
+  // written before the session_owners backfill has a cached owner but no join
+  // row, and it must not silently stop notifying them in the window between
+  // deploy and backfill. Once backfilled the two agree, and the Set de-dupes.
+  const recipients = await listSessionOwnerIds(ctx, conversation._id);
+  if (conversation.owner_user_id) recipients.push(conversation.owner_user_id);
+
+  // The alert follows the inbox row. A session whose owner set excludes the
+  // account that runs it has been handed over (the same rule the inbox scan
+  // applies), so the runner is not rung about work that is no longer theirs to
+  // answer. An unowned session is the runner's own and always rings them.
+  const runnerAssignedAway = isAssignedAwayFromOwnerSet(recipients, conversation.user_id.toString());
+  let delivered = runnerAssignedAway
+    ? false
+    : await deliverSessionNotification(
+      ctx, conversation.user_id, conversation._id, type, title, message,
+    );
+
+  const seen = new Set<string>(runnerAssignedAway ? [] : [conversation.user_id.toString()]); // runner: done above
+  for (const ownerId of recipients) {
+    const key = ownerId.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (await deliverSessionNotification(ctx, ownerId, conversation._id, type, title, message)) {
+      delivered = true;
+    }
+  }
+  return delivered;
+}
+
+export const createSessionNotification = mutation({
+  args: {
+    api_token: v.string(),
+    conversation_id: v.id("conversations"),
+    type: v.union(
+      v.literal("session_idle"),
+      v.literal("permission_request"),
+      v.literal("session_error")
+    ),
+    title: v.string(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) {
+      return { error: "Unauthorized" };
+    }
+
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation || conversation.user_id !== auth.userId) {
+      return { error: "Not found" };
+    }
+
+    const delivered = await deliverSessionNotificationToParties(
+      ctx, conversation, args.type, args.title, args.message,
+    );
+
+    // Stamp the needs-input dedupe key so the server-side check
+    // (checkNeedsInput) stands down for the episode this push already covered:
+    // "session_idle" here is the legacy no-hook watcher path, and a
+    // "permission_request" push covers the permission_blocked flavor even if
+    // the pending_permissions record is slow to land.
+    const dedupeKind =
+      args.type === "session_idle" ? "idle" :
+      args.type === "permission_request" ? "permission_blocked" : null;
+    if (dedupeKind) {
+      await ctx.db.patch(args.conversation_id, {
+        needs_input_notified_key: `${conversation.message_count || 0}:${dedupeKind}`,
+      });
+    }
+
+    if (delivered && args.type === "session_idle") {
+      await ctx.scheduler.runAfter(0, internal.idleSummary.generateIdleSummary, {
+        conversation_id: args.conversation_id,
+      });
+    }
+
+    return delivered ? { notified: true } : { skipped: true };
+  },
+});
+
+// ── The single-row verdict ───────────────────────────────────────────────────
+//
+// Single-row mirror of enrichInboxSessionRow's derivation: the trusted status,
+// the activity read, the open-poll and live-subagent checks, then the same
+// classifyWorkState the inbox buckets by. Two consumers read it — the
+// needs-input push below and the Lock Screen Live Activity (liveActivity.ts) —
+// so a rule added here reaches both, and the phone can never file a session
+// differently from the inbox.
+export interface ConversationVerdict {
+  state: WorkState;
+  agentStatus: string | undefined;
+  activity: ReturnType<typeof deriveSessionActivity>;
+  isIdle: boolean;
+  awaitingInput: boolean;
+  hasPending: boolean;
+  lastMsg: any;
+  boundary: boolean;
+}
+
+export async function deriveConversationVerdict(
+  ctx: any,
+  conv: any,
+  session: any,
+  now: number,
+): Promise<ConversationVerdict> {
+  const heartbeatFresh = !!session?.last_heartbeat && now - session.last_heartbeat < HEARTBEAT_ALIVE_MS;
+  const agentStatus = trustedAgentStatus(
+    session?.agent_status, conv.updated_at, now, heartbeatFresh,
+    openTasksVouchForWaiting(session?.open_tasks_at, session?.open_tasks?.length ?? 0, heartbeatFresh),
+  );
+  const daemonAlive = agentStatus === "stopped" ? false : heartbeatFresh;
+  const hasPending = !!conv.has_pending_messages;
+  // The settle's own fact, alongside the status: it came from a lifecycle
+  // event (a resume, a clear, a manual compact), not from a turn ending.
+  const boundary = session?.agent_status_boundary === true;
+
+  const lastMsg = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_timestamp", (q: any) => q.eq("conversation_id", conv._id))
+    .order("desc")
+    .first();
+
+  const activity = deriveSessionActivity({
+    agentStatus,
+    agentStatusUpdatedAt: session?.agent_status_updated_at,
+    lastMessageRole: lastMsg?.role ?? conv.last_message_role,
+    lastMessagePreview: lastMsg?.content ?? conv.last_message_preview,
+    hasPending,
+    status: conv.status,
+    updatedAt: conv.updated_at,
+    daemonAlive,
+    agentType: conv.agent_type,
+    now,
+  });
+  let isIdle = activity.isIdle;
+
+  // Open AskUserQuestion poll — same derivation as enrichInboxSessionRow: the
+  // chronologically-latest message being the poll's tool_use means it is
+  // unanswered (an answer would be a later tool_result), overriding the raced
+  // agent_status.
+  let awaitingInput = false;
+  if (!isIdle && lastMsg?.role === "assistant" &&
+      lastMsg.tool_calls?.some((tc: any) => tc.name === "AskUserQuestion")) {
+    awaitingInput = true;
+    isIdle = true;
+  }
+
+  // An idle parent whose subagent child is still producing is parked on it
+  // (classifyWorkState's childProducing) — don't push mid-orchestration. Cheap
+  // recent-output arm first; the child's managed session is read only when
+  // that arm fails.
+  let childProducing = false;
+  if (isIdle && !awaitingInput) {
+    const children = await ctx.db
+      .query("conversations")
+      .withIndex("by_parent_conversation_id", (q: any) => q.eq("parent_conversation_id", conv._id))
+      .take(20);
+    for (const c of children) {
+      if (!c.is_subagent || c.status !== "active") continue;
+      if (subagentIsProducing({
+        isSubagent: true, convStatus: c.status, updatedAt: c.updated_at,
+        isLive: false, agentStatus: undefined, now,
+      })) {
+        childProducing = true;
+        break;
+      }
+      const childSession = await ctx.db
+        .query("managed_sessions")
+        .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", c._id))
+        .first();
+      const childAlive = !!childSession?.last_heartbeat && now - childSession.last_heartbeat < HEARTBEAT_ALIVE_MS;
+      if (childAlive && subagentIsProducing({
+        isSubagent: true, convStatus: c.status, updatedAt: c.updated_at,
+        isLive: true, agentStatus: trustedAgentStatus(childSession?.agent_status, c.updated_at, now), now,
+      })) {
+        childProducing = true;
+        break;
+      }
+    }
+  }
+
+  const armedHomes = await loadArmedTriggerHomes(ctx, conv.user_id);
+  const state = classifyWorkState({
+    agentStatus,
+    isIdle,
+    awaitingInput,
+    hasPending,
+    isUnresponsive: activity.isUnresponsive,
+    messageCount: conv.message_count || 0,
+    killed: !!conv.inbox_killed_at,
+    userRest: userRestOf(conv),
+    armedTriggerHome: isArmedTriggerHome(conv, armedHomes.standing),
+    armedLoopHome: isArmedLoopHome(conv, now),
+    armedOnceTriggerHome: isArmedTriggerHome(conv, armedHomes.once),
+    childProducing,
+    settleVerdict: isSettleVerdictCurrent(conv) ? conv.settle_verdict : null,
+    declaredStatus: conv.thread_state_status ?? null,
+    sessionBoundary: boundary,
+  });
+  return { state, agentStatus, activity, isIdle, awaitingInput, hasPending, lastMsg, boundary };
+}
+
+// ── Needs-input push ─────────────────────────────────────────────────────────
+//
+// Pushes "this session is waiting on you" when a session TRANSITIONS into the
+// inbox's needs-input bucket — the same classification that drives the web
+// inbox grouping and its idle sound (classifyWorkState server-side;
+// isSessionWaitingForInput / waitingSoundKey are the client mirrors). The
+// daemon can't own this: it only reports raw agent_status, and "needs input"
+// is a composite verdict (status + idle grace + queued messages + open polls)
+// that can settle 45s AFTER the last write. So the write sites SCHEDULE a
+// re-check — managedSessions.updateAgentStatus / heartbeat on a status change,
+// messages.addMessages on an AskUserQuestion arrival — and this mutation
+// recomputes the verdict at fire time. Deduped per (message_count, kind), the
+// idle sound's exact key: one waiting episode pushes once, each new turn can
+// push again.
+//
+// Exported as a plain function so the fake-db tests can drive the real logic
+// (same pattern as pendingMessages).
+export async function performNeedsInputCheck(
+  ctx: any,
+  args: { conversation_id: any; status_ts?: number },
+): Promise<{ notified: boolean; reason?: string }> {
+  const conv = await ctx.db.get(args.conversation_id);
+  if (!conv || !conv.message_count) return { notified: false, reason: "no_content" };
+  // A killed row is retired for good — the teardown is deliberate, and its
+  // frozen flags never resurface anything.
+  if (conv.inbox_killed_at) return { notified: false, reason: "killed" };
+  // Hidden rows (stashed, or a folded run carrying the legacy dismissed stamp)
+  // do NOT return yet: the stall rule below needs the same derivation this
+  // push uses. "Stash hides work, not stalls" — a hidden session may be quiet,
+  // never quietly stuck, so a HARD block (open question, permission prompt,
+  // dead process) clears the hide and the row surfaces in Needs Input. The
+  // push-etiquette guards (pinned, subagents, spawned fleets, schedule runs)
+  // apply to the CHIME only and move below the stall block: a folded schedule
+  // run stalled on a permission prompt is exactly the invisible-stall trap.
+  const hidden = !!(conv.inbox_dismissed_at || conv.inbox_stashed_at);
+
+  const session = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", args.conversation_id))
+    .first();
+  // Scheduled off a specific status change: if the status has moved since, the
+  // newer write has its own check in flight — this one is stale.
+  if (args.status_ts !== undefined && session?.agent_status_updated_at !== args.status_ts) {
+    return { notified: false, reason: "superseded" };
+  }
+
+  const now = Date.now();
+  const { state, agentStatus, activity, awaitingInput, hasPending, lastMsg, boundary } =
+    await deriveConversationVerdict(ctx, conv, session, now);
+
+  // A SESSION BOUNDARY — a resume, a clear, or a manual /compact landing the
+  // pane at an idle prompt — settles the row with no turn behind it. Nothing
+  // completed, so nothing is announced: no chime, no unstash, and above all no
+  // needs_input_notified_key. That last one is why the gate sits HERE rather
+  // than beside the chime: the key names the waiting episode this check
+  // covered, and a boundary writing it would read as "already announced" and
+  // swallow the real settle that follows at the same message count. Returning
+  // first is what keeps the key an identity for real settles only (ct-49533).
+  //
+  // A boundary write does not schedule this check at all, so this is normally
+  // unreachable; a check scheduled by another path (the AskUserQuestion
+  // recheck in messages.ts) can still land on one.
+  if (boundary) return { notified: false, reason: "session_boundary" };
+
+  // The route up (org-staffing.md S28). A hand (a session that reports to a
+  // role) that ends a turn needing input tells its role at once, however it
+  // asks: an open prompt, a dead process, a declared block, a question in
+  // prose. The role, not the person, is its first reader. A role's standing
+  // session tells the role it reports to the same way; one that reports to a
+  // person is its own card in that person's inbox (the anchor rule in
+  // placeInboxRow), so it tells nobody. What it tells is the role's
+  // needs-input trigger, fired once per ask (agentTasks.routeUpWaitingSession).
+  // A role that cannot be told (its trigger paused or cancelled, no standing
+  // session, the org off, its machine away) is no reader at all: `unheard` sends the settle on
+  // to the person's own notify below, so the wait is never swallowed.
+  let unheard = false;
+  if ((conv.org_role_id || conv.standing_role_id) && state === "needs_input") {
+    const kind = needsInputKind({ awaitingInput, agentStatus, isUnresponsive: activity.isUnresponsive });
+    const declared = conv.thread_state_status === "blocked";
+    const stuck = awaitingInput || kind === "permission_blocked" || kind === "stopped" || kind === "unresponsive";
+    // A stall or a declared block is certain now. A plain turn is not yet: a
+    // finished turn lands here too, so it waits for the settle classifier,
+    // which fires the route up on a needs-input verdict
+    // (idleSummary.setIdleSummary). Only whether anyone can hear is known now.
+    if (stuck || declared) {
+      unheard = (await routeUpWaitingSession(ctx, conv, {
+        why: stuck ? kind : "blocked",
+        since: (stuck ? session?.agent_status_updated_at : conv.thread_state_at) ?? lastMsg?.timestamp ?? now,
+        stuck,
+      })) === "unreachable";
+    } else {
+      unheard = (await routeUpHears(ctx, conv)) === "unreachable";
+    }
+  }
+
+  // ── The stall rule ─────────────────────────────────────────────────────────
+  // Only the HARD kinds count as a stall: the machine cannot proceed (open
+  // AskUserQuestion, permission prompt) or is gone (dead / unresponsive with
+  // output). A plain finished turn — the needs_input fallthrough — is quiet
+  // progress and never breaks a hide; neither does the classifier. Clearing
+  // both stamps mirrors --needs-attention (agentTasks.completeTaskRun) and the
+  // blocked declaration (conversations.setThreadState): one contract, three
+  // doors. No push from here — the row surfacing in Needs Input IS the signal,
+  // and the machine-turn guard below would suppress the chime anyway.
+  if (hidden) {
+    const stallKind = needsInputKind({ awaitingInput, agentStatus, isUnresponsive: activity.isUnresponsive });
+    const stalled =
+      state === "needs_input" &&
+      (awaitingInput || stallKind === "permission_blocked" || stallKind === "stopped" || stallKind === "unresponsive");
+    if (stalled) {
+      await restoreToInbox(ctx, conv);
+      return { notified: false, reason: "unstashed_stall" };
+    }
+    return { notified: false, reason: "hidden" };
+  }
+  // A session a role looks after reaches the person through the role
+  // (org-staffing.md S28): its own settle rings nobody. The role reads it
+  // first and raises what needs a person in its own thread, and that card
+  // chimes like any session waiting on them.
+  // A role's standing session that reports to a role rides that role's card
+  // the same way (S28), so it rings nobody either.
+  if (conv.org_role_id && !unheard) {
+    return { notified: false, reason: "under_role" };
+  }
+  // ── Push etiquette (chime only) ────────────────────────────────────────────
+  // The sound skips pinned (isSessionWaitingForInput's !is_pinned arms).
+  if (conv.inbox_pinned_at) return { notified: false, reason: "pinned" };
+  // Mirror of the web's isSub guard (inboxStore): the SAME two shared
+  // predicates, in the same order — isSubagentConversation here (reason
+  // "subagent": is_subagent / parent link; a workflow sub keeps this reason
+  // too, though isAgentSpawnedConversation would also catch it) and the
+  // isAgentSpawnedConversation gate just below (reason "agent_spawned"). The
+  // idle sound skips these, so the push does too. A worktree (local
+  // --isolated, path-stamped, or a cloud host's) is a LOCATION, not a parent,
+  // so a human-started worktree session pushes. Agent fan-out in worktrees
+  // (cast spawn --isolated/--cloud from inside a session, agent-team fleets)
+  // still stands down at the agent_spawned gate because those rows carry
+  // spawned_by_conversation_id / agent_name; a fan-out started from a plain
+  // terminal has no spawner and pushes per worker — intended: human-started
+  // fan-out is first-class. The schedule_run stand-down further down is
+  // server-only (the chime has no agent_task_id case).
+  if (isSubagentConversation(conv) || conv.is_workflow_sub) {
+    return { notified: false, reason: "subagent" };
+  }
+  // The bar is "a session the USER was driving is waiting on THEM". Machine-
+  // initiated sessions never clear it: agent fan-out (cast spawn, agent-team
+  // fleets — the same classification that gates the "started coding" team
+  // notification) and schedule runs park idle after every turn by design.
+  if (isAgentSpawnedConversation(conv)) {
+    return { notified: false, reason: "agent_spawned" };
+  }
+  if (conv.agent_task_id) {
+    return { notified: false, reason: "schedule_run" };
+  }
+  // The settle classifier is NOT scheduled from here any more: this check
+  // stands down for pinned / agent-spawned / schedule-run rows before this
+  // point, and those need a verdict too. It has its own entry off the same
+  // status change (managedSessions.scheduleNeedsInputCheck →
+  // idleSummary.classifySettle).
+  // A hosted assistant conversation asks only through its decision row (the
+  // approval card, which rings on its own), the same rule as the server's
+  // ownAsk and the web's sessionHasOpenQuestion. A settled answer is the
+  // person's to read, never "waiting for you": nine finished answers once
+  // rang as nine conversations needing them (pl-840).
+  if (isHostedAgentType(conv.agent_type)) return { notified: false, reason: "hosted" };
+  if (state !== "needs_input") return { notified: false, reason: "not_needs_input" };
+
+  const kind = needsInputKind({ awaitingInput, agentStatus, isUnresponsive: activity.isUnresponsive });
+  // Dead/unresponsive sessions land in needs-input on the web too, but a push
+  // for every deliberately closed terminal session is noise — keep the push to
+  // the genuinely-waiting kinds.
+  if (kind === "stopped" || kind === "unresponsive") return { notified: false, reason: "dead" };
+
+  // The waiting episode's identity, and only a REAL settle ever reaches it —
+  // the boundary return above is what keeps it that way (ct-49533). The key
+  // stays this exact shape because the daemon's own permission push writes it
+  // too (notifySession, always for a real settle) and the two must match for
+  // that stand-down to work.
+  const key = `${conv.message_count}:${kind}`;
+  if (conv.needs_input_notified_key === key) return { notified: false, reason: "dup" };
+
+  // The waiting turn must have been STARTED by the human. A turn kicked off by
+  // another session's cast send (arrives wrapped in <session-message>) or by a
+  // schedule injection into a live conversation (<scheduled-task>, the
+  // taskScheduler --context current path) parks the session idle without the
+  // user having asked anything — that's the machinery talking to itself, not a
+  // session waiting on its human. Runs after the verdict so the extra indexed
+  // read is only paid when we'd otherwise push.
+  const lastUserMsg = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_timestamp", (q: any) => q.eq("conversation_id", conv._id))
+    .order("desc")
+    .filter((q: any) => q.eq(q.field("role"), "user"))
+    .first();
+  if (isMachineStartedTurn(lastUserMsg?.content)) {
+    return { notified: false, reason: "machine_turn" };
+  }
+
+  // The daemon already pushes "Permission needed" when it creates the pending
+  // permission record — only cover the recordless blocks (AskUserQuestion and
+  // scraped prompts, which the daemon's SKIP_TOOLS deliberately skips).
+  if (kind === "permission_blocked") {
+    const open = await ctx.db
+      .query("pending_permissions")
+      .withIndex("by_conversation_status", (q: any) =>
+        q.eq("conversation_id", conv._id).eq("status", "pending"),
+      )
+      .first();
+    if (open) {
+      await ctx.db.patch(conv._id, { needs_input_notified_key: key });
+      return { notified: false, reason: "daemon_permission_push" };
+    }
+  }
+
+  // Mark BEFORE delivering so a conflicting retry can't double-push.
+  await ctx.db.patch(conv._id, { needs_input_notified_key: key });
+
+  const title = conv.title?.trim() || conv.project_path?.split("/").pop() || "Session";
+  const message =
+    (kind === "awaiting_input" ? auqQuestionPreview(lastMsg) : null) ??
+    (lastMsg?.role === "assistant" ? notifPreview(lastMsg.content) : null) ??
+    conv.idle_summary ??
+    "Waiting for your input";
+
+  const delivered = await deliverSessionNotificationToParties(
+    ctx, conv, "session_idle", title, message,
+  );
+  return { notified: delivered };
+}
+
+// Machine-authored user turns: another session's cast send and the schedule
+// injector both wrap their prompts in a sentinel tag the human never types.
+function isMachineStartedTurn(content: string | undefined | null): boolean {
+  const c = (content || "").trimStart();
+  return c.startsWith("<session-message") || c.startsWith("<scheduled-task") || c.startsWith("<session-escalation");
+}
+
+export function notifPreview(text: string | undefined | null, max = 200): string | null {
+  const cleaned = (text || "").replace(/\s+/g, " ").trim();
+  if (!cleaned) return null;
+  return cleaned.length > max ? cleaned.slice(0, max - 1) + "…" : cleaned;
+}
+
+// The first question of an open AskUserQuestion poll — the most useful push
+// body for "Claude is asking you something". tool_calls[].input is a JSON
+// string (messages schema).
+export function auqQuestionPreview(lastMsg: any): string | null {
+  const tc = lastMsg?.tool_calls?.find((t: any) => t.name === "AskUserQuestion");
+  if (!tc) return null;
+  try {
+    const q = JSON.parse(tc.input)?.questions?.[0]?.question;
+    return notifPreview(typeof q === "string" ? q : null);
+  } catch {
+    return null;
+  }
+}
+
+// The fold-up. Runs at the end of an open window and delivers ONE alert for
+// every session that started waiting inside it.
+//
+// Two facts are re-read rather than trusted: a session the person already
+// answered (its message count moved past the episode the row announced) and a
+// session they stashed are dropped, so the alert never names work that is no
+// longer waiting. When nothing survives, the window closes WITHOUT stamping an
+// alert — a quiet hour must not spend the next hour's budget, so the next
+// session to settle alerts at once.
+//
+// Exported plain for the fake-db tests, same pattern as performNeedsInputCheck.
+export async function performIdleDigestFlush(
+  ctx: any,
+  userId: any,
+): Promise<{ notified: boolean; reason?: string; count?: number }> {
+  const user = await ctx.db.get(userId);
+  if (!user) return { notified: false, reason: "no_user" };
+  const state = user.idle_digest_state;
+  const now = Date.now();
+  const since = state?.last_alerted_at ?? 0;
+  const windowEndsAt = since + IDLE_DIGEST_WINDOW_MS;
+  // The window moved after this flush was armed (an alert landed inside it).
+  // Wait out the rest rather than alerting early.
+  if (now < windowEndsAt) {
+    await ctx.db.patch(user._id, {
+      idle_digest_state: { last_alerted_at: since, flush_due_at: windowEndsAt },
+    });
+    await ctx.scheduler.runAfter(windowEndsAt - now, internal.notifications.idleDigestFlush, {
+      user_id: user._id,
+    });
+    return { notified: false, reason: "early" };
+  }
+
+  const rows = await ctx.db
+    .query("notifications")
+    .withIndex("by_recipient_created", (q: any) =>
+      q.eq("recipient_user_id", user._id).gte("created_at", since),
+    )
+    .collect();
+  const waiting = rows.filter((n: any) => n.quiet && n.type === "session_idle" && !n.read);
+
+  const titles: string[] = [];
+  for (const row of waiting) {
+    const conv = row.conversation_id ? await ctx.db.get(row.conversation_id) : null;
+    if (!conv || conv.inbox_killed_at || conv.inbox_stashed_at || conv.inbox_dismissed_at) continue;
+    // Rows written before hosted conversations stood down above.
+    if (isHostedAgentType(conv.agent_type)) continue;
+    // The episode this row announced, still current: the dedupe key names the
+    // message count the session settled at, so a reply (which grows the count)
+    // reads as answered.
+    if (!String(conv.needs_input_notified_key ?? "").startsWith(`${conv.message_count || 0}:`)) continue;
+    titles.push(sessionLabelOf(conv));
+  }
+
+  if (titles.length === 0) {
+    // Close the window without spending an alert.
+    await ctx.db.patch(user._id, { idle_digest_state: { last_alerted_at: since } });
+    return { notified: false, reason: "nothing_waiting" };
+  }
+
+  // Replace, don't stack: the bell holds at most one fold-up, and the fresh
+  // _id is what the desktop banner watcher reads as "new".
+  for (const row of rows) {
+    if (row.type === "sessions_need_input") await ctx.db.delete(row._id);
+  }
+
+  const { title, message } = summarizeIdleDigest(titles);
+  // Stamp BEFORE delivering so a racing second flush can't double-alert.
+  await ctx.db.patch(user._id, { idle_digest_state: { last_alerted_at: now } });
+  const notifId = await ctx.db.insert("notifications", {
+    recipient_user_id: user._id,
+    type: "sessions_need_input",
+    // No conversation on purpose: the alert points at the inbox, not at one
+    // session out of several.
+    message,
+    read: false,
+    created_at: now,
+  });
+  if (user.push_token && user.notifications_enabled) {
+    await enqueuePush(ctx, {
+      user,
+      notification_id: notifId,
+      type: "sessions_need_input",
+      title,
+      body: message,
+      data: { type: "sessions_need_input", count: titles.length },
+    });
+  }
+  return { notified: true, count: titles.length };
+}
+
+export const idleDigestFlush = internalMutation({
+  args: { user_id: v.id("users") },
+  handler: (ctx, args) => performIdleDigestFlush(ctx, args.user_id),
+});
+
+export const checkNeedsInput = internalMutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    // agent_status_updated_at at scheduling time; the check aborts if the
+    // status moved on since (a newer transition owns its own check).
+    status_ts: v.optional(v.number()),
+  },
+  handler: (ctx, args) => performNeedsInputCheck(ctx, args),
+});
+
+const ENTITY_TYPE_VALIDATOR = v.union(
+  v.literal("task"),
+  v.literal("doc"),
+  v.literal("plan"),
+  v.literal("conversation")
+);
+
+export const isWatching = query({
+  args: {
+    entity_type: ENTITY_TYPE_VALIDATOR,
+    entity_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!args.entity_id) return false;
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return false;
+    const sub = await ctx.db
+      .query("entity_subscriptions")
+      .withIndex("by_user_entity", (q: any) =>
+        q.eq("user_id", userId).eq("entity_type", args.entity_type).eq("entity_id", args.entity_id)
+      )
+      .first();
+    return sub ? !sub.muted : false;
+  },
+});
+
+export const toggleWatch = mutation({
+  args: {
+    entity_type: ENTITY_TYPE_VALIDATOR,
+    entity_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const existing = await ctx.db
+      .query("entity_subscriptions")
+      .withIndex("by_user_entity", (q: any) =>
+        q.eq("user_id", userId).eq("entity_type", args.entity_type).eq("entity_id", args.entity_id)
+      )
+      .first();
+    if (existing) {
+      if (existing.reason === "watching") {
+        await ctx.db.delete(existing._id);
+        return { watching: false };
+      }
+      await ctx.db.patch(existing._id, { muted: !existing.muted });
+      return { watching: existing.muted };
+    }
+    await ctx.db.insert("entity_subscriptions", {
+      user_id: userId,
+      entity_type: args.entity_type,
+      entity_id: args.entity_id,
+      reason: "watching",
+      muted: false,
+      created_at: Date.now(),
+    });
+    return { watching: true };
+  },
+});

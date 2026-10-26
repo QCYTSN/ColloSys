@@ -1,0 +1,536 @@
+import { matchDirectoryMapping } from "@codecast/shared/team/directoryRules";
+import { repositoryKeyOfRemote } from "@codecast/shared/contracts";
+import { Id } from "./_generated/dataModel";
+import { isSessionOwner } from "./sessionOwners";
+import { currentMembershipVisibility, effectiveMembershipVisibility, isVisibilityShareable, type MembershipVisibilityFacts } from "./teamVisibility";
+
+type DbCtx = { db: any };
+
+type ConversationForAccess = {
+  _id?: Id<"conversations">;
+  user_id: Id<"users">;
+  team_id?: Id<"teams">;
+  is_private: boolean;
+  team_visibility?: string;
+  share_token?: string;
+  // Decides which segment of the owner's visibility history applies.
+  started_at?: number;
+};
+
+export type AccessLevel = "owner" | "team" | "shared" | "denied";
+
+// ── Team membership ──
+
+export async function isTeamMember(
+  ctx: DbCtx,
+  userId: Id<"users">,
+  teamId: Id<"teams">
+): Promise<boolean> {
+  const m = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_user_team", (q: any) =>
+      q.eq("user_id", userId).eq("team_id", teamId)
+    )
+    .first();
+  return !!m;
+}
+
+// The admin half of the same question, next to it so the two can never drift.
+// Membership decides what you may READ; admin decides what you may reshape for
+// everybody else (delete a teammate's message, rename a channel, set the default
+// one). Chat and anchors both gate on this.
+export async function isTeamAdmin(
+  ctx: DbCtx,
+  userId: Id<"users">,
+  teamId: Id<"teams">
+): Promise<boolean> {
+  const m = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_user_team", (q: any) =>
+      q.eq("user_id", userId).eq("team_id", teamId)
+    )
+    .first();
+  return m?.role === "admin";
+}
+
+export async function getOwnerMembership(
+  ctx: DbCtx,
+  ownerId: Id<"users">,
+  teamId: Id<"teams">
+): Promise<MembershipVisibilityFacts | null> {
+  return ctx.db
+    .query("team_memberships")
+    .withIndex("by_user_team", (q: any) =>
+      q.eq("user_id", ownerId).eq("team_id", teamId)
+    )
+    .first();
+}
+
+export { isVisibilityShareable } from "./teamVisibility";
+
+// ── Access control (single conversation) ──
+// is_private is the source of truth (set at creation from directory_team_mappings auto_share).
+// team_visibility is the per-conversation override. Membership visibility is user-level opt-out,
+// read per conversation: a "going forward" switch pins sessions started before it at the
+// level they had (teamVisibility.ts).
+
+export async function isConversationTeamVisible(
+  ctx: DbCtx,
+  conversation: ConversationForAccess
+): Promise<boolean> {
+  if (!conversation.team_id) return false;
+  const membership = await getOwnerMembership(ctx, conversation.user_id, conversation.team_id);
+  return isConversationTeamVisibleSync(
+    conversation,
+    effectiveMembershipVisibility(membership, conversation.started_at)
+  );
+}
+
+function isConversationTeamVisibleSync(
+  conversation: { is_private: boolean; team_visibility?: string; team_id?: any; user_id: any },
+  ownerMembershipVisibility: string
+): boolean {
+  if (!conversation.team_id) return false;
+  if (!isVisibilityShareable(ownerMembershipVisibility)) return false;
+  if (conversation.is_private === false) return true;
+  if (conversation.team_visibility && conversation.team_visibility !== "private")
+    return true;
+  return false;
+}
+
+export async function canTeamMemberAccess(
+  ctx: DbCtx,
+  viewerId: Id<"users">,
+  conversation: ConversationForAccess
+): Promise<boolean> {
+  if (!conversation.team_id) return false;
+  if (!(await isTeamMember(ctx, viewerId, conversation.team_id))) return false;
+  return isConversationTeamVisible(ctx, conversation);
+}
+
+// Owner-or-team gate for a signed-in viewer. "Owner" is the same definition
+// checkConversationAccess uses — primary user_id, the denormalized
+// owner_user_id, or a session_owners row (assigned secondary owners steer with
+// full owner rights). No share-token logic: presenting or having redeemed a
+// share link is a separate, weaker tier.
+export async function isConversationOwner(
+  ctx: DbCtx,
+  viewerId: Id<"users">,
+  conversation: ConversationForAccess
+): Promise<boolean> {
+  if (conversation.user_id.toString() === viewerId.toString()) return true;
+  if ((conversation as any).owner_user_id?.toString() === viewerId.toString()) return true;
+  return !!conversation._id && (await isSessionOwner(ctx, conversation._id, viewerId));
+}
+
+export async function canOwnerOrTeamAccess(
+  ctx: DbCtx,
+  viewerId: Id<"users">,
+  conversation: ConversationForAccess
+): Promise<boolean> {
+  if (await isConversationOwner(ctx, viewerId, conversation)) return true;
+  return canTeamMemberAccess(ctx, viewerId, conversation);
+}
+
+export async function checkConversationAccess(
+  ctx: DbCtx,
+  viewerId: Id<"users"> | null,
+  conversation: ConversationForAccess,
+  presentedShareToken?: string | null
+): Promise<AccessLevel> {
+  if (viewerId) {
+    if (conversation.user_id.toString() === viewerId.toString()) return "owner";
+    // An OWNER (a member of the session's owner set — the humans ASSIGNED to
+    // steer a session run by another account, e.g. a Mr Bot fix session parked
+    // on a founder) steers with full owner rights: assignment is an explicit
+    // grant made by someone who already had runner-or-team access. owner_user_id
+    // is the denormalized primary-owner fast path; the session_owners lookup
+    // covers secondary owners (a session may have several).
+    if ((conversation as any).owner_user_id?.toString() === viewerId.toString()) return "owner";
+    if (conversation._id && (await isSessionOwner(ctx, conversation._id, viewerId))) return "owner";
+    if (await canTeamMemberAccess(ctx, viewerId, conversation)) return "team";
+  }
+  // "shared" means the viewer PRESENTED the share link — the token itself on
+  // this call, or (signed in) a prior redemption of it recorded when they
+  // opened /share/<token>. The token's mere existence grants nothing: a
+  // conversation id circulates far more freely than its share link, and this
+  // branch once made every conversation that ever minted a link readable to
+  // anyone holding its id (issue #27). A redemption counts only while its
+  // stored token matches the current one, so rotation revokes past redeemers.
+  if (conversation.share_token) {
+    if (presentedShareToken && presentedShareToken === conversation.share_token) return "shared";
+    if (viewerId && conversation._id) {
+      const redemption = await ctx.db
+        .query("share_redemptions")
+        .withIndex("by_conversation_user", (q: any) =>
+          q.eq("conversation_id", conversation._id).eq("user_id", viewerId)
+        )
+        .first();
+      if (redemption?.token === conversation.share_token) return "shared";
+    }
+  }
+  return "denied";
+}
+
+// ── Team feed filter ──
+// Pre-loads membership data for team feed filtering, returns a predicate.
+// Use this everywhere team conversations are listed or counted.
+//
+// Visibility is determined by is_private (set at creation from auto_share).
+// Membership visibility is a user-level opt-out (hidden users are invisible).
+//
+// Usage:
+//   const filter = await createTeamFeedFilter(ctx, teamId);
+//   const visible = conversations.filter(c => filter.isVisible(c));
+//   const vis = filter.getVisibility(userId);  // for resolveVisibilityMode
+
+type ConversationForFeed = {
+  user_id: { toString(): string };
+  team_id?: any;
+  is_private: boolean;
+  team_visibility?: string;
+  started_at?: number;
+};
+
+export type TeamFeedFilter = {
+  isVisible: (conversation: ConversationForFeed) => boolean;
+  /** The member's CURRENT level: the most they show for any session. Use it
+   *  for member-level gates ("is this member hidden"); a conversation's own
+   *  level is getVisibilityFor. */
+  getVisibility: (userId: string) => string;
+  /** The level the owner shows THIS conversation at (history-aware). */
+  getVisibilityFor: (conversation: ConversationForFeed) => string;
+  memberships: Array<{ user_id: Id<"users">; visibility?: string }>;
+};
+
+export async function createTeamFeedFilter(
+  ctx: DbCtx,
+  teamId: Id<"teams">
+): Promise<TeamFeedFilter> {
+  const memberships = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_team_id", (q: any) => q.eq("team_id", teamId))
+    .collect();
+
+  const membershipMap = new Map<string, MembershipVisibilityFacts>(
+    memberships.map((m: any) => [m.user_id.toString(), m])
+  );
+
+  const getVisibilityFor = (conversation: ConversationForFeed): string =>
+    effectiveMembershipVisibility(membershipMap.get(conversation.user_id.toString()), conversation.started_at);
+
+  const isVisible = (conversation: ConversationForFeed): boolean => {
+    if (!conversation.team_id) return false;
+    return isConversationTeamVisibleSync(conversation as any, getVisibilityFor(conversation));
+  };
+
+  const getVisibility = (userId: string): string => currentMembershipVisibility(membershipMap.get(userId));
+
+  return { isVisible, getVisibility, getVisibilityFor, memberships };
+}
+
+// ── Profile activity visibility ──
+// A user's profile page (team/[username]) surfaces their conversations, message
+// previews, and activity counts. Selecting by (team_id, user_id) alone is NOT a
+// privacy gate — team_id is routing, set even on is_private conversations. These
+// helpers re-apply the real gate so a teammate's profile shows only *shared*
+// activity, while the owner viewing their own profile sees everything.
+
+// Pure per-conversation decision. Unit-tested in privacy.test.ts.
+export function profileConversationVisible(
+  isOwner: boolean,
+  isViewerTeamMember: boolean,
+  ownerMembershipVisibility: string,
+  conversation: ConversationForFeed
+): boolean {
+  if (isOwner) return true; // viewing your own profile → see all your activity
+  if (!isViewerTeamMember) return false; // not a member of the scoping team → nothing
+  return isConversationTeamVisibleSync(conversation as any, ownerMembershipVisibility);
+}
+
+// Builds the predicate used to filter a target user's conversations on their
+// profile, loading membership data once via createTeamFeedFilter. Owner sees
+// all; a teammate sees only team-visible (non-private) conversations; anyone
+// else (or a missing team scope) sees nothing.
+export async function getProfileVisibilityPredicate(
+  ctx: DbCtx,
+  viewerId: Id<"users"> | null,
+  targetUserId: Id<"users">,
+  teamId: Id<"teams"> | undefined
+): Promise<(conversation: ConversationForFeed) => boolean> {
+  if (viewerId && viewerId.toString() === targetUserId.toString()) return () => true;
+  if (!viewerId || !teamId) return () => false;
+  const filter = await createTeamFeedFilter(ctx, teamId);
+  const isMember = filter.memberships.some(
+    (m) => m.user_id.toString() === viewerId.toString()
+  );
+  return (conversation) =>
+    profileConversationVisible(false, isMember, filter.getVisibilityFor(conversation), conversation);
+}
+
+// ── Public profile visibility (the third, anonymous tier) ──
+// is_private=false only means "team-visible" — NOT world-visible. A session is
+// PUBLIC only because its owner explicitly pinned it to their public profile,
+// which the pin mutation backs with a share_token. We require BOTH here as
+// defense in depth: an un-pin or a revoked token immediately drops the session
+// from the anonymous profile even if the other field lingers. No auth context
+// is consulted — this is the rule for an anonymous visitor.
+export function profilePublicSessionVisible(conversation: {
+  profile_pinned_at?: number;
+  share_token?: string;
+}): boolean {
+  return !!conversation.profile_pinned_at && !!conversation.share_token;
+}
+
+// ── Team resolution for session creation ──
+// Single source of truth for resolving which team a conversation belongs to.
+// Used by dispatch.ts and conversations.ts session creation.
+
+export type DirectoryMapping = {
+  /** The team a share rule sends sessions to; absent on a "never share" rule. */
+  team_id?: Id<"teams">;
+  path_prefix: string;
+  auto_share: boolean;
+  /**
+   * A lock written by hand: nothing in this folder is ever shared by a rule.
+   * A path lock beats a repository rule the same way any path rule does
+   * (longest prefix), and among repository rules a lock wins over a share.
+   */
+  private?: boolean;
+  /** Sessions started before this stay private; absent shares every session. */
+  share_since?: number;
+  /**
+   * The repository the mapped checkout is a clone of (repositoryKeyOfRemote),
+   * stamped when the mapping is written. A session in ANY clone or linked
+   * worktree of that repository resolves to this mapping when no path rule
+   * covers it, so one share reaches every checkout, the ones outside the
+   * mapped folder included (codex keeps its worktrees under ~/.codex).
+   */
+  repository?: string;
+};
+
+/** The repository key of a session, from the remote its checkout recorded. */
+export function conversationRepository(conv: { git_remote_url?: string | null } | null | undefined): string | undefined {
+  return repositoryKeyOfRemote(conv?.git_remote_url) ?? undefined;
+}
+
+// A mapping shares a session only if the session started on or after the
+// mapping's share start. A session with no start time is one being created
+// right now, so it is covered. Rows synced later from old transcripts carry
+// their real started_at and stay private when it predates the share.
+export function mappingCoversStart(
+  mapping: Pick<DirectoryMapping, "share_since">,
+  startedAt: number | undefined,
+): boolean {
+  return mapping.share_since == null || startedAt == null || startedAt >= mapping.share_since;
+}
+
+// The mapping a session falls under. A directory rule is the explicit word
+// on a path, so the longest matching prefix wins; with no path rule, a
+// mapping stamped with the session's repository covers it. Neither the path
+// nor the repository alone is enough: a private clone of a shared repository
+// is a path rule on that clone, and a codex worktree outside every mapped
+// folder is reached only through the repository.
+export { matchDirectoryMapping };
+
+export function resolveTeamForPath(
+  userMappings: DirectoryMapping[],
+  conversationPath: string | undefined,
+  fallbackTeamId: Id<"teams"> | undefined,
+  startedAt?: number,
+  repository?: string | null,
+): { teamId: Id<"teams"> | undefined; isPrivate: boolean; autoShared: boolean } {
+  let resolvedTeamId = fallbackTeamId;
+  let isPrivate = true;
+  let autoShared = false;
+
+  if ((conversationPath || repository) && userMappings.length > 0) {
+    const bestMatch = matchDirectoryMapping(userMappings, conversationPath, repository);
+
+    if (bestMatch?.private) {
+      // A lock: private, and routed nowhere. The team fallback never applies.
+      resolvedTeamId = undefined;
+    } else if (bestMatch) {
+      resolvedTeamId = bestMatch.team_id;
+      if (bestMatch.auto_share && mappingCoversStart(bestMatch, startedAt)) {
+        isPrivate = false;
+        autoShared = true;
+      }
+    } else {
+      resolvedTeamId = undefined;
+    }
+  }
+
+  return { teamId: resolvedTeamId, isPrivate, autoShared };
+}
+
+// Work items (tasks/plans/docs) inherit a linked conversation's team only when
+// the conversation is actually team-visible. On conversations team_id is
+// routing — stamped even on private sessions — but on work items team_id alone
+// grants every team member full read access (canAccessTask has no privacy
+// gate), so propagating it from a private session leaks the item to the team.
+export function teamVisibleConvTeam<T = Id<"teams">>(conv: {
+  team_id?: T;
+  is_private?: boolean;
+  auto_shared?: boolean;
+  team_visibility?: string;
+} | null | undefined): T | undefined {
+  if (!conv?.team_id) return undefined;
+  if (!conv.is_private || conv.auto_shared) return conv.team_id;
+  if (conv.team_visibility && conv.team_visibility !== "private") return conv.team_id;
+  return undefined;
+}
+
+// Creation-time team/privacy resolution. Every conversation insert must derive
+// team_id / is_private / auto_shared from this (or inherit them from an
+// existing conversation, as forks do) — writing literals at an insert site is
+// how "shared with nobody" rows are born (is_private:false with no team_id
+// fails every team-visibility gate, and buildPathRestampUpdate treats that
+// combination as a manual share it must not touch, so the row never heals).
+export async function resolveCreationPrivacy(
+  ctx: DbCtx,
+  ownerId: Id<"users">,
+  conversationPath: string | undefined,
+  fallbackTeamId?: Id<"teams">,
+  startedAt?: number,
+  gitRemoteUrl?: string | null,
+): Promise<{
+  team_id: Id<"teams"> | undefined;
+  is_private: boolean;
+  auto_shared: true | undefined;
+}> {
+  const mappings = await ctx.db
+    .query("directory_team_mappings")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", ownerId))
+    .collect();
+  const { teamId, isPrivate, autoShared } = resolveTeamForPath(
+    mappings as DirectoryMapping[],
+    conversationPath,
+    fallbackTeamId,
+    startedAt,
+    repositoryKeyOfRemote(gitRemoteUrl),
+  );
+  return {
+    team_id: teamId,
+    is_private: isPrivate,
+    auto_shared: autoShared || undefined,
+  };
+}
+
+// Sharing a conversation (is_private → false) MUST guarantee a team_id, or the
+// conversation becomes "shared with nobody": every team-visibility check
+// short-circuits on `!team_id` (see isConversationTeamVisible), so no teammate
+// can see it even though it reads as non-private. This builds the patch that
+// flips a conversation shared while ensuring it carries a team:
+//   1. keep an already-assigned team_id,
+//   2. else re-resolve from the owner's directory mappings (the creation rule),
+//   3. else fall back to the owner's active/default team.
+// team_id is only omitted if the owner belongs to no team at all.
+export async function buildShareUpdate(
+  ctx: DbCtx,
+  conversation: { team_id?: Id<"teams">; git_root?: string; project_path?: string; git_remote_url?: string },
+  ownerId: Id<"users">
+): Promise<{ is_private: false; team_id?: Id<"teams"> }> {
+  const updates: { is_private: false; team_id?: Id<"teams"> } = { is_private: false };
+  if (conversation.team_id) {
+    updates.team_id = conversation.team_id;
+    return updates;
+  }
+
+  const mappings = await ctx.db
+    .query("directory_team_mappings")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", ownerId))
+    .collect();
+  const { teamId } = resolveTeamForPath(
+    mappings as DirectoryMapping[],
+    conversation.git_root || conversation.project_path,
+    undefined,
+    undefined,
+    conversationRepository(conversation),
+  );
+  if (teamId) {
+    updates.team_id = teamId;
+    return updates;
+  }
+
+  const owner = await ctx.db.get(ownerId);
+  const fallback = owner?.active_team_id ?? owner?.team_id;
+  if (fallback) updates.team_id = fallback;
+  return updates;
+}
+
+// Team/privacy is resolved once at creation from whatever path exists at that
+// instant — but several flows mint the conversation before the real path is
+// known (quick-create pre-warm, web-started stubs) and stamp project_path /
+// git_root later. Without re-resolving, those conversations keep their
+// born-blank visibility (private, teamless) forever, even when the directory
+// has an auto_share mapping covering it.
+//
+// Builds the creation-equivalent team/privacy patch for a late path stamp.
+// Explicit user choices always win, and a restamp only ever applies a positive
+// mapping match — revoking access stays a user action:
+//  - team_visibility "private" (user locked it private) → no change
+//  - is_private false without auto_shared (user shared it manually) → no change,
+//    UNLESS the row has no team_id: "shared with nobody" is a contradiction
+//    (invisible to every teammate despite reading as shared), so adopting the
+//    mapping's team only grants the visibility the owner already believes exists
+//  - no mapping match for the path → no change
+export function buildPathRestampUpdate(
+  conversation: {
+    team_id?: Id<"teams">;
+    is_private?: boolean;
+    auto_shared?: boolean;
+    team_visibility?: string;
+    started_at?: number;
+    git_remote_url?: string;
+  },
+  mappings: DirectoryMapping[],
+  conversationPath: string | undefined
+): { team_id?: Id<"teams">; is_private?: boolean; auto_shared?: boolean } | null {
+  if (conversation.team_visibility === "private") return null;
+  if (conversation.is_private === false && !conversation.auto_shared && conversation.team_id)
+    return null;
+
+  const { teamId, autoShared } = resolveTeamForPath(
+    mappings,
+    conversationPath,
+    undefined,
+    conversation.started_at,
+    conversationRepository(conversation),
+  );
+  if (!teamId) return null;
+
+  const patch: { team_id?: Id<"teams">; is_private?: boolean; auto_shared?: boolean } = {};
+  if (conversation.team_id?.toString() !== teamId.toString()) {
+    patch.team_id = teamId;
+  }
+  if (autoShared && conversation.is_private !== false) {
+    patch.is_private = false;
+    patch.auto_shared = true;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+// ── Visibility modes ──
+
+export type VisibilityMode = "full" | "detailed" | "summary" | "minimal";
+
+const MEMBERSHIP_TO_VISIBILITY: Record<string, VisibilityMode> = {
+  hidden: "minimal",
+  activity: "minimal",
+  summary: "summary",
+  full: "full",
+  detailed: "detailed",
+  minimal: "minimal",
+};
+
+export function resolveVisibilityMode(
+  teamVisibility: string | undefined,
+  ownerMembershipVisibility: string | undefined,
+  isTeamFilter: boolean
+): VisibilityMode {
+  if (!isTeamFilter) return "full";
+  if (teamVisibility) return teamVisibility as VisibilityMode;
+  const fallback = ownerMembershipVisibility || "activity";
+  return MEMBERSHIP_TO_VISIBILITY[fallback] || "detailed";
+}

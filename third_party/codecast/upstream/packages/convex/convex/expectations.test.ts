@@ -1,0 +1,559 @@
+// A project's expectations (the-line-model.md LM5): the data path from a
+// proposal to a version, the history every version keeps, who may read and
+// change a project's document, and the card answer that applies a proposal.
+import { describe, expect, test } from "bun:test";
+import schema from "./schema";
+import { makeFakeDb, schemaIndexes } from "./testDb";
+import { hashToken } from "./apiTokens";
+import { brief, forProject, lines, overview, personEditCore, propose, resolve, resolveProposalCore, retract, show } from "./expectations";
+import { answerTrialCardCore, cards } from "./lineTrial";
+import { pauseAtGateCore } from "./workflow_runs";
+import { settleExpectationCard } from "./lib/expectationsApply";
+import { ask } from "./sessionDecisions";
+
+const INDEXES = schemaIndexes(schema);
+const TEAM = "teams_union";
+const OWNER = "users_owner";
+const MATE = "users_mate";
+const OUTSIDER = "users_out";
+const QUOTED = { kind: "call", ref: "cl-96:718", quote: "a call card's facts should hold true", when: "2026-09-30" };
+const BARE = { kind: "commit", ref: "um@0274603e1d" };
+
+async function makeCtx(asUser: string | null = null) {
+  let t = 1;
+  let n = 0;
+  const tables: Record<string, any[]> = {
+    users: [{ _id: OWNER, name: "Ashot" }, { _id: MATE, name: "Cam" }, { _id: OUTSIDER, name: "Out" }],
+    api_tokens: await Promise.all([OWNER, MATE, OUTSIDER].map(async (u) => ({ _id: `api_tokens_${u}`, user_id: u, token_hash: await hashToken(`tok-${u}`) }))),
+    teams: [{ _id: TEAM, name: "Union" }],
+    team_memberships: [{ _id: "tm_1", user_id: OWNER, team_id: TEAM, role: "admin" }, { _id: "tm_2", user_id: MATE, team_id: TEAM, role: "member" }],
+    projects: [{ _id: "projects_calls", user_id: OWNER, team_id: TEAM, workspace: `team:${TEAM}`, title: "Callers & Call Management", status: "active", created_at: 1, updated_at: 1 }],
+    project_expectations: [],
+    expectation_proposals: [],
+    counters: [],
+    session_decisions: [
+      { _id: "session_decisions_95", short_id: "sd-95", user_id: MATE, status: "answered", answered_by: { kind: "user", id: OWNER }, answer_text: "yes we should track the bounce as an object with the email on it.", options: [], created_at: 1 },
+      { _id: "session_decisions_96", short_id: "sd-96", user_id: MATE, status: "answered", answered_by: { kind: "role", id: "org_roles_1" }, answer_text: "yes we should track the bounce as an object with the email on it.", options: [], created_at: 1 },
+    ],
+    // cl-96: Ashot says the line QUOTED cites, at the segment its ref names.
+    transcripts: [{ _id: "transcripts_96", short_id: "cl-96", team_id: TEAM, room_key: "r", started_by: OWNER, status: "ended", started_at: 1 }],
+    transcript_segments: [
+      { _id: "transcript_segments_1", transcript_id: "transcripts_96", seq: 717, speaker_id: MATE, speaker_name: "Cam", text: "So what does the card show the caller?", t0: 0, t1: 1 },
+      { _id: "transcript_segments_2", transcript_id: "transcripts_96", seq: 718, speaker_id: OWNER, speaker_name: "Ashot", text: "I think a call card's facts should", t0: 1, t1: 2 },
+      { _id: "transcript_segments_3", transcript_id: "transcripts_96", seq: 719, speaker_id: OWNER, speaker_name: "Ashot", text: "hold true for every caller.", t0: 2, t1: 3 },
+    ],
+    chat_messages: [
+      { _id: "chat_messages_person", team_id: TEAM, channel_id: "chat_channels_team", user_id: MATE, content: "Callbacks only when the contact asked for one.", created_at: 1 },
+      { _id: "chat_messages_agent", team_id: TEAM, channel_id: "chat_channels_team", user_id: OWNER, origin: "agent", content: "Shipped: callbacks only when the contact asked for one.", created_at: 1 },
+      { _id: "chat_messages_other", team_id: "teams_other", channel_id: "chat_channels_x", user_id: OUTSIDER, content: "Callbacks only when the contact asked for one.", created_at: 1 },
+    ],
+  };
+  const db = makeFakeDb(tables, { indexes: INDEXES, creationTime: () => t++, mintId: (table) => `${table}_${++n}`, strictPatch: true });
+  return { auth: { async getUserIdentity() { return asUser ? { subject: asUser } : null; } }, db } as any;
+}
+
+const scope = (user = OWNER) => ({ api_token: `tok-${user}`, workspace: "team" as const, team_id: TEAM, project: "Callers" });
+const run = (fn: any, ctx: any, args: any) => fn._handler(ctx, args);
+
+describe("expectations data path", () => {
+  test("additions in a person's quoted words apply on their own as version 1, with stable ids and the window as the cursor", async () => {
+    const ctx = await makeCtx();
+    const out = await run(propose, ctx, { ...scope(), summary: "Seed", until: 500, ops: [
+      { op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED, BARE] },
+      { op: "add", part: "Calls", text: "The facts on a call card hold for every caller.", citations: [QUOTED] },
+    ] });
+    expect(out).toEqual({ short_id: "xp-1", status: "applied", version: 1, auto: true });
+    const s = await run(show, ctx, scope());
+    expect(s.current_version).toBe(1);
+    expect(s.doc.items.map((e: any) => e.id)).toEqual(["ex-callers-call-1", "ex-callers-call-2"]);
+    expect(s.doc).toMatchObject({ how: "auto", applied_by: "Ashot", proposal: "xp-1", prefix: "callers-call" });
+    expect(s.cursor).toBe(500);
+    const row = await ctx.db.query("project_expectations").first();
+    expect(row.workspace).toBe(`team:${TEAM}`);
+  });
+
+  test("an edit waits for a person; applying writes version 2 and version 1 stays readable", async () => {
+    const ctx = await makeCtx();
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] }] });
+    const edit = await run(propose, ctx, { ...scope(), summary: "Sharpen", ops: [{ op: "edit", id: "ex-callers-call-1", text: "A call card's facts are true, in English.", citations: [BARE] }] });
+    expect(edit).toEqual({ short_id: "xp-2", status: "open", version: 1 });
+    expect((await run(show, ctx, scope())).proposals[0]).toMatchObject({ short_id: "xp-2", status: "open", changes: 1 });
+
+    const applied = await run(resolve, ctx, { api_token: `tok-${MATE}`, proposal: "xp-2", action: "apply" });
+    expect(applied).toEqual({ short_id: "xp-2", status: "applied", version: 2 });
+    const now = await run(show, ctx, scope());
+    expect(now.doc.items[0]).toMatchObject({ id: "ex-callers-call-1", text: "A call card's facts are true, in English.", added_in: 1, changed_in: 2 });
+    expect(now.doc).toMatchObject({ version: 2, how: "person", applied_by: "Cam" });
+    expect(now.versions.map((v: any) => v.version)).toEqual([2, 1]);
+    const old = await run(show, ctx, { ...scope(), version: 1 });
+    expect(old.doc.items[0].text).toBe("A call card's facts are true.");
+
+    const judge = await run(brief, ctx, scope(MATE));
+    expect(judge.version).toBe(2);
+    expect(judge.text).toContain("ex-callers-call-1: A call card's facts are true, in English.");
+    expect((await run(brief, ctx, { ...scope(), version: 1 })).text).toContain("version 1");
+  });
+
+  test("a proposal that cannot apply is refused whole and stores nothing", async () => {
+    const ctx = await makeCtx();
+    await expect(run(propose, ctx, { ...scope(), summary: "x", ops: [{ op: "retire", id: "ex-callers-call-4", reason: "gone", citations: [BARE] }] })).rejects.toThrow(/no such expectation/);
+    await expect(run(propose, ctx, { ...scope(), summary: "x", ops: [{ op: "add", part: "Calls", text: "T.", citations: [] }] })).rejects.toThrow(/at least one source/);
+    expect(await ctx.db.query("expectation_proposals").collect()).toEqual([]);
+  });
+
+  test("a line changed under an open proposal refuses it, and the proposal says why", async () => {
+    const ctx = await makeCtx();
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "A card's facts are true.", citations: [QUOTED] }] });
+    await run(propose, ctx, { ...scope(), summary: "A", ops: [{ op: "edit", id: "ex-callers-call-1", note: "under review", citations: [BARE] }] });
+    await run(propose, ctx, { ...scope(), summary: "B", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [BARE] }] });
+    await run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-2", action: "apply" });
+    await expect(run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-3", action: "apply" })).rejects.toThrow(/changed in version 2/);
+    const s = await run(show, ctx, scope());
+    expect(s.proposals.find((p: any) => p.short_id === "xp-3")).toMatchObject({ status: "open", refused: expect.stringContaining("changed in version 2") });
+    expect(s.current_version).toBe(2);
+  });
+
+  test("a retracted harvest moves no cursor, so the next pass reads its window again; an applied one is not retracted", async () => {
+    const ctx = await makeCtx();
+    const seed = await run(propose, ctx, { ...scope(), summary: "Seed", until: 500, ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] }] });
+    const stray = await run(propose, ctx, { ...scope(), summary: "Nothing", since: 500, until: 900, ops: [] });
+    expect((await run(show, ctx, scope())).cursor).toBe(900);
+    expect(await run(retract, ctx, { proposal: stray.short_id, reason: "A test run outside the routine wrote it." })).toEqual({ short_id: stray.short_id, status: "retracted" });
+    const s = await run(show, ctx, scope());
+    expect(s.cursor).toBe(500);
+    expect(s.proposals.find((p: any) => p.short_id === stray.short_id)).toMatchObject({ status: "retracted", retracted_reason: "A test run outside the routine wrote it." });
+    await expect(run(retract, ctx, { proposal: seed.short_id, reason: "x" })).rejects.toThrow(/applied; only an open or empty proposal/);
+  });
+
+  test("an empty harvest records its window and changes nothing", async () => {
+    const ctx = await makeCtx();
+    expect(await run(propose, ctx, { ...scope(), summary: "Nothing new", since: 10, until: 900, ops: [] })).toEqual({ short_id: "xp-1", status: "empty", version: 0 });
+    const s = await run(show, ctx, scope());
+    expect(s).toMatchObject({ current_version: 0, doc: null, cursor: 900 });
+    expect((await run(brief, ctx, scope())).text).toBe("Callers & Call Management has no expectations yet.\n");
+  });
+});
+
+describe("an addition applies on its own only in a person's own words", () => {
+  const CALLBACKS = "Callbacks happen only when the contact asked.";
+  const BOUNCE = "A bounce is tracked as an object with the email on it.";
+  const add = (citation: any, text: string) => ({ op: "add", part: "Calls", text, citations: [citation] });
+  const statusOf = async (citation: any, text = CALLBACKS) => (await run(propose, await makeCtx(), { ...scope(), summary: "One line", ops: [add(citation, text)] })).status;
+
+  test("a chat line a person typed, a decision a person answered, a person on the call", async () => {
+    expect(await statusOf({ kind: "chat", ref: "#team/chat_messages_person", quote: "Callbacks only when the contact asked for one", when: "2026-10-04" })).toBe("applied");
+    expect(await statusOf({ kind: "decision", ref: "sd-95", quote: "we should track the bounce as an object", when: "2026-09-17" }, BOUNCE)).toBe("applied");
+    // The quote runs across two of Ashot's segments around the one the ref names.
+    expect(await statusOf({ kind: "call", ref: "cl-96:718", quote: "a call card's facts should hold true for every caller", when: "2026-09-30" }, "A call card's facts hold true for every caller.")).toBe("applied");
+    // Cam is a person in the team too: the rule checks who said the words, never whether they rule.
+    expect(await statusOf({ kind: "call", ref: "cl-96", quote: "what does the card show the caller", when: "2026-09-30" }, "The card shows the caller who they are calling.")).toBe("applied");
+  });
+
+  test("an agent's words, another team's line, a role's answer, a quote the record lacks or a task note wait for the person", async () => {
+    expect(await statusOf({ kind: "chat", ref: "#team/chat_messages_agent", quote: "callbacks only when the contact asked for one", when: "2026-10-04" })).toBe("open");
+    expect(await statusOf({ kind: "chat", ref: "#x/chat_messages_other", quote: "Callbacks only when the contact asked for one", when: "2026-10-04" })).toBe("open");
+    expect(await statusOf({ kind: "decision", ref: "sd-96", quote: "we should track the bounce as an object", when: "2026-09-17" }, BOUNCE)).toBe("open");
+    expect(await statusOf({ kind: "call", ref: "cl-96:718", quote: "a call card's facts should be approximate", when: "2026-09-30" }, "A call card's facts should be approximate.")).toBe("open");
+    expect(await statusOf({ kind: "task", ref: "ct-52376", quote: "a delivery now outranks a later temporary bounce", when: "2026-10-02" }, "A delivery outranks a later temporary bounce.")).toBe("open");
+  });
+
+  test("a person's real words behind a line about something else wait for the person, with the line shown beside the quote", async () => {
+    const ctx = await makeCtx();
+    const real = { kind: "decision", ref: "sd-95", quote: "we should track the bounce as an object", when: "2026-09-17" };
+    expect((await run(propose, ctx, { ...scope(), summary: "One line", ops: [add(real, "Refunds are issued within a day of the request.")] })).status).toBe("open");
+    expect((await run(show, ctx, scope())).current_version).toBe(0);
+  });
+});
+
+describe("a copy of lines another project holds applies on its own (a trial project's seed)", () => {
+  const seedOriginal = async (ctx: any) => {
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] }] });
+  };
+  const addTrial = async (ctx: any) => {
+    await ctx.db.insert("projects", { user_id: OWNER, team_id: TEAM, workspace: `team:${TEAM}`, title: "Calls Trial", status: "active", created_at: 2, updated_at: 2 });
+  };
+  const trialScope = () => ({ ...scope(), project: "Calls Trial" });
+
+  test("word for word, naming the original id, it applies", async () => {
+    const ctx = await makeCtx();
+    await seedOriginal(ctx);
+    await addTrial(ctx);
+    const out = await run(propose, ctx, { ...trialScope(), summary: "Copy", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [BARE, { kind: "other", ref: "ex-callers-call-1" }] }] });
+    expect(out).toMatchObject({ status: "applied", auto: true });
+  });
+
+  test("changed words or an id nothing answers to wait for the person", async () => {
+    const ctx = await makeCtx();
+    await seedOriginal(ctx);
+    await addTrial(ctx);
+    const changed = await run(propose, ctx, { ...trialScope(), summary: "Copy", ops: [{ op: "add", part: "Calls", text: "A call card's facts are mostly true.", citations: [{ kind: "other", ref: "ex-callers-call-1" }] }] });
+    expect(changed.status).toBe("open");
+    const unknown = await run(propose, ctx, { ...trialScope(), summary: "Copy", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [{ kind: "other", ref: "ex-callers-call-9" }] }] });
+    expect(unknown.status).toBe("open");
+  });
+});
+
+describe("who may read and change a project's expectations", () => {
+  test("someone outside the project's workspace reads nothing and resolves nothing", async () => {
+    const ctx = await makeCtx();
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }, { op: "add", part: "Calls", text: "T two.", citations: [BARE] }] });
+    await expect(run(show, ctx, scope(OUTSIDER))).rejects.toThrow();
+    await expect(run(brief, ctx, { ...scope(OUTSIDER), workspace: "personal", team_id: undefined })).rejects.toThrow(/No project matching/);
+    await expect(run(resolve, ctx, { api_token: `tok-${OUTSIDER}`, proposal: "xp-1", action: "apply" })).rejects.toThrow(/not found/);
+    expect(await run(forProject, await makeCtx(OUTSIDER), { project_id: "projects_calls" })).toBeNull();
+  });
+
+  test("an agent session proposes but never applies or drops", async () => {
+    const ctx = await makeCtx();
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [BARE] }] });
+    await expect(run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-1", action: "apply", conversation_id: "jx7abcd" })).rejects.toThrow(/a person's act/);
+    expect((await run(show, ctx, scope())).proposals[0].status).toBe("open");
+  });
+
+  test("in a trial project an agent session applies as a stand-in, and the version says so", async () => {
+    const ctx = await makeCtx();
+    await ctx.db.patch("projects_calls", { line_trial: { since: 1, by: OWNER } });
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [BARE] }] });
+    expect(await run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-1", action: "apply", conversation_id: "jx7abcd" })).toEqual({ short_id: "xp-1", status: "applied", version: 1 });
+    expect((await run(show, ctx, scope())).doc).toMatchObject({ how: "stand_in", proposal: "xp-1" });
+  });
+
+  test("the Line tab reads the same document for a signed-in teammate", async () => {
+    const ctx = await makeCtx(MATE);
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }] });
+    const tab = await run(forProject, ctx, { project_id: "projects_calls" });
+    expect(tab).toMatchObject({ current_version: 1, project: { title: "Callers & Call Management" } });
+    expect(tab.doc.items).toHaveLength(1);
+  });
+});
+
+describe("the lines some ids name (a cause's Expects row)", () => {
+  const seed = async (ctx: any) => run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] }] });
+
+  test("a teammate reads the line with the project it lives in; an unknown id is left out", async () => {
+    const ctx = await makeCtx(MATE);
+    await seed(ctx);
+    const out = await run(lines, ctx, { workspace: `team:${TEAM}`, ids: ["ex-callers-call-1", "ex-callers-call-9", "ex-nobody-1", "comms"] });
+    expect(out).toEqual([{ id: "ex-callers-call-1", text: "A call card's facts are true.", status: "active", version: 1, project_id: "projects_calls", project_short_id: undefined, project_title: "Callers & Call Management" }]);
+  });
+
+  test("someone who cannot open the project reads nothing, whatever workspace they name", async () => {
+    const ctx = await makeCtx(null);
+    await seed(ctx);
+    const as = (user: string | null) => ({ ...ctx, auth: { async getUserIdentity() { return user ? { subject: user } : null; } } });
+    expect(await run(lines, as(MATE), { workspace: `team:${TEAM}`, ids: ["ex-callers-call-1"] })).toHaveLength(1);
+    expect(await run(lines, as(OUTSIDER), { workspace: `team:${TEAM}`, ids: ["ex-callers-call-1"] })).toEqual([]);
+    expect(await run(lines, as(null), { workspace: `team:${TEAM}`, ids: ["ex-callers-call-1"] })).toEqual([]);
+  });
+});
+
+describe("the card's answer", () => {
+  async function withCard(ctx: any) {
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }] });
+    await run(propose, ctx, { ...scope(), summary: "Retire", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [BARE] }] });
+    const proposal = await ctx.db.query("expectation_proposals").withIndex("by_short_id", (q: any) => q.eq("short_id", "xp-2")).first();
+    await ctx.db.patch(proposal._id, { decision_id: "session_decisions_card" });
+    return { _id: "session_decisions_card", options: [{ label: "Apply: callers stop citing it" }, { label: "Keep the line as it is" }, { label: "Narrow it to regulated markets" }] } as any;
+  }
+  const person = { kind: "user", id: MATE, user_id: MATE } as any;
+
+  test("Apply from a person lands the proposal as the next version", async () => {
+    const ctx = await makeCtx();
+    const row = await withCard(ctx);
+    await settleExpectationCard(ctx, row, { status: "answered", answer_index: 0 }, person, 5);
+    const s = await run(show, ctx, scope());
+    expect(s.doc).toMatchObject({ version: 2, how: "person", applied_by: "Cam" });
+    expect(s.doc.items[0]).toMatchObject({ status: "retired", retired_reason: "ruled out" });
+  });
+
+  test("Keep or a dismissal closes it; another course, a role's answer or a withdrawal leaves it open", async () => {
+    for (const [verdict, by, status] of [
+      [{ status: "answered", answer_index: 1 }, person, "dropped"],
+      [{ status: "answered", answer_index: 2 }, person, "open"],
+      [{ status: "dismissed" }, person, "dropped"],
+      [{ status: "answered", answer_index: 0 }, { kind: "role", id: "org_roles_1" }, "open"],
+      [{ status: "withdrawn" }, person, "open"],
+    ] as const) {
+      const ctx = await makeCtx();
+      const row = await withCard(ctx);
+      await settleExpectationCard(ctx, row, verdict as any, by as any, 5);
+      expect((await run(show, ctx, scope())).proposals.find((p: any) => p.short_id === "xp-2").status).toBe(status);
+    }
+  });
+});
+
+/** The proposing session's own decision about a proposal (`cast decide --proposal`). */
+const askAbout = (ctx: any, session: string, proposal: string, extra: any = {}) => run(ask, ctx, {
+  api_token: `tok-${OWNER}`, session_id: session, proposal, blocking: false,
+  question: "Should callers stop treating a retired rule as live?",
+  options: [{ label: "Apply: retire the rule", description: "4 flagged calls stop being flagged" }, { label: "Keep the rule", description: "the 4 calls stay flagged" }],
+  context_md: "Three calls were flagged under a rule the team ruled out on Oct 6.",
+  ...extra,
+});
+
+describe("a session's proposal that needs a person", () => {
+  async function proposed() {
+    const ctx = await makeCtx();
+    await ctx.db.insert("conversations", { user_id: OWNER, session_id: "sess-routine", team_id: TEAM, is_private: false, title: "Expectations for Callers", message_count: 3, created_at: 1, updated_at: 1 });
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }] });
+    const out = await run(propose, ctx, { ...scope(), conversation_id: "sess-routine", summary: "Retire", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [QUOTED] }] });
+    return { ctx, out };
+  }
+  const asked = async (ctx: any) => (await ctx.db.query("session_decisions").collect()).filter((d: any) => !d.short_id?.match(/^sd-9[56]$/));
+
+  test("waits with nobody asked: the session that proposed it asks in its own words", async () => {
+    const { ctx, out } = await proposed();
+    expect(out).toEqual({ short_id: "xp-2", status: "open", version: 1, ask: true });
+    expect(await asked(ctx)).toHaveLength(0);
+    const d = await askAbout(ctx, "sess-routine", "xp-2");
+    expect(d).toMatchObject({ short_id: expect.stringMatching(/^sd-/), proposal: "xp-2" });
+    const [row] = await asked(ctx);
+    expect(row).toMatchObject({ question: "Should callers stop treating a retired rule as live?", status: "pending" });
+    expect((await run(show, ctx, scope())).proposals.find((p: any) => p.short_id === "xp-2").card).toBe(row.short_id);
+    await settleExpectationCard(ctx, row, { status: "answered", answer_index: 0 }, { kind: "user", id: OWNER, user_id: OWNER } as any, 9);
+    expect((await run(show, ctx, scope())).doc.items[0].status).toBe("retired");
+  });
+
+  test("answers that cannot settle it, or a closed proposal, are refused", async () => {
+    const { ctx } = await proposed();
+    expect(await askAbout(ctx, "sess-routine", "xp-2", { options: [{ label: "Retire it" }, { label: "Leave it" }] })).toEqual({ error: expect.stringContaining('"Apply"') });
+    // A second "Keep" would close the proposal for an answer that means "rework it".
+    expect(await askAbout(ctx, "sess-routine", "xp-2", { options: [{ label: "Apply: retire it" }, { label: "Keep it for now and reword it" }, { label: "Keep the rule" }] })).toEqual({ error: expect.stringContaining('exactly one opening with "Keep"') });
+    expect(await askAbout(ctx, "sess-routine", "xp-9")).toEqual({ error: "Proposal xp-9 not found" });
+    await resolveProposalCore(ctx, OWNER as any, "xp-2", "drop");
+    expect(await askAbout(ctx, "sess-routine", "xp-2")).toEqual({ error: "xp-2 is dropped: only an open proposal is asked" });
+  });
+
+  test("a second ask about the same proposal withdraws the first, so one decision stands for it", async () => {
+    const { ctx } = await proposed();
+    await ctx.db.insert("conversations", { user_id: OWNER, session_id: "sess-again", team_id: TEAM, is_private: false, title: "Re-ask", message_count: 1, created_at: 1, updated_at: 1 });
+    const first = await askAbout(ctx, "sess-routine", "xp-2");
+    const second = await askAbout(ctx, "sess-again", "xp-2", { question: "Should the retired rule stop flagging calls?" });
+    expect(second.replaced).toBe(first.short_id);
+    expect((await asked(ctx)).map((d: any) => [d.short_id, d.status])).toEqual([[first.short_id, "withdrawn"], [second.short_id, "pending"]]);
+    expect((await run(show, ctx, scope())).proposals.find((p: any) => p.short_id === "xp-2")).toMatchObject({ status: "open", card: second.short_id });
+  });
+
+  test("in a trial project a session standing in applies it", async () => {
+    const ctx = await makeCtx();
+    await ctx.db.patch("projects_calls", { line_trial: { since: 1, by: OWNER } });
+    await ctx.db.insert("conversations", { user_id: OWNER, session_id: "sess-routine", team_id: TEAM, is_private: false, title: "Expectations for Callers", message_count: 3, created_at: 1, updated_at: 1 });
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }] });
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-routine", summary: "Retire", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [QUOTED] }] });
+    expect(await run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-2", action: "apply", conversation_id: "sess-routine" })).toEqual({ short_id: "xp-2", status: "applied", version: 2 });
+  });
+});
+
+describe("a trial station's proposal is its trial decision (LL12)", () => {
+  // AgentWatch Trial's judge route: the Fix station decides the fix is the expectation line and proposes it.
+  async function trialCtx(decides = true) {
+    const ctx = await makeCtx();
+    await ctx.db.patch("projects_calls", { line_trial: { since: 1, by: OWNER, judge: { graph: "/g/judge.cast", cwd: "/g", name: "agentwatch_trial_judge", ...(decides ? { decides: "org_roles_quality" } : {}) } } });
+    await ctx.db.insert("org_roles", { _id: "org_roles_quality", short_id: "or-39", name: "Agent Quality lead", team_id: TEAM, status: "active", reports_to: { kind: "user", user_id: MATE }, created_at: 1 });
+    await ctx.db.insert("tasks", { _id: "tasks_judge", short_id: "ct-7", user_id: OWNER, team_id: TEAM, workspace: `team:${TEAM}`, project_id: "projects_calls", title: "A judge flags good intros", status: "in_progress", task_type: "task", priority: "medium", workflow_run_id: "workflow_runs_judge", created_at: 1, updated_at: 1 });
+    await ctx.db.insert("workflow_runs", {
+      _id: "workflow_runs_judge", user_id: OWNER, task_id: "tasks_judge", status: "running", workflow_name: "agentwatch_trial_judge", current_node_id: "fix",
+      node_statuses: [{ node_id: "repeats", status: "completed" }, { node_id: "fix", status: "running", session_id: "jx7fixx" }],
+      primary_conversation_id: "conversations_primary", workspace: `team:${TEAM}`, team_id: TEAM, created_at: 1, updated_at: 1,
+    });
+    await ctx.db.insert("conversations", { _id: "conversations_primary", session_id: "wf-judge", user_id: OWNER, team_id: TEAM, message_count: 1, workflow_run_id: "workflow_runs_judge", is_workflow_primary: true, created_at: 1, updated_at: 1 });
+    await ctx.db.insert("conversations", { _id: "conversations_fix", session_id: "sess-fix", short_id: "jx7fixx", user_id: OWNER, team_id: TEAM, message_count: 3, parent_conversation_id: "conversations_primary", created_at: 1, updated_at: 1 });
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "Card facts are true.", citations: [QUOTED] }] });
+    return ctx;
+  }
+  const retire = { summary: "Retire", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [BARE] }] };
+  const decisionOf = async (ctx: any, shortId: string) => (await ctx.db.query("session_decisions").collect()).find((d: any) => d.short_id === shortId);
+
+  test("the station's ask is on the trial rail, routed as the run's decisions are, and filed for the trial feed on its node", async () => {
+    const ctx = await trialCtx();
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-fix", ...retire });
+    const out = await askAbout(ctx, "sess-fix", "xp-2");
+    expect(out).toMatchObject({ proposal: "xp-2", trial_card: expect.stringMatching(/^tc-/) });
+    const d = await decisionOf(ctx, out.short_id);
+    expect(d).toMatchObject({ trial: true, task_id: "tasks_judge", asked_user_ids: [MATE] });
+    expect(d.hops.map((h: any) => h.role_id)).toEqual(["org_roles_quality"]);
+    expect(await ctx.db.query("trial_cards").collect()).toMatchObject([{ short_id: out.trial_card, node_id: "fix", kind: "gate", decision_id: d._id, task_id: "tasks_judge", run_id: "workflow_runs_judge", status: "waiting" }]);
+    // Asked again from the same session, it is the same decision and the same card.
+    expect((await askAbout(ctx, "sess-fix", "xp-2")).short_id).toBe(out.short_id);
+    expect(await ctx.db.query("trial_cards").collect()).toHaveLength(1);
+  });
+
+  test("a fresh session re-asking routes and files it as the station that proposed it, named by its short conversation id", async () => {
+    const ctx = await trialCtx();
+    await ctx.db.insert("conversations", { _id: "jx7dissolve00", session_id: "sess-dissolve", user_id: OWNER, team_id: TEAM, message_count: 3, parent_conversation_id: "conversations_primary", created_at: 1, updated_at: 1 });
+    await ctx.db.patch("workflow_runs_judge", { current_node_id: "exit", node_statuses: [{ node_id: "dissolve", status: "completed", session_id: "jx7diss" }, { node_id: "exit", status: "completed" }] });
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-dissolve", ...retire });
+    // The re-asking session is no station of the run: the decision routes as the proposer's.
+    await ctx.db.insert("conversations", { session_id: "sess-reask", user_id: OWNER, team_id: TEAM, message_count: 1, created_at: 1, updated_at: 1 });
+    const out = await askAbout(ctx, "sess-reask", "xp-2");
+    expect(await decisionOf(ctx, out.short_id)).toMatchObject({ trial: true, task_id: "tasks_judge", asked_user_ids: [MATE] });
+    expect((await ctx.db.query("trial_cards").collect()).find((c: any) => c.short_id === out.trial_card)).toMatchObject({ node_id: "dissolve" });
+  });
+
+  test("a trial naming no decider asks the owner's practice answer, in nobody's inbox", async () => {
+    const ctx = await trialCtx(false);
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-fix", ...retire });
+    const out = await askAbout(ctx, "sess-fix", "xp-2");
+    expect(await decisionOf(ctx, out.short_id)).toMatchObject({ trial: true, asked_user_ids: [OWNER], hops: [] });
+    expect((await ctx.db.query("decision_inbox").collect())).toHaveLength(0);
+  });
+
+  test("a later gate of the run leaves it waiting, and its answer applies the proposal without moving the run", async () => {
+    const ctx = await trialCtx();
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-fix", ...retire });
+    const out = await askAbout(ctx, "sess-fix", "xp-2");
+    const gate: any = await pauseAtGateCore(ctx, { userId: OWNER as any }, { run_id: "workflow_runs_judge" as any, node_id: "review", prompt: "Publish?", choices: [{ key: "P", label: "[P] Publish", target: "publish" }, { key: "N", label: "[N] Not now", target: "dropped" }] });
+    expect(gate.ok).toBe(true);
+    expect((await decisionOf(ctx, out.short_id)).status).toBe("pending");
+    const card = (await ctx.db.query("trial_cards").collect()).find((c: any) => c.short_id === out.trial_card);
+    expect(card.status).toBe("waiting");
+    // The trial feed reads it waiting, unsuperseded, though its run stands at another gate.
+    const feed = async () => (await run(cards, ctx, scope())).find((c: any) => c.short_id === out.trial_card);
+    expect({ ...(await feed()) }).toMatchObject({ status: "waiting", superseded: null, decision: { short_id: out.short_id } });
+    await answerTrialCardCore(ctx, MATE as any, out.trial_card, "1", undefined, 50);
+    expect((await feed()).status).toBe("answered");
+    expect((await run(show, ctx, scope())).doc).toMatchObject({ version: 2, how: "person", items: [{ status: "retired" }] });
+    expect((await ctx.db.query("trial_cards").collect()).find((c: any) => c.short_id === out.trial_card).status).toBe("answered");
+    const runRow = await ctx.db.get("workflow_runs_judge");
+    expect(runRow).toMatchObject({ status: "paused", gate_node_id: "review" });
+  });
+});
+
+describe("a person's edits from the web (line-map.md LX3, LX5)", () => {
+  const seed = async (ctx: any) => run(propose, ctx, { ...scope(), summary: "Seed", ops: [{ op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] }] });
+
+  test("a line in a person's own words applies, cited as them; the project's person retires at once", async () => {
+    const ctx = await makeCtx();
+    await seed(ctx);
+    const added = await personEditCore(ctx, MATE as any, "projects_calls", { op: "add", part: "Calls", text: "Callbacks happen only when the contact asked for one." });
+    expect(added).toMatchObject({ status: "applied", version: 2, auto: true });
+    const s = await run(show, ctx, scope());
+    expect(s.doc.items[1]).toMatchObject({ id: "ex-callers-call-2", status: "active", citations: [{ kind: "person", ref: MATE, quote: "Callbacks happen only when the contact asked for one." }] });
+    expect(s.doc.summary).toBe("Cam added: Callbacks happen only when the contact asked for one.");
+    const retired = await personEditCore(ctx, OWNER as any, "projects_calls", { op: "retire", id: "ex-callers-call-1", reason: "We show estimates now" });
+    expect(retired).toMatchObject({ status: "applied", version: 3, auto: false });
+    expect((await run(show, ctx, scope())).doc).toMatchObject({ how: "person", items: [{ status: "retired", retired_reason: "We show estimates now" }, { status: "active" }] });
+  });
+
+  test("a teammate's retirement and a line too thin to stand on its words wait for the project's person", async () => {
+    const ctx = await makeCtx();
+    await seed(ctx);
+    expect(await personEditCore(ctx, MATE as any, "projects_calls", { op: "retire", id: "ex-callers-call-1", reason: "We show estimates now" })).toMatchObject({ status: "open" });
+    expect(await personEditCore(ctx, MATE as any, "projects_calls", { op: "add", part: "Calls", text: "Be nice." })).toMatchObject({ status: "open" });
+    const tab = await run(forProject, await makeCtxSharing(ctx, MATE), { project_id: "projects_calls" });
+    expect(tab.you_answer).toBe(false);
+    expect(tab.proposals.filter((p: any) => p.status === "open").map((p: any) => p.ops[0].op)).toEqual(["add", "retire"]);
+    expect((await run(forProject, await makeCtxSharing(ctx, OWNER), { project_id: "projects_calls" })).you_answer).toBe(true);
+  });
+
+  test("a CLI proposal citing a person never applies on that citation alone", async () => {
+    const ctx = await makeCtx();
+    const out = await run(propose, ctx, { ...scope(), summary: "One", ops: [{ op: "add", part: "Calls", text: "Callbacks happen only when the contact asked for one.", citations: [{ kind: "person", ref: OWNER, quote: "Callbacks happen only when the contact asked for one.", when: "2026-10-06" }] }] });
+    expect(out.status).toBe("open");
+  });
+
+  test("outside the project, nothing is written", async () => {
+    const ctx = await makeCtx();
+    await expect(personEditCore(ctx, OUTSIDER as any, "projects_calls", { op: "add", part: "Calls", text: "Callbacks happen only when the contact asked for one." })).rejects.toThrow(/not found/);
+    await expect(personEditCore(ctx, OWNER as any, "projects_calls", { op: "move", id: "ex-callers-call-1" } as any)).rejects.toThrow(/adds, changes or retires/);
+  });
+
+  test("Apply on the panel answers the proposal's card, the same decision the queue holds", async () => {
+    const ctx = await makeCtx();
+    await ctx.db.insert("conversations", { user_id: OWNER, session_id: "sess-routine", team_id: TEAM, is_private: false, title: "Expectations for Callers", message_count: 3, created_at: 1, updated_at: 1 });
+    await seed(ctx);
+    await run(propose, ctx, { ...scope(), conversation_id: "sess-routine", summary: "Retire", ops: [{ op: "retire", id: "ex-callers-call-1", reason: "ruled out", citations: [QUOTED] }] });
+    await askAbout(ctx, "sess-routine", "xp-2");
+    const out = await resolveProposalCore(ctx, OWNER as any, "xp-2", "apply", { settled: true });
+    expect(out).toEqual({ short_id: "xp-2", status: "applied", version: 2 });
+    const card = (await ctx.db.query("session_decisions").collect()).find((d: any) => !d.short_id?.match(/^sd-9[56]$/));
+    expect(card).toMatchObject({ status: "answered", answer_index: 0 });
+    // The queue answered first: the panel's dispatch that follows finds it settled.
+    expect(await resolveProposalCore(ctx, OWNER as any, "xp-2", "apply", { settled: true })).toMatchObject({ status: "applied", version: 2 });
+    await expect(resolveProposalCore(ctx, OWNER as any, "xp-2", "drop", { settled: true })).rejects.toThrow(/already applied/);
+  });
+});
+
+/** The same tables, read as another signed-in person. */
+async function makeCtxSharing(ctx: any, user: string) {
+  return { ...ctx, auth: { async getUserIdentity() { return { subject: user }; } } };
+}
+
+describe("the Expectations page (usage, sources, history, edits)", () => {
+  const DAY = 86_400_000;
+  const signal = (n: number, subject: string, ageDays: number, task = "tasks_cause") => ({
+    _id: `signals_${n}`, user_id: OWNER, team_id: TEAM, workspace: `team:${TEAM}`, short_id: `sg-${n}`, source: "judge", kind: "prompt_miss",
+    fingerprint: `f${n}`, title: `Finding ${n}`, subject, observed_at: Date.now() - ageDays * DAY, created_at: Date.now() - ageDays * DAY, task_id: task, attach: "judge",
+  });
+  async function seeded(asUser = MATE) {
+    const ctx = await makeCtx(asUser);
+    await run(propose, ctx, { ...scope(), summary: "Seed", ops: [
+      { op: "add", part: "Calls", text: "A call card's facts are true.", citations: [QUOTED] },
+      { op: "add", part: "Callbacks", text: "Callbacks happen only when the contact asked for one.", citations: [{ kind: "chat", ref: "#team/chat_messages_person", quote: "Callbacks only when the contact asked for one.", when: "2026-10-01" }] },
+    ] });
+    await ctx.db.insert("tasks", { _id: "tasks_cause", short_id: "ct-9", title: "Card shows a wrong fact", status: "open" });
+    for (const [i, sg] of [signal(1, "ex-callers-call-1", 2), signal(2, "ex-callers-call-1", 10), signal(3, "ex-callers-call-1", 40), signal(4, "comms", 1)].entries()) await ctx.db.insert("signals", { ...sg, _id: `signals_${i + 1}` });
+    return ctx;
+  }
+
+  test("a line's breaks are the signals whose subject is its id: this week, the last 30 days, with the causes they opened", async () => {
+    const ctx = await seeded();
+    const tab = await run(forProject, ctx, { project_id: "projects_calls" });
+    expect(tab.usage.lines["ex-callers-call-1"]).toMatchObject({ d7: 1, d30: 2 });
+    expect(tab.usage.lines["ex-callers-call-1"].findings.map((f: any) => f.short_id)).toEqual(["sg-1", "sg-2"]);
+    expect(tab.usage.lines["ex-callers-call-1"].findings[0].cause).toMatchObject({ short_id: "ct-9", title: "Card shows a wrong fact" });
+    expect(tab.usage.lines["ex-callers-call-2"]).toBeUndefined();
+  });
+
+  test("each source names who said it: the call's speaker at its segment, the chat line's author", async () => {
+    const ctx = await seeded();
+    const tab = await run(forProject, ctx, { project_id: "projects_calls" });
+    expect(tab.sources["call:cl-96:718"]).toEqual({ who: "Ashot" });
+    expect(tab.sources["chat:#team/chat_messages_person"]).toEqual({ who: "Cam" });
+    expect(tab.person).toBe("Ashot");
+  });
+
+  test("history: each version says what it changed, who applied it and from which proposal", async () => {
+    const ctx = await seeded();
+    await personEditCore(ctx, OWNER as any, "projects_calls", { op: "retire", id: "ex-callers-call-2", reason: "Callbacks moved to the desk" });
+    const tab = await run(forProject, ctx, { project_id: "projects_calls" });
+    expect(tab.versions[0]).toMatchObject({ version: 2, retired: 1, added: 0, applied_by: "Ashot", proposal: "xp-2", proposed_by: "Ashot", how: "person" });
+    expect(tab.versions[1]).toMatchObject({ version: 1, added: 2, how: "auto" });
+  });
+
+  test("a change to a line applies for the project's person and waits for anyone else; settling a question clears it on their words", async () => {
+    const ctx = await seeded();
+    await run(propose, ctx, { ...scope(), summary: "Contest", ops: [{ op: "edit", id: "ex-callers-call-1", note: "True for every caller, or only brokers?", citations: [BARE] }] });
+    await run(resolve, ctx, { api_token: `tok-${OWNER}`, proposal: "xp-2", action: "apply" });
+    const mate = await personEditCore(ctx, MATE as any, "projects_calls", { op: "edit", id: "ex-callers-call-1", text: "A call card's facts are true for brokers." });
+    expect(mate).toMatchObject({ status: "open" });
+    const settled = await personEditCore(ctx, OWNER as any, "projects_calls", { op: "edit", id: "ex-callers-call-1", note: "", why: "Every caller, ruled on the Oct 6 call" });
+    expect(settled).toMatchObject({ status: "applied", version: 3 });
+    const line = (await run(show, ctx, scope())).doc.items.find((e: any) => e.id === "ex-callers-call-1");
+    expect(line.note).toBeUndefined();
+    expect(line.citations.at(-1)).toMatchObject({ kind: "person", ref: OWNER, quote: "Every caller, ruled on the Oct 6 call" });
+  });
+
+  test("a line added by hand keeps the source the person named beside their own words", async () => {
+    const ctx = await seeded();
+    await personEditCore(ctx, OWNER as any, "projects_calls", { op: "add", part: "Calls", text: "A callback names who asked for it.", source: { kind: "task", ref: "ct-9", quote: "say who asked", when: "2026-10-05" } });
+    const line = (await run(show, ctx, scope())).doc.items.at(-1);
+    expect(line.citations.map((c: any) => c.kind)).toEqual(["person", "task"]);
+  });
+
+  test("the overview lists every project's document with its breaks, the most broken lines first", async () => {
+    const ctx = await seeded();
+    await ctx.db.insert("projects", { _id: "projects_empty", user_id: OWNER, team_id: TEAM, workspace: `team:${TEAM}`, title: "Billing", status: "active", created_at: 1, updated_at: 1 });
+    const rows = await run(overview, ctx, { team_id: TEAM });
+    const calls = rows.find((r: any) => r._id === "projects_calls");
+    expect(calls).toMatchObject({ workspace: `team:${TEAM}`, version: 1, active: 2, parts: 2, breaks7: 1, breaks30: 2, broken: 1, open_proposals: 0 });
+    expect(calls.most_broken).toEqual([{ id: "ex-callers-call-1", text: "A call card's facts are true.", part: "Calls", d7: 1, d30: 2 }]);
+    expect(rows.find((r: any) => r._id === "projects_empty")).toMatchObject({ version: 0, active: 0 });
+    expect(await run(overview, await makeCtxAs(ctx, OUTSIDER), { team_id: TEAM })).toEqual([]);
+  });
+});
+
+/** The same tables, read as another signed-in user. */
+function makeCtxAs(ctx: any, user: string) {
+  return { ...ctx, auth: { async getUserIdentity() { return { subject: user }; } } };
+}

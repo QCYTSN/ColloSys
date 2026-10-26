@@ -1,0 +1,207 @@
+import { shellEntryPath } from "../lib/tabRoutes";
+import { useEffect, useMemo, useRef } from "react";
+import { useLocation } from "react-router";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { useInboxStore, useTrackedStore, type AppTab } from "../store/inboxStore";
+import { isPrewarmTab, clearPrewarmTab } from "../lib/openIntent";
+import { tabSessionId } from "../lib/tabTitle";
+import { conversationTabPath, pathLabel, tabNeedsUrlRestore } from "../lib/pathLabel";
+import { SessionPrewarm } from "./SessionPrewarm";
+import { stageRenderLayout } from "../lib/stage";
+import { useNarrowStage } from "../hooks/useNarrowStage";
+import { useStageShortcuts } from "../hooks/useStageShortcuts";
+import { startVisitRecorder } from "../lib/visitRecorder";
+import { borrowsTabShell } from "../lib/desktop";
+import { StageDropLayer } from "./stage/StageDropLayer";
+import { StagePickLayer } from "./stage/StagePickLayer";
+
+// Every tab renders through the flat stage, split or not (the conversation
+// pane it can host stays lazy inside it). One renderer for both is what makes
+// the first split a rect change on the existing cell rather than a swap of
+// renderers: the page on stage is never remounted.
+import StageSplitView from "./stage/StageSplitView";
+
+// -- Route map: path pattern → lazy component --
+//
+// The registry and the warm-up live in lib/tabLazyPages; matchRoute and the
+// pane renderer live in components/RoutePane (shared with the split stage).
+// This module keeps the tab lifecycle: which tabs mount, which is visible,
+// the one-shot entry-URL adoption.
+
+// The router location the shell last entered on, document-scoped: the
+// component remounts when the layout around it changes, and a dev hot update
+// re-executes this module, but neither is a navigation. shellEntryPath
+// (lib/tabRoutes) decides what a mount adopts from it.
+const shellEntry: { key: string | null } = ((globalThis as any).__codecastTabShellEntry ??= { key: null });
+
+// Which tabs have mounted panes, document-scoped for the same reason: when
+// TabContent itself remounts, a surviving set means every previously visited
+// tab remounts warm (hidden) instead of silently losing its pane.
+const mountedTabs: Set<string> = ((globalThis as any).__codecastMountedTabs ??= new Set());
+
+// -- TabPane: renders one tab's content with context --
+
+function TabPane({ tab, isActive, children }: { tab: AppTab; isActive: boolean; children?: React.ReactNode }) {
+  const pathname = tab.path.split("?")[0].split("#")[0];
+
+  // Sync browser URL when this tab is active. tabNeedsUrlRestore stands down
+  // when the live URL is this tab's own content in the other spelling — an
+  // inbox tab's session select canonicalizes the URL to /conversation/<id> and
+  // PUSHES a { inboxId } history entry (QueuePageClient), then updates the
+  // tab's /inbox?s=<id> path (syncActiveInboxTabPath). Rewriting the URL here
+  // on that path change was clobbering the just-pushed entry (null state, ?s=
+  // spelling), which collapsed browser back/forward across viewed sessions.
+  useEffect(() => {
+    if (!isActive) return;
+    if (window.location.pathname !== pathname) {
+      if (!tabNeedsUrlRestore(window.location.pathname, tab.path)) return;
+      window.history.replaceState(null, "", tab.path);
+    }
+  }, [isActive, tab.path, pathname]);
+
+  // The stage: one route, or a split of them, always as a tree (a plain tab
+  // is a single leaf under the id its first split keeps). A narrow screen
+  // renders the focused pane only — the layout survives untouched for a wider
+  // window.
+  const narrow = useNarrowStage();
+  const layout = useMemo(
+    () => stageRenderLayout(tab, narrow),
+    [tab.id, tab.path, tab.layout, tab.focusedLeafId, narrow],
+  );
+
+  return (
+    <div
+      data-tab-id={tab.id}
+      className="h-full"
+      style={{ display: isActive ? "block" : "none" }}
+    >
+      <StageDropLayer tab={tab} enabled={isActive && !narrow}>
+        <StageSplitView tab={tab} layout={layout} isTabActive={isActive} />
+        <StagePickLayer tab={tab} enabled={isActive && !narrow} />
+      </StageDropLayer>
+      {children}
+    </div>
+  );
+}
+
+// -- TabContent: renders all mounted tabs, toggles visibility --
+
+export function TabContent() {
+  const s = useTrackedStore([
+    (s) => s.tabs,
+    (s) => s.activeTabId,
+  ]);
+  // The pane chords live with the stage they act on.
+  useStageShortcuts();
+  // What this shell shows feeds recents. A window borrowing the tab shell
+  // (a detached tab, an embedded pane) shows no tab of its own.
+  useMountEffect(() => (borrowsTabShell() ? undefined : startVisitRecorder()));
+
+  if (s.tabs.length === 0) return null;
+  return <TabStage tabs={s.tabs} storeActiveTabId={s.activeTabId} />;
+}
+
+// Mounts once the first tab exists, so every hook below runs on every render
+// and the entry URL is adopted into a tab that is really there.
+function TabStage({ tabs, storeActiveTabId }: { tabs: AppTab[]; storeActiveTabId: string | null }) {
+  const location = useLocation();
+  let activeTabId = storeActiveTabId;
+
+  // Fix stale activeTabId — use local override for this render,
+  // then schedule the store update for next tick to avoid setState-during-render
+  if (!activeTabId || !tabs.find((t: AppTab) => t.id === activeTabId)) {
+    activeTabId = tabs[0].id;
+  }
+
+  // On entering the shell (a full-page load, or a real navigation from a page
+  // outside it: a share link resolving to its conversation, a sign-in
+  // returning to a task), the active tab's stored path may differ from the
+  // browser URL. The URL wins. Override it at render time so TabPanes
+  // immediately render the correct content (no effect-timing race); the store
+  // is updated in the effect below. Full-path compare: an entry URL that
+  // differs only in query (e.g. /search?q=new vs a restored /search?q=old)
+  // must also win, or the restored tab silently clobbers the typed query.
+  // Decided once per instance, on its first render: a remount at the same
+  // router location adopts nothing (see shellEntryPath).
+  const entryRef = useRef<string | null | undefined>(undefined);
+  if (entryRef.current === undefined) {
+    const entry = shellEntryPath(shellEntry.key, location.key, location.pathname, location.search);
+    const tabPath = entry ? conversationTabPath(entry) : null;
+    // The fragment is part of the address (a line in a pull request's diff),
+    // so it comes along. A conversation link is rewritten to its inbox form,
+    // and its #msg- anchor has its own landing, so that one is left as is.
+    entryRef.current = tabPath && tabPath === entry ? tabPath + location.hash : tabPath;
+  }
+  let renderTabs = tabs;
+  const entryUrl = entryRef.current;
+  if (entryUrl && activeTabId) {
+    const active = tabs.find((t: AppTab) => t.id === activeTabId);
+    if (active && active.path !== entryUrl) {
+      renderTabs = tabs.map((t: AppTab) =>
+        t.id === activeTabId ? { ...t, path: entryUrl } : t
+      );
+    }
+  }
+  useMountEffect(() => {
+    const url = entryRef.current;
+    entryRef.current = null;
+    if (!url) return;
+    const store = useInboxStore.getState();
+    if (!store.activeTabId) return;
+    const active = store.tabs.find((t: AppTab) => t.id === store.activeTabId);
+    // The title comes along: the stored one named the old path, so a tab
+    // entered at /line would otherwise keep reading "Inbox".
+    if (active && active.path !== url) {
+      store.updateTab(store.activeTabId, { path: url, title: pathLabel(url) });
+    }
+  });
+  // Every location this instance saw counts as entered, so a later remount at
+  // it (history moved while mounted, then the layout changed) adopts nothing.
+  useEffect(() => {
+    shellEntry.key = location.key;
+  }, [location.key]);
+
+  // Sync stale activeTabId to store after render
+  useEffect(() => {
+    const { activeTabId: storeId, tabs } = useInboxStore.getState();
+    if (tabs.length > 0 && (!storeId || !tabs.find((t: AppTab) => t.id === storeId))) {
+      useInboxStore.getState().switchTab(tabs[0].id);
+    }
+  });
+
+  // Lazy mount: only render tabs that have been active at least once — plus
+  // tabs opened in the background by a Cmd-click (lib/openIntent), which mount
+  // hidden so they are warm on first switch. A prewarm tab stops being one the
+  // moment it is shown; from then on it is an ordinary visited tab.
+  for (const tab of tabs) {
+    if (tab.id === activeTabId) clearPrewarmTab(tab.id);
+    if (tab.id === activeTabId || mountedTabs.has(tab.id) || isPrewarmTab(tab.id)) {
+      mountedTabs.add(tab.id);
+    }
+  }
+  // Clean up removed tabs
+  for (const id of mountedTabs) {
+    if (!tabs.find((t: AppTab) => t.id === id)) {
+      mountedTabs.delete(id);
+    }
+  }
+
+  return (
+    <div className="h-full">
+      {renderTabs.map((tab: AppTab) => {
+        if (!mountedTabs.has(tab.id)) return null;
+        const isActive = tab.id === activeTabId;
+        const prewarmSession = !isActive && isPrewarmTab(tab.id) ? tabSessionId(tab) : null;
+        return (
+          <TabPane
+            key={tab.id}
+            tab={tab}
+            isActive={isActive}
+          >
+            {prewarmSession && <SessionPrewarm sessionId={prewarmSession} />}
+          </TabPane>
+        );
+      })}
+    </div>
+  );
+}

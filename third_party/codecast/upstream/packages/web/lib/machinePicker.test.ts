@@ -1,0 +1,357 @@
+import { describe, expect, it } from "bun:test";
+import { dedupeProjectsByRepoName, defaultMachineId, listedMachines, pathOnMyMachines, resolveMachineSelection, resolveScopedProjects, type MachineCandidate } from "./machinePicker";
+
+const dev = (id: string, over: Partial<MachineCandidate> = {}): MachineCandidate => ({
+  device_id: id,
+  is_remote: false,
+  online: true,
+  last_seen: 1000,
+  ...over,
+});
+
+describe("defaultMachineId", () => {
+  it("queues for an offline Mac instead of stamping a live Linux runtime onto a Mac checkout", () => {
+    const devices = [
+      dev("runtime", { platform: "linux" }),
+      dev("mac", { platform: "darwin", online: false, local_project_roots: ["/Users/me/src/app"] }),
+    ];
+    expect(defaultMachineId(devices, { projectPath: "/Users/me/src/app" })).toBe("mac");
+    expect(defaultMachineId(devices, { projectPath: "/Users/me/src/app", lastPicked: "runtime" })).toBe("mac");
+    expect(defaultMachineId(devices.map((d) => ({ ...d, online: false })), {
+      projectPath: "/Users/me/src/app", ownerDeviceId: "runtime",
+    })).toBe("mac");
+  });
+
+  it("prefers the conversation's owner while it's online", () => {
+    const devices = [dev("laptop", { last_seen: 5000 }), dev("desktop")];
+    expect(defaultMachineId(devices, { ownerDeviceId: "desktop" })).toBe("desktop");
+  });
+
+  it("routes past an owner that went offline", () => {
+    const devices = [dev("laptop"), dev("desktop", { online: false })];
+    expect(defaultMachineId(devices, { ownerDeviceId: "desktop" })).toBe("laptop");
+  });
+
+  it("falls through when the owner device is no longer in the list", () => {
+    expect(defaultMachineId([dev("laptop")], { ownerDeviceId: "gone" })).toBe("laptop");
+  });
+
+  it("opens on the machine you last picked", () => {
+    const devices = [dev("laptop"), dev("desktop")];
+    expect(defaultMachineId(devices, { lastPicked: "desktop" })).toBe("desktop");
+  });
+
+  it("the machine this client runs on outranks the standing pick, but not an online owner", () => {
+    const devices = [dev("laptop", { online: false }), dev("desktop", { last_seen: 5000, local_project_roots: ["/x"] })];
+    expect(defaultMachineId(devices, { localDeviceId: "laptop", lastPicked: "desktop", projectPath: "/x" })).toBe("laptop");
+    expect(defaultMachineId(devices, { localDeviceId: "laptop", ownerDeviceId: "desktop" })).toBe("desktop");
+    expect(defaultMachineId(devices, { localDeviceId: "gone", lastPicked: "desktop" })).toBe("desktop");
+  });
+
+  it("does not let a standing pick move a session that already has an owner", () => {
+    // The pick is stamped now, so honouring lastPicked here would re-point an
+    // existing session onto another machine just by opening it.
+    const devices = [dev("laptop"), dev("desktop")];
+    expect(defaultMachineId(devices, { lastPicked: "desktop", ownerDeviceId: "laptop" })).toBe("laptop");
+  });
+
+  it("ignores a standing pick whose machine is offline or gone", () => {
+    expect(defaultMachineId([dev("laptop"), dev("desktop", { online: false })], { lastPicked: "desktop" })).toBe("laptop");
+    expect(defaultMachineId([dev("laptop")], { lastPicked: "retired" })).toBe("laptop");
+  });
+
+  it("prefers an online local that has the checkout over one that doesn't", () => {
+    const devices = [
+      dev("laptop", { last_seen: 9000 }),
+      dev("desktop", { last_seen: 1000, local_project_roots: ["/Users/j/code/codecast"] }),
+    ];
+    expect(defaultMachineId(devices, { projectPath: "/Users/j/code/codecast" })).toBe("desktop");
+  });
+
+  it("matches a checkout by prefix, so a repo subdir still finds its machine", () => {
+    const devices = [dev("laptop"), dev("desktop", { local_project_roots: ["/Users/j/code/app"] })];
+    expect(defaultMachineId(devices, { projectPath: "/Users/j/code/app/packages/web" })).toBe("desktop");
+    // …but not a sibling that merely shares a prefix string: nobody has that
+    // checkout, so it falls to the stable tiebreak across all online locals.
+    expect(defaultMachineId(devices, { projectPath: "/Users/j/code/app-other" })).toBe("desktop");
+  });
+
+  // THE REGRESSION this ladder exists to prevent. Two idle online locals
+  // re-heartbeat every ~30s; the old tiebreak was `last_seen`, so the answer
+  // flipped between the render that showed a chip and the send that acted on it.
+  it("is stable against heartbeat churn — last_seen never decides", () => {
+    const a = [dev("laptop", { last_seen: 9000 }), dev("desktop", { last_seen: 8000 })];
+    const b = [dev("laptop", { last_seen: 8000 }), dev("desktop", { last_seen: 9000 })];
+    expect(defaultMachineId(a)).toBe(defaultMachineId(b));
+  });
+
+  it("is stable against roster reordering", () => {
+    const devices = [dev("laptop"), dev("desktop"), dev("studio")];
+    expect(defaultMachineId(devices)).toBe(defaultMachineId([...devices].reverse()));
+  });
+
+  // nose is registered is_remote:false with zero roots, so it competed for
+  // /Users/... sessions it cannot cd into. Now that the default is STAMPED,
+  // defaulting to it would pin the mistake instead of letting routing correct it.
+  it("skips a local that provably can't open the path", () => {
+    const devices = [
+      dev("aaa-linux", { platform: "linux" }),
+      dev("zzz-mac", { platform: "darwin" }),
+    ];
+    expect(defaultMachineId(devices, { projectPath: "/Users/j/.claude" })).toBe("zzz-mac");
+    expect(defaultMachineId(devices, { projectPath: "/home/j/src" })).toBe("aaa-linux");
+  });
+
+  it("still picks someone when no machine can open the path", () => {
+    const devices = [dev("aaa-linux", { platform: "linux" })];
+    expect(defaultMachineId(devices, { projectPath: "/Users/j/.claude" })).toBe("aaa-linux");
+  });
+
+  it("leaves shared namespaces alone — /opt is not evidence either way", () => {
+    const devices = [dev("aaa-linux", { platform: "linux" }), dev("zzz-mac", { platform: "darwin" })];
+    expect(defaultMachineId(devices, { projectPath: "/opt/thing" })).toBe("aaa-linux");
+  });
+
+  it("never auto-selects an online remote while a local is online", () => {
+    const devices = [dev("aaa-nose", { is_remote: true, local_project_roots: ["/repo"] }), dev("zzz-laptop")];
+    expect(defaultMachineId(devices, { projectPath: "/repo" })).toBe("zzz-laptop");
+  });
+
+  it("uses an online remote holding the checkout when no local is online", () => {
+    const devices = [
+      dev("laptop", { online: false }),
+      dev("nose", { is_remote: true, local_project_roots: ["/repo"] }),
+    ];
+    expect(defaultMachineId(devices, { projectPath: "/repo" })).toBe("nose");
+  });
+
+  it("otherwise queues for a local machine even though none is online", () => {
+    const devices = [
+      dev("laptop", { online: false, last_seen: 9000 }),
+      dev("desktop", { online: false, last_seen: 1000 }),
+      dev("nose", { is_remote: true }),
+    ];
+    expect(defaultMachineId(devices, { projectPath: "/repo" })).toBe("desktop");
+  });
+
+  it("falls back to an online remote for a cloud-only user", () => {
+    expect(defaultMachineId([dev("nose", { is_remote: true })])).toBe("nose");
+  });
+
+  it("is null with no devices at all", () => {
+    expect(defaultMachineId([])).toBeNull();
+  });
+});
+
+describe("dedupeProjectsByRepoName", () => {
+  const p = (path: string) => ({ path });
+
+  it("collapses the same repo name across machines to one entry", () => {
+    const out = dedupeProjectsByRepoName([p("/Users/me/src/codecast"), p("/Users/m1/work/codecast"), p("/Users/me/src/app")]);
+    expect(out.map((o) => o.path)).toEqual(["/Users/me/src/codecast", "/Users/me/src/app"]);
+  });
+
+  it("keeps the variant the routed machine can open", () => {
+    const m1 = dev("m1", { local_project_roots: ["/Users/m1/work/codecast"] });
+    const out = dedupeProjectsByRepoName([p("/Users/me/src/codecast"), p("/Users/m1/work/codecast")], m1);
+    expect(out.map((o) => o.path)).toEqual(["/Users/m1/work/codecast"]);
+  });
+
+  it("keeps the current path over the routed machine's variant", () => {
+    const m1 = dev("m1", { local_project_roots: ["/Users/m1/work/codecast"] });
+    const out = dedupeProjectsByRepoName(
+      [p("/Users/me/src/codecast"), p("/Users/m1/work/codecast")],
+      m1,
+      "/Users/me/src/codecast",
+    );
+    expect(out.map((o) => o.path)).toEqual(["/Users/me/src/codecast"]);
+  });
+
+  it("preserves rank order: the group stays where its best-ranked variant first appeared", () => {
+    const out = dedupeProjectsByRepoName([p("/a/codecast"), p("/a/app"), p("/b/codecast")]);
+    expect(out.map((o) => o.path)).toEqual(["/a/codecast", "/a/app"]);
+  });
+
+  it("returns the input array untouched when there are no duplicates", () => {
+    const input = [p("/a/codecast"), p("/a/app")];
+    expect(dedupeProjectsByRepoName(input)).toBe(input);
+  });
+});
+
+describe("pathOnMyMachines", () => {
+  const mine = [
+    dev("laptop", { local_project_roots: ["/Users/me/src/codecast", "/Users/me/src/app"] }),
+    dev("nose", { is_remote: true, local_project_roots: [] }),
+  ];
+
+  it("accepts a path one of my machines has, including repo subdirs", () => {
+    expect(pathOnMyMachines(mine, "/Users/me/src/codecast")).toBe(true);
+    expect(pathOnMyMachines(mine, "/Users/me/src/codecast/packages/web")).toBe(true);
+  });
+
+  it("rejects a teammate's checkout no machine of mine has", () => {
+    expect(pathOnMyMachines(mine, "/Users/samvit/dev/codecast")).toBe(false);
+  });
+
+  it("does not filter before the roster loads or before any device reports roots", () => {
+    expect(pathOnMyMachines([], "/Users/samvit/dev/codecast")).toBe(true);
+    expect(pathOnMyMachines([dev("laptop", { local_project_roots: [] })], "/Users/samvit/dev/codecast")).toBe(true);
+  });
+
+  it("is false for an empty path", () => {
+    expect(pathOnMyMachines(mine, undefined)).toBe(false);
+    expect(pathOnMyMachines(mine, "")).toBe(false);
+  });
+});
+
+describe("resolveMachineSelection", () => {
+  const ROSTER = [
+    dev("aaa-mac", { platform: "darwin", local_project_roots: ["/Users/j/a"] }),
+    dev("zzz-mac2", { platform: "darwin", local_project_roots: ["/Users/j/b"] }),
+  ];
+
+  it("an explicit pick wins over the computed default", () => {
+    const r = resolveMachineSelection(ROSTER, { picked: "zzz-mac2" });
+    expect(r.selectedDeviceId).toBe("zzz-mac2");
+  });
+
+  it("falls back to the default when the user hasn't touched the picker", () => {
+    expect(resolveMachineSelection(ROSTER, {}).selectedDeviceId).toBe("aaa-mac");
+  });
+
+  // BLOCKER 1. useDevices() starts empty, so the first render(s) resolve to null.
+  // The caller must not write that through — an earlier mount's stamp would be
+  // wiped and the session would quietly fall back to server-side routing.
+  it("is null (not a machine) while the roster is still loading", () => {
+    const r = resolveMachineSelection([], {});
+    expect(r.selectedDeviceId).toBeNull();
+    expect(r.stampDeviceId).toBeNull();
+  });
+
+  it("an explicit pick survives a roster that hasn't loaded", () => {
+    expect(resolveMachineSelection([], { picked: "zzz-mac2" }).stampDeviceId).toBe("zzz-mac2");
+  });
+
+  // BLOCKER 2. The unscoped recents query is a union across ALL online locals.
+  // Since the stamp wins rung 1 outright, offering that union would let a user
+  // choose a folder the stamped machine cannot open. The folder list must be
+  // scoped to exactly the machine being stamped — in every case, not just when
+  // the user moved off the default.
+  it("scopes the folder list to exactly the machine it stamps", () => {
+    for (const opts of [
+      {},
+      { picked: "zzz-mac2" },
+      { lastPicked: "zzz-mac2" },
+      { ownerDeviceId: "zzz-mac2" },
+      { projectPath: "/Users/j/b" },
+      { picked: "aaa-mac", projectPath: "/Users/j/b" },
+    ]) {
+      const r = resolveMachineSelection(ROSTER, opts);
+      expect(r.scopeProjectsToDeviceId).toBe(r.stampDeviceId);
+    }
+  });
+
+  it("scopes to nothing while the roster is loading, rather than to the union", () => {
+    expect(resolveMachineSelection([], {}).scopeProjectsToDeviceId).toBeNull();
+  });
+});
+
+describe("resolveMachineSelection — a transient empty roster", () => {
+  // `useDevices()` is `useQuery(...) ?? []`, so the roster reads EMPTY on every
+  // mount and again on any Convex reconnect. That gap used to resolve to null,
+  // and null scoping reverted the folder list to the cross-machine union while
+  // the stub's stamp survived — so the UI could offer a machine-B-only path for a
+  // session already pinned to machine A, and the create would send it to A.
+  const ROSTER = [dev("A"), dev("B")];
+
+  it("preserves BOTH the stamp and the project scoping across the gap", () => {
+    const loaded = resolveMachineSelection(ROSTER, { picked: "A" });
+    expect(loaded.stampDeviceId).toBe("A");
+
+    const duringGap = resolveMachineSelection([], { existingStamp: loaded.stampDeviceId });
+    expect(duringGap.stampDeviceId).toBe("A");
+    expect(duringGap.scopeProjectsToDeviceId).toBe("A"); // never null → never the union
+  });
+
+  it("keeps scope and stamp equal in the gap, so neither half can drift", () => {
+    const r = resolveMachineSelection([], { existingStamp: "A" });
+    expect(r.scopeProjectsToDeviceId).toBe(r.stampDeviceId);
+  });
+
+  it("is only a fallback — a live roster decides again, so a stale stamp can't stick", () => {
+    const r = resolveMachineSelection(ROSTER, { existingStamp: "B", lastPicked: "A" });
+    expect(r.selectedDeviceId).toBe("A");
+  });
+
+  it("an active pick still outranks the recorded stamp", () => {
+    expect(resolveMachineSelection(ROSTER, { picked: "B", existingStamp: "A" }).stampDeviceId).toBe("B");
+  });
+
+  it("still null when there is no roster AND no prior decision", () => {
+    const r = resolveMachineSelection([], {});
+    expect(r.stampDeviceId).toBeNull();
+    expect(r.scopeProjectsToDeviceId).toBeNull();
+  });
+});
+
+describe("resolveScopedProjects (folder-chip flicker)", () => {
+  const union = [
+    { path: "/Users/me/src/codecast" },
+    { path: "/Users/me/src/union-mobile" },
+    { path: "/Users/m1/work/elsewhere" },
+  ];
+  const mac = { local_project_roots: ["/Users/me/src"] };
+
+  it("narrows the union to the routed machine while the scoped query is in flight", () => {
+    expect(resolveScopedProjects({
+      scopedDeviceId: "mac", scoped: undefined, cached: undefined, union, routedDevice: mac,
+    }).map((p) => p.path)).toEqual(["/Users/me/src/codecast", "/Users/me/src/union-mobile"]);
+  });
+
+  it("prefers the live scoped answer, then that machine's cache", () => {
+    const scoped = [{ path: "/Users/me/src/only-scoped" }];
+    const cached = [{ path: "/Users/me/src/only-cached" }];
+    expect(resolveScopedProjects({ scopedDeviceId: "mac", scoped, cached, union, routedDevice: mac })).toBe(scoped);
+    expect(resolveScopedProjects({ scopedDeviceId: "mac", scoped: undefined, cached, union, routedDevice: mac })).toBe(cached);
+  });
+
+  it("shows nothing rather than a foreign path when the roster hasn't loaded", () => {
+    expect(resolveScopedProjects({
+      scopedDeviceId: "mac", scoped: undefined, cached: undefined, union, routedDevice: null,
+    })).toEqual([]);
+    expect(resolveScopedProjects({
+      scopedDeviceId: "mac", scoped: undefined, cached: undefined, union, routedDevice: { local_project_roots: [] },
+    })).toEqual([]);
+  });
+
+  it("uses the whole union when nothing is scoped", () => {
+    expect(resolveScopedProjects({
+      scopedDeviceId: null, scoped: undefined, cached: undefined, union, routedDevice: mac,
+    })).toBe(union);
+  });
+});
+
+describe("defaultMachineId — dead VMs and sleeping cloud hosts (jx7bt5n)", () => {
+  const NOW = 10 * 86_400_000;
+  const path = "/home/ubuntu/src/union-mobile";
+  const laptop = dev("laptop", { platform: "darwin", last_seen: NOW, local_project_roots: ["/Users/ashot/src/union-mobile"] });
+  const vm = dev("vm", { platform: "linux", online: false, last_seen: NOW - 9 * 86_400_000, local_project_roots: ["/home/box/.claude"] });
+  const host = dev("host", {
+    is_remote: true, platform: "linux", online: false, last_seen: NOW - 3_600_000,
+    local_project_roots: ["/home/ubuntu/src/union-mobile"],
+    cloud_host: { managed_by: "laptop", instance_id: "i-1", provider: "aws", state: "stopped", images: [], logins_held: [], at: NOW - 600_000 },
+  });
+
+  it("a sleeping cloud host holding the folder beats a dead VM of the same platform", () => {
+    expect(defaultMachineId([laptop, vm, host], { projectPath: path, now: NOW })).toBe("host");
+  });
+
+  it("a dead VM does not narrow the pool to itself", () => {
+    expect(defaultMachineId([laptop, vm], { projectPath: path, now: NOW })).toBe("laptop");
+  });
+
+  it("listedMachines leaves a dead VM out unless it is the one already chosen", () => {
+    expect(listedMachines([laptop, vm, host], null, NOW).map((d) => d.device_id)).toEqual(["laptop", "host"]);
+    expect(listedMachines([laptop, vm, host], "vm", NOW).map((d) => d.device_id)).toEqual(["laptop", "vm", "host"]);
+  });
+});

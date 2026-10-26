@@ -1,0 +1,27 @@
+{
+  "initialOutbox": 0,
+  "statusWithNewSession": 200,
+  "after": {
+    "workspaceId": "workspace-b1bc7be5-436c-4923-8e3a-be4b7e968736",
+    "projectId": "project-a",
+    "userId": "owner",
+    "label": "Audit",
+    "root": "D:\\Github_Ku\\ColloSys\\.local\\audit\\integration\\lifecycle-1792742748686\\project",
+    "pending": 1,
+    "deliveryError": "401: Session expired",
+    "offline": false,
+    "lastScan": 1792742749589,
+    "lastSent": 1792742749601,
+    "error": null,
+    "agent": {
+      "adapter": null,
+      "source": null,
+      "error": null
+    },
+    "excluded": [],
+    "latest": "4f20c526-a508-4b0d-93b4-865cda413aa0",
+    "backup": "local-only"
+  },
+  "connectorStillUsesOldSession": true,
+  "failedOldEventDeliveries": 1
+}

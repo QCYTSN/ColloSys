@@ -1,0 +1,41 @@
+{
+  "name": "@platform/assistant",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./plans": "./src/plans.ts",
+    "./wallet": "./src/wallet.ts",
+    "./zone": "./src/zone.ts",
+    "./cadence": "./src/cadence.ts",
+    "./text": "./src/text.ts",
+    "./whisk": "./src/whisk.ts",
+    "./rules": "./src/rules.ts",
+    "./prompt": "./src/prompt.ts",
+    "./mail": "./src/mail.ts",
+    "./calendar": "./src/calendar.ts",
+    "./web": "./src/web.ts",
+    "./sources": "./src/sources.ts",
+    "./testkit": "./src/whisk.testkit.ts",
+    "./messages": "./src/messages.ts",
+    "./whisk-engine": "./src/whiskEngine.ts",
+    "./steps": "./src/steps.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "peerDependencies": {
+    "@platform/agent": "*"
+  },
+  "devDependencies": {
+    "@platform/agent": "file:../agent",
+    "@platform/fence": "file:../fence",
+    "typescript": "^5.7.2"
+  }
+}

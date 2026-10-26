@@ -1,0 +1,4487 @@
+import { getUserOrToken } from "./lib/auth";
+import { getAuthenticatedUserId } from "./pendingMessages";
+import { mutation, query, internalMutation, internalQuery } from "./functions";
+import { scheduleLiveActivityRefresh } from "./lib/liveActivityRefresh";
+import { wakeDevicesFor } from "./cloud";
+import { internal } from "./_generated/api";
+import { ConvexError, v } from "convex/values";
+import { peopleOf } from "@codecast/shared/team/memberKind";
+import { paginationOptsValidator } from "convex/server";
+import type { PaginationOptions, PaginationResult, RegisteredQuery } from "convex/server";
+import type { Doc, Id } from "./_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
+import { enqueueStartSession, getDeviceLocalRoots, getOnlineLocalRoots, ownDevice } from "./devices";
+import { DEVICE_ONLINE_MS } from "./deviceRouting";
+import { reissueStrandedCloudSpawns } from "./cloudPlacement";
+import { reissueWaitingMigrations } from "./sessionMigrations";
+import { fromConvexAgentType, LOCAL_AGENT_CLIENTS, isPinnableAgentId, findModelOption, CLOUD_SESSION_SOURCES, cloudSessionSyncSettings } from "@codecast/shared/contracts";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { adminChangesZones, recutChangesDays } from "./lib/changesDirty";
+import { normalizeTimezone } from "./lib/teamDay";
+import { startedBefore } from "./pathStats";
+import { isStaff } from "./lib/staff";
+import { verifyApiToken } from "./apiTokens";
+import { findSessionCommandByRequest, hasRecentPendingDaemonCommand, resumeConversationSession } from "./daemonCommandUtils";
+import { resolveTeamForPath, resolveCreationPrivacy, getProfileVisibilityPredicate, isTeamMember, profilePublicSessionVisible, conversationRepository, matchDirectoryMapping, type DirectoryMapping } from "./privacy";
+import { DAEMON_COMMAND_TTL_MS, repositoryKeyOfRemote } from "@codecast/shared/contracts";
+import { canAccessTask, canAccessDoc, patchConversationVisibility } from "./lib/access";
+import { canReleaseCommandClaim, commandVisibleToClaimer, decideCommandClaim } from "./lib/daemonCommandClaim";
+import { stripMessageTags, isUserMessageNoise, fetchUserSendDays, dayStartUtc } from "./lib/userSend";
+import {
+  ACTIVITY_DAY_MS,
+  activityLiveFrom,
+  collectIntervalsInWindow,
+  fetchUserActivityDays,
+  type ActivityDayRow,
+  type ActivityScope,
+  type ScopedInterval,
+} from "./lib/activityDaily";
+import { fetchUserUsageDays } from "./lib/usageDaily";
+import { bucketPunchcardRows } from "./lib/activityPunchcard";
+import { ccAccountsValidator } from "./ccAccountsShared";
+import { cloudAgentBlocksValidator, cloudSessionSyncFields, deviceSettingsValidator, modelInventoryValidator } from "./deviceSettingsShared";
+import { normalizeProjectPath, pathWithinLocalRoots } from "./projectPaths";
+import { bucketTs } from "./presenceState";
+import { backlogFieldsPatch } from "./heartbeatBacklog";
+import { deleteCommentWithRevision } from "./commentViewWrites";
+import { agentCommentLevelValidator } from "./threadReads";
+import { gatedSnippetAvailability } from "./teamFeatures";
+import { deleteBookmarkWithRevision } from "./bookmarkViewWrites";
+import { readLocalViewRevision } from "./localFirstCommands";
+import { daemonLastSeenStale } from "./lib/daemonLiveness";
+import {
+  CURRENT_USER_GRANT_KEY,
+  CURRENT_USER_VIEW_CONTRACT_ID,
+  CURRENT_USER_VIEW_KEY,
+  grantedView,
+  missingView,
+  projectCurrentUserMetadata,
+  unauthenticatedView,
+} from "./smallViewContracts";
+
+// Skills moved off the heartbeat-hot users doc into user_skills (see schema
+// note); overlay them back so clients keep reading currentUser.available_skills
+// unchanged. Falls back to the legacy on-doc field for users who haven't
+// written skills since the split.
+async function getUserWithSkills(ctx: QueryCtx, userId: Id<"users">) {
+  const user = await ctx.db.get(userId);
+  if (!user) return null;
+  const rows = await ctx.db
+    .query("user_skills")
+    .withIndex("by_user", (q) => q.eq("user_id", userId))
+    .collect();
+  const legacy = rows.find((row) => row.project_path === undefined)?.skills_json ?? user.available_skills;
+  const projects = rows.filter((row) => row.project_path !== undefined);
+  if (projects.length === 0) return legacy === undefined ? user : { ...user, available_skills: legacy };
+  const parsed = legacy ? JSON.parse(legacy) : {};
+  const skillsMap = Array.isArray(parsed) ? { global: parsed } : parsed;
+  for (const row of projects) skillsMap[row.project_path!] = JSON.parse(row.skills_json);
+  return { ...user, available_skills: JSON.stringify(skillsMap) };
+}
+
+export const getCurrentUser = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return null;
+    }
+    return await getUserWithSkills(ctx, userId);
+  },
+});
+
+/**
+ * Complete, revisioned principal metadata projection for durable local state.
+ * V1 intentionally remains the full historical user shape; this contract
+ * excludes volatile daemon fields and secrets by explicit whitelist.
+ */
+export const getCurrentUserV2 = query({
+  args: {},
+  handler: async (ctx) => {
+    const identity = { contractId: CURRENT_USER_VIEW_CONTRACT_ID, viewKey: CURRENT_USER_VIEW_KEY };
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return unauthenticatedView(identity);
+
+    const user = await ctx.db.get(userId);
+    if (!user) return missingView(identity, [CURRENT_USER_GRANT_KEY]);
+    const viewRevision = await readLocalViewRevision(
+      ctx, userId, identity.contractId, identity.viewKey);
+    return grantedView(identity, { grantKeys: [CURRENT_USER_GRANT_KEY], viewRevision }, {
+      user: projectCurrentUserMetadata(user),
+    });
+  },
+});
+
+// Identical payload to getCurrentUser, but a distinct function nothing
+// subscribes to via useQuery. The web recovery poll uses this so its one-shot
+// gets a unique query token: ConvexReactClient.query() returns the cached value
+// of any live subscription sharing the token, so probing getCurrentUser itself
+// would just re-read the stalled cache it's trying to refresh. With no live
+// subscriber here the token is never cached and the probe always round-trips —
+// the safety net that keeps the daemon-stale banner from sticking until reload.
+// `_probe` (ignored) varies per call as extra insurance against future callers.
+export const getCurrentUserProbe = query({
+  args: { _probe: v.optional(v.number()) },
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return null;
+    }
+    return await getUserWithSkills(ctx, userId);
+  },
+});
+
+// internal: had zero callers and was a public, unauthenticated mutation that
+// inserted a user row for any supplied email. Convex Auth owns real user
+// creation; nothing legitimate needs this from a client.
+export const createUser = internalMutation({
+  args: {
+    email: v.string(),
+    name: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await ctx.db.insert("users", {
+      email: args.email,
+      name: args.name,
+      created_at: Date.now(),
+      role: "member",
+    });
+    return userId;
+  },
+});
+
+// internal: was a public query that returned the ENTIRE users table (including
+// every email) to any caller — the id/email directory an attacker needed to
+// target the other unauthenticated mutations. Only a dev test script referenced
+// it; no product surface lists all users this way.
+export const listUsers = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    return await ctx.db.query("users").collect();
+  },
+});
+
+export const updateProfile = mutation({
+  args: {
+    name: v.optional(v.string()),
+    bio: v.optional(v.string()),
+    title: v.optional(v.string()),
+    status: v.optional(v.union(v.literal("available"), v.literal("busy"), v.literal("away"))),
+    timezone: v.optional(v.string()),
+    // The walkie door. "team" (the absent default) lets a teammate's push-to-talk
+    // burst play live here; "off" closes it. It gates LIVE PLAYBACK on this
+    // person's own client and nothing else — the burst still arrives as a chat
+    // voice message either way, so closing the door mutes a speaker, never
+    // silences them.
+    walkie_pref: v.optional(v.union(v.literal("team"), v.literal("off"))),
+    // The shutter under that door: bursts stop playing here until this moment
+    // passes. Zero re-opens it now. Same contract as the pref — playback only,
+    // never delivery.
+    walkie_snoozed_until: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const updateData: any = {};
+    if (args.name !== undefined) updateData.name = args.name;
+    if (args.bio !== undefined) updateData.bio = args.bio;
+    if (args.title !== undefined) updateData.title = args.title;
+    if (args.status !== undefined) updateData.status = args.status;
+    if (args.timezone !== undefined) updateData.timezone = args.timezone;
+    if (args.walkie_pref !== undefined) updateData.walkie_pref = args.walkie_pref;
+    if (args.walkie_snoozed_until !== undefined) {
+      updateData.walkie_snoozed_until = args.walkie_snoozed_until;
+    }
+    const zones = args.timezone !== undefined ? await adminChangesZones(ctx, userId) : null;
+    await ctx.db.patch(userId, updateData);
+    if (zones) await recutChangesDays(ctx, zones);
+    return userId;
+  },
+});
+
+/** The device's timezone for a profile that has none (store adoptTimezone). A zone the person chose is never replaced. */
+export const adoptTimezone = mutation({
+  args: { timezone: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const user = await ctx.db.get(userId);
+    if (!user || user.timezone || normalizeTimezone(args.timezone) !== args.timezone) return;
+    const zones = await adminChangesZones(ctx, userId);
+    await ctx.db.patch(userId, { timezone: args.timezone });
+    await recutChangesDays(ctx, zones);
+  },
+});
+
+// No-op stub. This used to advance last_message_sent_at / prev_message_sent_at /
+// work_cluster_started_at on the user doc, scheduled from every synced batch that
+// contained a user-role message (tool results included). Nothing reads those
+// fields, and with a fleet of live sessions the concurrent invocations serialized
+// on one hot document and OCC-storm'd the backend. Kept only so invocations
+// already in the scheduler queue at deploy time don't fail; delete once drained.
+// ── Other addresses ──────────────────────────────────────────────────────────
+//
+// One person, several email addresses: a work address in Slack, a personal one
+// here, an old one on past commits. `users.alternate_emails` is the list of the
+// others, and every place that resolves a person BY email reads it beside the
+// primary: the Slack person match, task assignee resolution, thread membership,
+// issue sync. Adding one is how you say "that is also me" once, instead of
+// mapping the same person by hand in each place.
+
+const MAX_ALTERNATE_EMAILS = 10;
+
+function normalizeEmail(raw: string): string {
+  return raw.trim().toLowerCase();
+}
+
+function looksLikeEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/** Add another address to your own account. Refused when it is somebody else's
+ *  primary address or already claimed by another account, because these
+ *  addresses decide who a line or a task belongs to. */
+export const addAlternateEmail = mutation({
+  args: { api_token: v.optional(v.string()), email: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!userId) throw new Error("Not authenticated");
+    const email = normalizeEmail(args.email);
+    if (!looksLikeEmail(email)) throw new Error("That does not look like an email address");
+    const me = await ctx.db.get(userId);
+    if (!me) throw new Error("Not authenticated");
+    if (normalizeEmail(me.email ?? "") === email) throw new Error("That is already your primary address");
+    const mine = (me.alternate_emails ?? []).map(normalizeEmail);
+    if (mine.includes(email)) return { ok: true as const, email, added: false };
+    if (mine.length >= MAX_ALTERNATE_EMAILS) throw new Error(`At most ${MAX_ALTERNATE_EMAILS} other addresses`);
+    const primaryOwner = await ctx.db.query("users").withIndex("email", (q: any) => q.eq("email", email)).first();
+    if (primaryOwner && primaryOwner._id.toString() !== userId.toString()) {
+      throw new Error("Another account already signs in with that address");
+    }
+    await ctx.db.patch(userId, { alternate_emails: [...mine, email] });
+    return { ok: true as const, email, added: true };
+  },
+});
+
+export const myEmails = query({
+  args: { api_token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!userId) return null;
+    const me = await ctx.db.get(userId);
+    return me ? { email: me.email ?? null, alternate_emails: me.alternate_emails ?? [] } : null;
+  },
+});
+
+export const removeAlternateEmail = mutation({
+  args: { api_token: v.optional(v.string()), email: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!userId) throw new Error("Not authenticated");
+    const me = await ctx.db.get(userId);
+    if (!me) throw new Error("Not authenticated");
+    const email = normalizeEmail(args.email);
+    const left = (me.alternate_emails ?? []).filter((e) => normalizeEmail(e) !== email);
+    await ctx.db.patch(userId, { alternate_emails: left });
+    return { ok: true as const, email, remaining: left };
+  },
+});
+
+export const updateUserActivity = internalMutation({
+  args: {
+    userId: v.id("users"),
+    daemonSeen: v.optional(v.boolean()),
+    messageTimestamp: v.optional(v.number()),
+  },
+  handler: async () => {},
+});
+
+// internal: had zero callers and was a public mutation that let anyone stamp
+// any user's daemon_last_seen. The real daemon-liveness write is daemonHeartbeat
+// below, which authenticates via api_token.
+export const updateDaemonLastSeen = internalMutation({
+  args: {
+    user_id: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.user_id, {
+      daemon_last_seen: Date.now(),
+    });
+  },
+});
+
+// A device row not refreshed for this long is treated as offline for the
+// purpose of handing the per-machine user fields to another daemon (beats are
+// ~30s; allow a few misses).
+export const DAEMON_FIELDS_OWNER_STALE_MS = 3 * 60 * 1000;
+
+/**
+ * Who may write the per-machine sticky fields on the user doc this beat.
+ * `owns` = write them; `claim` = also stamp this device as the owner.
+ * A beat with no device id (pre-routing CLI, or an older daemon's command
+ * poll) never claims: it writes only while no identified owner is alive, so
+ * it can't flap the fields against a modern daemon on another machine.
+ */
+export function resolveMachineFieldsOwner(input: {
+  deviceId: string | undefined;
+  owner: string | undefined;
+  ownerLastSeen: number | undefined;
+  now: number;
+}): { owns: boolean; claim: boolean } {
+  const { deviceId, owner, ownerLastSeen, now } = input;
+  if (!owner) return { owns: true, claim: deviceId !== undefined };
+  if (owner === deviceId) return { owns: true, claim: false };
+  const ownerAlive =
+    ownerLastSeen !== undefined && now - ownerLastSeen < DAEMON_FIELDS_OWNER_STALE_MS;
+  if (ownerAlive) return { owns: false, claim: false };
+  return { owns: true, claim: deviceId !== undefined };
+}
+
+/**
+ * Label writes for the device-row upsert. A beat that omits device_label must
+ * not degrade an existing label: the command-poll heartbeat identifies its
+ * device but sends no label, and a platform fallback on patch overwrote
+ * "macOS - <hostname>" with a literal "darwin" on every poll. The platform
+ * string is only the default for a brand-new row, which needs SOME label.
+ */
+export function deviceLabelWrite(input: {
+  deviceLabel: string | undefined;
+  platform: string;
+  isNew: boolean;
+}): { label: string } | Record<never, never> {
+  if (input.deviceLabel) return { label: input.deviceLabel };
+  return input.isNew ? { label: input.platform } : {};
+}
+
+/**
+ * Did a heartbeat field actually change? A device row carries small arrays and
+ * records (settings, cc_accounts, local_project_roots, git_plane), so identity
+ * alone reports a change on every beat; compare their content instead.
+ */
+export function sameHeartbeatValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// last_input_at is `now` minus the idle time the daemon measured a moment
+// earlier, so it drifts by a second or so on every beat even when nobody has
+// touched the machine. Compared exactly it would report a change on every beat
+// and the throttle below would never fire. Input since the last beat moves it by
+// seconds at least, because beats are 30s apart.
+const INPUT_AT_TOLERANCE_MS = 5 * 1000;
+
+/**
+ * Does this beat say anything the stored device row does not already say?
+ * Ignores the two timestamps the server derives from `now`: last_seen is the
+ * value being throttled, and last_input_at is compared with a tolerance that
+ * absorbs measurement drift but not real input.
+ */
+export function deviceBeatChanged(
+  existing: Record<string, any>,
+  patch: Record<string, unknown>,
+): boolean {
+  return Object.entries(patch).some(([k, val]) => {
+    if (k === "last_seen") return false;
+    if (k === "last_input_at") {
+      const prev = existing.last_input_at;
+      return typeof prev !== "number" || Math.abs((val as number) - prev) >= INPUT_AT_TOLERANCE_MS;
+    }
+    return !sameHeartbeatValue(existing[k], val);
+  });
+}
+
+export const daemonHeartbeat = mutation({
+  args: {
+    api_token: v.string(),
+    version: v.string(),
+    platform: v.string(),
+    pid: v.number(),
+    autostart_enabled: v.optional(v.boolean()),
+    has_tmux: v.optional(v.boolean()),
+    // Random per daemon process. Identifies WHICH daemon on a device is asking,
+    // so a command another daemon already claimed is not handed out twice. Never
+    // stored on the devices row: it changes on every restart, and the roster
+    // change detector would then churn on every bounce.
+    boot_id: v.optional(v.string()),
+    local_project_roots: v.optional(v.array(v.string())),
+    pending_sync_count: v.optional(v.number()),
+    oldest_pending_ms: v.optional(v.number()),
+    pending_sync_messages: v.optional(v.number()),
+    pending_sync_conversations: v.optional(v.number()),
+    sync_no_progress_ms: v.optional(v.number()),
+    daemon_started_at: v.optional(v.number()),
+    loop_freeze_ms: v.optional(v.number()),
+    // The loop freeze budget: blocked ms over the trailing hour, the worst
+    // single freeze, and the stacks it was in. These live on the device row
+    // only. Their twins on the user doc keep whatever the last machine to beat
+    // wrote, which would mask one machine's trouble behind another's beats.
+    loop_freeze_1h_ms: v.optional(v.number()),
+    loop_freeze_max_ms: v.optional(v.number()),
+    loop_freeze_top: v.optional(v.string()),
+    // Device identity (remote/device.ts). When present, upsert a per-device
+    // row so multiple machines don't clobber each other's project roots.
+    device_id: v.optional(v.string()),
+    device_label: v.optional(v.string()),
+    // The machine's own hostname, kept apart from the overridable device_label.
+    // Seeds the SSH-host placeholder in Settings → Devices; never becomes an
+    // ssh target on its own (see devices.ssh_host).
+    device_hostname: v.optional(v.string()),
+    wsl_distro: v.optional(v.string()),
+    is_remote_device: v.optional(v.boolean()),
+    // Time since the last keyboard/mouse event on that machine (macOS-only;
+    // absent elsewhere and from pre-presence daemons). Anchored to the SERVER
+    // clock below so a skewed daemon clock can't manufacture presence.
+    input_idle_ms: v.optional(v.number()),
+    // Git-plane health per repo (gitPlane.ts) — metadata only, mirrors the
+    // devices.git_plane schema field.
+    git_plane: v.optional(v.array(v.object({
+      root: v.string(),
+      origin: v.optional(v.string()),
+      origin_ok: v.boolean(),
+      fetch_ok: v.optional(v.boolean()),
+      ahead: v.optional(v.number()),
+      behind: v.optional(v.number()),
+      branch: v.optional(v.string()),
+      fetched_at: v.optional(v.number()),
+      repaired_from: v.optional(v.string()),
+      needs_access: v.optional(v.boolean()),
+      identity: v.optional(v.string()),
+      error: v.optional(v.string()),
+    }))),
+    // The device's PUBLIC git key — see schema devices.git_pubkey.
+    git_pubkey: v.optional(v.string()),
+    // CC account inventory (names/emails/tiers, never tokens) for the switcher.
+    cc_accounts: v.optional(ccAccountsValidator),
+    // DEPRECATED: old daemons still send the machine-wide Codex snapshot;
+    // accepted (and stored as-is) until the fleet is on codex_accounts.
+    codex_usage: v.optional(v.any()),
+    // Codex account inventory (names/emails/plans + usage, never tokens) —
+    // same shape as cc_accounts.
+    codex_accounts: v.optional(ccAccountsValidator),
+    // Managed-provider-key metadata (pl-207): device ECDH public key (not secret)
+    // + which providers have a key here (ids only, never the keys).
+    provider_key_pubkey: v.optional(v.string()),
+    managed_provider_ids: v.optional(v.array(v.string())),
+    // What keeps this machine from reading each cloud agent provider (schema devices.cloud_agent_blocks).
+    cloud_agent_blocks: v.optional(cloudAgentBlocksValidator),
+    // Installed agent-feature snippets (by slug) + stable mode on this device.
+    settings: v.optional(deviceSettingsValidator),
+    // A newer release the daemon could update to; "" once it checked and found
+    // none, absent before its first check (and from older daemons).
+    update_available: v.optional(v.string()),
+    // Live model inventory for dynamic clients (opencode/pi) — the daemon sends
+    // it only when its hash changes.
+    model_inventory: v.optional(modelInventoryValidator),
+  },
+  handler: async (ctx, args) => {
+    // updateLastUsed=true here is the ONLY token-doc refresh: heartbeat is a
+    // single call per 30s, so its throttled last_used_at write can't create the
+    // cross-session OCC contention that the per-message write path did.
+    const auth = await verifyApiToken(ctx, args.api_token, true);
+    if (!auth) {
+      return { error: "Unauthorized" };
+    }
+
+    const now = Date.now();
+    // Coalesce the user-doc write. This doc is HOT: webListPaginated and the
+    // daemon-health queries read it, so an unconditional patch every 30s beat
+    // (× the whole fleet) invalidated those subscriptions ~per-second and drove
+    // the OCC contention / 1011 WS storm. Mirror updateUserActivity: read first,
+    // patch only what changed, and refresh the volatile liveness/queue fields on
+    // a throttle (the readers only need minute-granularity online detection).
+    const existingUser = await ctx.db.get(auth.userId);
+    const newPending = args.pending_sync_count ?? 0;
+    const newOldest = args.oldest_pending_ms ?? 0;
+
+    const patch: Record<string, any> = {};
+    // Funnel: first heartbeat ever carrying a version = the CLI daemon came
+    // alive for this user for the first time (upgrades change an existing value
+    // and don't re-fire).
+    if (!existingUser?.cli_version && args.version) {
+      await ctx.scheduler.runAfter(0, internal.analytics.capture, {
+        event: "cli_daemon_connected",
+        distinctId: auth.userId.toString(),
+        properties: { cli_version: args.version, cli_platform: args.platform },
+      });
+    }
+    // Per-machine sticky fields live on the per-user doc, so with two machines
+    // online they would flip between machines on every beat (each daemon sees
+    // the other's values as "changed"). One daemon owns them at a time: the
+    // current owner, or — when the owner's device row has gone quiet — whoever
+    // beats next. Daemons that don't identify a device (pre-routing CLI) keep
+    // the legacy last-writer behavior.
+    const owner = existingUser?.daemon_fields_device_id;
+    let ownerLastSeen: number | undefined;
+    if (owner && owner !== args.device_id) {
+      const ownerDevice = await ctx.db
+        .query("devices")
+        .withIndex("by_user_device", (q) =>
+          q.eq("user_id", auth.userId).eq("device_id", owner),
+        )
+        .first();
+      ownerLastSeen = ownerDevice?.last_seen;
+    }
+    const { owns: ownsMachineFields, claim } = resolveMachineFieldsOwner({
+      deviceId: args.device_id,
+      owner,
+      ownerLastSeen,
+      now,
+    });
+    if (claim) patch.daemon_fields_device_id = args.device_id;
+    // Sticky fields: write only on actual change.
+    if (ownsMachineFields) {
+      if (existingUser?.cli_version !== args.version) patch.cli_version = args.version;
+      if (existingUser?.cli_platform !== args.platform) patch.cli_platform = args.platform;
+      if (existingUser?.daemon_pid !== args.pid) patch.daemon_pid = args.pid;
+      if (existingUser?.autostart_enabled !== args.autostart_enabled) patch.autostart_enabled = args.autostart_enabled;
+      if (existingUser?.has_tmux !== args.has_tmux) patch.has_tmux = args.has_tmux;
+    }
+
+    // Volatile liveness/queue fields: refresh on a throttle, when queue zeroness
+    // flips (so a newly-stuck queue still surfaces promptly), or when we're already
+    // writing a sticky change anyway.
+    const lastSeenStale = daemonLastSeenStale(existingUser?.daemon_last_seen, now);
+    const queueZeronessFlipped =
+      ((existingUser?.daemon_pending_sync_count ?? 0) === 0) !== (newPending === 0);
+    // Same rule for load: a loop that just started (or stopped) freezing must
+    // reach the web on this beat, not up to 50s later.
+    const loadFlipped =
+      args.loop_freeze_ms !== undefined &&
+      ((existingUser?.daemon_loop_freeze_ms ?? 0) === 0) !== (args.loop_freeze_ms === 0);
+    if (lastSeenStale || queueZeronessFlipped || loadFlipped || Object.keys(patch).length > 0) {
+      patch.daemon_last_seen = now;
+      patch.last_heartbeat = now;
+      patch.daemon_pending_sync_count = newPending;
+      patch.daemon_oldest_pending_ms = newOldest;
+      if (args.loop_freeze_ms !== undefined) patch.daemon_loop_freeze_ms = args.loop_freeze_ms;
+      if (args.daemon_started_at !== undefined) patch.daemon_started_at = args.daemon_started_at;
+      // Only patch the per-table backlog fields when the daemon actually sent
+      // them. During a mixed-version rollout an OLD daemon omits these (undefined),
+      // and coercing to 0 would clobber a real backlog → the web chip shows
+      // "syncing 0 messages" while we're actually behind. backlogFieldsPatch leaves
+      // an absent field untouched.
+      Object.assign(patch, backlogFieldsPatch(args));
+    }
+
+    if (args.local_project_roots !== undefined && ownsMachineFields) {
+      // NOTE: a per-user field written by daemons; the owner rule above keeps
+      // multi-machine users from flip-flopping it on each heartbeat. Read paths
+      // use the per-device union (getOnlineLocalRoots) instead; this write is
+      // retained only for rollback safety and can be dropped once nothing depends
+      // on it. Write only when the set actually changed — an unconditional
+      // rewrite is a needless invalidation of every user-doc reader.
+      const prev = existingUser?.local_project_roots;
+      const next = args.local_project_roots;
+      const rootsChanged =
+        !prev || prev.length !== next.length || prev.some((p: string, i: number) => p !== next[i]);
+      if (rootsChanged) {
+        patch.local_project_roots = next;
+        patch.local_project_roots_updated_at = now;
+      }
+    }
+
+    if (Object.keys(patch).length > 0) {
+      await ctx.db.patch(auth.userId, patch);
+    }
+
+    // Per-device row upsert (multi-machine): the stable, non-clobbered source the
+    // read paths consume via getOnlineLocalRoots (union across online devices).
+    if (args.device_id) {
+      const existingDevice = await ctx.db
+        .query("devices")
+        .withIndex("by_user_device", (q) =>
+          q.eq("user_id", auth.userId).eq("device_id", args.device_id!),
+        )
+        .first();
+      const devicePatch = {
+        ...deviceLabelWrite({ deviceLabel: args.device_label, platform: args.platform, isNew: !existingDevice }),
+        platform: args.platform,
+        last_seen: now,
+        status: "online" as const,
+        // Per-device daemon health (see schema devices.daemon_started_at). Only
+        // the fields this daemon actually sent: an older daemon must not zero a
+        // value a newer one wrote — same rule as backlogFieldsPatch.
+        ...(args.daemon_started_at !== undefined ? { daemon_started_at: args.daemon_started_at } : {}),
+        ...(args.loop_freeze_ms !== undefined ? { loop_freeze_ms: args.loop_freeze_ms } : {}),
+        ...(args.loop_freeze_1h_ms !== undefined ? { loop_freeze_1h_ms: args.loop_freeze_1h_ms } : {}),
+        ...(args.loop_freeze_max_ms !== undefined ? { loop_freeze_max_ms: args.loop_freeze_max_ms } : {}),
+        ...(args.loop_freeze_top !== undefined ? { loop_freeze_top: args.loop_freeze_top } : {}),
+        ...(args.pending_sync_count !== undefined ? { pending_sync_count: args.pending_sync_count } : {}),
+        ...(args.oldest_pending_ms !== undefined ? { oldest_pending_ms: args.oldest_pending_ms } : {}),
+        ...(args.pending_sync_messages !== undefined ? { pending_sync_messages: args.pending_sync_messages } : {}),
+        ...(args.pending_sync_conversations !== undefined ? { pending_sync_conversations: args.pending_sync_conversations } : {}),
+        ...(args.sync_no_progress_ms !== undefined ? { sync_no_progress_ms: args.sync_no_progress_ms } : {}),
+        // Absolute time of this machine's last HID event, on the server clock.
+        // Left untouched when the daemon doesn't report idle (Linux, or a daemon
+        // predating this): a frozen last_input_at simply goes stale, which reads
+        // as away — never as falsely present.
+        // Reject rather than clamp a nonsensical duration: clamping a negative to
+        // 0 would read as "input RIGHT NOW", i.e. the one direction that silently
+        // swallows the user's notifications. Everything uncertain must degrade to
+        // "away", so a bad value just leaves last_input_at to go stale.
+        ...(args.input_idle_ms !== undefined &&
+        Number.isFinite(args.input_idle_ms) &&
+        args.input_idle_ms >= 0
+          ? { last_input_at: now - Math.min(args.input_idle_ms, 7 * 24 * 3600_000) }
+          : {}),
+        ...(args.device_hostname !== undefined ? { hostname: args.device_hostname } : {}),
+        ...(args.wsl_distro !== undefined && /^[A-Za-z0-9._-]{1,64}$/.test(args.wsl_distro) ? { wsl_distro: args.wsl_distro } : {}),
+        ...(args.is_remote_device !== undefined ? { is_remote: args.is_remote_device } : {}),
+        // The device is awake: whatever asked for it has been answered.
+        ...((existingDevice as any)?.wake_requested_at !== undefined ? { wake_requested_at: undefined } : {}),
+        ...(args.local_project_roots !== undefined
+          ? { local_project_roots: args.local_project_roots }
+          : {}),
+        ...(args.git_plane !== undefined ? { git_plane: args.git_plane } : {}),
+        ...(args.git_pubkey !== undefined ? { git_pubkey: args.git_pubkey } : {}),
+        ...(args.cc_accounts !== undefined ? { cc_accounts: args.cc_accounts } : {}),
+        ...(args.codex_usage !== undefined ? { codex_usage: args.codex_usage } : {}),
+        ...(args.codex_accounts !== undefined ? { codex_accounts: args.codex_accounts } : {}),
+        ...(args.provider_key_pubkey !== undefined ? { provider_key_pubkey: args.provider_key_pubkey } : {}),
+        ...(args.managed_provider_ids !== undefined ? { managed_provider_ids: args.managed_provider_ids } : {}),
+        ...(args.cloud_agent_blocks !== undefined ? { cloud_agent_blocks: args.cloud_agent_blocks.length ? args.cloud_agent_blocks : undefined } : {}),
+        ...(args.settings !== undefined ? { settings: args.settings } : {}),
+        cli_version: args.version,
+        ...(args.update_available !== undefined ? { update_available: args.update_available || undefined } : {}),
+        // Hash-gated: the daemon only attaches this when it changed, but guard
+        // against a resend loop (e.g. a failed-ack daemon) rewriting the ~10KB
+        // field every beat anyway.
+        ...(args.model_inventory !== undefined &&
+        args.model_inventory.hash !== (existingDevice as any)?.model_inventory?.hash
+          ? { model_inventory: args.model_inventory }
+          : {}),
+      };
+      // Coalesce the per-device write, mirroring the user-doc throttle above.
+      // `last_seen: now` alone made every 30s beat a real write, so every
+      // listDevices and routing subscription in the fleet re-ran on it. Skip the
+      // write when the beat says nothing new and the stored last_seen is still
+      // fresh; anything else the beat carries writes through at once. Writes
+      // then land at most 60s apart, well inside the 120s DEVICE_ONLINE_MS
+      // window every routing and delivery path gates on.
+      const DEVICE_WRITE_THROTTLE_MS = 45 * 1000;
+      // Read BEFORE the patch: was this machine offline until this beat?
+      const cameOnline = !existingDevice || now - existingDevice.last_seen >= DEVICE_ONLINE_MS;
+      if (existingDevice) {
+        const seenStale = now - existingDevice.last_seen >= DEVICE_WRITE_THROTTLE_MS;
+        if (seenStale || deviceBeatChanged(existingDevice, devicePatch)) {
+          await ctx.db.patch(existingDevice._id, devicePatch);
+        }
+      } else {
+        await ctx.db.insert("devices", {
+          user_id: auth.userId,
+          device_id: args.device_id,
+          // deviceLabelWrite ran with isNew, so devicePatch always carries a
+          // label here — the schema requires one on insert.
+          label: args.device_label || args.platform,
+          ...devicePatch,
+        });
+      }
+      // A LOCAL device's offline→online transition (never the per-beat path):
+      // rows parked on this user's cloud hosts whose cloud_spawn expired while
+      // no laptop was around get re-issued, preferably to this laptop
+      // (cloudPlacement.reissueStrandedCloudSpawns). Only the transition beat
+      // pays for the scan, and a catch-up failure never fails the beat.
+      const localDevice = !(args.is_remote_device ?? existingDevice?.is_remote ?? false);
+      // New meters from a machine on the fleet store: see whether the fleet
+      // should leave its account before it runs out (switchAheadCheck).
+      if (
+        localDevice &&
+        args.cc_accounts?.fleet_store &&
+        JSON.stringify(args.cc_accounts) !== JSON.stringify(existingDevice?.cc_accounts)
+      ) {
+        await ctx.scheduler.runAfter(0, internal.accountSwitch.switchAheadCheck, { user_id: auth.userId });
+      }
+      if (cameOnline && localDevice) {
+        try {
+          await reissueStrandedCloudSpawns(ctx, auth.userId, args.device_id);
+        } catch (err) {
+          console.warn("[cloud] re-issue on heartbeat failed", err instanceof Error ? err.message : String(err));
+        }
+        // Migrations planned onto this machine while it was offline run now.
+        try {
+          await reissueWaitingMigrations(ctx, auth.userId, args.device_id, now);
+        } catch (err) {
+          console.warn("[migrate] re-issue on heartbeat failed", err instanceof Error ? err.message : String(err));
+        }
+      }
+    }
+
+    const allPendingCommands = await ctx.db
+      .query("daemon_commands")
+      .withIndex("by_user_pending", (q) =>
+        q.eq("user_id", auth.userId).eq("executed_at", undefined)
+      )
+      .collect();
+
+    const COMMAND_TTL_MS = DAEMON_COMMAND_TTL_MS;
+    const pendingCommands = allPendingCommands.filter(
+      (c) => now - c._creationTime < COMMAND_TTL_MS
+    );
+    for (const stale of allPendingCommands) {
+      if (now - stale._creationTime >= COMMAND_TTL_MS) {
+        await ctx.db.patch(stale._id, {
+          executed_at: now,
+          error: "expired_ttl",
+          // Never leave an unconsumed encrypted key ciphertext lying in the row
+          // (pl-207) — even expired, it's decryptable with the device's key file.
+          ...(stale.command === "set_provider_key" ? { args: undefined } : {}),
+        });
+      }
+    }
+
+    // Device routing: a command with a target_device_id is delivered ONLY to that
+    // daemon. This is what stops every daemon from racing a session command —
+    // start_session/resume go to the one machine that owns the checkout. Untargeted
+    // commands (status/restart, or sessions with no resolvable owner) broadcast to
+    // all daemons. Rollout-safe: a daemon that doesn't identify itself (pre-routing
+    // CLI) sees everything, so new sessions still start before the fleet upgrades.
+    const visibleCommands = (
+      args.device_id === undefined
+        ? pendingCommands
+        : pendingCommands.filter(
+            (c) => c.target_device_id === undefined || c.target_device_id === args.device_id,
+          )
+    ).filter((c) => commandVisibleToClaimer(c, args.boot_id, args.device_id, now));
+
+    // Reuse the doc read above for the return payload — these fields are sticky
+    // (untouched by the heartbeat patch), so the pre-patch snapshot is correct and
+    // we avoid a second read of the hot user doc.
+    const user = existingUser;
+
+    const minVersionConfig = await ctx.db
+      .query("system_config")
+      .withIndex("by_key", (q) => q.eq("key", "min_cli_version"))
+      .unique();
+
+    // Capability convergence (ct-42847/48). The revision is the pull signal: a
+    // laptop asleep when a toggle flipped compares one integer on its next beat
+    // and reconciles only when behind — pushed commands expire in 5 minutes,
+    // this never does. The mode is the kill switch: a reconciler bug reaches
+    // every machine on the next heartbeat, and without a server-side off you
+    // ship a new CLI to every machine to stop it. Global override outranks the
+    // user's setting; default dry (plan and report, never apply) until the
+    // zero-ops gate has been proven in the field.
+    const globalCapMode = await ctx.db
+      .query("system_config")
+      .withIndex("by_key", (q) => q.eq("key", "capabilities_mode"))
+      .unique();
+
+    // Cloud hosts asleep with work waiting (cloud.requestRemoteWake). Only a
+    // LOCAL daemon gets the list — it holds the host registry and the SSH key
+    // — and the device's own beat above already cleared its stamp.
+    const wakeDevices = args.is_remote_device
+      ? []
+      : wakeDevicesFor(
+          await ctx.db
+            .query("devices")
+            .withIndex("by_user_id", (q) => q.eq("user_id", auth.userId))
+            .collect(),
+          now,
+        );
+
+    return {
+      commands: visibleCommands.map((c) => ({
+        id: c._id,
+        command: c.command,
+        args: c.args,
+      })),
+      wake_devices: wakeDevices,
+      sync_mode: user?.sync_mode ?? "all",
+      sync_projects: user?.sync_projects ?? [],
+      sync_excluded: user?.sync_excluded ?? [],
+      ...cloudSessionSyncSettings(user),
+      // Older daemons still gate token minting on this wire field. Always true
+      // now that per-session account tokens are the default behavior.
+      cc_session_tokens: true,
+      team_id: user?.active_team_id ?? user?.team_id ?? undefined,
+      min_cli_version: minVersionConfig?.value ?? undefined,
+      agent_permission_modes: user?.agent_permission_modes ?? undefined,
+      agent_default_params: user?.agent_default_params ?? undefined,
+      // The user's codecast default model per client. The daemon mirrors the
+      // claude one into ~/.claude/settings.json every beat, so the file (and
+      // with it every bare `claude` terminal) tracks the codecast default even
+      // after a session's `/model <x>` one-shot rewrote it.
+      default_models: user?.default_models ?? undefined,
+      // Feature-gated agent snippets this user's teams make available (chat,
+      // calls). The daemon reconciles its installed snippets to this on every
+      // beat, so a team flipping a feature reaches offline machines when they
+      // wake — no pushed command to miss.
+      snippet_availability: await gatedSnippetAvailability(ctx, auth.userId),
+      capability_desired_revision: (user as any)?.capability_revision ?? 0,
+      capabilities_mode: (globalCapMode?.value as string | undefined) ?? (user as any)?.capabilities_mode ?? "dry",
+    };
+  },
+});
+
+export const claimDaemonCommand = mutation({
+  args: {
+    api_token: v.string(),
+    command_id: v.id("daemon_commands"),
+    boot_id: v.string(),
+    // The machine the claimer runs on. Optional so a daemon that predates this
+    // still claims; without it the lease falls back to contending with every
+    // holder, which is the old user wide behaviour.
+    device_id: v.optional(v.string()),
+    // Drop a hold this process is still carrying. A daemon releases what it
+    // claimed but never executed on the way out, so a restart does not strand
+    // a resume or a kill for the whole grace window.
+    release: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) {
+      return { claimed: false, reason: "unauthorized" };
+    }
+
+    const command = await ctx.db.get(args.command_id);
+    if (!command || command.user_id !== auth.userId) {
+      return { claimed: false, reason: "not_found" };
+    }
+
+    const claimer = { bootId: args.boot_id, deviceId: args.device_id };
+    const now = Date.now();
+
+    if (args.release) {
+      if (!canReleaseCommandClaim(command, claimer)) {
+        return { claimed: false, released: false, reason: "not_holder" };
+      }
+      await ctx.db.patch(args.command_id, {
+        claimed_by: undefined,
+        claimed_at: undefined,
+        claimed_device: undefined,
+      });
+      return { claimed: false, released: true };
+    }
+
+    const decision = decideCommandClaim(command, claimer, now);
+    if (decision !== "grant") {
+      return { claimed: false, reason: decision };
+    }
+
+    await ctx.db.patch(args.command_id, {
+      claimed_by: args.boot_id,
+      claimed_at: now,
+      claimed_device: args.device_id,
+    });
+    return { claimed: true };
+  },
+});
+
+// An isolated start made its worktree on the machine: the row learns it here,
+// since a spawned row exists before the daemon picks the worktree. The header
+// chip, the worktree GC and a worker's merge back all read these fields.
+async function stampStartedWorktree(ctx: any, commandArgs: string | undefined, result: string | undefined): Promise<void> {
+  let started: any;
+  let conversationId: string | undefined;
+  try {
+    started = result ? JSON.parse(result) : null;
+    conversationId = commandArgs ? JSON.parse(commandArgs).conversation_id : undefined;
+  } catch {
+    return;
+  }
+  if (!started?.worktree_path || !conversationId) return;
+  const id = ctx.db.normalizeId("conversations", conversationId);
+  const conv = id ? await ctx.db.get(id) : null;
+  if (!conv || conv.worktree_path === started.worktree_path) return;
+  await ctx.db.patch(conv._id, {
+    worktree_name: started.worktree_name,
+    worktree_branch: started.worktree_branch,
+    worktree_path: started.worktree_path,
+    worktree_status: "active",
+  });
+}
+
+export const reportCommandResult = mutation({
+  args: {
+    api_token: v.string(),
+    command_id: v.id("daemon_commands"),
+    result: v.optional(v.string()),
+    error: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) {
+      return { error: "Unauthorized" };
+    }
+
+    const command = await ctx.db.get(args.command_id);
+    if (!command || command.user_id !== auth.userId) {
+      return { error: "Command not found" };
+    }
+
+    await ctx.db.patch(args.command_id, {
+      executed_at: Date.now(),
+      result: args.result,
+      error: args.error,
+      // Scrub the encrypted-provider-key payload the instant the daemon acks it
+      // (pl-207): daemon_commands rows are never deleted, so leaving the ciphertext
+      // here would let a later daemon_commands dump + the device's private key file
+      // decrypt keys the user has since rotated/removed. The daemon has already
+      // applied it; the ciphertext has no further use.
+      ...(command.command === "set_provider_key" ? { args: undefined } : {}),
+    });
+    if (command.command === "start_session" && !args.error) await stampStartedWorktree(ctx, command.args, args.result);
+
+    return { success: true };
+  },
+});
+
+export const sendDaemonCommand = mutation({
+  args: {
+    user_id: v.id("users"),
+    command: v.union(
+      v.literal("status"),
+      v.literal("restart"),
+      v.literal("force_update"),
+      v.literal("reinstall"),
+      v.literal("version"),
+      v.literal("start_session"),
+      v.literal("escape"),
+      v.literal("resume_session"),
+      v.literal("kill_session"),
+      v.literal("send_keys"),
+      v.literal("rewind"),
+      v.literal("config_list"),
+      v.literal("config_read"),
+      v.literal("config_write"),
+      v.literal("config_create"),
+      v.literal("config_delete"),
+      v.literal("run_workflow")
+    ),
+    args_json: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      throw new Error("Not authenticated");
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      throw new Error("Not authorized");
+    }
+
+    const commandId = await ctx.db.insert("daemon_commands", {
+      user_id: args.user_id,
+      command: args.command,
+      args: args.args_json,
+      created_at: Date.now(),
+    });
+
+    return { command_id: commandId };
+  },
+});
+
+// "Update now" from the in-app desktop-update banner. Unlike sendDaemonCommand
+// (admin, targets any user), this lets a signed-in user apply the desktop update
+// to THEIR OWN daemon on demand — the daemon force-applies (quit + swap +
+// relaunch) so an always-open app updates without waiting for a manual quit.
+export const requestDesktopUpdate = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    await ctx.db.insert("daemon_commands", {
+      user_id: userId,
+      command: "desktop_update",
+      created_at: Date.now(),
+    });
+  },
+});
+
+// Integrated terminal: ask this user's live daemons for their loopback
+// terminal endpoints. One targeted command per recently-seen device; the web
+// polls each command's result and connects to whichever endpoint answers on
+// 127.0.0.1 (only the machine the browser is on is reachable, so multi-device
+// resolution needs no server-side smarts).
+export const requestTerminalEndpoints = mutation({
+  // device_id narrows the ask to ONE machine. The conversation terminal knows
+  // where its pane lives, so it only needs to learn whether that machine is the
+  // one the browser is on — asking every device would queue commands on
+  // machines that can't be the answer. Optional, so older clients that send no
+  // args keep the broadcast behaviour.
+  args: { device_id: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+
+    const devices = await ctx.db
+      .query("devices")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+    const now = Date.now();
+    const live = devices
+      .filter((d) => now - d.last_seen < 5 * 60 * 1000)
+      .filter((d) => !args.device_id || d.device_id === args.device_id);
+
+    const commands: Array<{ command_id: Id<"daemon_commands">; device_id: string; label: string }> = [];
+    for (const device of live) {
+      const commandId = await ctx.db.insert("daemon_commands", {
+        user_id: userId,
+        command: "get_terminal_endpoint" as const,
+        created_at: now,
+        target_device_id: device.device_id,
+      });
+      commands.push({ command_id: commandId, device_id: device.device_id, label: device.label });
+    }
+    return { commands };
+  },
+});
+
+export const sendDaemonCommandToAll = mutation({
+  args: {
+    command: v.union(
+      v.literal("restart"),
+      v.literal("force_update"),
+      v.literal("reinstall"),
+      v.literal("desktop_update")
+    ),
+    max_version: v.optional(v.string()),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getUserOrToken(ctx, args.api_token);
+    if (!authUserId) throw new Error("Not authenticated");
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) throw new Error("Not authorized");
+
+    const allUsers = await ctx.db.query("users").collect();
+    const now = Date.now();
+    const recentlyActive = allUsers.filter(
+      (u) => u.last_heartbeat && now - u.last_heartbeat < 24 * 60 * 60 * 1000
+    );
+
+    let targeted = recentlyActive;
+    if (args.max_version) {
+      targeted = recentlyActive.filter((u) => {
+        if (!u.cli_version) return true;
+        const parts = u.cli_version.split(".").map(Number);
+        const maxParts = args.max_version!.split(".").map(Number);
+        for (let i = 0; i < Math.max(parts.length, maxParts.length); i++) {
+          if ((parts[i] || 0) < (maxParts[i] || 0)) return true;
+          if ((parts[i] || 0) > (maxParts[i] || 0)) return false;
+        }
+        return false;
+      });
+    }
+
+    let sent = 0;
+    for (const user of targeted) {
+      await ctx.db.insert("daemon_commands", {
+        user_id: user._id,
+        command: args.command,
+        created_at: now,
+      });
+      sent++;
+    }
+
+    return { sent, total: recentlyActive.length };
+  },
+});
+
+// Admin-only internal mutation for CLI use with admin key
+export const internalSendCommand = internalMutation({
+  args: {
+    email: v.string(),
+    command: v.string(),
+    args_json: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const users = await ctx.db.query("users").collect();
+    const user = users.find(u => u.email === args.email);
+    if (!user) throw new Error(`User not found: ${args.email}`);
+
+    const commandId = await ctx.db.insert("daemon_commands", {
+      user_id: user._id,
+      command: args.command as any,
+      args: args.args_json,
+      created_at: Date.now(),
+    });
+    return { command_id: commandId, user_id: user._id };
+  },
+});
+
+export const internalExpireCommands = internalMutation({
+  args: { email: v.string() },
+  handler: async (ctx, args) => {
+    const users = await ctx.db.query("users").collect();
+    const user = users.find(u => u.email === args.email);
+    if (!user) throw new Error(`User not found: ${args.email}`);
+    const pending = await ctx.db.query("daemon_commands")
+      .withIndex("by_user_pending", q => q.eq("user_id", user._id).eq("executed_at", undefined))
+      .collect();
+    for (const cmd of pending) {
+      await ctx.db.patch(cmd._id, {
+        executed_at: Date.now(),
+        error: "expired_manual",
+        ...(cmd.command === "set_provider_key" ? { args: undefined } : {}),
+      });
+    }
+    return { expired: pending.length, commands: pending.map(c => c.command) };
+  },
+});
+
+export const internalGetCommand = internalMutation({
+  args: { command_id: v.id("daemon_commands") },
+  handler: async (ctx, args) => {
+    const cmd = await ctx.db.get(args.command_id);
+    return cmd ? { command: cmd.command, result: cmd.result, error: cmd.error, executed_at: cmd.executed_at } : null;
+  },
+});
+
+export const internalListUsers = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const users = await ctx.db.query("users").collect();
+    return users
+      .filter(u => u.last_heartbeat)
+      .map(u => ({ email: u.email, _id: u._id, cli_version: u.cli_version, last_heartbeat: u.last_heartbeat }))
+      .sort((a, b) => (b.last_heartbeat ?? 0) - (a.last_heartbeat ?? 0));
+  },
+});
+
+export const resumeSession = mutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    /** A failed cloud park over the context cap: the files to leave out on the retry. */
+    leave_out: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      throw new Error("Not authenticated");
+    }
+    // Runner or second-party owner, runner-addressed command — the same core
+    // as the dispatch resume handler, so an owned (Mr-Bot-run) session resumes
+    // from the owner's inbox exactly like their own.
+    return await resumeConversationSession(ctx, authUserId, args.conversation_id, { leaveOut: args.leave_out });
+  },
+});
+
+export const getDaemonStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      return { users: [], isAdmin: false };
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      return { users: [], isAdmin: false };
+    }
+
+    const allUsers = await ctx.db.query("users").collect();
+    const now = Date.now();
+    const tenMinutes = 10 * 60 * 1000;
+
+    const usersWithDaemon = allUsers
+      .filter((u) => u.daemon_last_seen || u.last_heartbeat)
+      .map((u) => ({
+        _id: u._id,
+        email: u.email,
+        name: u.name,
+        cli_version: u.cli_version,
+        cli_platform: u.cli_platform,
+        autostart_enabled: u.autostart_enabled,
+        daemon_pid: u.daemon_pid,
+        last_heartbeat: u.last_heartbeat,
+        daemon_last_seen: u.daemon_last_seen,
+        is_online: u.last_heartbeat ? now - u.last_heartbeat < tenMinutes : false,
+        offline_duration: u.last_heartbeat ? now - u.last_heartbeat : null,
+      }))
+      .sort((a, b) => (b.last_heartbeat || 0) - (a.last_heartbeat || 0));
+
+    return { users: usersWithDaemon, isAdmin: true };
+  },
+});
+
+export const getPendingCommands = query({
+  args: {
+    user_id: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      return [];
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      return [];
+    }
+
+    const query = args.user_id
+      ? ctx.db
+          .query("daemon_commands")
+          .withIndex("by_user_pending", (q) => q.eq("user_id", args.user_id!))
+      : ctx.db.query("daemon_commands");
+
+    const commands = await query.order("desc").take(100);
+
+    return commands;
+  },
+});
+
+export const storeVoipPushToken = mutation({
+  args: { voip_push_token: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await ctx.db.patch(userId, { voip_push_token: args.voip_push_token ?? undefined });
+  },
+});
+
+export const storePushToken = mutation({
+  args: {
+    push_token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const user = await ctx.db.get(userId);
+    // Token registration runs on every app launch — seed notification defaults
+    // only for first-time registration, never overwrite saved preferences.
+    await ctx.db.patch(userId, {
+      push_token: args.push_token,
+      ...(user?.notifications_enabled === undefined && { notifications_enabled: true }),
+      ...(user?.notification_preferences === undefined && {
+        notification_preferences: {
+          team_session_start: true,
+          mention: true,
+          permission_request: true,
+          session_idle: true,
+          session_error: true,
+        },
+      }),
+    });
+  },
+});
+
+export const updateNotificationPreferences = mutation({
+  args: {
+    notifications_enabled: v.optional(v.boolean()),
+    notification_preferences: v.optional(v.object({
+      team_session_start: v.boolean(),
+      mention: v.boolean(),
+      permission_request: v.boolean(),
+      session_idle: v.optional(v.boolean()),
+      session_error: v.optional(v.boolean()),
+      session_assigned: v.optional(v.boolean()),
+      task_activity: v.optional(v.boolean()),
+      doc_activity: v.optional(v.boolean()),
+      plan_activity: v.optional(v.boolean()),
+      artifact_activity: v.optional(v.boolean()),
+      // This list must hold every key the schema holds. A Convex object
+      // validator REJECTS a field it does not declare, so a key the schema has
+      // and this does not can never be written — and, worse, once such a key
+      // reaches a user row by any other route, the settings page echoes the
+      // stored object back and every toggle on web and mobile fails validation.
+      chat_activity: v.optional(v.boolean()),
+      email_notifications: v.optional(v.boolean()),
+      session_idle_digest: v.optional(v.boolean()),
+      live_activity: v.optional(v.boolean()),
+      task_agent_comments: v.optional(agentCommentLevelValidator),
+      task_status_changes: v.optional(v.boolean()),
+    })),
+    muted_members: v.optional(v.array(v.id("users"))),
+    machine_wide_presence: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const updateData: any = {};
+    if (args.notifications_enabled !== undefined) {
+      updateData.notifications_enabled = args.notifications_enabled;
+    }
+    if (args.machine_wide_presence !== undefined) {
+      updateData.machine_wide_presence = args.machine_wide_presence;
+    }
+    if (args.notification_preferences !== undefined) {
+      // MERGE, don't replace. A client that saves one toggle sends the object it
+      // holds, and a key it has not learned about yet (a newer app version's, or
+      // one this build does not render) would otherwise be wiped on every save.
+      const user = await ctx.db.get(userId);
+      updateData.notification_preferences = {
+        ...(user?.notification_preferences ?? {}),
+        ...args.notification_preferences,
+      };
+    }
+    if (args.muted_members !== undefined) {
+      updateData.muted_members = args.muted_members;
+    }
+    await ctx.db.patch(userId, updateData);
+    // Flipping the Lock Screen switch ends the running activity (or starts one
+    // for what is already live) on the next refresh.
+    const before = (await ctx.db.get(userId))?.notification_preferences?.live_activity;
+    const after = updateData.notification_preferences?.live_activity;
+    if (args.notification_preferences !== undefined && before !== after) {
+      await scheduleLiveActivityRefresh(ctx, userId, { urgent: true });
+    }
+  },
+});
+
+// Set or clear the user's default model for one agent client. The value is a
+// shared-contract option key ("fable"), validated against the same registry
+// dispatch validates launch picks with; null clears the default (fall back to
+// the agent's own saved default). Merge per key — saving claude's default must
+// not wipe codex's.
+export const updateDefaultModel = mutation({
+  args: {
+    agent: v.string(),
+    model: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    if (!(args.agent in LOCAL_AGENT_CLIENTS)) throw new Error(`Unknown agent client: ${args.agent}`);
+    if (args.model !== null) {
+      const opt = findModelOption(args.agent, args.model);
+      // Launchability is the bar: a default the daemon can't put on the launch
+      // line (menu keys, Sonnet 1M) would silently degrade to "no flag".
+      if (!opt?.cliAlias) throw new Error(`Model ${args.model} cannot be a launch default`);
+    }
+    const user = await ctx.db.get(userId);
+    const merged: Record<string, string> = { ...(user?.default_models ?? {}) };
+    if (args.model === null) delete merged[args.agent];
+    else merged[args.agent] = args.model;
+    await ctx.db.patch(userId, { default_models: merged });
+  },
+});
+
+export const updatePrivacySettings = mutation({
+  args: {
+    hide_activity: v.optional(v.boolean()),
+    share_session_metadata: v.optional(v.boolean()),
+    activity_visibility: v.optional(v.union(
+      v.literal("detailed"),
+      v.literal("summary"),
+      v.literal("minimal"),
+      v.literal("hidden")
+    )),
+    encryption_enabled: v.optional(v.boolean()),
+    encryption_master_key: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const updateData: any = {};
+    if (args.hide_activity !== undefined) {
+      updateData.hide_activity = args.hide_activity;
+    }
+    if (args.share_session_metadata !== undefined) {
+      updateData.share_session_metadata = args.share_session_metadata;
+    }
+    if (args.activity_visibility !== undefined) {
+      updateData.activity_visibility = args.activity_visibility;
+    }
+    if (args.encryption_enabled !== undefined) {
+      updateData.encryption_enabled = args.encryption_enabled;
+    }
+    if (args.encryption_master_key !== undefined) {
+      updateData.encryption_master_key = args.encryption_master_key;
+    }
+    await ctx.db.patch(userId, updateData);
+  },
+});
+
+// The profile header shape: publicUserCard plus the two fields the profile
+// page reads directly. NEVER return a raw `users` row from a public function —
+// the row carries github_access_token, encryption_master_key and push_token
+// alongside the profile fields, and this deployment has no global auth gate.
+function profileHeaderCard(user: Doc<"users"> | null) {
+  if (!user) return null;
+  return {
+    ...publicUserCard(user),
+    github_avatar_url: user.github_avatar_url ?? null,
+    daemon_last_seen: user.daemon_last_seen ?? null,
+  };
+}
+
+export const getUserByUsername = query({
+  args: {
+    username: v.optional(v.string()),
+    user_id: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    // Signed-in viewers read any card (the team page shows teammates). An
+    // anonymous caller reads only a profile its owner made public, the same
+    // gate getPublicProfile applies; otherwise this query was a lookup of any
+    // user's bio, title, timezone and presence by id or name.
+    const viewer = await getAuthUserId(ctx);
+    const card = (user: Doc<"users"> | null) =>
+      !viewer && !user?.public_profile_enabled ? null : profileHeaderCard(user);
+    if (args.user_id) {
+      return card(await ctx.db.get(args.user_id));
+    }
+    if (args.username) {
+      const byUsername = await ctx.db
+        .query("users")
+        .withIndex("by_github_username", (q) => q.eq("github_username", args.username))
+        .first();
+      if (byUsername) return card(byUsername);
+      const asId = ctx.db.normalizeId("users", args.username);
+      if (asId) return card(await ctx.db.get(asId));
+      const lower = args.username.toLowerCase();
+      const all = await ctx.db.query("users").take(200);
+      return card(all.find((u) =>
+        u.name?.toLowerCase() === lower ||
+        u.github_username?.toLowerCase() === lower
+      ) ?? null);
+    }
+    return null;
+  },
+});
+
+export const getUserActivity = query({
+  args: {
+    user_id: v.id("users"),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.user_id);
+    // Public, unauthed query. is_private=false means TEAM-visible, not world-
+    // visible. The world tier is the pinned-and-shared set only — the same
+    // canonical rule getPublicPinnedSessions uses (profilePublicSessionVisible).
+    if (!user || user.hide_activity || !user.public_profile_enabled) {
+      return [];
+    }
+    const limit = Math.min(args.limit ?? 3, 5);
+    const pinned = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_profile_pinned", (q) =>
+        q.eq("user_id", args.user_id).gt("profile_pinned_at", 0)
+      )
+      .order("desc")
+      .collect();
+    return pinned
+      .filter((c) => profilePublicSessionVisible(c))
+      .slice(0, limit)
+      .map((c) => ({
+        _id: c._id,
+        title: c.title,
+        subtitle: c.subtitle,
+        status: c.status,
+        message_count: c.message_count,
+        updated_at: c.updated_at,
+        started_at: c.started_at,
+        // Never leak the full local path — only the repo/folder basename, matching
+        // getPublicPinnedSessions.
+        repo: basenameOf(c.git_root || c.project_path),
+      }));
+  },
+});
+
+export const getUserStats = query({
+  args: {
+    user_id: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.user_id);
+    if (!user || user.hide_activity || !user.public_profile_enabled) {
+      return null;
+    }
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_private", (q) =>
+        q.eq("user_id", args.user_id).eq("is_private", false)
+      )
+      .order("desc")
+      .take(10);
+    const totalMessages = conversations.reduce((sum, conv) => sum + conv.message_count, 0);
+    const activeCount = conversations.filter((c) => c.status === "active").length;
+    return {
+      total_conversations: conversations.length,
+      total_messages: totalMessages,
+      active_conversations: activeCount,
+    };
+  },
+});
+
+// ── Public profiles ──────────────────────────────────────────────────────────
+// Anonymous, opt-in profile pages at /u/<username>. Three rules govern them:
+//   1. Nothing is anonymously readable until public_profile_enabled is true.
+//   2. The handle is a claimed, unique `username` (github_username only pre-fills).
+//   3. Sessions appear only because they were explicitly pinned (profile_pinned_at),
+//      which guarantees a share_token — so cards deep-link to the /share viewer.
+// Counts/heatmap are anonymized aggregates (no titles/ids cross the boundary).
+
+// Handles live at the ROOT (/<handle>), sharing the URL namespace with every
+// top-level route. React Router still serves real routes (static beats dynamic),
+// but a handle matching one would be an unreachable, confusing profile — so block
+// them. KEEP IN SYNC with the top-level <Route> paths in web/src/App.tsx; add any
+// new first-segment route here. Plus product nouns we don't want impersonated.
+const RESERVED_USERNAMES = new Set([
+  // Top-level route segments (web/src/App.tsx)
+  "about", "features", "documentation", "privacy", "security", "support", "terms",
+  "login", "signup", "signin", "logout", "forgot-password", "reset-password", "auth",
+  "join", "inbox", "feed", "search", "notifications", "conversation", "docs", "plans",
+  "tasks", "projects", "goals", "workflows", "routines", "schedules", "sessions", "resources", "team",
+  "admin", "config", "memory", "dashboard", "explore", "timeline", "windows", "orchestration",
+  "roadmap", "cli", "share", "commit", "pr", "review", "palette", "people", "call-panel", "settings",
+  "pricing", "blog", "a", "simple", "welcome",
+  // A trial project's cards (web /trial, convex lineTrial.ts).
+  "trial",
+  // Hosted mode's page names, which redirect to their pages (web
+  // lib/laneRedirect.ts PAGE_ALIASES), renamed pages' old roots (web
+  // lib/renamedPages.ts), and the pages they name.
+  "approvals", "plan", "mail", "integrations", "initiatives", "questions", "triggers", "assistant",
+  // The Org screen and the company document's old address, which redirects to it.
+  "org", "company",
+  // The non-developer funnel's address (/everyone, the landing's For everyone).
+  "everyone",
+  // Product nouns / safety
+  "u", "api", "teams", "codecast", "help", "status", "me", "you", "new", "null", "undefined",
+]);
+
+// Lowercase, 3–30 chars, alnum + single internal dashes, must start/end alnum.
+// Returns the normalized handle or an error string.
+export function normalizeUsername(raw: string): { username?: string; error?: string } {
+  const username = raw.trim().toLowerCase();
+  if (username.length < 3) return { error: "Username must be at least 3 characters" };
+  if (username.length > 30) return { error: "Username must be at most 30 characters" };
+  if (!/^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9]))*$/.test(username))
+    return { error: "Use lowercase letters, numbers, and single dashes (no leading/trailing dash)" };
+  if (RESERVED_USERNAMES.has(username)) return { error: "That username is reserved" };
+  return { username };
+}
+
+// Last path segment only — the public profile shows "codecast", never the
+// owner's full "/Users/ashot/src/codecast" home-dir layout.
+function basenameOf(path?: string): string | null {
+  if (!path) return null;
+  const parts = path.replace(/\/+$/, "").split("/");
+  return parts[parts.length - 1] || null;
+}
+
+// Whitelisted, never-leaks-internal-fields view of a user for anonymous pages.
+function publicUserCard(user: any) {
+  return {
+    _id: user._id,
+    username: user.username,
+    name: user.name,
+    avatar_url: user.github_avatar_url ?? user.image ?? null,
+    github_username: user.github_username ?? null,
+    bio: user.bio ?? null,
+    title: user.title ?? null,
+    timezone: user.timezone ?? null,
+  };
+}
+
+// Is the requested handle available for this user to claim?
+export const isUsernameAvailable = query({
+  args: { username: v.string() },
+  handler: async (ctx, args) => {
+    const { username, error } = normalizeUsername(args.username);
+    if (error) return { available: false, reason: error };
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username))
+      .first();
+    const me = await getAuthUserId(ctx);
+    if (existing && (!me || existing._id.toString() !== me.toString())) {
+      return { available: false, reason: "That username is taken" };
+    }
+    return { available: true, username };
+  },
+});
+
+// Claim (or change) the caller's public handle. Uniqueness-checked.
+export const claimUsername = mutation({
+  args: { username: v.string() },
+  handler: async (ctx, args) => {
+    const me = await getAuthUserId(ctx);
+    if (!me) throw new Error("Unauthorized");
+    const { username, error } = normalizeUsername(args.username);
+    if (error) throw new Error(error);
+    const existing = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", username))
+      .first();
+    if (existing && existing._id.toString() !== me.toString()) {
+      throw new Error("That username is taken");
+    }
+    await ctx.db.patch(me, { username });
+    return { username };
+  },
+});
+
+// The master opt-in switch. Refuses to enable without a claimed handle, since
+// the public URL is the handle — there'd be nothing to route to.
+export const setPublicProfileEnabled = mutation({
+  args: { enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    const me = await getAuthUserId(ctx);
+    if (!me) throw new Error("Unauthorized");
+    if (args.enabled) {
+      const user = await ctx.db.get(me);
+      if (!user?.username) throw new Error("Claim a username before enabling your public profile");
+    }
+    await ctx.db.patch(me, { public_profile_enabled: args.enabled });
+    return { enabled: args.enabled };
+  },
+});
+
+// PUBLIC. The 404 gate lives here: returns null unless the handle resolves AND
+// the owner has the profile switched on. Only whitelisted fields ever escape.
+export const getPublicProfile = query({
+  args: { username: v.string() },
+  handler: async (ctx, args) => {
+    const handle = args.username.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", handle))
+      .first();
+    if (!user || !user.public_profile_enabled) return null;
+
+    // Aggregate, anonymized stats from the public (pinned) tier only.
+    const pinned = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_profile_pinned", (q) =>
+        q.eq("user_id", user._id).gt("profile_pinned_at", 0)
+      )
+      .collect();
+    const publicPins = pinned.filter((c) => profilePublicSessionVisible(c));
+
+    return {
+      ...publicUserCard(user),
+      show_activity_graph: !user.hide_activity,
+      stats: {
+        pinned_sessions: publicPins.length,
+        pinned_messages: publicPins.reduce((s, c) => s + (c.message_count ?? 0), 0),
+      },
+    };
+  },
+});
+
+// PUBLIC. The pinned sessions, newest pin first. Defense-in-depth filtered to
+// those still backed by a share_token; each row carries that token so the card
+// links straight to the existing guest /share viewer. Never leaks the full
+// local path — only the repo/folder basename.
+export const getPublicPinnedSessions = query({
+  args: { username: v.string() },
+  handler: async (ctx, args) => {
+    const handle = args.username.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", handle))
+      .first();
+    if (!user || !user.public_profile_enabled) return [];
+
+    const pinned = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_profile_pinned", (q) =>
+        q.eq("user_id", user._id).gt("profile_pinned_at", 0)
+      )
+      .order("desc")
+      .collect();
+
+    return pinned
+      .filter((c) => profilePublicSessionVisible(c))
+      .map((c) => ({
+        _id: c._id,
+        share_token: c.share_token!,
+        title: c.title,
+        subtitle: c.subtitle,
+        repo: basenameOf(c.git_root || c.project_path),
+        agent: c.agent_type ?? null,
+        message_count: c.message_count ?? 0,
+        updated_at: c.updated_at ?? c.started_at ?? c._creationTime,
+        profile_pinned_at: c.profile_pinned_at,
+      }));
+  },
+});
+
+// PUBLIC. The anonymized GitHub-style contribution graph: per-day activity
+// tally across ALL the user's sessions (private ones count as anonymous squares,
+// exactly like GitHub). Each day is only aggregates — hours, session/message
+// counts, and a distinct-project COUNT (never names) — so the same rows power
+// both the contribution grid and the anonymized "ran N sessions on M projects"
+// feed. `projects` is best-effort: only the recent conversations source knows
+// paths, so older days report 0 (render-side: omit, don't show "0 projects").
+// Honors hide_activity, and only runs once the profile is enabled.
+export const getPublicActivityHeatmap = query({
+  args: { username: v.string(), days: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const handle = args.username.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", handle))
+      .first();
+    if (!user || !user.public_profile_enabled || user.hide_activity) return [];
+
+    const { days, live } = await loadUserActivity(
+      ctx,
+      null,
+      { user_id: user._id, days: args.days },
+      { countAll: true },
+    );
+
+    return [...bucketActivityDays(days, live)]
+      .map(([date, d]) => ({
+        date,
+        hours: Math.round(d.hours * 100) / 100,
+        sessions: d.sessions,
+        msgs: Math.round(d.msgs),
+        // A rolled-up day counts its own distinct projects; the live window
+        // still has the paths, so take whichever the day drew from.
+        projects: Math.max(d.projectCount, d.projects.size),
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  },
+});
+
+export const getUserAbstractActivity = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+  },
+  handler: async (ctx, args) => {
+    const viewerId = await getAuthUserId(ctx);
+    if (!viewerId) return null;
+    const user = await ctx.db.get(args.user_id);
+    if (!user) return null;
+
+    const now = Date.now();
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+    const oneMonthAgo = now - 30 * 24 * 60 * 60 * 1000;
+
+    const recentConversationsRaw = args.team_id
+      ? await ctx.db
+          .query("conversations")
+          .withIndex("by_team_user_updated", (q: any) =>
+            q.eq("team_id", args.team_id).eq("user_id", args.user_id)
+          )
+          .order("desc")
+          .take(10)
+      : await ctx.db
+          .query("conversations")
+          .withIndex("by_user_id", (q) => q.eq("user_id", args.user_id))
+          .order("desc")
+          .take(10);
+
+    // Privacy gate: exclude private conversations from a teammate's profile so
+    // their titles/subtitles/projects and counts don't leak (owner sees all).
+    const isVisible = await getProfileVisibilityPredicate(ctx, viewerId, args.user_id, args.team_id);
+    const recentConversations = recentConversationsRaw.filter(isVisible);
+
+    const weekConversations = recentConversations.filter(c => c.started_at > oneWeekAgo);
+    const monthConversations = recentConversations.filter(c => c.started_at > oneMonthAgo);
+    const activeSession = recentConversations.find(c => c.status === "active");
+
+    const projectCounts: Record<string, { sessions: number; messages: number; lastActive: number }> = {};
+    monthConversations.forEach(c => {
+      const project = c.project_path?.split('/').pop() || 'Unknown';
+      if (!projectCounts[project]) {
+        projectCounts[project] = { sessions: 0, messages: 0, lastActive: 0 };
+      }
+      projectCounts[project].sessions++;
+      projectCounts[project].messages += c.message_count;
+      projectCounts[project].lastActive = Math.max(projectCounts[project].lastActive, c.updated_at);
+    });
+
+    const recentProjects = Object.entries(projectCounts)
+      .sort(([,a], [,b]) => b.lastActive - a.lastActive)
+      .slice(0, 5)
+      .map(([name, stats]) => ({
+        name,
+        sessions: stats.sessions,
+        messages: stats.messages,
+      }));
+
+    const weekTotalMessages = weekConversations.reduce((sum, c) => sum + c.message_count, 0);
+    const monthTotalMessages = monthConversations.reduce((sum, c) => sum + c.message_count, 0);
+
+    let teamActivityStats = null;
+    let recentCommits: Array<{ message: string; branch?: string; filesChanged?: number; timestamp: number }> = [];
+
+    if (args.team_id || user.team_id) {
+      const teamEventsRaw = await ctx.db
+        .query("team_activity_events")
+        .withIndex("by_actor", (q) => q.eq("actor_user_id", args.user_id))
+        .order("desc")
+        .take(args.team_id ? 60 : 15);
+      const teamEvents = args.team_id
+        ? teamEventsRaw.filter(e => String(e.team_id) === String(args.team_id)).slice(0, 15)
+        : teamEventsRaw;
+
+      const weekEvents = teamEvents.filter(e => e.timestamp > oneWeekAgo);
+      const monthEvents = teamEvents.filter(e => e.timestamp > oneMonthAgo);
+
+      const weekCommits = weekEvents.filter(e => e.event_type === "commit_pushed").length;
+      const monthCommits = monthEvents.filter(e => e.event_type === "commit_pushed").length;
+      const weekPRs = weekEvents.filter(e => e.event_type === "pr_created" || e.event_type === "pr_merged").length;
+      const monthPRs = monthEvents.filter(e => e.event_type === "pr_created" || e.event_type === "pr_merged").length;
+
+      const weekFilesChanged = weekEvents
+        .filter(e => e.event_type === "commit_pushed" && e.metadata?.files_changed)
+        .reduce((sum, e) => sum + (e.metadata?.files_changed || 0), 0);
+
+      const recentBranches = monthEvents
+        .filter(e => e.metadata?.git_branch)
+        .map(e => e.metadata!.git_branch!)
+        .filter((v, i, a) => a.indexOf(v) === i)
+        .slice(0, 5);
+
+      recentCommits = monthEvents
+        .filter(e => e.event_type === "commit_pushed")
+        .slice(0, 5)
+        .map(e => ({
+          message: e.title,
+          branch: e.metadata?.git_branch,
+          filesChanged: e.metadata?.files_changed,
+          timestamp: e.timestamp,
+        }));
+
+      teamActivityStats = {
+        week_commits: weekCommits,
+        month_commits: monthCommits,
+        week_prs: weekPRs,
+        month_prs: monthPRs,
+        week_files_changed: weekFilesChanged,
+        recent_branches: recentBranches,
+      };
+    }
+
+    const hourOfDay: Record<number, number> = {};
+    monthConversations.forEach(c => {
+      const hour = new Date(c.started_at).getHours();
+      hourOfDay[hour] = (hourOfDay[hour] || 0) + 1;
+    });
+    const peakHours = Object.entries(hourOfDay)
+      .sort(([,a], [,b]) => b - a)
+      .slice(0, 3)
+      .map(([hour]) => parseInt(hour));
+
+
+    const daySet = new Set<string>();
+    recentConversations.forEach(c => {
+      const day = new Date(c.started_at).toISOString().split('T')[0];
+      daySet.add(day);
+    });
+    const sortedDays = Array.from(daySet).sort().reverse();
+    let streak = 0;
+    for (let i = 0; i < sortedDays.length; i++) {
+      const expectedDate = new Date(Date.now() - i * 86400000).toISOString().split('T')[0];
+      if (sortedDays[i] === expectedDate) {
+        streak++;
+      } else if (i === 0 && sortedDays[0] === new Date(Date.now() - 86400000).toISOString().split('T')[0]) {
+        streak++;
+      } else {
+        break;
+      }
+    }
+
+    const shareMetadata = user.share_session_metadata !== false;
+
+    const recentSessions = shareMetadata ? weekConversations.slice(0, 5).map(c => ({
+      title: c.title || 'Untitled Session',
+      subtitle: c.subtitle,
+      message_count: c.message_count,
+      project: c.project_path?.split('/').pop(),
+      started_at: c.started_at,
+      updated_at: c.updated_at,
+      status: c.status,
+    })) : [];
+
+    return {
+      last_active: user.daemon_last_seen,
+      is_currently_active: activeSession !== undefined,
+      current_project: activeSession?.project_path?.split('/').pop(),
+      week_sessions: weekConversations.length,
+      month_sessions: monthConversations.length,
+      week_messages: weekTotalMessages,
+      month_messages: monthTotalMessages,
+      activity_streak: streak,
+      recent_projects: recentProjects,
+      recent_sessions: recentSessions,
+      recent_commits: recentCommits,
+      peak_hours: peakHours,
+      team_activity: teamActivityStats,
+      share_session_metadata: shareMetadata,
+    };
+  },
+});
+
+// ── Profile activity: rolled-up days + a live window ──
+// `user_activity_daily` holds one small row per (user, team, UTC day), so a
+// year of activity is ~370 rows instead of the tens of thousands of session
+// rows it is derived from (that read blew Convex's system-operation ceiling and
+// the profile heatmap failed outright). Only today and yesterday are still
+// read raw, where one day is a few hundred documents — see lib/activityDaily.ts.
+//
+// Who sees what: the owner and the anonymized public graph read the day row's
+// totals; a teammate reads its `shared_*` counters, the same team-visibility
+// rule `getProfileVisibilityPredicate` applies to the live window. Someone who
+// is not the owner and not scoped to a team they share sees nothing.
+type ActivityRequest = { user_id: Id<"users">; team_id?: Id<"teams">; days?: number };
+
+async function loadUserActivity(
+  ctx: any,
+  viewerId: Id<"users"> | null,
+  args: ActivityRequest,
+  opts?: { countAll?: boolean },
+): Promise<{ days: ActivityDayRow[]; live: ScopedInterval[] }> {
+  const now = Date.now();
+  const from = dayStartUtc(now - (args.days ?? 365) * ACTIVITY_DAY_MS);
+  const liveFrom = Math.max(activityLiveFrom(now), from);
+
+  const isOwner = !!viewerId && viewerId.toString() === args.user_id.toString();
+  const unrestricted = !!opts?.countAll || isOwner;
+  // Not the owner: the viewer must be a member of the team they scope to.
+  // The day rows are pre-summed, so this gate stands in for the membership
+  // half of getProfileVisibilityPredicate, which only sees the live window.
+  if (!unrestricted && (!viewerId || !args.team_id || !(await isTeamMember(ctx, viewerId, args.team_id))))
+    return { days: [], live: [] };
+  const scope: ActivityScope = unrestricted ? "total" : "shared";
+
+  const days = await fetchUserActivityDays(ctx, args.user_id, args.team_id, from, liveFrom, scope);
+  const raw = await collectIntervalsInWindow(ctx, args.user_id, liveFrom, now + 1);
+  const isVisible = unrestricted
+    ? () => true
+    : await getProfileVisibilityPredicate(ctx, viewerId!, args.user_id, args.team_id);
+  const live = raw
+    .filter(
+      (iv) =>
+        (!args.team_id || String(iv.team_id) === String(args.team_id)) &&
+        // An event/insight interval carries no privacy facts (its conversation
+        // is gone): it counts for a teammate only as part of a team, exactly as
+        // the shared day counters treat it.
+        (iv.conv ? isVisible(iv.conv) : unrestricted || !!iv.team_id),
+    )
+    // A session that began before the live window is credited to its last
+    // activity day either way; clamping its start keeps the punchcard from
+    // spreading that credit back over days the rolled-up rows already hold.
+    .map((iv) => (iv.start < liveFrom ? { ...iv, start: liveFrom } : iv));
+  return { days, live };
+}
+
+const utcDate = (ts: number) => new Date(ts).toISOString().split("T")[0];
+
+type DayBucket = { hours: number; sessions: number; msgs: number; projects: Set<string>; projectCount: number };
+
+/** Per-UTC-day totals from the rolled-up rows plus the live window. */
+function bucketActivityDays(days: ActivityDayRow[], live: ScopedInterval[]): Map<string, DayBucket> {
+  const buckets = new Map<string, DayBucket>();
+  const bucketFor = (date: string) => {
+    let b = buckets.get(date);
+    if (!b) buckets.set(date, (b = { hours: 0, sessions: 0, msgs: 0, projects: new Set(), projectCount: 0 }));
+    return b;
+  };
+  const sum = (a: number[]) => a.reduce((t, v) => t + v, 0);
+  for (const d of days) {
+    const b = bucketFor(utcDate(d.day_start));
+    b.hours += sum(d.hours);
+    b.msgs += sum(d.msgs);
+    b.sessions += d.day_sessions;
+    b.projectCount += d.projects;
+  }
+  for (const iv of live) {
+    const b = bucketFor(utcDate(iv.end));
+    b.hours += iv.hours;
+    b.msgs += iv.msgs;
+    b.sessions++;
+    if (iv.project) b.projects.add(iv.project);
+  }
+  return buckets;
+}
+
+export const getUserActivityHeatmap = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(args.user_id);
+    if (!user || user.hide_activity) return [];
+
+    const { days, live } = await loadUserActivity(ctx, userId, args);
+
+    return [...bucketActivityDays(days, live)]
+      .map(([date, data]) => ({
+        date,
+        hours: Math.round(data.hours * 100) / 100,
+        sessions: data.sessions,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  },
+});
+
+export const getUserActivityPunchcard = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+    days: v.optional(v.number()),
+    tz_offset_minutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(args.user_id);
+    if (!user || user.hide_activity) return [];
+
+    const [{ days, live }, sendDays, usageDays] = await Promise.all([
+      loadUserActivity(ctx, userId, args),
+      fetchUserSendDays(ctx, args.user_id, args.team_id, args.days ?? 365),
+      fetchUserUsageDays(ctx, args.user_id, args.team_id, args.days ?? 365),
+    ]);
+    return bucketPunchcardRows(live, args.tz_offset_minutes ?? 0, sendDays, usageDays, days);
+  },
+});
+
+// PUBLIC. The anonymized hour-of-day punchcard for /u/<handle> profile pages:
+// same countAll aggregation as the public heatmap (every session counts, no
+// identities), distributed across local-clock hour cells like the authed
+// Timeline tab. Gated identically: opt-in profile + activity not hidden.
+export const getPublicActivityPunchcard = query({
+  args: {
+    username: v.string(),
+    days: v.optional(v.number()),
+    tz_offset_minutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const handle = args.username.trim().toLowerCase();
+    const user = await ctx.db
+      .query("users")
+      .withIndex("by_username", (q) => q.eq("username", handle))
+      .first();
+    if (!user || !user.public_profile_enabled || user.hide_activity) return [];
+
+    const [{ days, live }, sendDays] = await Promise.all([
+      loadUserActivity(ctx, null, { user_id: user._id, days: args.days }, { countAll: true }),
+      fetchUserSendDays(ctx, user._id, undefined, args.days ?? 365),
+    ]);
+    return bucketPunchcardRows(live, args.tz_offset_minutes ?? 0, sendDays, undefined, days);
+  },
+});
+
+
+export const getUserTasks = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const user = await ctx.db.get(args.user_id);
+    if (!user || user.hide_activity) return [];
+    const limit = Math.min(args.limit ?? 20, 50);
+    // Fetch a wider slab, then keep only the rows the VIEWER may actually see.
+    // hide_activity is the target's opt-out; it is not an access grant — a task
+    // is visible to its owner or a member of its effective team (canAccessTask).
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", args.user_id))
+      .order("desc")
+      .take(limit * 4);
+    const scoped = args.team_id
+      ? tasks.filter((t: any) => t.team_id && String(t.team_id) === String(args.team_id))
+      : tasks;
+    // Access checks are independent per row — run them concurrently instead of
+    // serially awaiting up to 4×limit round-trips.
+    const access = await Promise.all(scoped.map((t: any) => canAccessTask(ctx, userId, t)));
+    const visible = scoped.filter((_: any, i: number) => access[i]).slice(0, limit);
+    return visible.map((t: any) => ({
+      _id: t._id,
+      short_id: t.short_id,
+      title: t.title,
+      status: t.status,
+      priority: t.priority,
+      labels: t.labels,
+      created_at: t.created_at || t._creationTime,
+      updated_at: t.updated_at,
+      closed_at: t.closed_at,
+    }));
+  },
+});
+
+export const getUserDocs = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const user = await ctx.db.get(args.user_id);
+    if (!user || user.hide_activity) return [];
+    const limit = Math.min(args.limit ?? 20, 50);
+    // Same rule as getUserTasks: a doc is visible to its owner or a member of
+    // its EFFECTIVE team. A doc mined from a private session is team-tagged but
+    // effectively personal (canAccessDoc via effectiveTeamForResource).
+    const docs = await ctx.db
+      .query("docs")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", args.user_id))
+      .order("desc")
+      .take(limit * 4);
+    const live = docs.filter((d: any) =>
+      !d.archived_at && (!args.team_id || (d.team_id && String(d.team_id) === String(args.team_id)))
+    );
+    const access = await Promise.all(live.map((d: any) => canAccessDoc(ctx, userId, d)));
+    const visible = live.filter((_: any, i: number) => access[i]).slice(0, limit);
+    return visible.map((d: any) => ({
+      _id: d._id,
+      title: d.title,
+      doc_type: d.doc_type,
+      labels: d.labels,
+      created_at: d.created_at || d._creationTime,
+      updated_at: d.updated_at,
+    }));
+  },
+});
+
+type ProfileFeedItem = {
+  type: string;
+  timestamp: number;
+  verb: string;
+  preview?: string;
+  entity_id?: string;
+  entity_type?: string;
+  entity_title?: string;
+  entity_short_id?: string;
+  count?: number;
+  meta?: Record<string, any>;
+};
+
+export const getUserProfileFeed = query({
+  args: {
+    user_id: v.id("users"),
+    team_id: v.optional(v.id("teams")),
+    // Deployed web bundles (and the remote-URL Electron shell) outlive convex
+    // deploys by days — accept the pre-pagination {limit} shape and answer it
+    // with the pre-pagination array return. The export is cast below so the
+    // generated types only advertise the paginated signature.
+    paginationOpts: v.optional(paginationOptsValidator),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const legacy = !args.paginationOpts;
+    const legacyLimit = Math.min(args.limit ?? 30, 200);
+    const paginationOpts = args.paginationOpts ?? { numItems: 30, cursor: null };
+    const empty = legacy ? [] : { page: [], isDone: true, continueCursor: "" };
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return empty;
+    const user = await ctx.db.get(args.user_id);
+    if (!user) return empty;
+
+    const items: ProfileFeedItem[] = [];
+
+    // Messages are the spine of the feed, so we paginate over the user's
+    // conversations (newest first) and pull each page's user-authored messages.
+    // The activity overlay (tasks/docs/commits) is appended only on the first
+    // page so it sits at the top without re-fetching on every "load more".
+    const isFirstPage = !paginationOpts.cursor;
+    const convoQuery = args.team_id
+      ? ctx.db
+          .query("conversations")
+          .withIndex("by_team_user_updated", (q: any) =>
+            q.eq("team_id", args.team_id).eq("user_id", args.user_id)
+          )
+          .order("desc")
+      : ctx.db
+          .query("conversations")
+          .withIndex("by_user_id", (q) => q.eq("user_id", args.user_id))
+          .order("desc");
+    const convoPage = await convoQuery.paginate(paginationOpts);
+
+    // Privacy gate: (team_id, user_id) is routing, not visibility. Drop private
+    // conversations so a teammate's profile never exposes their message text.
+    const isVisible = await getProfileVisibilityPredicate(ctx, userId, args.user_id, args.team_id);
+    const recentConvos = convoPage.page.filter(isVisible);
+
+    // Shared with insert-time send counting (lib/userSend) so "what I wrote"
+    // and the Sends chart metric agree on what a human-typed message is.
+    const stripTags = stripMessageTags;
+    const isNoise = isUserMessageNoise;
+
+    for (const c of recentConvos) {
+      if ((c as any).parent_conversation_id) continue;
+      const allMsgs = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_timestamp", (q: any) =>
+          q.eq("conversation_id", c._id)
+        )
+        .order("desc")
+        .take(40);
+      const sessionMeta = { message_count: c.message_count, project: c.project_path?.split("/").pop(), status: c.status, duration_ms: c.started_at && c.updated_at ? c.updated_at - c.started_at : undefined };
+      for (let i = 0; i < allMsgs.length; i++) {
+        const m = allMsgs[i];
+        if (m.role !== "user") continue;
+        if (m.from_user_id && String(m.from_user_id) !== String(args.user_id)) continue;
+        if (!m.content || isNoise(m.content)) continue;
+        if (m.tool_results && m.tool_results.length > 0 && (!m.content || !m.content.trim())) continue;
+        const prev = allMsgs[i + 1];
+        if (prev?.role === "assistant" && prev?.tool_calls?.some((tc: any) => tc.name === "Task" || tc.name === "Agent")) continue;
+        const content = stripTags(m.content);
+        if (!content) continue;
+        items.push({
+          type: "message",
+          timestamp: m.timestamp || m._creationTime,
+          verb: "messaged",
+          preview: content,
+          entity_id: String(c._id),
+          entity_type: "session",
+          entity_title: c.title || "Untitled",
+          meta: sessionMeta,
+        });
+      }
+    }
+
+    if (isFirstPage) {
+    const tasks = await ctx.db
+      .query("tasks")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", args.user_id))
+      .order("desc")
+      .take(20);
+    for (const t of tasks as any[]) {
+      if (args.team_id && t.team_id && String(t.team_id) !== String(args.team_id)) continue;
+      items.push({
+        type: "task",
+        timestamp: t.updated_at || t.created_at || t._creationTime,
+        verb: t.status === "done" ? "completed" : t.updated_at > t.created_at + 1000 ? "updated" : "created",
+        entity_id: String(t._id),
+        entity_type: "task",
+        entity_title: t.title,
+        entity_short_id: t.short_id,
+        meta: { status: t.status, priority: t.priority },
+      });
+    }
+
+    const docs = await ctx.db
+      .query("docs")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", args.user_id))
+      .order("desc")
+      .take(15);
+    for (const d of docs as any[]) {
+      if (d.archived_at) continue;
+      if (args.team_id && d.team_id && String(d.team_id) !== String(args.team_id)) continue;
+      items.push({
+        type: "doc",
+        timestamp: d.updated_at || d.created_at || d._creationTime,
+        verb: d.updated_at > (d.created_at || d._creationTime) + 1000 ? "edited" : "wrote",
+        entity_id: String(d._id),
+        entity_type: "doc",
+        entity_title: d.title || "Untitled",
+        meta: { doc_type: d.doc_type },
+      });
+    }
+
+    const teamEvents = await ctx.db
+      .query("team_activity_events")
+      .withIndex("by_actor", (q) => q.eq("actor_user_id", args.user_id))
+      .order("desc")
+      .take(20);
+    for (const e of teamEvents) {
+      if (args.team_id && String(e.team_id) !== String(args.team_id)) continue;
+      const typeMap: Record<string, string> = {
+        commit_pushed: "pushed",
+        pr_created: "opened PR",
+        pr_merged: "merged PR",
+        session_started: "started",
+        session_completed: "finished",
+      };
+      if (!typeMap[e.event_type]) continue;
+      items.push({
+        type: e.event_type,
+        timestamp: e.timestamp,
+        verb: typeMap[e.event_type],
+        preview: e.title,
+        entity_id: e.related_conversation_id ? String(e.related_conversation_id) : undefined,
+        entity_type: e.related_conversation_id ? "session" : undefined,
+        meta: {
+          branch: e.metadata?.git_branch,
+          files_changed: e.metadata?.files_changed,
+          pr_number: e.related_pr_id,
+        },
+      });
+    }
+    }
+
+    items.sort((a, b) => b.timestamp - a.timestamp);
+    if (legacy) return items.slice(0, legacyLimit);
+    return { page: items, isDone: convoPage.isDone, continueCursor: convoPage.continueCursor };
+  },
+  // The runtime validator above also tolerates legacy {limit} callers, but the
+  // advertised type is paginated-only so usePaginatedQuery accepts it and new
+  // callers are steered to paginationOpts.
+}) as unknown as RegisteredQuery<
+  "public",
+  { user_id: Id<"users">; team_id?: Id<"teams">; paginationOpts: PaginationOptions },
+  Promise<PaginationResult<ProfileFeedItem>>
+>;
+
+export const getTeamMembers = query({
+  args: {
+    team_id: v.id("teams"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const membership = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_user_team", (q: any) => q.eq("user_id", userId).eq("team_id", args.team_id))
+      .first();
+    if (!membership) return [];
+
+    // The team's PEOPLE, for the team charts (memberKind.ts): role bots,
+    // agent accounts and Slack identities hold memberships too. Read through memberships, not users.team_id, which is a stale
+    // pointer for anyone who has moved teams.
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_team_id", (q: any) => q.eq("team_id", args.team_id))
+      .collect();
+    const users = await Promise.all(memberships.map((m) => ctx.db.get(m.user_id)));
+    return peopleOf(users).map((member) => ({
+      _id: member._id,
+      name: member.name,
+      github_username: member.github_username,
+      github_avatar_url: member.github_avatar_url,
+    }));
+  },
+});
+
+// There is no linkGitHub. A GitHub identity is written in ONE place, by the
+// auth provider's own profile (auth.ts), because `github_username` is read as
+// identity: it routes an issue's assignee to a codecast user (issueSync), it
+// resolves an @handle to an assignee (tasks), and it attributes a pull request
+// event to a team member (pull_requests). The public mutation that used to sit
+// here took a github_id, a username and an access token as ARGUMENTS, so any
+// signed-in account could claim any unclaimed GitHub login — and nothing in the
+// product called it. Unlinking stays: it only clears the caller's own fields.
+
+export const unlinkGitHub = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+    if (!user.email) {
+      throw new Error("Cannot unlink GitHub without an email/password login configured");
+    }
+    await ctx.db.patch(userId, {
+      github_id: undefined,
+      github_username: undefined,
+      github_avatar_url: undefined,
+      github_access_token: undefined,
+    });
+    return userId;
+  },
+});
+
+export const updateSyncSettings = mutation({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    sync_mode: v.optional(v.union(v.literal("all"), v.literal("selected"))),
+    sync_projects: v.optional(v.array(v.string())),
+    sync_excluded: v.optional(v.array(v.string())),
+    ...cloudSessionSyncFields,
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const updateData: Record<string, unknown> = {};
+    if (args.sync_mode !== undefined) {
+      updateData.sync_mode = args.sync_mode;
+    }
+    if (args.sync_projects !== undefined) {
+      updateData.sync_projects = args.sync_projects;
+    }
+    if (args.sync_excluded !== undefined) {
+      updateData.sync_excluded = [...new Set(args.sync_excluded)];
+    }
+    for (const { field } of Object.values(CLOUD_SESSION_SOURCES)) {
+      if (args[field] !== undefined) updateData[field] = args[field];
+    }
+    await ctx.db.patch(userId, updateData);
+    return userId;
+  },
+});
+
+export const getSyncSettings = query({
+  args: { api_token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      return null;
+    }
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      return null;
+    }
+    return {
+      sync_mode: user.sync_mode ?? "all",
+      sync_projects: user.sync_projects ?? [],
+      sync_excluded: user.sync_excluded ?? [],
+      ...cloudSessionSyncSettings(user),
+    };
+  },
+});
+
+export const getSyncSettingsForCLI = query({
+  args: {
+    api_token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const user = await ctx.db.get(result.userId);
+    if (!user) {
+      return { error: "User not found" };
+    }
+    return {
+      sync_mode: user.sync_mode ?? "all",
+      sync_projects: user.sync_projects ?? [],
+    };
+  },
+});
+
+export const updateSyncSettingsForCLI = mutation({
+  args: {
+    api_token: v.string(),
+    sync_mode: v.optional(v.union(v.literal("all"), v.literal("selected"))),
+    sync_projects: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const updateData: Record<string, unknown> = {};
+    if (args.sync_mode !== undefined) {
+      updateData.sync_mode = args.sync_mode;
+    }
+    if (args.sync_projects !== undefined) {
+      updateData.sync_projects = args.sync_projects;
+    }
+    await ctx.db.patch(result.userId, updateData);
+    return { success: true };
+  },
+});
+
+export const getDirectoryTeamMappings = query({
+  args: { api_token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      return [];
+    }
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+
+    const mappingsWithTeams = await Promise.all(
+      mappings.map(async (m) => {
+        const team = m.team_id ? await ctx.db.get(m.team_id) : null;
+        return {
+          _id: m._id,
+          path_prefix: m.path_prefix,
+          team_id: m.team_id ?? null,
+          team_name: m.team_id ? team?.name ?? "Unknown Team" : null,
+          auto_share: m.auto_share,
+          private: m.private ?? false,
+          share_since: m.share_since,
+          repository: m.repository,
+          created_at: m.created_at,
+        };
+      })
+    );
+    return mappingsWithTeams;
+  },
+});
+
+const DIRECTORY_MATCH_BATCH_SIZE = 32;
+
+function matchesPathPrefix(projectPath: string | null | undefined, pathPrefix: string) {
+  return !!projectPath && (
+    projectPath === pathPrefix ||
+    projectPath.startsWith(pathPrefix + "/")
+  );
+}
+
+function getConversationProjectPath(conv: { git_root?: string | null; project_path?: string | null }) {
+  return conv.git_root || conv.project_path || null;
+}
+
+// One walk over the viewer's most recently ACTIVE conversations, folded into
+// distinct projects. Keyed by git root when present, else project path. The
+// window is by updated_at, not creation time: a project whose sessions are
+// old but still in use must not fall out behind a burst of fresh sessions.
+// The one scan every "recent projects" fold walks: the viewer's conversations,
+// most recently active first, optionally bounded to a window. It rides the hot
+// `by_user_updated` index, so every conversation write for the user re-runs
+// the subscribing query; keep `take` as small as the fold can stand.
+async function scanRecentConversations(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  take: number,
+  since?: number,
+) {
+  return ctx.db
+    .query("conversations")
+    .withIndex("by_user_updated", (q) =>
+      since === undefined ? q.eq("user_id", userId) : q.eq("user_id", userId).gte("updated_at", since)
+    )
+    .order("desc")
+    .take(take);
+}
+
+async function collectRecentProjects(ctx: QueryCtx, userId: Id<"users">, take = 600) {
+  const conversations = await scanRecentConversations(ctx, userId, take);
+
+  const projectMap = new Map<string, {
+    path: string;
+    git_root: string | null;
+    git_remote_url?: string;
+    session_count: number;
+    first_active: number;
+    last_active: number;
+  }>();
+
+  for (const conv of conversations) {
+    const path = getConversationProjectPath(conv);
+    if (!path) continue;
+
+    const startedAt = conv.started_at ?? conv.updated_at;
+    const existing = projectMap.get(path);
+    if (existing) {
+      existing.session_count++;
+      existing.first_active = Math.min(existing.first_active, startedAt);
+      existing.last_active = Math.max(existing.last_active, conv.updated_at);
+      if (!existing.git_remote_url && conv.git_remote_url) {
+        existing.git_remote_url = conv.git_remote_url;
+      }
+      continue;
+    }
+
+    projectMap.set(path, {
+      path,
+      git_root: conv.git_root || null,
+      git_remote_url: conv.git_remote_url,
+      session_count: 1,
+      first_active: startedAt,
+      last_active: conv.updated_at,
+    });
+  }
+
+  return Array.from(projectMap.values()).sort((a, b) => b.last_active - a.last_active);
+}
+
+function getPathPrefixUpperBound(pathPrefix: string) {
+  return `${pathPrefix}\uffff`;
+}
+
+function getRepoNameFromPath(path: string | null | undefined) {
+  if (!path) return null;
+  const parts = path.split("/").filter(Boolean);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const part = parts[i];
+    if (!part.startsWith(".")) {
+      return part.toLowerCase();
+    }
+  }
+  return null;
+}
+
+function getRepoKeyFromRemote(remote: string | null | undefined) {
+  if (!remote) return null;
+  const normalized = remote.trim().replace(/\/+$/, "");
+  const githubMatch = normalized.match(/github\.com[:/](.+?)(?:\.git)?$/i);
+  if (githubMatch?.[1]) {
+    return githubMatch[1].toLowerCase();
+  }
+  const genericMatch = normalized.match(/[:/]([^/:]+\/[^/]+?)(?:\.git)?$/);
+  return genericMatch?.[1]?.toLowerCase() || null;
+}
+
+async function getMatchingConversationsPage(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+  source: "git_root" | "project_path",
+  cursor?: string,
+  numItems = DIRECTORY_MATCH_BATCH_SIZE,
+) {
+  const field = source === "git_root" ? "git_root" : "project_path";
+  const index = source === "git_root" ? "by_user_git_root" : "by_user_project_path";
+  const page = await ctx.db
+    .query("conversations")
+    .withIndex(index, (q: any) =>
+      q
+        .eq("user_id", userId)
+        .gte(field, pathPrefix)
+        .lt(field, getPathPrefixUpperBound(pathPrefix))
+    )
+    .paginate({
+      cursor: (cursor || null) as any,
+      numItems,
+    });
+
+  const matches = page.page.filter((conv: any) => {
+    if (source === "project_path" && conv.git_root) {
+      return false;
+    }
+    return matchesPathPrefix(getConversationProjectPath(conv), pathPrefix);
+  });
+
+  return { page: matches, isDone: page.isDone, continueCursor: page.continueCursor };
+}
+
+// Visit every conversation matching `pathPrefix` (git_root first, then
+// project_path-only rows), calling `visit` until it returns false. Built on
+// `.take()` rather than `.paginate()`: Convex allows only ONE paginated query
+// per query/mutation execution, and this scan needs two index ranges — the
+// paginate version threw "ran multiple paginated queries" the moment the
+// git_root range didn't resolve the call, which silently broke every
+// delete-by-path flow for path-only conversations. take() has no such limit.
+// A batch that fills up is retried from the range start with double the size
+// (value-boundary cursors can't advance safely through runs of identical path
+// values), capped so one call can't blow the transaction read budget; ranges
+// larger than the cap are handled by the callers' delete→rescan loop.
+// Newest first, in two ranges per source: the exact root, then everything
+// under "<root>/". The old single range "<root>" to "<root>\uffff" also swept
+// sibling folders ("/a/bc" for "/a/b") into the take budget, and read the
+// index ascending, so a repository past the cap showed its OLDEST sessions
+// and a review could not keep a recent one private. Returns whether any
+// range hit the cap: a caller's count is then a lower bound of the newest.
+export async function scanConversationsForPath(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+  visit: (conv: any) => boolean,
+): Promise<{ truncated: boolean }> {
+  const MAX_TAKE = 1024;
+  const seen = new Set<string>();
+  let truncated = false;
+  const childPrefix = pathPrefix.endsWith("/") ? pathPrefix : `${pathPrefix}/`;
+  for (const source of ["git_root", "project_path"] as const) {
+    const field = source === "git_root" ? "git_root" : "project_path";
+    const index = source === "git_root" ? "by_user_git_root" : "by_user_project_path";
+    const ranges: ((q: any) => any)[] = [
+      (q: any) => q.eq("user_id", userId).eq(field, pathPrefix),
+      (q: any) => q.eq("user_id", userId).gte(field, childPrefix).lt(field, getPathPrefixUpperBound(childPrefix)),
+    ];
+    for (const range of ranges) {
+      let take = 128;
+      while (true) {
+        const rows = await ctx.db
+          .query("conversations")
+          .withIndex(index, range)
+          .order("desc")
+          .take(take);
+        for (const conv of rows) {
+          if (source === "project_path" && conv.git_root) continue;
+          if (!matchesPathPrefix(getConversationProjectPath(conv), pathPrefix)) continue;
+          const id = conv._id.toString();
+          if (seen.has(id)) continue;
+          seen.add(id);
+          if (!visit(conv)) return { truncated };
+        }
+        if (rows.length < take) break;
+        if (take >= MAX_TAKE) { truncated = true; break; }
+        take *= 2;
+      }
+    }
+  }
+  return { truncated };
+}
+
+async function findNextConversationForPath(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+) {
+  let found: any = null;
+  await scanConversationsForPath(ctx, userId, pathPrefix, (conv) => {
+    found = conv;
+    return false;
+  });
+  return found;
+}
+
+// Queue a full re-resolution of every conversation whose path matches
+// `pathPrefix`. Used after any mapping mutation (add/update/remove) — the
+// backfill reads the *current* mappings and recomputes team_id/is_private/
+// auto_shared per conversation, so it correctly handles longer-prefix
+// precedence and falls back to teamless when no mapping matches anymore.
+async function queueRetroactiveResolveConversations(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+  repository?: string,
+) {
+  await ctx.scheduler.runAfter(0, internal.users.backfillDirectoryTeamMappingConversations, {
+    user_id: userId,
+    path_prefix: pathPrefix,
+    repository,
+    source: "git_root",
+  });
+}
+
+// The repository a checkout root is a clone of, read off the sessions
+// recorded there: the daemon stamps every session's origin, so the newest
+// session in the folder knows. Undefined for a folder with no remote or no
+// synced session yet; the backfill fills it in once a session lands.
+export async function repositoryOfCheckout(ctx: any, userId: any, root: string): Promise<string | undefined> {
+  const rows = await ctx.db
+    .query("conversations")
+    .withIndex("by_user_git_root", (q: any) => q.eq("user_id", userId).eq("git_root", root))
+    .order("desc")
+    .take(20);
+  for (const row of rows) {
+    const key = conversationRepository(row);
+    if (key) return key;
+  }
+  return undefined;
+}
+
+// One page of the owner's sessions in a repository, for the pass that reaches
+// clones and worktrees no path rule names. Origins differ in form across
+// clones (ssh, https), so the walk is by owner and the match is on the key.
+// Pages are wide: the walk covers every session the owner has, nearly all of
+// which it only reads, and a 32 row page turned one share into hundreds of
+// scheduled runs on an owner with thousands of sessions.
+const REPOSITORY_MATCH_BATCH_SIZE = 400;
+async function getRepositoryConversationsPage(ctx: any, userId: any, repository: string, cursor?: string, numItems = REPOSITORY_MATCH_BATCH_SIZE) {
+  const page = await ctx.db
+    .query("conversations")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+    .paginate({ cursor: (cursor || null) as any, numItems });
+  return {
+    page: page.page.filter((conv: any) => conversationRepository(conv) === repository),
+    isDone: page.isDone,
+    continueCursor: page.continueCursor,
+  };
+}
+
+export const backfillDirectoryTeamMappingConversations = internalMutation({
+  args: {
+    user_id: v.id("users"),
+    path_prefix: v.string(),
+    // Legacy arg — ignored. The backfill re-resolves from current mappings.
+    team_id: v.optional(v.id("teams")),
+    // The repository of the mapping that changed, when known: after the two
+    // path passes a third pass visits the owner's sessions in that repository
+    // wherever they live. Carried explicitly because a removed mapping is
+    // gone by the time the pass runs.
+    repository: v.optional(v.string()),
+    source: v.optional(v.union(v.literal("git_root"), v.literal("project_path"), v.literal("repository"))),
+    cursor: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const source = args.source || "git_root";
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", args.user_id))
+      .collect();
+    const page = source === "repository"
+      ? await getRepositoryConversationsPage(ctx, args.user_id, args.repository!, args.cursor)
+      : await getMatchingConversationsPage(
+          ctx,
+          args.user_id,
+          args.path_prefix,
+          source,
+          args.cursor,
+        );
+
+    let updated = 0;
+    for (const conv of page.page) {
+      const convPath = conv.git_root || conv.project_path;
+      if (!convPath && !conversationRepository(conv)) continue;
+      // The owner's explicit choices outlive any mapping change, the same
+      // rule as buildPathRestampUpdate: a session locked private stays
+      // hidden, and a manual share (non-private without the auto stamp)
+      // stays shared. Only rows the mappings put in their state re-resolve.
+      if (conv.team_visibility === "private") continue;
+      if (conv.is_private === false && !conv.auto_shared && conv.team_id) continue;
+      const { teamId, isPrivate, autoShared } = resolveTeamForPath(mappings, convPath, undefined, conv.started_at, conversationRepository(conv));
+
+      const patch: Record<string, unknown> = {};
+      const newTeam = teamId ? teamId.toString() : null;
+      const oldTeam = conv.team_id ? conv.team_id.toString() : null;
+      if (newTeam !== oldTeam) patch.team_id = teamId ?? undefined;
+      if ((conv.is_private ?? true) !== isPrivate) patch.is_private = isPrivate;
+      if ((conv.auto_shared ?? false) !== autoShared) patch.auto_shared = autoShared;
+
+      if (Object.keys(patch).length > 0) {
+        // Visibility and routing change together here, and linked work
+        // items carry a stored access key derived from them.
+        await patchConversationVisibility(ctx, conv, patch);
+        updated++;
+      }
+    }
+
+    const next = (source === "git_root")
+      ? "project_path"
+      : (source === "project_path" && args.repository) ? "repository" : null;
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.users.backfillDirectoryTeamMappingConversations, {
+        user_id: args.user_id,
+        path_prefix: args.path_prefix,
+        repository: args.repository,
+        source,
+        cursor: page.continueCursor,
+      });
+    } else if (next) {
+      await ctx.scheduler.runAfter(0, internal.users.backfillDirectoryTeamMappingConversations, {
+        user_id: args.user_id,
+        path_prefix: args.path_prefix,
+        repository: args.repository,
+        source: next,
+      });
+    }
+
+    return {
+      updated,
+      source,
+      isDone: page.isDone && next === null,
+      continueCursor: page.isDone ? undefined : page.continueCursor,
+    };
+  },
+});
+
+export const backfillAutoShareConversations = internalMutation({
+  args: {
+    userId: v.optional(v.id("users")),
+  },
+  handler: async (ctx, args) => {
+    let mappings;
+    if (args.userId) {
+      mappings = await ctx.db
+        .query("directory_team_mappings")
+        .withIndex("by_user_id", (q) => q.eq("user_id", args.userId!))
+        .collect();
+    } else {
+      mappings = await ctx.db.query("directory_team_mappings").take(50);
+    }
+    // Re-resolve conversations under every mapping — not just auto_share ones.
+    // The shared backfill reads current mappings and applies the right
+    // is_private/auto_shared values per conversation.
+    for (const mapping of mappings) {
+      await queueRetroactiveResolveConversations(
+        ctx, mapping.user_id, mapping.path_prefix, mapping.repository
+      );
+    }
+    return { totalUpdated: 0, mappingsProcessed: mappings.length };
+  },
+});
+
+// The one write behind every "share this directory with a team" control
+// (web settings, the team setup flows, `cast teams map`). A mapping shares
+// every session in the directory, past included, unless `include_past` is
+// false: then the mapping is stamped with a share start and sessions that
+// began before it stay private (privacy.ts mappingCoversStart). Changing the
+// team of an existing mapping keeps its share start unless the caller says
+// otherwise. Removing the mapping re-resolves the directory's sessions so
+// they fall back to a parent mapping or to private.
+export type MappingUpsertArgs = {
+  path_prefix: string;
+  team_id?: Id<"teams">;
+  /** A "never share" lock: no team, and no rule can share the folder. */
+  private?: boolean;
+  auto_share?: boolean;
+  include_past?: boolean;
+  /** An explicit share start; wins over include_past. */
+  share_since?: number;
+  /** Sessions the owner keeps private: locked before the backfill can read them. */
+  lock_private?: Id<"conversations">[];
+};
+
+// The rules a checkout lives under: its own path rule, and every rule stamped
+// with the repository it is a clone of. A share addresses the repository, so
+// a write lands on the rule that already covers it (wherever that rule's path
+// is) and a removal takes every rule of the repository with it. Two rules for
+// one repository was the state that let "switch team" leave the old team
+// sharing through the other checkout.
+async function rulesForCheckout(ctx: any, userId: Id<"users">, pathPrefix: string) {
+  const mappings = await ctx.db
+    .query("directory_team_mappings")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+    .collect();
+  const own = mappings.find((m: any) => m.path_prefix === pathPrefix) ?? null;
+  const repository: string | undefined = own?.repository ?? (await repositoryOfCheckout(ctx, userId, pathPrefix));
+  const siblings = repository
+    ? mappings.filter((m: any) => m.repository === repository && m._id !== own?._id)
+    : [];
+  return { own, repository, siblings };
+}
+
+export async function upsertDirectoryMapping(
+  ctx: any,
+  userId: Id<"users">,
+  args: MappingUpsertArgs,
+): Promise<{ error: string } | { success: true; action: "removed" | "updated" | "created"; share_since: number | null }> {
+  const { own, repository, siblings } = await rulesForCheckout(ctx, userId, args.path_prefix);
+  // The rule this write addresses: the checkout's own, else the repository's.
+  const existingMapping = own ?? siblings[0] ?? null;
+  const duplicates = existingMapping ? siblings.filter((m: any) => m._id !== existingMapping._id) : [];
+
+  if (!args.team_id && !args.private) {
+    for (const rule of [existingMapping, ...duplicates].filter(Boolean)) {
+      await ctx.db.delete(rule._id);
+      await queueRetroactiveResolveConversations(ctx, userId, rule.path_prefix, rule.repository ?? repository);
+    }
+    if (!existingMapping) {
+      await queueRetroactiveResolveConversations(ctx, userId, args.path_prefix, repository);
+    }
+    return { success: true, action: "removed", share_since: null };
+  }
+
+  if (args.private) {
+    // A lock replaces whatever rule covered the checkout: its own, or the
+    // repository's from another clone. The backfill then re-resolves every
+    // session under it, so a rule share closes; a session the owner shared
+    // by hand keeps that choice, as it does under every rule change.
+    for (const rule of duplicates) {
+      await ctx.db.delete(rule._id);
+      await queueRetroactiveResolveConversations(ctx, userId, rule.path_prefix, rule.repository ?? repository);
+    }
+    const lock = { team_id: undefined, auto_share: false, private: true, share_since: undefined, repository };
+    if (existingMapping) await ctx.db.patch(existingMapping._id, lock);
+    else await ctx.db.insert("directory_team_mappings", { user_id: userId, path_prefix: args.path_prefix, ...lock, created_at: Date.now() });
+    await queueRetroactiveResolveConversations(ctx, userId, existingMapping?.path_prefix ?? args.path_prefix, repository);
+    return { success: true, action: existingMapping ? "updated" : "created", share_since: null };
+  }
+
+  const membership = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_user_team", (q: any) => q.eq("user_id", userId).eq("team_id", args.team_id!))
+    .unique();
+  if (!membership) {
+    return { error: "Not a member of this team" };
+  }
+
+  // A lock carries no share to inherit from: a team share that lifts one
+  // starts like a new rule.
+  const prior = existingMapping && !existingMapping.private ? existingMapping : null;
+  const autoShare = args.auto_share ?? (prior ? prior.auto_share : true);
+  const shareSince =
+    args.share_since !== undefined
+      ? args.share_since
+      : args.include_past === undefined
+        ? prior?.share_since
+        : args.include_past
+          ? undefined
+          : prior?.share_since ?? Date.now();
+
+  // A session the owner keeps private locks first, through the visibility
+  // chokepoint, so the backfill queued below reads it as a hand lock.
+  for (const id of args.lock_private ?? []) {
+    const conv = await ctx.db.get(id);
+    if (!conv || conv.user_id.toString() !== userId.toString()) continue;
+    if (conv.team_visibility === "private" && conv.is_private !== false) continue;
+    await patchConversationVisibility(ctx, conv, { is_private: true, team_visibility: "private" });
+  }
+
+  for (const rule of duplicates) {
+    await ctx.db.delete(rule._id);
+    await queueRetroactiveResolveConversations(ctx, userId, rule.path_prefix, rule.repository ?? repository);
+  }
+  if (existingMapping) {
+    await ctx.db.patch(existingMapping._id, {
+      team_id: args.team_id,
+      auto_share: autoShare,
+      private: undefined,
+      share_since: shareSince,
+      repository,
+    });
+  } else {
+    await ctx.db.insert("directory_team_mappings", {
+      user_id: userId,
+      path_prefix: args.path_prefix,
+      team_id: args.team_id,
+      auto_share: autoShare,
+      share_since: shareSince,
+      repository,
+      created_at: Date.now(),
+    });
+  }
+
+  // Re-resolve every matching conversation against current mappings,
+  // regardless of auto_share: the backfill applies the mapping's
+  // is_private/auto_shared per conversation, share start included.
+  await queueRetroactiveResolveConversations(ctx, userId, existingMapping?.path_prefix ?? args.path_prefix, repository);
+
+  return { success: true, action: existingMapping ? "updated" : "created", share_since: shareSince ?? null };
+}
+
+/** Operator path: repoint one user's folder rule, with the same backfill. */
+export const updateDirectoryMappingForUser = internalMutation({
+  args: { user_id: v.id("users"), path_prefix: v.string(), team_id: v.id("teams") },
+  handler: async (ctx, args) => upsertDirectoryMapping(ctx, args.user_id, { path_prefix: args.path_prefix, team_id: args.team_id }),
+});
+
+export const updateDirectoryTeamMapping = mutation({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    path_prefix: v.string(),
+    team_id: v.optional(v.id("teams")),
+    private: v.optional(v.boolean()),
+    auto_share: v.optional(v.boolean()),
+    include_past: v.optional(v.boolean()),
+    share_since: v.optional(v.number()),
+    lock_private: v.optional(v.array(v.id("conversations"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    const result = await upsertDirectoryMapping(ctx, userId, args);
+    if ("error" in result) throw new Error(result.error);
+    return {
+      success: true,
+      deleted: result.action === "removed",
+      updated: result.action === "updated",
+      created: result.action === "created",
+      share_since: result.share_since,
+      retroactivelyShared: 0,
+      retroactiveQueued: true,
+    };
+  },
+});
+
+export const removeDirectoryTeamMapping = mutation({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    path_prefix: v.string(),
+    delete_conversations: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const mapping = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .filter((q) => q.eq(q.field("path_prefix"), args.path_prefix))
+      .first();
+
+    if (mapping) {
+      await ctx.db.delete(mapping._id);
+    }
+
+    let conversationsDeleted = 0;
+    let messagesDeleted = 0;
+    let hasMore = false;
+    if (args.delete_conversations) {
+      const result = await deleteConversationsForPathInternal(ctx, userId, args.path_prefix);
+      conversationsDeleted = result.conversationsDeleted;
+      messagesDeleted = result.messagesDeleted;
+      hasMore = result.hasMore;
+    } else if (mapping) {
+      // Mapping was removed but conversations kept — re-resolve them so they
+      // either pick up a parent mapping or fall back to personal (no team).
+      await queueRetroactiveResolveConversations(ctx, userId, args.path_prefix);
+    }
+
+    return { success: true, conversationsDeleted, messagesDeleted, hasMore };
+  },
+});
+
+async function deleteConversationsForPathInternal(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+) {
+  const conv = await findNextConversationForPath(ctx, userId, pathPrefix);
+
+  if (!conv) {
+    return { conversationsDeleted: 0, messagesDeleted: 0, hasMore: false };
+  }
+
+  const MSG_BATCH = 100;
+  const msgs = await ctx.db
+    .query("messages")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conv._id))
+    .take(MSG_BATCH);
+
+  for (const msg of msgs) {
+    await ctx.db.delete(msg._id);
+  }
+
+  if (msgs.length === MSG_BATCH) {
+    return { conversationsDeleted: 0, messagesDeleted: msgs.length, hasMore: true };
+  }
+
+  await ctx.db.delete(conv._id);
+  const nextConv = await findNextConversationForPath(ctx, userId, pathPrefix);
+  return { conversationsDeleted: 1, messagesDeleted: msgs.length, hasMore: !!nextConv };
+}
+
+// What a share of `pathPrefix` would expose: how many sessions, and the span
+// of their start dates. This is the number every share control shows before
+// it writes, so it walks the path index in full rather than the recent-
+// projects window. The scan visits at most SCAN_CAP rows per source; a count
+// at the cap is reported as truncated ("1,024+").
+export type PathShareSummary = {
+  count: number;
+  first_started_at: number | null;
+  last_started_at: number | null;
+  truncated: boolean;
+  /** Sessions started before `since` (the share start): they stay private. */
+  older: number;
+  /** Sessions started before the day start the client named ("from today"). */
+  older_than_day: number;
+  /** Sessions the owner hid by hand; a share never re-opens them. */
+  hidden: number;
+  /** Sessions the owner shared by hand; a share start never closes them. */
+  manually_shared: number;
+};
+
+function conversationStart(conv: any): number | null {
+  // A stored NaN (Convex floats allow it) would poison every min/max after
+  // it and print as "Invalid Date"; only finite stamps count.
+  const started = conv.started_at ?? conv.updated_at ?? null;
+  return typeof started === "number" && Number.isFinite(started) ? started : null;
+}
+
+export async function summarizeConversationsForPath(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+  since?: number | null,
+  dayStart?: number | null,
+): Promise<PathShareSummary> {
+  let count = 0;
+  let first: number | null = null;
+  let last: number | null = null;
+  let older = 0;
+  let olderThanDay = 0;
+  let hidden = 0;
+  let manuallyShared = 0;
+  const { truncated } = await scanConversationsForPath(ctx, userId, pathPrefix, (conv) => {
+    count++;
+    const started = conversationStart(conv);
+    if (started != null) {
+      first = first == null ? started : Math.min(first, started);
+      last = last == null ? started : Math.max(last, started);
+      if (since != null && started < since) older++;
+      if (dayStart != null && started < dayStart) olderThanDay++;
+    }
+    if (conv.team_visibility === "private") hidden++;
+    else if (conv.is_private === false && !conv.auto_shared) manuallyShared++;
+    return true;
+  });
+  return {
+    count,
+    first_started_at: first,
+    last_started_at: last,
+    truncated,
+    older,
+    older_than_day: olderThanDay,
+    hidden,
+    manually_shared: manuallyShared,
+  };
+}
+
+// The sessions a share of `pathPrefix` would expose, newest first, so a person
+// can read the titles and keep some private before the mapping is written.
+// Capped: the summary carries the true total.
+export type PathSessionRow = {
+  _id: Id<"conversations">;
+  title: string | null;
+  started_at: number | null;
+  message_count: number;
+  is_private: boolean;
+  team_visibility: string | null;
+  auto_shared: boolean;
+  /** The session's own folder, which may sit below the one listed. */
+  path: string | null;
+};
+
+export async function listConversationsForPathInternal(
+  ctx: any,
+  userId: any,
+  pathPrefix: string,
+  limit: number,
+): Promise<{ rows: PathSessionRow[]; total: number; truncated: boolean }> {
+  // Newest first without reading the whole folder: each index range holds its
+  // rows by creation time within one path, so the newest `limit` of the
+  // folder's own root are the first `limit` read. Roots under the folder
+  // (nested checkouts) sort by path first, so they are read the same way and
+  // merged; the folder's total comes from its stats row, not from here.
+  const rows: PathSessionRow[] = [];
+  const childPrefix = pathPrefix.endsWith("/") ? pathPrefix : `${pathPrefix}/`;
+  let truncated = false;
+  for (const source of ["git_root", "project_path"] as const) {
+    const index = source === "git_root" ? "by_user_git_root" : "by_user_project_path";
+    const ranges: ((q: any) => any)[] = [
+      (q: any) => q.eq("user_id", userId).eq(source, pathPrefix),
+      (q: any) => q.eq("user_id", userId).gte(source, childPrefix).lt(source, getPathPrefixUpperBound(childPrefix)),
+    ];
+    for (const range of ranges) {
+      const page = await ctx.db.query("conversations").withIndex(index, range).order("desc").take(limit);
+      if (page.length === limit) truncated = true;
+      for (const conv of page) {
+        if (source === "project_path" && conv.git_root) continue;
+        if (!matchesPathPrefix(getConversationProjectPath(conv), pathPrefix)) continue;
+        rows.push({
+          _id: conv._id,
+          title: conv.title ?? null,
+          started_at: conversationStart(conv),
+          message_count: conv.message_count ?? 0,
+          is_private: conv.is_private !== false,
+          team_visibility: conv.team_visibility ?? null,
+          auto_shared: !!conv.auto_shared,
+          path: getConversationProjectPath(conv) ?? null,
+        });
+      }
+    }
+  }
+  rows.sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
+  return { rows: rows.slice(0, limit), total: rows.length, truncated };
+}
+
+export const listConversationsForPath = query({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    // Every checkout of the repository under review; the rows merge, newest first.
+    path_prefixes: v.array(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) return { rows: [], total: 0, truncated: false };
+    const limit = Math.min(args.limit ?? 50, 1000);
+    const rows: PathSessionRow[] = [];
+    let total = 0;
+    let truncated = false;
+    for (const prefix of args.path_prefixes.slice(0, 12)) {
+      const part = await listConversationsForPathInternal(ctx, userId, prefix, limit);
+      rows.push(...part.rows);
+      total += part.total;
+      truncated = truncated || part.truncated;
+    }
+    rows.sort((a, b) => (b.started_at ?? 0) - (a.started_at ?? 0));
+    return { rows: rows.slice(0, limit), total, truncated };
+  },
+});
+
+export const countConversationsForPath = query({
+  args: {
+    path_prefix: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return summarizeNothing();
+    return summarizeConversationsForPath(ctx, userId, args.path_prefix);
+  },
+});
+
+function summarizeNothing(): PathShareSummary {
+  return { count: 0, first_started_at: null, last_started_at: null, truncated: false, older: 0, older_than_day: 0, hidden: 0, manually_shared: 0 };
+}
+
+// The preview behind a share step: one summary per selected directory. Capped
+// so one call cannot outrun the transaction read budget; a picker asks for the
+// paths it has selected, never the whole list. `since` is the share start
+// under review; without it each path reads its own mapping's start, so the
+// settings page shows how many older sessions a live mapping keeps private.
+export const shareImpactForPaths = query({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    path_prefixes: v.array(v.string()),
+    since: v.optional(v.number()),
+    // The client's local midnight: the menu's "from today" reads its count off this.
+    day_start: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    const out: Record<string, PathShareSummary> = {};
+    if (!userId) return out;
+    const mappings = args.since === undefined
+      ? await ctx.db
+          .query("directory_team_mappings")
+          .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+          .collect()
+      : [];
+    for (const prefix of args.path_prefixes.slice(0, 12)) {
+      let since: number | null | undefined = args.since;
+      if (since === undefined) {
+        // The rule this checkout lives under: its own path rule, else the
+        // repository rule another clone carries (matchDirectoryMapping).
+        let rule = matchDirectoryMapping(mappings as DirectoryMapping[], prefix, undefined);
+        if (!rule && mappings.some((m) => m.repository)) {
+          const repository = await repositoryOfCheckout(ctx, userId, prefix);
+          rule = repository ? matchDirectoryMapping(mappings as DirectoryMapping[], undefined, repository) : null;
+        }
+        since = rule?.share_since ?? null;
+      }
+      // Totals come from the folder's stats row (pathStats.ts), never from a
+      // scan here: this query is subscribed, and a scan re-ran on every write
+      // in the folder. A folder whose first rebuild has not landed is left
+      // out, and the page reads it as still counting.
+      const stats = await ctx.db
+        .query("path_session_stats")
+        .withIndex("by_user_path", (q) => q.eq("user_id", userId).eq("path", prefix))
+        .first();
+      if (!stats || stats.computed_at === 0) continue;
+      out[prefix] = {
+        count: stats.count,
+        first_started_at: stats.first_started_at ?? null,
+        last_started_at: stats.last_started_at ?? null,
+        truncated: false,
+        older: since != null ? startedBefore(stats.buckets, stats.bucket_counts, since) : 0,
+        older_than_day: args.day_start != null ? startedBefore(stats.buckets, stats.bucket_counts, args.day_start) : 0,
+        hidden: stats.hidden,
+        manually_shared: stats.manually_shared,
+      };
+    }
+    return out;
+  },
+});
+
+export const deleteConversationsForPath = mutation({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    path_prefix: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+    return deleteConversationsForPathInternal(ctx, userId, args.path_prefix);
+  },
+});
+
+export const getRecentProjectsWithGitInfo = query({
+  args: {
+    // A CLI caller (cast sharing) presents its token; the web signs in.
+    api_token: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getUserOrToken(ctx, args.api_token);
+    if (!userId) {
+      return [];
+    }
+    const limit = args.limit ?? 20;
+    const recentProjects = await collectRecentProjects(ctx, userId);
+
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+
+    const projects = recentProjects
+      .slice(0, limit)
+      .map((data) => {
+        // The mapping that governs this checkout: its own path rule, else the
+        // rule on another clone of the same repository.
+        const repository = repositoryKeyOfRemote(data.git_remote_url);
+        const mapping = matchDirectoryMapping(mappings as DirectoryMapping[], data.path, repository);
+        return {
+          path: data.path,
+          is_git_repo: !!data.git_root,
+          git_remote_url: data.git_remote_url,
+          repository: repository ?? undefined,
+          session_count: data.session_count,
+          first_active: data.first_active,
+          last_active: data.last_active,
+          team_id: mapping?.team_id ?? null,
+          auto_share: mapping?.auto_share ?? false,
+          private: mapping?.private ?? false,
+          share_since: mapping?.share_since ?? null,
+          // Whether the rule is this checkout's own or inherited from the repository.
+          mapped_directly: !!mapping && mapping.path_prefix === data.path,
+        };
+      });
+
+    return projects;
+  },
+});
+
+export const getSuggestedTeamProjects = query({
+  args: {
+    team_id: v.optional(v.id("teams")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return null;
+    }
+
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      return null;
+    }
+
+    const teamId = args.team_id || user.active_team_id || user.team_id;
+    if (!teamId) {
+      return null;
+    }
+
+    const membership = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_user_team", (q) => q.eq("user_id", userId).eq("team_id", teamId))
+      .unique();
+    if (!membership) {
+      return null;
+    }
+
+    const team = await ctx.db.get(teamId);
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_team_id", (q) => q.eq("team_id", teamId))
+      .collect();
+
+    const currentUserMappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+    const mappingByPath = new Map(currentUserMappings.map((mapping) => [mapping.path_prefix, mapping]));
+
+    const projectMap = new Map(
+      (await collectRecentProjects(ctx, userId)).map((project) => [project.path, {
+        ...project,
+        repo_key: getRepoKeyFromRemote(project.git_remote_url),
+        repo_name: getRepoNameFromPath(project.path),
+      }]),
+    );
+
+    const repoKeySignals = new Map<string, { members: Set<string> }>();
+    const repoNameSignals = new Map<string, { members: Set<string> }>();
+    const registerSignal = (
+      store: Map<string, { members: Set<string> }>,
+      key: string | null,
+      memberId: string,
+    ) => {
+      if (!key) return;
+      const existing = store.get(key) || { members: new Set<string>() };
+      existing.members.add(memberId);
+      store.set(key, existing);
+    };
+
+    for (const member of memberships) {
+      if (member.user_id.toString() === userId.toString()) {
+        continue;
+      }
+
+      const sharedConversations = await ctx.db
+        .query("conversations")
+        .withIndex("by_team_user_updated", (q) => q.eq("team_id", teamId).eq("user_id", member.user_id))
+        .order("desc")
+        .take(40);
+
+      for (const conv of sharedConversations) {
+        if (conv.is_private) continue;
+        const path = getConversationProjectPath(conv);
+        if (!path) continue;
+        const memberKey = member.user_id.toString();
+        registerSignal(repoKeySignals, getRepoKeyFromRemote(conv.git_remote_url), memberKey);
+        registerSignal(repoNameSignals, getRepoNameFromPath(path), memberKey);
+      }
+    }
+
+    const mappingsForTeam = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_team_id", (q) => q.eq("team_id", teamId))
+      .collect();
+    for (const mapping of mappingsForTeam) {
+      if (mapping.user_id.toString() === userId.toString()) {
+        continue;
+      }
+      registerSignal(repoNameSignals, getRepoNameFromPath(mapping.path_prefix), mapping.user_id.toString());
+    }
+
+    const suggestions = Array.from(projectMap.values())
+      .map((project) => {
+        const currentMapping = mappingByPath.get(project.path);
+        if (currentMapping?.team_id?.toString() === teamId.toString()) {
+          return null;
+        }
+
+        const repoKeySignal = project.repo_key ? repoKeySignals.get(project.repo_key) : null;
+        const repoNameSignal = project.repo_name ? repoNameSignals.get(project.repo_name) : null;
+        const signal = repoKeySignal || repoNameSignal;
+        if (!signal) {
+          return null;
+        }
+
+        const matched_member_count = signal.members.size;
+        const match_type = repoKeySignal ? "github" : "repo_name";
+        const match_reason = repoKeySignal
+          ? `${matched_member_count} teammate${matched_member_count === 1 ? "" : "s"} already share ${project.repo_key}`
+          : `${matched_member_count} teammate${matched_member_count === 1 ? "" : "s"} already share ${project.repo_name}`;
+
+        return {
+          path: project.path,
+          git_remote_url: project.git_remote_url || null,
+          session_count: project.session_count,
+          last_active: project.last_active,
+          matched_member_count,
+          match_type,
+          match_reason,
+          current_team_id: currentMapping?.team_id || null,
+        };
+      })
+      .filter((project): project is NonNullable<typeof project> => project !== null)
+      .sort((a, b) => {
+        if (b.matched_member_count !== a.matched_member_count) {
+          return b.matched_member_count - a.matched_member_count;
+        }
+        if (a.match_type !== b.match_type) {
+          return a.match_type === "github" ? -1 : 1;
+        }
+        return b.last_active - a.last_active;
+      })
+      .slice(0, 8);
+
+    // Collect team repos the user doesn't have locally
+    const userRepoKeys = new Set<string>();
+    for (const project of projectMap.values()) {
+      if (project.repo_key) userRepoKeys.add(project.repo_key);
+    }
+
+    const teamOnlyRepos: { repo_key: string; repo_name: string; member_count: number }[] = [];
+    for (const [key, signal] of repoKeySignals) {
+      if (!userRepoKeys.has(key)) {
+        const name = key.split("/").pop() || key;
+        teamOnlyRepos.push({
+          repo_key: key,
+          repo_name: name,
+          member_count: signal.members.size,
+        });
+      }
+    }
+    teamOnlyRepos.sort((a, b) => b.member_count - a.member_count);
+
+    return {
+      team_id: teamId,
+      team_name: team?.name || "Team",
+      team_icon: team?.icon || null,
+      team_icon_color: team?.icon_color || null,
+      current_visibility: membership.visibility || "summary",
+      suggestions,
+      team_only_repos: teamOnlyRepos.slice(0, 6),
+    };
+  },
+});
+
+export const getRecentProjectPaths = query({
+  args: {
+    limit: v.optional(v.number()),
+    // Scope to one machine's checkouts (the new-session machine picker) instead
+    // of the union across online devices.
+    device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return [];
+    }
+    return performGetRecentProjectPaths(ctx, userId, args);
+  },
+});
+
+export async function performGetRecentProjectPaths(
+  ctx: QueryCtx,
+  userId: Id<"users">,
+  args: { limit?: number; device_id?: string },
+) {
+  {
+    const limit = args.limit ?? 10;
+    const windowStart = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const conversations = await scanRecentConversations(ctx, userId, 500, windowStart);
+
+    // Hide paths none of the user's machines can see locally. Read the union of
+    // online devices' roots (NOT the per-user field, which every daemon clobbers
+    // on each heartbeat — that made the list flip-flop between machines). Empty
+    // union (no device online/reporting) → don't filter: showing too much beats
+    // showing nothing.
+    //
+    // Scoped to one device, its roots are the whole truth: an empty root list
+    // means that machine reports no checkouts, so filter to nothing rather than
+    // falling back to unfiltered (which would offer dirs it can't open).
+    const deviceRoots = args.device_id
+      ? await getDeviceLocalRoots(ctx, userId, args.device_id)
+      : null;
+    if (args.device_id && !deviceRoots) return [];
+    const onlineRoots = deviceRoots ?? (await getOnlineLocalRoots(ctx, userId));
+    const localRoots = deviceRoots || onlineRoots.length > 0 ? onlineRoots : null;
+
+    const pathCounts = new Map<string, { count: number; lastActive: number; repository?: string }>();
+    for (const conv of conversations) {
+      const raw = conv.git_root || conv.project_path;
+      if (!raw) continue;
+      const path = normalizeProjectPath(raw);
+      if (!path) continue;
+      if (localRoots && !pathWithinLocalRoots(path, localRoots)) continue;
+      // Bucket to the minute as the value enters the tally, so both the ranking
+      // score and the returned recency are coarse. Raw updated_at moves on every
+      // streamed flush and re-pushed this whole list to an always-mounted
+      // picker; the value only drives a sort and a relative age. Invalidation is
+      // unchanged.
+      const lastActive = bucketTs(conv.updated_at)!;
+      const existing = pathCounts.get(path);
+      if (existing) {
+        existing.count++;
+        existing.lastActive = Math.max(existing.lastActive, lastActive);
+        existing.repository ??= conversationRepository(conv);
+      } else {
+        pathCounts.set(path, { count: 1, lastActive, repository: conversationRepository(conv) });
+      }
+    }
+
+    const entries = Array.from(pathCounts.entries());
+    const maxCount = Math.max(1, ...entries.map(([, s]) => s.count));
+    const now = Date.now();
+    const ageRange = now - windowStart;
+
+    // What a session started in each folder will be shared with, so the
+    // picker can say it before the session exists: the folder's own rule,
+    // else the rule on another checkout of the same repository (the same
+    // resolution the sharing page and creation use).
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .collect();
+    const teamNames = new Map<string, string>();
+    const shareOf = async (path: string, repository: string | undefined) => {
+      const mapping = matchDirectoryMapping(mappings as DirectoryMapping[], path, repository);
+      if (!mapping?.auto_share || !mapping.team_id) return { team_id: null, team_name: null };
+      const key = String(mapping.team_id);
+      if (!teamNames.has(key)) teamNames.set(key, (await ctx.db.get(mapping.team_id))?.name ?? "Team");
+      return { team_id: mapping.team_id, team_name: teamNames.get(key)! };
+    };
+
+    const ranked = entries
+      .map(([path, stats]) => ({
+        path,
+        count: stats.count,
+        lastActive: stats.lastActive,
+        repository: stats.repository,
+        score:
+          0.65 * (stats.count / maxCount) +
+          0.35 * ((stats.lastActive - windowStart) / ageRange),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+    const recents: { path: string; count: number; lastActive: number; suggested?: true; repository?: string; team_id?: Id<"teams"> | null; team_name?: string | null }[] = [];
+    for (const { path, count, lastActive, repository } of ranked) {
+      recents.push({ path, count, lastActive, repository, ...(await shareOf(path, repository)) });
+    }
+
+    // A freshly-picked machine may have almost no history here, so pad with its
+    // remaining roots: every directory on it stays reachable, recents first.
+    if (deviceRoots) {
+      const seen = new Set(recents.map((r) => r.path));
+      for (const root of deviceRoots) {
+        if (recents.length >= limit) break;
+        if (seen.has(root)) continue;
+        seen.add(root);
+        recents.push({ path: root, count: 0, lastActive: 0, suggested: true });
+      }
+    }
+
+    return recents;
+  }
+}
+
+export const adminSetTeamMemberVisibility = internalMutation({
+  args: {
+    email: v.string(),
+    visibility: v.union(
+      v.literal("hidden"),
+      v.literal("activity"),
+      v.literal("summary"),
+      v.literal("detailed"),
+      v.literal("full")
+    ),
+    clearHideActivity: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db
+      .query("users")
+      .withIndex("email", (q) => q.eq("email", args.email))
+      .unique();
+    if (!user) throw new Error("User not found");
+
+    const updates: Record<string, unknown> = {
+      activity_visibility: args.visibility,
+    };
+    if (args.clearHideActivity) {
+      updates.hide_activity = false;
+    }
+    await ctx.db.patch(user._id, updates as any);
+    return { success: true, user: user.name || user.email };
+  },
+});
+
+export const deleteAccount = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const user = await ctx.db.get(userId);
+    if (!user) {
+      throw new Error("User not found");
+    }
+
+    let totalDeleted = 0;
+
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(50);
+
+    for (const conv of conversations) {
+      const messages = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_id", (q) => q.eq("conversation_id", conv._id))
+        .take(500);
+      for (const msg of messages) {
+        await ctx.db.delete(msg._id);
+        totalDeleted++;
+      }
+
+      const fileTouches = await ctx.db
+        .query("file_touches")
+        .withIndex("by_conversation", (q) => q.eq("conversation_id", conv._id))
+        .take(200);
+      for (const ft of fileTouches) {
+        await ctx.db.delete(ft._id);
+        totalDeleted++;
+      }
+
+      const comments = await ctx.db
+        .query("comments")
+        .withIndex("by_conversation_id", (q) => q.eq("conversation_id", conv._id))
+        .take(100);
+      for (const comment of comments) {
+        if (await deleteCommentWithRevision(ctx, comment, conv)) totalDeleted++;
+      }
+
+      const publicComments = await ctx.db
+        .query("public_comments")
+        .withIndex("by_conversation_id", (q) => q.eq("conversation_id", conv._id))
+        .take(100);
+      for (const pc of publicComments) {
+        await ctx.db.delete(pc._id);
+        totalDeleted++;
+      }
+
+      const pendingPermissions = await ctx.db
+        .query("pending_permissions")
+        .withIndex("by_conversation_status", (q) => q.eq("conversation_id", conv._id))
+        .take(50);
+      for (const pp of pendingPermissions) {
+        await ctx.db.delete(pp._id);
+        totalDeleted++;
+      }
+
+      await ctx.db.delete(conv._id);
+      totalDeleted++;
+    }
+
+    const hasMoreConversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .first();
+
+    if (hasMoreConversations) {
+      return {
+        completed: false,
+        message: "Partial deletion complete. Run again to continue deleting account data.",
+        deleted: totalDeleted,
+      };
+    }
+
+    const bookmarks = await ctx.db
+      .query("bookmarks")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(100);
+    for (const b of bookmarks) {
+      await deleteBookmarkWithRevision(ctx, b);
+      totalDeleted++;
+    }
+
+    const decisions = await ctx.db
+      .query("decisions")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(100);
+    for (const d of decisions) {
+      await ctx.db.delete(d._id);
+      totalDeleted++;
+    }
+
+    const patterns = await ctx.db
+      .query("patterns")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(100);
+    for (const p of patterns) {
+      await ctx.db.delete(p._id);
+      totalDeleted++;
+    }
+
+    const syncCursors = await ctx.db
+      .query("sync_cursors")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(100);
+    for (const sc of syncCursors) {
+      await ctx.db.delete(sc._id);
+      totalDeleted++;
+    }
+
+    const rateLimits = await ctx.db
+      .query("rate_limits")
+      .withIndex("by_user_endpoint", (q) => q.eq("user_id", userId))
+      .take(100);
+    for (const rl of rateLimits) {
+      await ctx.db.delete(rl._id);
+      totalDeleted++;
+    }
+
+    const apiTokens = await ctx.db
+      .query("api_tokens")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(50);
+    for (const at of apiTokens) {
+      await ctx.db.delete(at._id);
+      totalDeleted++;
+    }
+
+    const pendingMessages = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_user_status", (q) => q.eq("from_user_id", userId))
+      .take(100);
+    for (const pm of pendingMessages) {
+      await ctx.db.delete(pm._id);
+      totalDeleted++;
+    }
+
+    const managedSessions = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_user_id", (q) => q.eq("user_id", userId))
+      .take(50);
+    for (const ms of managedSessions) {
+      await ctx.db.delete(ms._id);
+      totalDeleted++;
+    }
+
+    const notifications = await ctx.db
+      .query("notifications")
+      .withIndex("by_recipient", (q) => q.eq("recipient_user_id", userId))
+      .take(200);
+    for (const n of notifications) {
+      await ctx.db.delete(n._id);
+      totalDeleted++;
+    }
+
+    const daemonLogs = await ctx.db
+      .query("daemon_logs")
+      .withIndex("by_user_timestamp", (q) => q.eq("user_id", userId))
+      .take(500);
+    for (const dl of daemonLogs) {
+      await ctx.db.delete(dl._id);
+      totalDeleted++;
+    }
+
+    const messageShares = await ctx.db
+      .query("message_shares")
+      .filter((q) => q.eq(q.field("user_id"), userId))
+      .take(100);
+    for (const ms of messageShares) {
+      await ctx.db.delete(ms._id);
+      totalDeleted++;
+    }
+
+    const reviews = await ctx.db
+      .query("reviews")
+      .withIndex("by_reviewer", (q) => q.eq("reviewer_user_id", userId))
+      .take(100);
+    for (const r of reviews) {
+      await ctx.db.delete(r._id);
+      totalDeleted++;
+    }
+
+    const teamActivityEvents = await ctx.db
+      .query("team_activity_events")
+      .withIndex("by_actor", (q) => q.eq("actor_user_id", userId))
+      .take(200);
+    for (const tae of teamActivityEvents) {
+      await ctx.db.delete(tae._id);
+      totalDeleted++;
+    }
+
+    // @ts-ignore - authAccounts is from @convex-dev/auth
+    const authAccounts = await ctx.db
+      .query("authAccounts")
+      .withIndex("userIdAndProvider", (q: any) => q.eq("userId", userId))
+      .take(10);
+    for (const aa of authAccounts) {
+      await ctx.db.delete(aa._id);
+      totalDeleted++;
+    }
+
+    // @ts-ignore - authSessions is from @convex-dev/auth
+    const authSessions = await ctx.db
+      .query("authSessions")
+      .withIndex("userId", (q: any) => q.eq("userId", userId))
+      .take(50);
+    for (const as of authSessions) {
+      await ctx.db.delete(as._id);
+      totalDeleted++;
+    }
+
+    await ctx.db.delete(userId);
+    totalDeleted++;
+
+    return {
+      completed: true,
+      message: "Account permanently deleted",
+      deleted: totalDeleted,
+    };
+  },
+});
+
+export const getMyPendingCommands = query({
+  args: {
+    api_token: v.string(),
+    // The polling daemon's device id. Commands targeted at another device are
+    // filtered out so only the owning daemon executes session commands. This is
+    // the real-time twin of the heartbeat poll's routing filter. Optional for
+    // backward compat: a daemon that omits it only sees untargeted commands.
+    device_id: v.optional(v.string()),
+    // The polling daemon's boot id. A command another daemon on this device has
+    // already claimed is withheld until its lease lapses. Optional for backward
+    // compat, exactly like device_id: a daemon that omits it sees everything.
+    boot_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) {
+      return [];
+    }
+
+    const COMMAND_TTL_MS = DAEMON_COMMAND_TTL_MS;
+    const now = Date.now();
+    const commands = await ctx.db
+      .query("daemon_commands")
+      .withIndex("by_user_pending", (q) =>
+        q.eq("user_id", auth.userId).eq("executed_at", undefined)
+      )
+      .collect();
+
+    return commands
+      .filter((c) => now - c._creationTime < COMMAND_TTL_MS)
+      .filter(
+        (c) =>
+          // Rollout-safe: a daemon that doesn't identify itself sees everything.
+          args.device_id === undefined ||
+          c.target_device_id === undefined ||
+          c.target_device_id === args.device_id,
+      )
+      .filter((c) => commandVisibleToClaimer(c, args.boot_id, args.device_id, now))
+      .map((c) => ({
+        id: c._id,
+        command: c.command,
+        args: c.args,
+      }));
+  },
+});
+
+export const startSession = mutation({
+  args: {
+    agent_type: v.union(
+      v.literal("claude"),
+      v.literal("codex"),
+      v.literal("cursor"),
+      v.literal("gemini"),
+      v.literal("opencode"),
+      v.literal("pi"),
+      v.literal("grok"),
+      v.literal("muse")
+    ),
+    project_path: v.optional(v.string()),
+    prompt: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Not authenticated");
+    }
+
+    const now = Date.now();
+    const sessionId = `remote-${crypto.randomUUID()}`;
+
+    // Derive team/privacy from the owner's directory mappings, exactly like
+    // every other conversation insert. Writing a literal is_private:true ignored
+    // an auto_share mapping and permanently under-shared the session.
+    const privacy = await resolveCreationPrivacy(ctx, userId, args.project_path);
+
+    const conversationId = await ctx.db.insert("conversations", {
+      user_id: userId,
+      agent_type: args.agent_type === "claude" ? "claude_code" : args.agent_type,
+      session_id: sessionId,
+      project_path: args.project_path,
+      started_at: now,
+      updated_at: now,
+      message_count: 0,
+      team_id: privacy.team_id,
+      is_private: privacy.is_private,
+      auto_shared: privacy.auto_shared,
+      status: "active" as const,
+    });
+
+    await ctx.db.patch(conversationId, {
+      short_id: conversationId.toString().slice(0, 7),
+    });
+
+    const commandId = await enqueueStartSession(ctx, userId, {
+      conversationId,
+      // opencode/pi are first-class daemon clients; fromConvexAgentType maps each
+      // convex spelling to its daemon client id (opencode/pi to themselves) and falls
+      // back to "claude" only for unrecognized spellings.
+      agentType: fromConvexAgentType(args.agent_type),
+      projectPath: args.project_path,
+      sessionId,
+      prompt: args.prompt,
+      createdAt: now,
+    });
+
+    return { command_id: commandId ?? null, conversation_id: conversationId };
+  },
+});
+
+export const getTeamsForCLI = query({
+  args: {
+    api_token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_user_id", (q) => q.eq("user_id", result.userId))
+      .collect();
+
+    const teams = await Promise.all(
+      memberships.map(async (m) => {
+        const team = await ctx.db.get(m.team_id);
+        if (!team) return null;
+        return {
+          _id: team._id,
+          name: team.name,
+          icon: team.icon,
+          icon_color: team.icon_color,
+          features: team.features,
+          role: m.role,
+          visibility: m.visibility || "summary",
+        };
+      })
+    );
+    // The CANONICAL active-workspace pointer travels with the roster, so the
+    // CLI resolves the workspace from the same field web and mobile read
+    // instead of guessing (its old default was teams[0]). Absent = the
+    // personal workspace, which is a real answer, not a missing one.
+    const user = await ctx.db.get(result.userId);
+    return {
+      teams: teams.filter(Boolean),
+      active_team_id: user?.active_team_id ?? null,
+      user_id: result.userId,
+    };
+  },
+});
+
+export const getDirectoryMappingsForCLI = query({
+  args: {
+    api_token: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", result.userId))
+      .collect();
+
+    const mappingsWithTeams = await Promise.all(
+      mappings.map(async (m) => {
+        const team = m.team_id ? await ctx.db.get(m.team_id) : null;
+        return {
+          path_prefix: m.path_prefix,
+          team_id: m.team_id ?? null,
+          team_name: m.team_id ? team?.name ?? "Unknown" : null,
+          private: m.private ?? false,
+          auto_share: m.auto_share,
+        };
+      })
+    );
+    return { mappings: mappingsWithTeams };
+  },
+});
+
+export const updateDirectoryMappingForCLI = mutation({
+  args: {
+    api_token: v.string(),
+    path_prefix: v.string(),
+    team_id: v.optional(v.string()),
+    private: v.optional(v.boolean()),
+    auto_share: v.optional(v.boolean()),
+    include_past: v.optional(v.boolean()),
+    share_since: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const upsert = await upsertDirectoryMapping(ctx, result.userId, {
+      path_prefix: args.path_prefix,
+      team_id: args.team_id as Id<"teams"> | undefined,
+      private: args.private,
+      auto_share: args.auto_share,
+      include_past: args.include_past,
+      share_since: args.share_since,
+    });
+    if ("error" in upsert) return upsert;
+    return { ...upsert, retroactivelyShared: 0, retroactiveQueued: true };
+  },
+});
+
+export const countConversationsForPathCLI = query({
+  args: {
+    api_token: v.string(),
+    path_prefix: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    return summarizeConversationsForPath(ctx, result.userId, args.path_prefix);
+  },
+});
+
+export const deleteConversationsForPathCLI = mutation({
+  args: {
+    api_token: v.string(),
+    path_prefix: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    return deleteConversationsForPathInternal(ctx, result.userId, args.path_prefix);
+  },
+});
+
+export const getProjectsWithTeamsForCLI = query({
+  args: {
+    api_token: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const result = await verifyApiToken(ctx, args.api_token);
+    if (!result) {
+      return { error: "Unauthorized" };
+    }
+    const limit = args.limit ?? 30;
+    const conversations = await ctx.db
+      .query("conversations")
+      .withIndex("by_user_id", (q) => q.eq("user_id", result.userId))
+      .order("desc")
+      .take(200);
+
+    const projectMap = new Map<string, {
+      session_count: number;
+      first_active: number;
+      last_active: number;
+    }>();
+
+    for (const conv of conversations) {
+      const key = conv.git_root || conv.project_path;
+      if (!key) continue;
+
+      const startedAt = conv.started_at ?? conv.updated_at;
+      const existing = projectMap.get(key);
+      if (existing) {
+        existing.session_count++;
+        existing.first_active = Math.min(existing.first_active, startedAt);
+        existing.last_active = Math.max(existing.last_active, conv.updated_at);
+      } else {
+        projectMap.set(key, {
+          session_count: 1,
+          first_active: startedAt,
+          last_active: conv.updated_at,
+        });
+      }
+    }
+
+    const mappings = await ctx.db
+      .query("directory_team_mappings")
+      .withIndex("by_user_id", (q) => q.eq("user_id", result.userId))
+      .collect();
+
+    const mappingsWithTeams = await Promise.all(
+      mappings.map(async (m) => {
+        const team = m.team_id ? await ctx.db.get(m.team_id) : null;
+        return {
+          path_prefix: m.path_prefix,
+          team_id: m.team_id ?? null,
+          team_name: m.team_id ? team?.name ?? "Unknown" : null,
+          private: m.private ?? false,
+          share_since: m.share_since ?? null,
+        };
+      })
+    );
+    const mappingsByPath = new Map(mappingsWithTeams.map(m => [m.path_prefix, m]));
+
+    for (const m of mappingsWithTeams) {
+      if (!projectMap.has(m.path_prefix)) {
+        projectMap.set(m.path_prefix, {
+          session_count: 0,
+          first_active: 0,
+          last_active: 0,
+        });
+      }
+    }
+
+    const projects = Array.from(projectMap.entries())
+      .sort((a, b) => b[1].last_active - a[1].last_active)
+      .slice(0, limit)
+      .map(([path, data]) => {
+        const mapping = mappingsByPath.get(path);
+        return {
+          path,
+          session_count: data.session_count,
+          first_active: data.first_active,
+          last_active: data.last_active,
+          team_id: mapping?.team_id ?? null,
+          team_name: mapping?.team_name ?? null,
+          private: mapping?.private ?? false,
+          share_since: mapping?.share_since ?? null,
+        };
+      });
+
+    return { projects };
+  },
+});
+
+export const getAgentPermissionModes = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const user = await ctx.db.get(userId);
+    return user?.agent_permission_modes ?? null;
+  },
+});
+
+/** The agents the viewer's pickers show. Every supported client stays
+ *  launchable; this only decides which ones sit in the pickers. The hosted
+ *  assistant is pinnable like any client. */
+export const setPinnedAgents = mutation({
+  args: { agents: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const unknown = args.agents.filter((id) => !isPinnableAgentId(id));
+    if (unknown.length) throw new Error(`Unknown agent client: ${unknown.join(", ")}`);
+    await ctx.db.patch(userId, { pinned_agents: [...new Set(args.agents)] });
+  },
+});
+
+export const updateAgentPermissionModes = mutation({
+  args: {
+    claude: v.optional(v.union(v.literal("default"), v.literal("bypass"))),
+    codex: v.optional(v.union(v.literal("default"), v.literal("full_auto"), v.literal("bypass"))),
+    gemini: v.optional(v.union(v.literal("default"), v.literal("bypass"))),
+    muse: v.optional(v.union(v.literal("default"), v.literal("bypass"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    await ctx.db.patch(userId, {
+      agent_permission_modes: {
+        claude: args.claude,
+        codex: args.codex,
+        gemini: args.gemini,
+        muse: args.muse,
+      },
+    });
+    return userId;
+  },
+});
+
+export const getAgentDefaultParams = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const user = await ctx.db.get(userId);
+    return user?.agent_default_params ?? null;
+  },
+});
+
+export const updateAgentDefaultParams = mutation({
+  args: {
+    api_token: v.optional(v.string()),
+    agent: v.union(v.literal("claude"), v.literal("codex"), v.literal("gemini"), v.literal("cursor"), v.literal("muse")),
+    params: v.record(v.string(), v.string()),
+  },
+  handler: async (ctx, args) => {
+    let userId;
+    if (args.api_token) {
+      const auth = await verifyApiToken(ctx, args.api_token, false);
+      if (!auth) throw new Error("Unauthorized");
+      userId = auth.userId;
+    } else {
+      userId = await getAuthUserId(ctx);
+      if (!userId) throw new Error("Not authenticated");
+    }
+    const user = await ctx.db.get(userId);
+    const existing = user?.agent_default_params ?? {};
+    await ctx.db.patch(userId, {
+      agent_default_params: {
+        ...existing,
+        [args.agent]: args.params,
+      },
+    });
+    return userId;
+  },
+});
+
+export const deleteAgentDefaultParam = mutation({
+  args: {
+    agent: v.union(v.literal("claude"), v.literal("codex"), v.literal("gemini"), v.literal("cursor"), v.literal("muse")),
+    param: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    const user = await ctx.db.get(userId);
+    const existing = user?.agent_default_params ?? {};
+    const agentParams = { ...(existing[args.agent] ?? {}) };
+    delete agentParams[args.param];
+    await ctx.db.patch(userId, {
+      agent_default_params: {
+        ...existing,
+        [args.agent]: agentParams,
+      },
+    });
+    return userId;
+  },
+});
+
+export const sendConfigCommand = mutation({
+  args: {
+    command: v.union(
+      v.literal("config_list"),
+      v.literal("config_read"),
+      v.literal("config_write"),
+      v.literal("config_create"),
+      v.literal("config_delete"),
+      v.literal("line_profile_edit")
+    ),
+    args_json: v.optional(v.string()),
+    // The one machine that should answer (a project's file lives on the
+    // device that published its profile). Unset broadcasts, as before.
+    target_device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    return { command_id: await enqueueConfigCommand(ctx, userId, args.command, args.args_json, args.target_device_id) };
+  },
+});
+
+/**
+ * A config command for the viewer's own daemon. A target names one of the
+ * viewer's machines (the only daemons that run their commands); unset
+ * broadcasts. Shared by sendConfigCommand and dispatch's editLineProfile,
+ * whose request id lets the web's sessionCommands feed settle the edit.
+ */
+export async function enqueueConfigCommand(
+  ctx: Pick<MutationCtx, "db">,
+  userId: Id<"users">,
+  command: "config_list" | "config_read" | "config_write" | "config_create" | "config_delete" | "line_profile_edit" | "line_graph_edit" | "line_try" | "line_trial_reask" | "line_deploy",
+  argsJson: string | undefined,
+  targetDeviceId?: string,
+  requestId?: string,
+): Promise<Id<"daemon_commands">> {
+  if (targetDeviceId && !(await ownDevice(ctx, userId, targetDeviceId))) {
+    throw new ConvexError("That machine is not yours: only its owner can send it commands");
+  }
+  // A store action's request id binds its sessionCommands row to this command;
+  // an outbox retry of the same request answers the command already queued.
+  if (requestId !== undefined) {
+    const existing = await findSessionCommandByRequest(ctx, userId, requestId);
+    if (existing) {
+      if (existing.command !== command) throw new ConvexError("Request ID is already bound to a different command");
+      return existing._id;
+    }
+  }
+  return await ctx.db.insert("daemon_commands", {
+    user_id: userId,
+    command,
+    args: argsJson,
+    created_at: Date.now(),
+    ...(targetDeviceId ? { target_device_id: targetDeviceId } : {}),
+    ...(requestId !== undefined ? { request_id: requestId } : {}),
+  });
+}
+
+export const getCommandResult = query({
+  args: {
+    command_id: v.id("daemon_commands"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const cmd = await ctx.db.get(args.command_id);
+    if (!cmd || cmd.user_id !== userId) return null;
+    return {
+      executed_at: cmd.executed_at,
+      result: cmd.result,
+      error: cmd.error,
+    };
+  },
+});

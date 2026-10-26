@@ -1,0 +1,47 @@
+import type { EntityType } from "./entityLinks";
+
+// Every class literal in full — Tailwind's scanner never sees a composed
+// string like `hover:${accent.text}`, so composition would silently produce
+// no CSS at all. The strip tint is stronger in light mode (a 6% wash reads
+// as nothing on white); `borderOpen`/`stripOpen` are the open-state raise, so
+// an expanded card reads as open at a glance, not just by its chevron.
+export type Accent = {
+  text: string;
+  hoverText: string;
+  border: string;
+  borderOpen: string;
+  borderHover: string;
+  strip: string;
+  stripOpen: string;
+  stripBorder: string;
+  ring: string;
+  chevronHover: string;
+  bar: string;
+};
+export const ACCENT: Record<EntityType, Accent> = {
+  session: { text: "text-sol-blue", hoverText: "hover:text-sol-blue", border: "border-sol-blue/25", borderOpen: "border-sol-blue/45", borderHover: "hover:border-sol-blue/45", strip: "bg-sol-blue/10 dark:bg-sol-blue/[0.06]", stripOpen: "bg-sol-blue/[0.15] dark:bg-sol-blue/10", stripBorder: "border-sol-blue/15", ring: "focus-visible:ring-sol-blue/35", chevronHover: "group-hover/card:text-sol-blue", bar: "bg-sol-blue" },
+  task: { text: "text-sol-violet", hoverText: "hover:text-sol-violet", border: "border-sol-violet/25", borderOpen: "border-sol-violet/45", borderHover: "hover:border-sol-violet/45", strip: "bg-sol-violet/10 dark:bg-sol-violet/[0.06]", stripOpen: "bg-sol-violet/[0.15] dark:bg-sol-violet/10", stripBorder: "border-sol-violet/15", ring: "focus-visible:ring-sol-violet/35", chevronHover: "group-hover/card:text-sol-violet", bar: "bg-sol-violet" },
+  plan: { text: "text-sol-cyan", hoverText: "hover:text-sol-cyan", border: "border-sol-cyan/25", borderOpen: "border-sol-cyan/45", borderHover: "hover:border-sol-cyan/45", strip: "bg-sol-cyan/10 dark:bg-sol-cyan/[0.06]", stripOpen: "bg-sol-cyan/[0.15] dark:bg-sol-cyan/10", stripBorder: "border-sol-cyan/15", ring: "focus-visible:ring-sol-cyan/35", chevronHover: "group-hover/card:text-sol-cyan", bar: "bg-sol-cyan" },
+  doc: { text: "text-sol-green", hoverText: "hover:text-sol-green", border: "border-sol-green/25", borderOpen: "border-sol-green/45", borderHover: "hover:border-sol-green/45", strip: "bg-sol-green/10 dark:bg-sol-green/[0.06]", stripOpen: "bg-sol-green/[0.15] dark:bg-sol-green/10", stripBorder: "border-sol-green/15", ring: "focus-visible:ring-sol-green/35", chevronHover: "group-hover/card:text-sol-green", bar: "bg-sol-green" },
+  trigger: { text: "text-sol-orange", hoverText: "hover:text-sol-orange", border: "border-sol-orange/25", borderOpen: "border-sol-orange/45", borderHover: "hover:border-sol-orange/45", strip: "bg-sol-orange/10 dark:bg-sol-orange/[0.06]", stripOpen: "bg-sol-orange/[0.15] dark:bg-sol-orange/10", stripBorder: "border-sol-orange/15", ring: "focus-visible:ring-sol-orange/35", chevronHover: "group-hover/card:text-sol-orange", bar: "bg-sol-orange" },
+  pr: { text: "text-sol-green", hoverText: "hover:text-sol-green", border: "border-sol-green/25", borderOpen: "border-sol-green/45", borderHover: "hover:border-sol-green/45", strip: "bg-sol-green/10 dark:bg-sol-green/[0.06]", stripOpen: "bg-sol-green/[0.15] dark:bg-sol-green/10", stripBorder: "border-sol-green/15", ring: "focus-visible:ring-sol-green/35", chevronHover: "group-hover/card:text-sol-green", bar: "bg-sol-green" },
+  commit: { text: "text-sol-yellow", hoverText: "hover:text-sol-yellow", border: "border-sol-yellow/25", borderOpen: "border-sol-yellow/45", borderHover: "hover:border-sol-yellow/45", strip: "bg-sol-yellow/10 dark:bg-sol-yellow/[0.06]", stripOpen: "bg-sol-yellow/[0.15] dark:bg-sol-yellow/10", stripBorder: "border-sol-yellow/15", ring: "focus-visible:ring-sol-yellow/35", chevronHover: "group-hover/card:text-sol-yellow", bar: "bg-sol-yellow" },
+  project: { text: "text-sol-text-muted", hoverText: "hover:text-sol-text-muted", border: "border-sol-border", borderOpen: "border-[color-mix(in_srgb,var(--sol-text-dim)_40%,transparent)]", borderHover: "hover:border-[color-mix(in_srgb,var(--sol-text-dim)_40%,transparent)]", strip: "bg-sol-bg-alt", stripOpen: "bg-sol-bg-alt", stripBorder: "border-sol-border", ring: "focus-visible:ring-[color-mix(in_srgb,var(--sol-text-dim)_35%,transparent)]", chevronHover: "group-hover/card:text-sol-text-muted", bar: "bg-sol-text-dim" },
+  // A staffing proposal wears the org page's violet: the ghost colour of the changes it draws.
+  proposal: { text: "text-sol-violet", hoverText: "hover:text-sol-violet", border: "border-sol-violet/25", borderOpen: "border-sol-violet/45", borderHover: "hover:border-sol-violet/45", strip: "bg-sol-violet/10 dark:bg-sol-violet/[0.06]", stripOpen: "bg-sol-violet/[0.15] dark:bg-sol-violet/10", stripBorder: "border-sol-violet/15", ring: "focus-visible:ring-sol-violet/35", chevronHover: "group-hover/card:text-sol-violet", bar: "bg-sol-violet" },
+  // A role is the org's violet, as its pill and chat mention are; a person the green of a person mention.
+  role: { text: "text-sol-violet", hoverText: "hover:text-sol-violet", border: "border-sol-violet/25", borderOpen: "border-sol-violet/45", borderHover: "hover:border-sol-violet/45", strip: "bg-sol-violet/10 dark:bg-sol-violet/[0.06]", stripOpen: "bg-sol-violet/[0.15] dark:bg-sol-violet/10", stripBorder: "border-sol-violet/15", ring: "focus-visible:ring-sol-violet/35", chevronHover: "group-hover/card:text-sol-violet", bar: "bg-sol-violet" },
+  person: { text: "text-sol-green", hoverText: "hover:text-sol-green", border: "border-sol-green/25", borderOpen: "border-sol-green/45", borderHover: "hover:border-sol-green/45", strip: "bg-sol-green/10 dark:bg-sol-green/[0.06]", stripOpen: "bg-sol-green/[0.15] dark:bg-sol-green/10", stripBorder: "border-sol-green/15", ring: "focus-visible:ring-sol-green/35", chevronHover: "group-hover/card:text-sol-green", bar: "bg-sol-green" },
+  // A decision wears the queue's yellow, the colour the palette gives `sd-N`.
+  decision: { text: "text-sol-yellow", hoverText: "hover:text-sol-yellow", border: "border-sol-yellow/25", borderOpen: "border-sol-yellow/45", borderHover: "hover:border-sol-yellow/45", strip: "bg-sol-yellow/10 dark:bg-sol-yellow/[0.06]", stripOpen: "bg-sol-yellow/[0.15] dark:bg-sol-yellow/10", stripBorder: "border-sol-yellow/15", ring: "focus-visible:ring-sol-yellow/35", chevronHover: "group-hover/card:text-sol-yellow", bar: "bg-sol-yellow" },
+  // A call wears red, the colour of a microphone that is on.
+  call: { text: "text-sol-red", hoverText: "hover:text-sol-red", border: "border-sol-red/25", borderOpen: "border-sol-red/45", borderHover: "hover:border-sol-red/45", strip: "bg-sol-red/10 dark:bg-sol-red/[0.06]", stripOpen: "bg-sol-red/[0.15] dark:bg-sol-red/10", stripBorder: "border-sol-red/15", ring: "focus-visible:ring-sol-red/35", chevronHover: "group-hover/card:text-sol-red", bar: "bg-sol-red" },
+  // A source wears the Ops orange: it is what wakes triggers.
+  source: { text: "text-sol-orange", hoverText: "hover:text-sol-orange", border: "border-sol-orange/25", borderOpen: "border-sol-orange/45", borderHover: "hover:border-sol-orange/45", strip: "bg-sol-orange/10 dark:bg-sol-orange/[0.06]", stripOpen: "bg-sol-orange/[0.15] dark:bg-sol-orange/10", stripBorder: "border-sol-orange/15", ring: "focus-visible:ring-sol-orange/35", chevronHover: "group-hover/card:text-sol-orange", bar: "bg-sol-orange" },
+  // A replay wears the magenta of the Ops replay issues it explains.
+  replay: { text: "text-sol-magenta", hoverText: "hover:text-sol-magenta", border: "border-sol-magenta/25", borderOpen: "border-sol-magenta/45", borderHover: "hover:border-sol-magenta/45", strip: "bg-sol-magenta/10 dark:bg-sol-magenta/[0.06]", stripOpen: "bg-sol-magenta/[0.15] dark:bg-sol-magenta/10", stripBorder: "border-sol-magenta/15", ring: "focus-visible:ring-sol-magenta/35", chevronHover: "group-hover/card:text-sol-magenta", bar: "bg-sol-magenta" },
+  // A deploy wears the green of the deploy flags on the line's charts.
+  deploy: { text: "text-sol-green", hoverText: "hover:text-sol-green", border: "border-sol-green/25", borderOpen: "border-sol-green/45", borderHover: "hover:border-sol-green/45", strip: "bg-sol-green/10 dark:bg-sol-green/[0.06]", stripOpen: "bg-sol-green/[0.15] dark:bg-sol-green/10", stripBorder: "border-sol-green/15", ring: "focus-visible:ring-sol-green/35", chevronHover: "group-hover/card:text-sol-green", bar: "bg-sol-green" },
+  initiative: { text: "text-sol-magenta", hoverText: "hover:text-sol-magenta", border: "border-sol-magenta/25", borderOpen: "border-sol-magenta/45", borderHover: "hover:border-sol-magenta/45", strip: "bg-sol-magenta/10 dark:bg-sol-magenta/[0.06]", stripOpen: "bg-sol-magenta/[0.15] dark:bg-sol-magenta/10", stripBorder: "border-sol-magenta/15", ring: "focus-visible:ring-sol-magenta/35", chevronHover: "group-hover/card:text-sol-magenta", bar: "bg-sol-magenta" },
+};
+

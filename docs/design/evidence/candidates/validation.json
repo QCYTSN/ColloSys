@@ -1,0 +1,306 @@
+{
+  "passed": true,
+  "checks": [
+    "A/B rendered at 1440×900, 1280×800, 1920×1080, 800×900 and 390×844 without document horizontal overflow",
+    "search and empty result recovery",
+    "comment disabled when empty; preview comment added to selected work",
+    "handoff dialog traps focus, Esc closes and returns focus",
+    "member menu keyboard selection and dismissal",
+    "command dialog searches files and selects work",
+    "own restore preview rejects simulated staleness; no write action exists",
+    "unknown origin does not invent an Agent or restoration permission",
+    "narrow window switches between readable record and diff",
+    "focus workspace expands and collapses context",
+    "collapsed desktop evidence remains reachable after narrow resize",
+    "viewed control has discoverable tooltip and pressed state",
+    "handoff creates a retained, inspectable local draft",
+    "incoming record waits for the reader",
+    "error, denied and first-use states have exits",
+    "reduced motion disables transitions and animations",
+    "No page errors or external requests"
+  ],
+  "errors": [],
+  "external": [],
+  "dimensions": [
+    {
+      "layout": "queue",
+      "width": 1440,
+      "height": 900,
+      "viewport": 1440,
+      "scroll": 1440,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1440,
+        "height": 806,
+        "top": 94,
+        "right": 1440,
+        "bottom": 900,
+        "left": 0
+      },
+      "detail": {
+        "x": 58.59375,
+        "y": 545.328125,
+        "width": 1322.8125,
+        "height": 350,
+        "top": 545.328125,
+        "right": 1381.40625,
+        "bottom": 895.328125,
+        "left": 58.59375
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "queue",
+      "width": 1280,
+      "height": 800,
+      "viewport": 1280,
+      "scroll": 1280,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1280,
+        "height": 706,
+        "top": 94,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      },
+      "detail": {
+        "x": 52.1875,
+        "y": 545.328125,
+        "width": 1175.625,
+        "height": 350,
+        "top": 545.328125,
+        "right": 1227.8125,
+        "bottom": 895.328125,
+        "left": 52.1875
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "queue",
+      "width": 1920,
+      "height": 1080,
+      "viewport": 1920,
+      "scroll": 1920,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1920,
+        "height": 986,
+        "top": 94,
+        "right": 1920,
+        "bottom": 1080,
+        "left": 0
+      },
+      "detail": {
+        "x": 253,
+        "y": 603.328125,
+        "width": 1414,
+        "height": 440,
+        "top": 603.328125,
+        "right": 1667,
+        "bottom": 1043.328125,
+        "left": 253
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "queue",
+      "width": 800,
+      "height": 900,
+      "viewport": 800,
+      "scroll": 800,
+      "main": {
+        "x": 0,
+        "y": 90,
+        "width": 800,
+        "height": 810,
+        "top": 90,
+        "right": 800,
+        "bottom": 900,
+        "left": 0
+      },
+      "detail": {
+        "x": 21,
+        "y": 583.375,
+        "width": 758,
+        "height": 408,
+        "top": 583.375,
+        "right": 779,
+        "bottom": 991.375,
+        "left": 21
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "queue",
+      "width": 390,
+      "height": 844,
+      "viewport": 390,
+      "scroll": 390,
+      "main": {
+        "x": 0,
+        "y": 90,
+        "width": 390,
+        "height": 754,
+        "top": 90,
+        "right": 390,
+        "bottom": 844,
+        "left": 0
+      },
+      "detail": {
+        "x": 15,
+        "y": 679.875,
+        "width": 360,
+        "height": 430,
+        "top": 679.875,
+        "right": 375,
+        "bottom": 1109.875,
+        "left": 15
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "focus",
+      "width": 1440,
+      "height": 900,
+      "viewport": 1440,
+      "scroll": 1440,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1440,
+        "height": 806,
+        "top": 94,
+        "right": 1440,
+        "bottom": 900,
+        "left": 0
+      },
+      "detail": {
+        "x": 0,
+        "y": 334,
+        "width": 1440,
+        "height": 566,
+        "top": 334,
+        "right": 1440,
+        "bottom": 900,
+        "left": 0
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "focus",
+      "width": 1280,
+      "height": 800,
+      "viewport": 1280,
+      "scroll": 1280,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1280,
+        "height": 706,
+        "top": 94,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      },
+      "detail": {
+        "x": 0,
+        "y": 334,
+        "width": 1280,
+        "height": 466,
+        "top": 334,
+        "right": 1280,
+        "bottom": 800,
+        "left": 0
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "focus",
+      "width": 1920,
+      "height": 1080,
+      "viewport": 1920,
+      "scroll": 1920,
+      "main": {
+        "x": 0,
+        "y": 94,
+        "width": 1920,
+        "height": 986,
+        "top": 94,
+        "right": 1920,
+        "bottom": 1080,
+        "left": 0
+      },
+      "detail": {
+        "x": 0,
+        "y": 334,
+        "width": 1920,
+        "height": 746,
+        "top": 334,
+        "right": 1920,
+        "bottom": 1080,
+        "left": 0
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "focus",
+      "width": 800,
+      "height": 900,
+      "viewport": 800,
+      "scroll": 800,
+      "main": {
+        "x": 0,
+        "y": 90,
+        "width": 800,
+        "height": 810,
+        "top": 90,
+        "right": 800,
+        "bottom": 900,
+        "left": 0
+      },
+      "detail": {
+        "x": 0,
+        "y": 365.59375,
+        "width": 800,
+        "height": 534.40625,
+        "top": 365.59375,
+        "right": 800,
+        "bottom": 900,
+        "left": 0
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    {
+      "layout": "focus",
+      "width": 390,
+      "height": 844,
+      "viewport": 390,
+      "scroll": 390,
+      "main": {
+        "x": 0,
+        "y": 90,
+        "width": 390,
+        "height": 754,
+        "top": 90,
+        "right": 390,
+        "bottom": 844,
+        "left": 0
+      },
+      "detail": {
+        "x": 0,
+        "y": 355.59375,
+        "width": 390,
+        "height": 488.40625,
+        "top": 355.59375,
+        "right": 390,
+        "bottom": 844,
+        "left": 0
+      },
+      "font": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    }
+  ]
+}

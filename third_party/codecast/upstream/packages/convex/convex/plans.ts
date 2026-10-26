@@ -1,0 +1,1976 @@
+import { v } from "convex/values";
+import { claimShareToken } from "./publicShare";
+import { charterPatch, planCharterArgs } from "./lib/orgCharter";
+import { resolveActor } from "./lib/actor";
+import { mutation, query, internalMutation } from "./functions";
+import { verifyApiToken } from "./apiTokens";
+import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { createDataContext, scopeByProject, scopedFetch, explicitWorkspace } from "./data";
+import { nextShortId } from "./counters";
+// Owner-or-team access check for a plan. Moved to lib/access.ts (Wave-1
+// auth/access seam). Imported for local use here and re-exported so existing
+// callers keep working unchanged.
+import {
+  canAccessConversation,
+  canAccessDoc,
+  canAccessPlan,
+  canAccessTask,
+  isSameWorkspace,
+  requireAccessibleDoc,
+  requireAccessibleConversation,
+  requireAccessibleProject,
+  requireAccessibleTask,
+  requireSameWorkspace,
+  requireTeamMembership,
+  requireWorkspaceMatch,
+  resolveSessionConversation,
+  workspaceForConversation,
+  workspaceForResource,
+  workspacesMatch,
+} from "./lib/access";
+import { notFound } from "./lib/auth";
+import { docSourceForPlanSource } from "@codecast/shared/docs";
+import { renderFencedPlanRecord, renderFencedPlanTasks } from "@codecast/shared/tasks";
+import { inlineForeignText } from "@codecast/shared/contracts";
+import { listLiveManagedSessions, liveConversationIdSet } from "./lib/liveSessions";
+import { graphOutside, sortGraphRefs, stampGraphStatus } from "./lib/taskGraph";
+import { patchDepMirror } from "./tasks";
+import { isTeamMember, teamVisibleConvTeam } from "./privacy";
+import { linkConversationToEntityBestEffort } from "./conversationLinks";
+export { canAccessPlan };
+
+async function canReadPlanTask(ctx: any, userId: Id<"users">, plan: any, task: any) {
+  return isSameWorkspace(task, workspaceForResource(plan))
+    && await canAccessTask(ctx, userId, task);
+}
+
+async function canReadPlanDoc(ctx: any, userId: Id<"users">, plan: any, doc: any) {
+  return isSameWorkspace(doc, workspaceForResource(plan))
+    && await canAccessDoc(ctx, userId, doc);
+}
+
+async function recalcProgress(ctx: any, taskIds: Id<"tasks">[]) {
+  let total = 0, done = 0, in_progress = 0, open = 0;
+  let exec_done = 0, exec_done_with_concerns = 0, exec_blocked = 0, exec_needs_context = 0;
+
+  for (const tid of taskIds) {
+    const task = await ctx.db.get(tid);
+    if (!task || task.status === "dropped") continue;
+    // A subtask is never a plan's unit of progress (the parent is). Exclude any
+    // that slipped into task_ids before that rule — matches tasks.recalcPlanProgress.
+    if (task.parent_id) continue;
+    total++;
+    if (task.status === "done") done++;
+    else if (task.status === "in_progress" || task.status === "in_review") in_progress++;
+    else if (task.status === "open" || task.status === "backlog") open++;
+
+    const es = (task as any).execution_status;
+    if (es === "done") exec_done++;
+    else if (es === "done_with_concerns") exec_done_with_concerns++;
+    else if (es === "blocked") exec_blocked++;
+    else if (es === "needs_context") exec_needs_context++;
+  }
+
+  return {
+    total, done, in_progress, open,
+    execution_status: {
+      done: exec_done,
+      done_with_concerns: exec_done_with_concerns,
+      blocked: exec_blocked,
+      needs_context: exec_needs_context,
+    },
+  };
+}
+
+
+// Merge legacy per-type arrays with new unified entries into a single sorted timeline.
+// Deduplicates by timestamp+content to avoid showing entries written to both old and new.
+function mergePlanEntries(plan: any): Array<{
+  type: string; timestamp: number; content: string;
+  session_id?: string; author?: string; rationale?: string; path_or_url?: string;
+}> {
+  const seen = new Set<string>();
+  const all: any[] = [];
+
+  const add = (e: any) => {
+    const key = `${e.timestamp}:${e.content}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    all.push(e);
+  };
+
+  // New unified entries (preferred)
+  for (const e of (plan.entries || [])) add(e);
+
+  // Legacy arrays
+  for (const e of (plan.progress_log || [])) {
+    add({ type: "progress", timestamp: e.timestamp, content: e.entry, session_id: e.session_id });
+  }
+  for (const e of (plan.decision_log || [])) {
+    add({ type: "decision", timestamp: e.timestamp, content: e.decision, rationale: e.rationale, session_id: e.session_id });
+  }
+  for (const e of (plan.discoveries || [])) {
+    add({ type: "discovery", timestamp: e.timestamp, content: e.finding, session_id: e.session_id });
+  }
+  for (const e of (plan.context_pointers || [])) {
+    add({ type: "reference", timestamp: 0, content: e.label, path_or_url: e.path_or_url });
+  }
+
+  all.sort((a, b) => a.timestamp - b.timestamp);
+  return all;
+}
+
+// --- API token mutations ---
+
+export const create = mutation({
+  args: {
+    api_token: v.string(),
+    title: v.string(),
+    body: v.optional(v.string()),
+    goal: v.optional(v.string()),
+    acceptance_criteria: v.optional(v.array(v.string())),
+    status: v.optional(v.string()),
+    source: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    conversation_id: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    model_stylesheet: v.optional(v.string()),
+    fidelity: v.optional(v.string()),
+    join_policy: v.optional(v.string()),
+    join_k: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    // Resolve the source conversation first: a team-visible session hands its
+    // team to the plan (mirrors tasks.create); a private one contributes
+    // nothing and the directory mapping decides.
+    let created_from_conversation_id: Id<"conversations"> | undefined;
+    let convTeamId: Id<"teams"> | undefined;
+    if (args.conversation_id) {
+      // Unresolvable session ref = create the plan without the link, never
+      // reject the create (see resolveSessionConversation).
+      const conv = await resolveSessionConversation(ctx, auth.userId, args.conversation_id);
+      if (conv) {
+        created_from_conversation_id = conv._id;
+        convTeamId = teamVisibleConvTeam(conv);
+      }
+    }
+
+    const db = await createDataContext(ctx, {
+      userId: auth.userId,
+      project_path: args.project_path,
+      ...(convTeamId ? { workspace: "team" as const, team_id: convTeamId } : {}),
+    });
+    let project_id: Id<"projects"> | undefined;
+    if (args.project_id) {
+      const pid = ctx.db.normalizeId("projects", args.project_id);
+      if (!pid) notFound("Project not found");
+      const project = await requireAccessibleProject(ctx, auth.userId, pid);
+      requireSameWorkspace(project, db.workspace, "project");
+      project_id = pid;
+    }
+
+    const short_id = await nextShortId(ctx.db, "pl");
+
+    const id = await db.insert("plans", {
+      project_id,
+      short_id,
+      title: args.title,
+      goal: args.goal,
+      acceptance_criteria: args.acceptance_criteria,
+      status: (args.status || "draft") as any,
+      source: (args.source || "human") as any,
+      owner_id: auth.userId,
+      task_ids: [],
+      progress: { total: 0, done: 0, in_progress: 0, open: 0 },
+      progress_log: [],
+      decision_log: [],
+      discoveries: [],
+      context_pointers: [],
+      entries: [],
+      session_ids: [],
+      created_from_conversation_id,
+      model_stylesheet: args.model_stylesheet,
+      fidelity: args.fidelity as any,
+      join_policy: args.join_policy as any,
+      join_k: args.join_k,
+    });
+
+    const docId = await db.insert("docs", {
+      title: args.title,
+      content: args.body || "",
+      doc_type: "plan",
+      // The plan-body doc inherits the plan's origin: an agent's plan is agent
+      // output in the docs list, not a doc the human wrote.
+      source: docSourceForPlanSource(args.source || "human"),
+      plan_id: id,
+      project_id,
+    });
+    await ctx.db.patch(id, { doc_id: docId });
+
+    if (created_from_conversation_id) {
+      const conv = await ctx.db.get(created_from_conversation_id);
+      if (conv) {
+        await ctx.db.patch(created_from_conversation_id, {
+          active_plan_id: id,
+          plan_ids: [...((conv as any).plan_ids || []), id],
+        });
+      }
+      await ctx.db.patch(id, {
+        session_ids: [created_from_conversation_id],
+        current_session_id: created_from_conversation_id,
+      });
+    }
+
+    return { id, short_id, doc_id: docId };
+  },
+});
+
+export const createFromTemplate = mutation({
+  args: {
+    api_token: v.string(),
+    template_id: v.id("plan_templates"),
+    title: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const template = await ctx.db.get(args.template_id);
+    if (!template) throw new Error("Template not found");
+    // Templates carry a goal + task list and stamp their team_id onto the new
+    // plan. Only the owner or a member of the template's team may instantiate it.
+    const ownsTemplate = String(template.user_id) === String(auth.userId);
+    if (!ownsTemplate && !(template.team_id && (await isTeamMember(ctx, auth.userId, template.team_id)))) {
+      throw new Error("Template not found");
+    }
+    if (template.team_id) await requireTeamMembership(ctx, auth.userId, template.team_id);
+
+    const now = Date.now();
+    const short_id = await nextShortId(ctx.db, "pl");
+    const title = args.title || template.name;
+
+    const planId = await ctx.db.insert("plans", {
+      user_id: auth.userId,
+      team_id: template.team_id,
+      short_id,
+      title,
+      goal: template.goal_template,
+      status: "active",
+      progress: { total: template.task_templates.length, done: 0, in_progress: 0, open: template.task_templates.length },
+      task_ids: [],
+      progress_log: [],
+      entries: [{ type: "progress", timestamp: now, content: `Created from template: ${template.name}` }],
+      created_at: now,
+      updated_at: now,
+    } as any);
+
+    const taskIds: Id<"tasks">[] = [];
+    const taskShortIds: string[] = [];
+
+    for (let i = 0; i < template.task_templates.length; i++) {
+      const tt = template.task_templates[i];
+      const taskShortId = await nextShortId(ctx.db, "ct");
+      taskShortIds.push(taskShortId);
+
+      const blockedBy: string[] = [];
+      if (tt.blocked_by_indices) {
+        for (const idx of tt.blocked_by_indices) {
+          if (idx < taskShortIds.length) blockedBy.push(taskShortIds[idx]);
+        }
+      }
+
+      const taskId = await ctx.db.insert("tasks", {
+        user_id: auth.userId,
+        team_id: template.team_id,
+        plan_id: planId,
+        short_id: taskShortId,
+        title: tt.title,
+        description: tt.description,
+        task_type: tt.task_type || "task",
+        priority: tt.priority || "medium",
+        status: "open",
+        blocked_by: blockedBy,
+        estimated_minutes: tt.estimated_minutes,
+        source: "template",
+        created_at: now,
+        updated_at: now,
+      } as any);
+      taskIds.push(taskId);
+      const self = { short_id: taskShortId, workspace: workspaceForResource({ user_id: auth.userId, team_id: template.team_id }) };
+      for (const dep of blockedBy) await patchDepMirror(ctx, auth.userId, self, dep, "blocks", "add");
+    }
+
+    await ctx.db.patch(planId, { task_ids: taskIds });
+    return { id: planId, short_id, task_count: taskIds.length };
+  },
+});
+
+export const fork = mutation({
+  args: {
+    api_token: v.string(),
+    source_short_id: v.string(),
+    title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const source = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.source_short_id))
+      .first();
+    if (!source) throw new Error("Source plan not found");
+    // Forking clones the plan's goal, tasks, and team_id — gate on read access.
+    if (!(await canAccessPlan(ctx, auth.userId, source))) throw new Error("Source plan not found");
+
+    const now = Date.now();
+    const short_id = await nextShortId(ctx.db, "pl");
+
+    const sourceTasks: any[] = [];
+    for (const tid of source.task_ids || []) {
+      const t = await ctx.db.get(tid);
+      if (t && (await canReadPlanTask(ctx, auth.userId, source, t))) sourceTasks.push(t);
+    }
+    if (source.team_id) await requireTeamMembership(ctx, auth.userId, source.team_id);
+
+    const planId = await ctx.db.insert("plans", {
+      user_id: auth.userId,
+      team_id: source.team_id,
+      short_id,
+      title: args.title || `${source.title} (fork)`,
+      goal: source.goal,
+      status: "active",
+      acceptance_criteria: source.acceptance_criteria,
+      progress: { total: sourceTasks.length, done: 0, in_progress: 0, open: sourceTasks.length },
+      task_ids: [],
+      progress_log: [],
+      entries: [{ type: "progress", timestamp: now, content: `Forked from ${args.source_short_id}` }],
+      created_at: now,
+      updated_at: now,
+    } as any);
+
+    const oldToNew = new Map<string, string>();
+    const taskIds: Id<"tasks">[] = [];
+    const edges: [string, string[]][] = [];
+
+    // Keyed by both ids: older plan rows name a sibling blocker by its `_id`,
+    // which must map to the fork's copy, not wait on the original.
+    for (const st of sourceTasks) {
+      const newShortId = await nextShortId(ctx.db, "ct");
+      oldToNew.set(st.short_id, newShortId);
+      oldToNew.set(String(st._id), newShortId);
+    }
+
+    for (const st of sourceTasks) {
+      const newShortId = oldToNew.get(st.short_id)!;
+      // Stored canonical (sortGraphRefs). A source ref that is no task ref
+      // at all (#42, a title) blocked nothing there, so the copy drops it.
+      const blockedBy = sortGraphRefs(ctx, (st.blocked_by || []).map((bid: string) => oldToNew.get(bid) || bid)).tasks;
+
+      const tid = await ctx.db.insert("tasks", {
+        user_id: auth.userId,
+        team_id: source.team_id,
+        plan_id: planId,
+        short_id: newShortId,
+        title: st.title,
+        description: st.description,
+        task_type: st.task_type || "task",
+        priority: st.priority || "medium",
+        status: "open",
+        blocked_by: blockedBy,
+        estimated_minutes: st.estimated_minutes,
+        source: "fork",
+        created_at: now,
+        updated_at: now,
+      } as any);
+      taskIds.push(tid);
+      edges.push([newShortId, blockedBy]);
+    }
+    // Every fork task is in place first: a blocker may come later in the list.
+    const workspace = workspaceForResource({ user_id: auth.userId, team_id: source.team_id });
+    for (const [shortId, blockedBy] of edges) {
+      for (const dep of blockedBy) await patchDepMirror(ctx, auth.userId, { short_id: shortId, workspace }, dep, "blocks", "add");
+    }
+
+    await ctx.db.patch(planId, { task_ids: taskIds });
+    return { id: planId, short_id, task_count: taskIds.length };
+  },
+});
+
+export const update = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    title: v.optional(v.string()),
+    body: v.optional(v.string()),
+    goal: v.optional(v.string()),
+    acceptance_criteria: v.optional(v.array(v.string())),
+    status: v.optional(v.string()),
+    task_ids: v.optional(v.array(v.string())),
+    context_pointers: v.optional(v.array(v.object({
+      label: v.string(),
+      path_or_url: v.string(),
+    }))),
+    doc_id: v.optional(v.string()),
+    model_stylesheet: v.optional(v.string()),
+    workflow_id: v.optional(v.string()),
+    // The charter (org-staffing.md S7); `goal` above completes it.
+    ...planCharterArgs,
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const now = Date.now();
+    const updates: any = { updated_at: now, ...(await charterPatch(ctx, plan, args, "plans")) };
+    if (args.title) {
+      updates.title = args.title;
+      // The generated short name follows the title; the cron refills it.
+      updates.short_title = undefined;
+    }
+    if (args.acceptance_criteria) updates.acceptance_criteria = args.acceptance_criteria;
+    if (args.status) updates.status = args.status;
+    if (args.context_pointers) updates.context_pointers = args.context_pointers;
+    const planWorkspace = plan.team_id
+      ? { type: "team" as const, teamId: plan.team_id }
+      : { type: "personal" as const, userId: plan.user_id };
+    if (args.doc_id) {
+      const docId = ctx.db.normalizeId("docs", args.doc_id);
+      if (!docId) notFound("Doc not found");
+      const doc = await requireAccessibleDoc(ctx, auth.userId, docId);
+      requireSameWorkspace(doc, planWorkspace, "doc");
+      updates.doc_id = docId;
+    }
+    if (args.model_stylesheet !== undefined) updates.model_stylesheet = args.model_stylesheet;
+    if (args.workflow_id) updates.workflow_id = args.workflow_id as Id<"workflows">;
+
+    if (args.task_ids) {
+      const taskDocIds: Id<"tasks">[] = [];
+      for (const rawId of args.task_ids) {
+        const taskId = ctx.db.normalizeId("tasks", rawId);
+        if (!taskId) notFound("Task not found");
+        const task = await requireAccessibleTask(ctx, auth.userId, taskId);
+        requireSameWorkspace(task, planWorkspace, "task");
+        taskDocIds.push(taskId);
+      }
+      updates.task_ids = taskDocIds;
+      updates.progress = await recalcProgress(ctx, taskDocIds);
+    }
+
+    if (args.body !== undefined) {
+      if (plan.doc_id) {
+        const doc = await requireAccessibleDoc(ctx, auth.userId, plan.doc_id);
+        requireSameWorkspace(doc, planWorkspace, "plan doc");
+        await ctx.db.patch(plan.doc_id, { content: args.body, updated_at: now });
+        if (args.title) {
+          await ctx.db.patch(plan.doc_id, { title: args.title });
+        }
+      } else {
+        const db = await createDataContext(ctx, {
+          userId: auth.userId,
+          ...(plan.team_id ? { workspace: "team" as const, team_id: plan.team_id } : { workspace: "personal" as const }),
+        });
+        const docId = await db.insert("docs", {
+          title: args.title || plan.title,
+          content: args.body,
+          doc_type: "plan",
+          source: docSourceForPlanSource((plan as any).source),
+          plan_id: plan._id,
+          project_id: plan.project_id,
+        });
+        updates.doc_id = docId;
+      }
+    }
+
+    await ctx.db.patch(plan._id, updates);
+    return { success: true };
+  },
+});
+
+export const updateStatus = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    status: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const validStatuses = ["draft", "active", "paused", "done", "abandoned"];
+    if (!validStatuses.includes(args.status)) throw new Error(`Invalid status: ${args.status}`);
+
+    await ctx.db.patch(plan._id, { status: args.status as any, updated_at: Date.now() });
+    return { success: true };
+  },
+});
+
+// Unified comment mutation — replaces addLogEntry, addDecision, addDiscovery, addPointer
+export const addComment = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    content: v.string(),
+    type: v.optional(v.string()),
+    rationale: v.optional(v.string()),
+    path_or_url: v.optional(v.string()),
+    session_id: v.optional(v.string()),
+    author: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    // A role's standing session signs its entries as the role (lib/actor),
+    // and names itself as the actor for the wake rail's loop rules.
+    const callerConv = args.session_id ? await resolveSessionConversation(ctx, auth.userId, args.session_id) : null;
+    const actor = await resolveActor(ctx, auth.userId, callerConv);
+    const entries = (plan as any).entries || [];
+    const entry: Record<string, any> = {
+      type: args.type || "progress",
+      timestamp: Date.now(),
+      content: args.content,
+    };
+    if (args.session_id) entry.session_id = args.session_id;
+    // The name is the server resolved identity; the author argument is
+    // accepted for older CLIs and never read.
+    if (actor.name) entry.author = actor.name;
+    if (args.rationale) entry.rationale = args.rationale;
+    if (args.path_or_url) entry.path_or_url = args.path_or_url;
+
+    entries.push(entry);
+    await ctx.db.patch(plan._id, { entries, updated_at: Date.now() } as any);
+    return { success: true };
+  },
+});
+
+// Legacy mutations — kept for direct callers (addEscalation, updateDriveState, etc.)
+export const addLogEntry = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    entry: v.string(),
+    session_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const entries = (plan as any).entries || [];
+    entries.push({ type: "progress", timestamp: Date.now(), content: args.entry, session_id: args.session_id });
+    await ctx.db.patch(plan._id, { entries, updated_at: Date.now() } as any);
+    return { success: true };
+  },
+});
+
+export const bindSession = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    // Both spellings are accepted because released CLIs send `session_id` while
+    // this function was written expecting `conversation_id`, and `/cli/plans/bind`
+    // forwards the request body verbatim — so the mismatch surfaced as a validator
+    // rejection on `cast task start` for any plan-bound task, on every CLI already
+    // in the wild. The VALUE has always been a session id either way: it is looked
+    // up through the by_session_id index below. Keep both until the floor of
+    // deployed CLIs has moved; deleting either one breaks a live client.
+    conversation_id: v.optional(v.string()),
+    session_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const sessionId = args.conversation_id ?? args.session_id;
+    if (!sessionId) throw new Error("conversation_id (or session_id) is required");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    // The link IS this mutation, so an unresolvable session still fails — but
+    // resolveSessionConversation lets a session whose stored uuid went stale
+    // (stranded stub, handover) resolve via its managed_sessions link.
+    const conv = await resolveSessionConversation(ctx, auth.userId, sessionId);
+    if (!conv) {
+      notFound("Conversation not found");
+    }
+    requireWorkspaceMatch(
+      workspaceForConversation(conv),
+      workspaceForResource(plan),
+      "conversation",
+    );
+
+    const sessionIds = plan.session_ids || [];
+    if (!sessionIds.some(id => id === conv._id)) {
+      sessionIds.push(conv._id);
+      // Compatibility dual-write: the entity-conversation association row alongside the
+      // legacy session_ids field (already workspace-matched above; best-effort
+      // so the legacy bind can never start failing on the new rail).
+      await linkConversationToEntityBestEffort(ctx, auth.userId, {
+        entityType: "plan",
+        entityId: String(plan._id),
+        conversationId: conv._id,
+        relationship: "work",
+      });
+    }
+
+    await ctx.db.patch(plan._id, {
+      current_session_id: conv._id,
+      session_ids: sessionIds,
+      updated_at: Date.now(),
+    });
+
+    const planIds = (conv as any).plan_ids || [];
+    if (!planIds.some((pid: any) => pid === plan._id)) {
+      planIds.push(plan._id);
+    }
+    // Last bind wins on BOTH sides of the pointer pair. This mutation already
+    // takes over plan.current_session_id unconditionally above; guarding the
+    // conversation side (as this did from 2026-03 to 2026-08) left a rebound
+    // session's header stuck on its first plan forever: unbindSession clears
+    // the pointer only while the old plan still points back at this
+    // conversation, so once the old plan moved on, nothing could ever flip it.
+    await ctx.db.patch(conv._id, { plan_ids: planIds, active_plan_id: plan._id });
+    // The binding may file the session under the lead that owns the plan (S35).
+    await ctx.scheduler.runAfter(0, internal.sessionOwnership.reconcileHold, { conversation_id: conv._id });
+
+    return { success: true };
+  },
+});
+
+export const associatePlan = mutation({
+  args: {
+    api_token: v.string(),
+    plan_id: v.string(),
+    conversation_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.plan_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    // The link IS this mutation, so an unresolvable session still fails — but
+    // resolveSessionConversation lets a session whose stored uuid went stale
+    // (stranded stub, handover) resolve via its managed_sessions link.
+    const conv = await resolveSessionConversation(ctx, auth.userId, args.conversation_id);
+    if (!conv) {
+      notFound("Conversation not found");
+    }
+    requireWorkspaceMatch(
+      workspaceForConversation(conv),
+      workspaceForResource(plan),
+      "conversation",
+    );
+
+    const planIds = (conv as any).plan_ids || [];
+    if (!planIds.some((pid: any) => pid.toString() === plan._id.toString())) {
+      planIds.push(plan._id);
+      await ctx.db.patch(conv._id, { plan_ids: planIds });
+    }
+
+    const sessionIds = plan.session_ids || [];
+    if (!sessionIds.some((sid: any) => sid.toString() === conv._id.toString())) {
+      sessionIds.push(conv._id);
+      await ctx.db.patch(plan._id, { session_ids: sessionIds, updated_at: Date.now() });
+    }
+
+    return { success: true };
+  },
+});
+
+export const unbindSession = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    if (plan.current_session_id) {
+      const conv = await requireAccessibleConversation(ctx, auth.userId, plan.current_session_id);
+      requireWorkspaceMatch(
+        workspaceForConversation(conv),
+        workspaceForResource(plan),
+        "conversation",
+      );
+      if (conv) {
+        await ctx.db.patch(conv._id, { active_plan_id: undefined });
+        await ctx.scheduler.runAfter(0, internal.sessionOwnership.reconcileHold, { conversation_id: conv._id });
+      }
+    }
+
+    await ctx.db.patch(plan._id, {
+      current_session_id: undefined,
+      updated_at: Date.now(),
+    });
+
+    return { success: true };
+  },
+});
+
+export const recalcPlanProgress = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const accessibleTaskIds: Id<"tasks">[] = [];
+    for (const taskId of plan.task_ids || []) {
+      const task = await ctx.db.get(taskId);
+      if (task && (await canReadPlanTask(ctx, auth.userId, plan, task))) {
+        accessibleTaskIds.push(taskId);
+      }
+    }
+    const progress = await recalcProgress(ctx, accessibleTaskIds);
+    await ctx.db.patch(plan._id, { progress, updated_at: Date.now() });
+    return progress;
+  },
+});
+
+export const addEscalation = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    task_short_id: v.optional(v.string()),
+    reason: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const escalation = {
+      timestamp: Date.now(),
+      task_short_id: args.task_short_id,
+      reason: args.reason,
+    };
+
+    const escalationLog = ((plan as any).escalation_log || []) as any[];
+    escalationLog.push(escalation);
+
+    const entries = (plan as any).entries || [];
+    const logEntry = args.task_short_id
+      ? `[ESCALATION] ${args.task_short_id}: ${args.reason}`
+      : `[ESCALATION] ${args.reason}`;
+    entries.push({ type: "blocker", timestamp: Date.now(), content: logEntry });
+
+    await ctx.db.patch(plan._id, {
+      escalation_log: escalationLog,
+      entries,
+      updated_at: Date.now(),
+    } as any);
+
+    return { success: true };
+  },
+});
+
+export const updateDriveState = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    current_round: v.number(),
+    total_rounds: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const existing = (plan as any).drive_state || { current_round: 0, total_rounds: 0, rounds: [] };
+    const drive_state = {
+      ...existing,
+      current_round: args.current_round,
+      total_rounds: args.total_rounds,
+    };
+
+    const entries = (plan as any).entries || [];
+    entries.push({ type: "progress", timestamp: Date.now(), content: `Starting drive round ${args.current_round}/${args.total_rounds}` });
+
+    await ctx.db.patch(plan._id, {
+      drive_state,
+      entries,
+      updated_at: Date.now(),
+    } as any);
+
+    return { success: true };
+  },
+});
+
+export const recordDriveFindings = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    round: v.number(),
+    findings: v.array(v.string()),
+    fixed: v.array(v.string()),
+    deferred: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const drive_state = (plan as any).drive_state || { current_round: 0, total_rounds: 0, rounds: [] };
+    const existingIdx = drive_state.rounds.findIndex((r: any) => r.round === args.round);
+    const roundData = {
+      round: args.round,
+      findings: args.findings,
+      fixed: args.fixed,
+      deferred: args.deferred || [],
+    };
+
+    if (existingIdx >= 0) {
+      drive_state.rounds[existingIdx] = roundData;
+    } else {
+      drive_state.rounds.push(roundData);
+    }
+
+    const entries = (plan as any).entries || [];
+    entries.push({
+      type: "progress",
+      timestamp: Date.now(),
+      content: `Drive round ${args.round}: ${args.findings.length} findings, ${args.fixed.length} fixed${args.deferred?.length ? `, ${args.deferred.length} deferred` : ""}`,
+    });
+
+    await ctx.db.patch(plan._id, {
+      drive_state,
+      entries,
+      updated_at: Date.now(),
+    } as any);
+
+    return { success: true, round: roundData };
+  },
+});
+
+// --- API token queries ---
+
+export const get = query({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) return null;
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) return null;
+
+    const tasks = [];
+    if (plan.task_ids) {
+      for (const tid of plan.task_ids) {
+        const task = await ctx.db.get(tid);
+        if (task && (await canReadPlanTask(ctx, auth.userId, plan, task))) tasks.push(task);
+      }
+    }
+
+    let doc_content: string | undefined;
+    if (plan.doc_id) {
+      const doc = await ctx.db.get(plan.doc_id);
+      if (doc && (await canReadPlanDoc(ctx, auth.userId, plan, doc))) doc_content = doc.content;
+    }
+
+    // Merge legacy arrays + new entries into unified comments timeline
+    const comments = mergePlanEntries(plan);
+
+    // The blockers and parents the plan's tasks name outside it, so the CLI's
+    // planReadiness resolves them instead of holding them unknown (TG1).
+    const outside = await graphOutside(ctx, tasks);
+    const graph_outside = {
+      tasks: outside.tasks.map((t) => ({ _id: t._id, short_id: t.short_id, status: t.status })),
+      searched: outside.searched,
+    };
+
+    return { ...plan, tasks, doc_content, comments, graph_outside };
+  },
+});
+
+export const getOrchestrationStatus = query({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const taskIds: Id<"tasks">[] = [];
+    const tasks: any[] = [];
+    for (const tid of plan.task_ids || []) {
+      const task = await ctx.db.get(tid);
+      if (task && (await canReadPlanTask(ctx, auth.userId, plan, task))) {
+        tasks.push(task);
+        taskIds.push(tid);
+      }
+    }
+
+    const activeConvIds = await liveConversationIdSet(ctx, auth.userId);
+
+    const taskDocIds = new Set(taskIds.map(id => id.toString()));
+    const activeConvs = await Promise.all([...activeConvIds].map((convId) => ctx.db.get(convId as any)));
+    const activeAgentCount = activeConvs.filter(
+      (conv) => conv && (conv as any).active_task_id && taskDocIds.has((conv as any).active_task_id.toString())
+    ).length;
+
+    const waveMap = new Map<number, { done: number; total: number }>();
+    let blockedCount = 0;
+    let needsContextCount = 0;
+    let currentWave = 0;
+
+    for (const task of tasks) {
+      if (task.status === "dropped") continue;
+      const waveNumber = (task as any).wave_number as number | undefined;
+      if (waveNumber !== undefined && waveNumber !== null) {
+        const wave = waveMap.get(waveNumber) || { done: 0, total: 0 };
+        wave.total++;
+        if (task.status === "done") wave.done++;
+        waveMap.set(waveNumber, wave);
+      }
+
+      const es = (task as any).execution_status;
+      if (es === "blocked") blockedCount++;
+      else if (es === "needs_context") needsContextCount++;
+
+      if (task.status === "in_progress" || task.status === "in_review") {
+        const wn = (task as any).wave_number as number | undefined;
+        if (wn !== undefined && wn !== null && wn > currentWave) {
+          currentWave = wn;
+        }
+      }
+    }
+
+    const waveProgress: Record<number, { done: number; total: number }> = {};
+    for (const [wn, progress] of waveMap) {
+      waveProgress[wn] = progress;
+    }
+
+    return {
+      active_agents: activeAgentCount,
+      wave_progress: waveProgress,
+      blocked_count: blockedCount,
+      needs_context_count: needsContextCount,
+      current_wave: currentWave,
+    };
+  },
+});
+
+export const list = query({
+  args: {
+    api_token: v.string(),
+    status: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    team: v.optional(v.boolean()),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+    team_id: v.optional(v.id("teams")),
+    include_all: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+    query: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const db = await createDataContext(ctx, { userId: auth.userId, project_path: args.project_path, ...explicitWorkspace(args, {}) });
+    // A named team lists the team's plans the way `--team` (the active team) does.
+    const teamListing = (args.team || args.workspace === "team") && db.workspace.type === "team";
+
+    let plans;
+    // by_project_id is a global index — a client-supplied project_id could
+    // surface another user's/team's plans, so filter that branch by access.
+    let needsAccessFilter = false;
+    if (args.project_id) {
+      plans = await ctx.db
+        .query("plans")
+        .withIndex("by_project_id", (q) => q.eq("project_id", args.project_id as any))
+        .collect();
+      needsAccessFilter = true;
+    } else if (teamListing) {
+      const teamId = (db.workspace as { type: "team"; teamId: Id<"teams"> }).teamId;
+      if (args.status) {
+        plans = await ctx.db
+          .query("plans")
+          .withIndex("by_team_status", (q) => q.eq("team_id", teamId).eq("status", args.status as any))
+          .collect();
+      } else {
+        plans = await ctx.db
+          .query("plans")
+          .withIndex("by_team_id", (q) => q.eq("team_id", teamId))
+          .collect();
+      }
+    } else if (args.status) {
+      plans = await ctx.db
+        .query("plans")
+        .withIndex("by_user_status", (q) => q.eq("user_id", auth.userId).eq("status", args.status as any))
+        .collect();
+    } else {
+      plans = await db.query("plans").collect();
+    }
+
+    if (needsAccessFilter) {
+      const memberships = await ctx.db
+        .query("team_memberships")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", auth.userId))
+        .collect();
+      const memberTeamIds = new Set(memberships.map((m: any) => String(m.team_id)));
+      plans = plans.filter((p: any) =>
+        String(p.user_id) === String(auth.userId) ||
+        (p.team_id && memberTeamIds.has(String(p.team_id)))
+      );
+    }
+
+    if (!args.status && !args.include_all) {
+      plans = plans.filter((p: any) => p.status !== "done" && p.status !== "abandoned");
+    }
+
+    if (args.query) {
+      const q = args.query.toLowerCase();
+      plans = plans.filter((p: any) =>
+        (p.title || "").toLowerCase().includes(q) ||
+        (p.goal || "").toLowerCase().includes(q) ||
+        (p.description || "").toLowerCase().includes(q) ||
+        (p.short_id || "").toLowerCase().includes(q),
+      );
+    }
+
+    plans.sort((a: any, b: any) => (b.updated_at || 0) - (a.updated_at || 0));
+    return plans.slice(0, args.limit || 500);
+  },
+});
+
+export const snippet = query({
+  args: {
+    api_token: v.string(),
+    plan_short_id: v.optional(v.string()),
+    plan_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    let plan;
+    if (args.plan_short_id) {
+      plan = await ctx.db
+        .query("plans")
+        .withIndex("by_short_id", (q) => q.eq("short_id", args.plan_short_id!))
+        .first();
+    } else if (args.plan_id) {
+      plan = await ctx.db.get(args.plan_id as Id<"plans">);
+    }
+
+    if (!plan) return { snippet: "", task_count: 0 };
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) return { snippet: "", task_count: 0 };
+
+    let docContent: string | undefined;
+    if (plan.doc_id) {
+      const doc = await ctx.db.get(plan.doc_id);
+      if (doc && (await canReadPlanDoc(ctx, auth.userId, plan, doc)) && doc.content) {
+        docContent = doc.content;
+      }
+    }
+
+    const tasks = [];
+    if (plan.task_ids) {
+      for (const tid of plan.task_ids) {
+        const task = await ctx.db.get(tid);
+        if (task && (await canReadPlanTask(ctx, auth.userId, plan, task))) tasks.push(task);
+      }
+    }
+
+    // Why: this snippet is what an agent is shown about the plan it works on,
+    // and every field below the header is prose someone else wrote — the plan
+    // doc, its comments, and task titles issueSync imports from GitHub or
+    // Linear. Fenced, capped and named, the same way `cast plan context`
+    // renders it, so one renderer decides what a foreign plan looks like
+    // (ct-49593).
+    const lines: string[] = [];
+    lines.push(`Plan: ${inlineForeignText(plan.title)} (${plan.short_id}) [${plan.status}]`);
+    if (plan.progress) {
+      const p = plan.progress;
+      lines.push(`Progress: ${p.done}/${p.total} done, ${p.in_progress} in progress, ${p.open} open`);
+    }
+
+    const record = renderFencedPlanRecord({
+      short_id: plan.short_id,
+      title: plan.title,
+      goal: plan.goal,
+      doc_content: docContent,
+      acceptance_criteria: plan.acceptance_criteria,
+      comments: mergePlanEntries(plan),
+    });
+    if (record) lines.push(record);
+
+    const taskBlock = renderFencedPlanTasks(tasks, plan);
+    if (taskBlock) lines.push(taskBlock);
+
+    return {
+      snippet: lines.join("\n"),
+      task_count: tasks.length,
+    };
+  },
+});
+
+// --- Web mutations/queries (Convex auth) ---
+
+export const webCreate = mutation({
+  args: {
+    title: v.string(),
+    body: v.optional(v.string()),
+    goal: v.optional(v.string()),
+    acceptance_criteria: v.optional(v.array(v.string())),
+    status: v.optional(v.string()),
+    source: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    model_stylesheet: v.optional(v.string()),
+    fidelity: v.optional(v.string()),
+    join_policy: v.optional(v.string()),
+    join_k: v.optional(v.number()),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+    team_id: v.optional(v.id("teams")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const db = await createDataContext(ctx, { userId, workspace: args.workspace as any, team_id: args.team_id });
+
+    let project_id: Id<"projects"> | undefined;
+    if (args.project_id) {
+      const pid = ctx.db.normalizeId("projects", args.project_id);
+      if (!pid) notFound("Project not found");
+      const project = await requireAccessibleProject(ctx, userId, pid);
+      requireSameWorkspace(project, db.workspace, "project");
+      project_id = pid;
+    }
+
+    const short_id = await nextShortId(ctx.db, "pl");
+
+    const id = await db.insert("plans", {
+      project_id,
+      short_id,
+      title: args.title,
+      goal: args.goal,
+      acceptance_criteria: args.acceptance_criteria,
+      status: (args.status || "draft") as any,
+      source: (args.source || "human") as any,
+      owner_id: userId,
+      task_ids: [],
+      progress: { total: 0, done: 0, in_progress: 0, open: 0 },
+      progress_log: [],
+      decision_log: [],
+      discoveries: [],
+      context_pointers: [],
+      entries: [],
+      session_ids: [],
+      model_stylesheet: args.model_stylesheet,
+      fidelity: args.fidelity as any,
+      join_policy: args.join_policy as any,
+      join_k: args.join_k,
+    });
+
+    const docId = await db.insert("docs", {
+      title: args.title,
+      content: args.body || "",
+      doc_type: "plan",
+      source: "human",
+      plan_id: id,
+      project_id,
+    });
+    await ctx.db.patch(id, { doc_id: docId });
+
+    // Row rides back with the receipt: the client seeds its store before navigating.
+    return { id, short_id, doc_id: docId, row: await ctx.db.get(id) };
+  },
+});
+
+export const webUpdate = mutation({
+  args: {
+    short_id: v.string(),
+    title: v.optional(v.string()),
+    goal: v.optional(v.string()),
+    acceptance_criteria: v.optional(v.array(v.string())),
+    status: v.optional(v.string()),
+    task_ids: v.optional(v.array(v.string())),
+    context_pointers: v.optional(v.array(v.object({
+      label: v.string(),
+      path_or_url: v.string(),
+    }))),
+    // File the plan under a project (initiatives-projects-role-page.md I2:
+    // plans live inside projects). The plan's tasks that name no project
+    // follow it, so the project's counts include the work; a task that
+    // already names a project keeps it.
+    project_id: v.optional(v.string()),
+    ...planCharterArgs,
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+
+    if (!(await canAccessPlan(ctx, userId, plan))) throw new Error("Plan not found");
+
+    const updates: any = { updated_at: Date.now(), ...(await charterPatch(ctx, plan, args, "plans")) };
+    if (args.title) updates.title = args.title;
+    if (args.acceptance_criteria) updates.acceptance_criteria = args.acceptance_criteria;
+    if (args.status) updates.status = args.status;
+    if (args.context_pointers) updates.context_pointers = args.context_pointers;
+
+    if (args.task_ids) {
+      const planWorkspace = plan.team_id
+        ? { type: "team" as const, teamId: plan.team_id }
+        : { type: "personal" as const, userId: plan.user_id };
+      const taskDocIds: Id<"tasks">[] = [];
+      for (const rawId of args.task_ids) {
+        const taskId = ctx.db.normalizeId("tasks", rawId);
+        if (!taskId) notFound("Task not found");
+        const task = await requireAccessibleTask(ctx, userId, taskId);
+        requireSameWorkspace(task, planWorkspace, "task");
+        taskDocIds.push(taskId);
+      }
+      updates.task_ids = taskDocIds;
+      updates.progress = await recalcProgress(ctx, taskDocIds);
+    }
+
+    if (args.project_id) {
+      const projectId = ctx.db.normalizeId("projects", args.project_id);
+      if (!projectId) notFound("Project not found");
+      const project = await requireAccessibleProject(ctx, userId, projectId);
+      requireSameWorkspace(project, workspaceForResource(plan), "project");
+      updates.project_id = projectId;
+      const now = Date.now();
+      const planTasks = await ctx.db.query("tasks").withIndex("by_plan_id", (q) => q.eq("plan_id", plan._id)).collect();
+      for (const task of planTasks) if (!task.project_id) await ctx.db.patch(task._id, { project_id: projectId, updated_at: now });
+    }
+
+    if (args.title && plan.doc_id) {
+      const doc = await requireAccessibleDoc(ctx, userId, plan.doc_id);
+      const planWorkspace = plan.team_id
+        ? { type: "team" as const, teamId: plan.team_id }
+        : { type: "personal" as const, userId: plan.user_id };
+      requireSameWorkspace(doc, planWorkspace, "plan doc");
+      await ctx.db.patch(plan.doc_id, { title: args.title, updated_at: Date.now() });
+    }
+
+    await ctx.db.patch(plan._id, updates);
+    return { success: true };
+  },
+});
+
+export const webGet = query({
+  args: {
+    short_id: v.optional(v.string()),
+    id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    let plan;
+    if (args.short_id) {
+      plan = await ctx.db
+        .query("plans")
+        .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id!))
+        .first();
+    } else if (args.id) {
+      // ids arrive from clickable pills/links embedded in untrusted message and
+      // doc content; a malformed or cross-table id would make ctx.db.get throw
+      // ("Invalid ID length") and crash the page. normalizeId returns null for
+      // anything that isn't a plans id, so we degrade to "not found". (Mirrors
+      // docs.webGet.)
+      const planId = ctx.db.normalizeId("plans", args.id);
+      plan = planId ? await ctx.db.get(planId) : null;
+    }
+
+    if (!plan) return null;
+
+    if (!(await canAccessPlan(ctx, userId, plan))) return null;
+
+    // Find live agent sessions for tasks
+    const liveSessions = (await listLiveManagedSessions(ctx, userId)).filter(
+      (s) => s.conversation_id
+    );
+    const activeTaskMap = new Map<string, { _id: string; session_id: string; title?: string; agent_status?: string; agent_type?: string }>();
+    const liveConvs = await Promise.all(liveSessions.map((s) => ctx.db.get(s.conversation_id!)));
+    liveSessions.forEach((s, i) => {
+      const conv = liveConvs[i];
+      if (conv && (conv as any).active_task_id) {
+        activeTaskMap.set((conv as any).active_task_id.toString(), {
+          _id: conv._id.toString(),
+          session_id: conv.session_id,
+          title: conv.title || undefined,
+          agent_status: (s as any).agent_status || undefined,
+          agent_type: conv.agent_type || undefined,
+        });
+      }
+    });
+
+    const tasks = [];
+    if (plan.task_ids) {
+      for (const tid of plan.task_ids) {
+        const task = await ctx.db.get(tid);
+        // Subtasks aren't plan units — keep them off the plan board so a
+        // decomposition never appears as flat peers of its parent.
+        if (task && !task.parent_id && (await canReadPlanTask(ctx, userId, plan, task))) {
+          tasks.push({
+            ...task,
+            activeSession: activeTaskMap.get(task._id.toString()) || null,
+          });
+        }
+      }
+    }
+    // The store does not hold every blocker these rows name: stamp what each
+    // is, as the tasks list does, so the row marks agree with /tasks (TG1).
+    await stampGraphStatus(ctx, tasks);
+
+    let doc_content: string | undefined;
+    if (plan.doc_id) {
+      const doc = await ctx.db.get(plan.doc_id);
+      if (doc && (await canReadPlanDoc(ctx, userId, plan, doc))) {
+        doc_content = doc.content;
+      }
+    }
+
+    const sessions: any[] = [];
+    if (plan.session_ids) {
+      for (const sid of plan.session_ids) {
+        const conv = await ctx.db.get(sid);
+        if (
+          conv
+          && workspacesMatch(workspaceForConversation(conv), workspaceForResource(plan))
+          && (await canAccessConversation(ctx, userId, conv))
+        ) {
+          sessions.push({
+            _id: conv._id,
+            session_id: conv.session_id,
+            title: conv.title,
+            headline: (conv as any).headline,
+            project_path: conv.project_path,
+            message_count: conv.message_count || 0,
+            is_active: (conv as any).is_active,
+            started_at: (conv as any).started_at || conv._creationTime,
+            updated_at: conv.updated_at,
+            agent_type: conv.agent_type,
+            outcome_type: (conv as any).outcome_type,
+            git_branch: (conv as any).git_branch,
+            git_remote_url: conv.git_remote_url,
+            active_task_id: (conv as any).active_task_id?.toString() || null,
+          });
+        }
+      }
+    }
+
+    const author = await ctx.db.get(plan.user_id);
+    const comments = mergePlanEntries(plan);
+
+    return {
+      ...plan,
+      tasks,
+      sessions,
+      doc_content,
+      comments,
+      author: author ? { name: author.name, image: author.image } : null,
+    };
+  },
+});
+
+export const ensureDoc = mutation({
+  args: { plan_id: v.id("plans") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const plan = await ctx.db.get(args.plan_id);
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, userId, plan))) throw new Error("Unauthorized");
+    if (plan.doc_id) {
+      const doc = await requireAccessibleDoc(ctx, userId, plan.doc_id);
+      requireSameWorkspace(doc, workspaceForResource(plan), "plan doc");
+      return { doc_id: plan.doc_id, created: false };
+    }
+
+    const now = Date.now();
+    const docId = await ctx.db.insert("docs", {
+      title: plan.title,
+      content: "",
+      doc_type: "plan" as any,
+      source: docSourceForPlanSource((plan as any).source) as any,
+      plan_id: plan._id,
+      project_id: plan.project_id,
+      user_id: plan.user_id,
+      team_id: (plan as any).team_id,
+      created_at: now,
+      updated_at: now,
+    });
+    await ctx.db.patch(plan._id, { doc_id: docId });
+    return { doc_id: docId, created: true };
+  },
+});
+
+export const qualityScore = query({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) return null;
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) return null;
+
+    const tasks: any[] = [];
+    for (const tid of plan.task_ids || []) {
+      const t = await ctx.db.get(tid);
+      if (t && (await canReadPlanTask(ctx, auth.userId, plan, t))) tasks.push(t);
+    }
+
+    let readiness = 0, completeness = 0, risk = 0;
+    const activeTasks = tasks.filter((t: any) => t.status !== "dropped");
+    const total = activeTasks.length;
+    if (total === 0) return { readiness: 0, completeness: 0, risk: 0, overall: 0, details: {} };
+
+    const done = activeTasks.filter((t: any) => t.status === "done").length;
+    const withDesc = activeTasks.filter((t: any) => t.description && t.description.length > 10).length;
+    const withDeps = activeTasks.filter((t: any) => t.blocked_by?.length > 0).length;
+    const needsContext = activeTasks.filter((t: any) => t.execution_status === "needs_context").length;
+    const highRetry = activeTasks.filter((t: any) => (t.retry_count || 0) >= 2).length;
+
+    readiness = Math.round((withDesc / total) * 50 + (withDeps > 0 ? 25 : 0) + (plan.goal ? 25 : 0));
+    completeness = Math.round((done / total) * 100);
+    risk = Math.min(100, Math.round((needsContext / Math.max(1, total)) * 50 + (highRetry / Math.max(1, total)) * 50));
+
+    const overall = Math.round((readiness * 0.3 + completeness * 0.5 + (100 - risk) * 0.2));
+
+    return {
+      readiness, completeness, risk, overall,
+      details: { total, done, withDesc, withDeps, needsContext, highRetry },
+    };
+  },
+});
+
+export const webList = query({
+  args: {
+    status: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    include_all: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+    team_id: v.optional(v.id("teams")),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"), v.literal("all"))),
+    project_path: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    if (args.team_id) await requireTeamMembership(ctx, userId, args.team_id);
+    if (args.workspace === "team" && !args.team_id) {
+      throw new Error("team_id is required for the team workspace");
+    }
+
+    let plans;
+    if (args.project_id) {
+      const projectId = ctx.db.normalizeId("projects", args.project_id);
+      if (!projectId) notFound("Project not found");
+      await requireAccessibleProject(ctx, userId, projectId);
+      plans = await ctx.db
+        .query("plans")
+        .withIndex("by_project_id", (q) => q.eq("project_id", projectId))
+        .collect();
+      const authorized: any[] = [];
+      for (const plan of plans) {
+        if (await canAccessPlan(ctx, userId, plan)) authorized.push(plan);
+      }
+      plans = authorized;
+    } else {
+      const { records } = await scopedFetch(ctx, "plans", {
+        userId,
+        teamId: args.team_id,
+        workspace: args.workspace,
+      });
+      plans = records;
+    }
+    if (args.project_path) {
+      plans = scopeByProject(plans, args.project_path);
+    }
+
+    if (args.status) {
+      plans = plans.filter((p: any) => p.status === args.status);
+    } else if (!args.include_all) {
+      plans = plans.filter((p: any) => p.status !== "done" && p.status !== "abandoned");
+    }
+
+    plans.sort((a: any, b: any) => (b.updated_at || 0) - (a.updated_at || 0));
+    const result = plans.slice(0, args.limit || 500);
+    return enrichPlansWithLiveness(ctx, userId, result);
+  },
+});
+
+// Change-feed batch fetch: current state for a set of plan ids the user can
+// access (own or team). Same enriched shape as webList (reuses
+// enrichPlansWithLiveness), so the client merges via syncTable("plans"). No
+// status filter — an abandoned/done plan comes back with its status and the
+// client's read-time filter hides it. Inaccessible / gone ids are omitted; the
+// callers prune ids the response omits (authorized absence). Consumers: the
+// sync-log applier (syncLog.ts / web useSyncChangeFeed.ts) and, for deployed
+// old bundles, changeFeed.ts.
+export const webGetByIds = query({
+  args: { ids: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const result: any[] = [];
+    for (const raw of args.ids.slice(0, 300)) {
+      const id = ctx.db.normalizeId("plans", raw);
+      if (!id) continue;
+      const plan = await ctx.db.get(id);
+      if (!plan || !(await canAccessPlan(ctx, userId, plan))) continue;
+      result.push(plan);
+    }
+    return enrichPlansWithLiveness(ctx, userId, result);
+  },
+});
+
+async function enrichPlansWithLiveness(ctx: any, userId: any, plans: any[]) {
+  const liveSessions = (await listLiveManagedSessions(ctx, userId)).filter(
+    (s) => s.conversation_id,
+  );
+  const activeTaskIds = new Set<string>();
+  const liveConvs = await Promise.all(liveSessions.map((s: any) => ctx.db.get(s.conversation_id!)));
+  for (const conv of liveConvs) {
+    if (conv && (conv as any).active_task_id) {
+      activeTaskIds.add((conv as any).active_task_id.toString());
+    }
+  }
+  return plans.map((p: any) => {
+    const taskIds = (p.task_ids || []).map((id: any) => id.toString());
+    const activeAgents = taskIds.filter((id: string) => activeTaskIds.has(id)).length;
+    return { ...p, active_agents: activeAgents };
+  });
+}
+
+export const webMentionList = query({
+  args: {
+    team_id: v.optional(v.id("teams")),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"), v.literal("all"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { items: [] };
+    if (args.team_id) await requireTeamMembership(ctx, userId, args.team_id);
+    if (args.workspace === "team" && !args.team_id) {
+      throw new Error("team_id is required for the team workspace");
+    }
+
+    // Bound the scan to a small recent slice — the client only renders the
+    // top-6-per-type "recents" (see useMentionQuery); completeness comes from
+    // `mentionSearch`. `.take()` loads whole rows, so large caps risk the 64 MB
+    // isolate cap (see docs.webMentionList for the full rationale).
+    const MAX_TOTAL = 50;
+    const MAX_PER_TEAM = 25;
+    const seen = new Set<string>();
+    const plans: any[] = [];
+    const pushUnique = (p: any) => {
+      if (plans.length >= MAX_TOTAL) return;
+      const id = String(p._id);
+      if (!seen.has(id)) { seen.add(id); plans.push(p); }
+    };
+
+    if (args.workspace === "all") {
+      const memberships = await ctx.db
+        .query("team_memberships")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+        .collect();
+      for (const m of memberships) {
+        const teamPlans = await ctx.db
+          .query("plans")
+          .withIndex("by_team_id", (q: any) => q.eq("team_id", m.team_id))
+          .order("desc")
+          .take(MAX_PER_TEAM);
+        for (const p of teamPlans) pushUnique(p);
+        if (plans.length >= MAX_TOTAL) break;
+      }
+      if (plans.length < MAX_TOTAL) {
+        const userPlans = await ctx.db
+          .query("plans")
+          .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+          .order("desc")
+          .take(MAX_PER_TEAM);
+        for (const p of userPlans) pushUnique(p);
+      }
+    } else if (args.workspace === "team" && args.team_id) {
+      const teamPlans = await ctx.db
+        .query("plans")
+        .withIndex("by_team_id", (q: any) => q.eq("team_id", args.team_id))
+        .order("desc")
+        .take(MAX_TOTAL);
+      for (const p of teamPlans) pushUnique(p);
+    } else {
+      const userPlans = await ctx.db
+        .query("plans")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+        .order("desc")
+        .take(MAX_TOTAL);
+      for (const p of userPlans) {
+        if (args.workspace === "personal" && p.team_id) continue;
+        pushUnique(p);
+      }
+    }
+
+    return {
+      items: plans.map((p: any) => ({
+        _id: String(p._id),
+        title: p.title,
+        short_id: p.short_id,
+        status: p.status,
+        goal: p.goal,
+        updated_at: p.updated_at,
+        team_id: p.team_id ?? null,
+        user_id: p.user_id ?? null,
+      })),
+    };
+  },
+});
+
+export const webTeamList = query({
+  args: {
+    status: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+    team_id: v.optional(v.id("teams")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const db = await createDataContext(ctx, { userId, workspace: args.workspace as any, team_id: args.team_id });
+    if (db.workspace.type !== "team") return [];
+
+    let plans = await db.query("plans").collect();
+
+    if (args.status) {
+      plans = plans.filter((p: any) => p.status === args.status);
+    } else {
+      plans = plans.filter((p: any) => p.status !== "done" && p.status !== "abandoned");
+    }
+
+    const result = plans.slice(0, args.limit || 500);
+    return enrichPlansWithLiveness(ctx, userId, result);
+  },
+});
+
+export const webPlanContext = query({
+  args: {
+    plan_id: v.id("plans"),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const plan = await ctx.db.get(args.plan_id);
+    if (!plan) return null;
+    if (!(await canAccessPlan(ctx, userId, plan))) return null;
+
+    const tasks: any[] = [];
+    if (plan.task_ids) {
+      for (const tid of plan.task_ids) {
+        const t = await ctx.db.get(tid);
+        // Subtasks are not a plan's units of work — exclude any that slipped in.
+        if (t && !t.parent_id && (await canReadPlanTask(ctx, userId, plan, t))) {
+          tasks.push({
+            _id: t._id,
+            short_id: t.short_id,
+            title: t.title,
+            status: t.status,
+            priority: t.priority,
+          });
+        }
+      }
+    }
+
+
+    const done = tasks.filter(t => t.status === "done").length;
+    const inProgress = tasks.filter(t => t.status === "in_progress").length;
+
+    return {
+      _id: plan._id,
+      short_id: plan.short_id,
+      title: plan.title,
+      goal: plan.goal,
+      status: plan.status,
+      tasks,
+      progress: { total: tasks.length, done, in_progress: inProgress },
+      recent_log: mergePlanEntries(plan).filter(e => e.type === "progress").slice(-3),
+    };
+  },
+});
+
+export const saveRetro = mutation({
+  args: {
+    api_token: v.string(),
+    short_id: v.string(),
+    smoothness: v.string(),
+    headline: v.string(),
+    learnings: v.any(),
+    friction_points: v.any(),
+    open_items: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, auth.userId, plan))) throw new Error("Plan not found");
+
+    const normalizeArray = (arr: any[]) =>
+      arr.map((item: any) => typeof item === "string" ? { text: item } : item);
+
+    await ctx.db.patch(plan._id, {
+      retro: {
+        smoothness: args.smoothness,
+        headline: args.headline,
+        learnings: normalizeArray(args.learnings),
+        friction_points: normalizeArray(args.friction_points),
+        open_items: normalizeArray(args.open_items),
+        generated_at: Date.now(),
+      },
+      updated_at: Date.now(),
+    });
+    return { success: true };
+  },
+});
+
+// ── Public Sharing ─────────────────────────────────────────
+
+export const generateShareLink = mutation({
+  args: { short_id: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, userId, plan))) throw new Error("Plan not found");
+    const share_token = plan.share_token ?? crypto.randomUUID();
+    await claimShareToken(ctx, "plans", plan, share_token, userId);
+    return { share_token };
+  },
+});
+
+export const unsharePlan = mutation({
+  args: { short_id: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id))
+      .first();
+    if (!plan) throw new Error("Plan not found");
+    if (!(await canAccessPlan(ctx, userId, plan))) throw new Error("Plan not found");
+    await claimShareToken(ctx, "plans", plan, null, userId);
+    return { success: true };
+  },
+});
+
+export const getShared = query({
+  args: { share_token: v.string() },
+  handler: async (ctx, args) => {
+    const plan = await ctx.db
+      .query("plans")
+      .withIndex("by_share_token", (q) => q.eq("share_token", args.share_token))
+      .first();
+    if (!plan) return null;
+
+    const user = await ctx.db.get(plan.user_id);
+
+    const tasks = [];
+    if (plan.task_ids) {
+      for (const tid of plan.task_ids) {
+        const task = await ctx.db.get(tid);
+        if (task && isSameWorkspace(task, workspaceForResource(plan))) tasks.push({
+          _id: task._id,
+          title: task.title,
+          status: task.status,
+          priority: (task as any).priority,
+          short_id: (task as any).short_id,
+        });
+      }
+    }
+
+    let doc_content: string | undefined;
+    if (plan.doc_id) {
+      const doc = await ctx.db.get(plan.doc_id);
+      if (doc && isSameWorkspace(doc, workspaceForResource(plan))) doc_content = doc.content;
+    }
+
+    const comments = mergePlanEntries(plan);
+
+    return {
+      _id: plan._id,
+      short_id: plan.short_id,
+      title: plan.title,
+      goal: plan.goal,
+      status: plan.status,
+      acceptance_criteria: plan.acceptance_criteria,
+      progress: plan.progress,
+      drive_state: plan.drive_state,
+      created_at: plan.created_at,
+      updated_at: plan.updated_at,
+      tasks,
+      doc_content,
+      comments,
+      user: user ? { name: user.name, image: user.image } : null,
+    };
+  },
+});
+
+// Restamp for plans the CLI filed as "human" when it only failed to detect a
+// session (found 2026-09-11: `cast plan create` fell back to an explicit
+// "human" stamp on a miss, so agent plans from the Mac mini landed on the
+// human shelf and the plans board's human filter). A plan the CLI created
+// carries `project_path` (stamped from the create's working directory); a
+// plan a person made in the web UI has none. Every CLI-born "human" plan is
+// therefore either a missed session or a person at a terminal, and plans
+// here are overwhelmingly agent-created, so the plan and its body doc flip
+// to "agent"; the star (docs.pinned) is the rescue for one a person wants
+// on the shelf. Web-made plans are untouched. New writes stamp by evidence
+// (workOriginStamp in the CLI). Paged — call repeatedly with the returned
+// cursor until isDone. Does not bump updated_at: clients re-read rows fresh.
+export const restampCliPlanOrigins = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    numItems: v.optional(v.number()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const page = await ctx.db
+      .query("plans")
+      .paginate({ numItems: args.numItems ?? 100, cursor: args.cursor ?? null });
+    let scanned = 0;
+    let plansRestamped = 0;
+    let docsRestamped = 0;
+    for (const p of page.page) {
+      scanned++;
+      if (p.source !== "human" || !p.project_path) continue;
+      plansRestamped++;
+      if (!args.dryRun) await ctx.db.patch(p._id, { source: "agent" });
+      const doc = p.doc_id ? await ctx.db.get(p.doc_id) : null;
+      if (doc && doc.source === "human") {
+        docsRestamped++;
+        if (!args.dryRun) await ctx.db.patch(doc._id, { source: "agent" });
+      }
+    }
+    return { scanned, plansRestamped, docsRestamped, isDone: page.isDone, continueCursor: page.continueCursor };
+  },
+});

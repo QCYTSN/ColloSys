@@ -1,0 +1,67 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
+// The usage chip's hover panel hangs off the desktop titlebar. The titlebar
+// is a drag region; a drag region eats pointer events, so moving from the
+// chip onto the panel looks like a leave and the panel closes. data-flyout
+// opts the panel out (globals.css). Same contract as people-strip-faces.
+
+const web = join(import.meta.dir, "..", "..");
+const css = readFileSync(join(web, "app/globals.css"), "utf8");
+const chip = readFileSync(join(web, "components/AccountUsageChip.tsx"), "utf8");
+
+describe("usage chip hover panel vs titlebar drag", () => {
+  test("globals.css marks [data-flyout] no-drag", () => {
+    // [data-flyout] may share its block with other selectors (modal layers).
+    const rule = css.match(/(?:^|[},])\s*\[data-flyout\]\s*(?:,[^{}]*)?\{([^}]+)\}/m);
+    expect(rule).toBeTruthy();
+    expect(rule![1]).toMatch(/-webkit-app-region:\s*no-drag/);
+  });
+
+  test("the hover panel carries data-flyout", () => {
+    const panel = chip.match(/<div([^>]*absolute right-0 top-full[^>]*)>/);
+    expect(panel).toBeTruthy();
+    expect(panel![1]).toContain("data-flyout");
+  });
+});
+
+// The same dead strip closed the header faces' card as the pointer moved down
+// onto it, and any Radix popover opened from a header control.
+describe("every flyout over the titlebar opts out of drag", () => {
+  const noDragBlock = css.match(/\[data-flyout\],[^{]*\{([^}]+)\}/)?.[0] ?? "";
+
+  test("Radix floating layers are no-drag", () => {
+    expect(noDragBlock).toContain("[data-radix-popper-content-wrapper]");
+    expect(noDragBlock).toMatch(/-webkit-app-region:\s*no-drag/);
+  });
+
+  test("the face card band and the face chat bubble carry data-flyout", () => {
+    const row = readFileSync(join(web, "components/faces/FaceRow.tsx"), "utf8");
+    const chat = readFileSync(join(web, "components/faces/FaceChatLayer.tsx"), "utf8");
+    expect(row).toMatch(/className="face-row-below"[^>]*data-flyout/);
+    expect(chat).toMatch(/className="fc-bubble"\s+data-flyout/);
+  });
+});
+
+// The switcher is a fixture of the top bar. It used to go three ways: the
+// name vanished under 1460px (leaving a bare dot), a quiet or failed query
+// blanked the whole chip, and a machine with no reported account rendered
+// nothing at all. Each one read as a control that comes and goes.
+describe("usage chip never leaves the bar", () => {
+  test("the account name carries no width-gated hide", () => {
+    expect(chip).not.toContain("tb-squeeze");
+    expect(css).not.toContain("tb-squeeze");
+  });
+
+  test("cached accounts come from the viewer-scoped store", () => {
+    expect(chip).toContain('useSettingsData("accountProfiles")');
+    expect(chip).not.toContain("lastResolved");
+  });
+
+  test("an unresolved chip holds its slot instead of returning null", () => {
+    const branch = chip.match(/if \(!resolved \|\| !device\) return ([^;]+);/);
+    expect(branch).toBeTruthy();
+    expect(branch![1]).toContain("AccountChipEmpty");
+  });
+});

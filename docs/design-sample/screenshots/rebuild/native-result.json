@@ -1,0 +1,229 @@
+{
+  "passed": true,
+  "checks": [
+    "Original product route hosts the isolated sample with real local Google Sans",
+    "Member filtering, search and manual-edit state have working controls",
+    "Incoming replay preserves historical reading, then follows explicit return to latest",
+    "Original diff renderer displays actual fixture patch and long file paths",
+    "Checkpoint preview has explicit test boundaries, confirmation, stale rejection and focus return",
+    "Menu keyboard dismissal, failed/loading/empty states and reduced motion setting",
+    "1280 × 800 and narrow reader retain main controls without page overflow",
+    "Reading contrast is at least 4.5 on actual code and muted-text surfaces"
+  ],
+  "errors": [],
+  "external": [],
+  "observations": {
+    "native": {
+      "visible": true,
+      "sandbox": true,
+      "isolation": true,
+      "node": false
+    },
+    "font": {
+      "loaded": true,
+      "family": "\"Collo Google Sans\", \"Microsoft YaHei UI\", \"PingFang SC\", sans-serif"
+    },
+    "hierarchy": {
+      "firstParagraphY": 232,
+      "header": 72,
+      "footerCount": 0
+    },
+    "readerPosition": {
+      "before": 0,
+      "after": 0
+    },
+    "expansion": [
+      {
+        "ms": 4,
+        "height": 0
+      },
+      {
+        "ms": 7,
+        "height": 55.71875
+      },
+      {
+        "ms": 15,
+        "height": 109.828125
+      },
+      {
+        "ms": 23,
+        "height": 156.21875
+      },
+      {
+        "ms": 32,
+        "height": 192.125
+      },
+      {
+        "ms": 40,
+        "height": 218.5234375
+      },
+      {
+        "ms": 48,
+        "height": 237.3125
+      },
+      {
+        "ms": 57,
+        "height": 251.375
+      },
+      {
+        "ms": 65,
+        "height": 261.5078125
+      },
+      {
+        "ms": 73,
+        "height": 269.34375
+      },
+      {
+        "ms": 81,
+        "height": 275.40625
+      },
+      {
+        "ms": 90,
+        "height": 280.1953125
+      },
+      {
+        "ms": 98,
+        "height": 283.90625
+      },
+      {
+        "ms": 107,
+        "height": 286.8671875
+      },
+      {
+        "ms": 115,
+        "height": 289.15625
+      },
+      {
+        "ms": 123,
+        "height": 290.953125
+      },
+      {
+        "ms": 132,
+        "height": 292.3359375
+      },
+      {
+        "ms": 141,
+        "height": 293.390625
+      },
+      {
+        "ms": 148,
+        "height": 294.1484375
+      },
+      {
+        "ms": 157,
+        "height": 294.671875
+      },
+      {
+        "ms": 165,
+        "height": 295
+      },
+      {
+        "ms": 174,
+        "height": 295.15625
+      },
+      {
+        "ms": 182,
+        "height": 295.1875
+      },
+      {
+        "ms": 190,
+        "height": 295.1875
+      },
+      {
+        "ms": 198,
+        "height": 295.1875
+      },
+      {
+        "ms": 207,
+        "height": 295.1875
+      },
+      {
+        "ms": 215,
+        "height": 295.1875
+      },
+      {
+        "ms": 223,
+        "height": 295.1875
+      },
+      {
+        "ms": 232,
+        "height": 295.1875
+      },
+      {
+        "ms": 240,
+        "height": 295.1875
+      },
+      {
+        "ms": 249,
+        "height": 295.1875
+      },
+      {
+        "ms": 257,
+        "height": 295.1875
+      },
+      {
+        "ms": 265,
+        "height": 295.1875
+      },
+      {
+        "ms": 274,
+        "height": 295.1875
+      },
+      {
+        "ms": 282,
+        "height": 295.1875
+      },
+      {
+        "ms": 290,
+        "height": 295.1875
+      },
+      {
+        "ms": 299,
+        "height": 295.1875
+      },
+      {
+        "ms": 307,
+        "height": 295.1875
+      }
+    ],
+    "overflow": {
+      "scroll": 1281,
+      "viewport": 1281
+    },
+    "contrast": [
+      {
+        "token": "--hljs-number",
+        "minimum": 5.528764960246404
+      },
+      {
+        "token": "--hljs-string",
+        "minimum": 5.246026181616567
+      },
+      {
+        "token": "--hljs-comment",
+        "minimum": 5.042700613804161
+      },
+      {
+        "token": "--hljs-keyword",
+        "minimum": 5.222344951349768
+      },
+      {
+        "token": "--hljs-variable",
+        "minimum": 7.717495884135405
+      },
+      {
+        "token": "--hljs-function",
+        "minimum": 5.585890218932998
+      },
+      {
+        "token": "--hljs-type",
+        "minimum": 5.528764960246404
+      },
+      {
+        "token": "secondary-text",
+        "minimum": 5.144631363913238
+      }
+    ]
+  },
+  "limitation": "Design fixture interactions only; preview never writes files. Native run uses actual Electron window."
+}

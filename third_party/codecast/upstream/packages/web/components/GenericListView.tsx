@@ -1,0 +1,1583 @@
+"use client";
+import { ReactNode, useState, useCallback, useMemo, useEffect, useRef } from "react";
+import { HOSTED_LIST_TOP, HOSTED_PAGE_FRAME } from "../lib/hostedPage";
+import { PageHeading } from "./PageHeading";
+import { useHostedMode, useSurface } from "../lib/surfaces";
+import { copyToClipboard } from "../lib/utils";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useRouter, usePathname } from "next/navigation";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { useTabActive } from "../hooks/usePagePresence";
+import { matchesAction, useShortcutAction, useShortcutParts, type ShortcutAction } from "../shortcuts";
+import { KeyCap } from "./KeyCap";
+import { keyBelongsElsewhere } from "../shortcuts/keyOwnership";
+import { FilterDropdown, FilterOptionList, type FilterOption } from "./FilterDropdown";
+import { groupsWithItems, visibleGroups } from "../lib/listGroups";
+import { ContextMenu, useContextMenu } from "./ui/context-menu";
+import { useInboxStore } from "../store/inboxStore";
+import { toast } from "sonner";
+import { SyncProgressBadge } from "./SyncProgressBadge";
+import { ListGroupHeader, ListRowShell, type ItemRowState } from "./ListRowShell";
+import {
+  Plus,
+  SlidersHorizontal,
+  ListFilter,
+  X,
+  Command,
+  Check,
+  Search,
+  Bookmark,
+  Link2,
+  ChevronDown,
+  ChevronRight,
+  ChevronLeft,
+  ArrowUp,
+  ArrowDown,
+  RotateCcw,
+  BookmarkPlus,
+  Forward,
+} from "lucide-react";
+import { openForwardToChat } from "../lib/forwardToChat";
+import { useTeamFeature } from "../lib/teamFeatures";
+import { useTitlebarHead } from "../hooks/useTitlebarHead";
+import { installKeyboardCursor } from "../lib/keyboardCursor";
+
+// Hosted lists draw their keyboard cursor only once the keyboard moves it.
+installKeyboardCursor();
+
+export interface ListTab {
+  key: string;
+  label: string;
+  count?: number;
+  /** Optional leading icon (lucide component). When present, the compact
+   *  dropdown can shed its text label and collapse to icon-only at tight widths. */
+  icon?: any;
+  /** Tooltip. */
+  title?: string;
+}
+
+/** The tab a value stands on, or none. A tab is a PRESET — a whole state of the
+ *  list, not a member of a set — so it lights up only when the value is exactly
+ *  its key. Anything finer is a filter, and says so as a chip in the filter bar. */
+function activeTabOf(tabs: ListTab[], activeTab: string): ListTab | null {
+  return tabs.find((t) => t.key === activeTab) ?? null;
+}
+
+/** The pill/row label for the current selection. */
+function tabSelectionSummary(tabs: ListTab[], activeTab: string): { label: string; count?: number; icons: any[] } {
+  const t = activeTabOf(tabs, activeTab);
+  // A value no tab stands for (tasks: a hand-picked set of statuses, which
+  // renders as a chip in the filter bar). Naming the first tab there would be a
+  // lie — the list is filtered, just not to a preset.
+  if (!t) return { label: activeTab ? "Filtered" : tabs[0]?.label ?? "", icons: [] };
+  return { label: t.label, count: t.count, icons: t.icon ? [t.icon] : [] };
+}
+
+/** Compact stand-in for the preset pill row, shown when the header is too narrow
+ *  to fit every pill (see .cq-tabs-compact). Surfaces the active preset + count
+ *  and drops the list into a popover so no preset is ever out of reach. */
+function TabDropdown({
+  tabs,
+  activeTab,
+  onChange,
+}: {
+  tabs: ListTab[];
+  activeTab: string;
+  onChange: (key: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const active = activeTabOf(tabs, activeTab);
+  const summary = tabSelectionSummary(tabs, activeTab);
+
+  useWatchEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // The label/count only collapse when there's an icon to stand in for them, so
+  // icon-less consumers (e.g. Docs) keep their text at every width.
+  const labelCollapse = summary.icons.length ? "cq-tab-label" : "";
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 h-7 px-2 rounded-md bg-sol-bg-alt border border-sol-border/40 text-xs text-sol-text hover:border-sol-border transition-colors"
+        title={summary.label}
+      >
+        {summary.icons.length > 0 && (
+          <span className="flex items-center -space-x-0.5 flex-shrink-0">
+            {summary.icons.slice(0, 4).map((I, i) => <I key={i} className="w-3.5 h-3.5 flex-shrink-0 text-sol-text-muted" />)}
+          </span>
+        )}
+        <span className={`font-medium whitespace-nowrap max-w-[14rem] truncate ${labelCollapse}`}>{summary.label}</span>
+        {summary.count != null && summary.count > 0 && (
+          <span className={`text-[10px] tabular-nums text-sol-text-dim ${labelCollapse}`}>{summary.count}</span>
+        )}
+        <ChevronDown className="w-3 h-3 opacity-60 flex-shrink-0 cq-caret" />
+      </button>
+      {open && (
+        <div className="absolute top-full left-0 mt-1 w-52 bg-sol-bg border border-sol-border rounded-lg shadow-xl z-[250] py-1">
+          {tabs.map((t) => {
+            const TIcon = t.icon;
+            const isActive = active?.key === t.key;
+            return (
+              <button
+                key={t.key}
+                onClick={() => { onChange(t.key); setOpen(false); }}
+                title={t.title ?? t.label}
+                className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
+                  isActive ? "bg-sol-bg-highlight text-sol-text" : "text-sol-text-muted hover:bg-sol-bg-alt"
+                }`}
+              >
+                {TIcon && <TIcon className="w-3.5 h-3.5 flex-shrink-0 text-sol-text-dim" />}
+                <span className="flex-1 text-left whitespace-nowrap">{t.label}</span>
+                {t.count != null && t.count > 0 && (
+                  <span className="text-[10px] tabular-nums text-sol-text-dim">{t.count}</span>
+                )}
+                {isActive && <Check className="w-3 h-3 text-sol-cyan flex-shrink-0" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface ListSortOption {
+  value: string;
+  label: string;
+}
+
+/** One selectable row inside the Display popover (a grouping or sort choice).
+ *  Picking a row does NOT close the popover — grouping and sorting are two
+ *  independent axes the user often sets in one sitting, so we keep it open and
+ *  let the checkmarks reflect state until they click away. */
+function DisplayOptionRow({
+  label,
+  selected,
+  onClick,
+}: {
+  label: string;
+  selected: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs transition-colors ${
+        selected ? "bg-sol-bg-highlight text-sol-text" : "text-sol-text-muted hover:bg-sol-bg-alt"
+      }`}
+    >
+      <span className="flex-1 text-left whitespace-nowrap">{label}</span>
+      {selected && <Check className="w-3 h-3 text-sol-cyan flex-shrink-0" />}
+    </button>
+  );
+}
+
+/** Linear-style "Display" popover. Folds two independent controls — Grouping and
+ *  Sorting (with a direction toggle) — plus any page-specific display options
+ *  (e.g. a List/Board switch passed as `extra`) behind one button, so the header
+ *  toolbar stays a single compact row. Same popover pattern as TabDropdown.
+ *
+ *  Grouping is optional: when `groupOptions` is omitted the section is hidden and
+ *  the popover is sort-only. Sorting always shows; the asc/desc toggle appears
+ *  only when the consumer wires `onSortDirChange`. */
+function DisplayMenu({
+  groupBy,
+  groupOptions,
+  onGroupChange,
+  subGroupBy,
+  subGroupOptions,
+  onSubGroupChange,
+  sortBy,
+  sortOptions,
+  onSortChange,
+  sortDir,
+  onSortDirChange,
+  extra,
+  onCopyLink,
+}: {
+  groupBy?: string;
+  groupOptions?: ListSortOption[];
+  onGroupChange?: (v: string) => void;
+  subGroupBy?: string;
+  subGroupOptions?: ListSortOption[];
+  onSubGroupChange?: (v: string) => void;
+  sortBy: string;
+  sortOptions: ListSortOption[];
+  onSortChange: (v: string) => void;
+  sortDir?: "asc" | "desc";
+  onSortDirChange?: () => void;
+  extra?: ReactNode;
+  /** When set, the popover gains a "Copy link to this view" row so the current
+   *  filters/sort/tab are shareable even when no filter chip is showing (the
+   *  filter bar — the other home for this action — is hidden with no filters). */
+  onCopyLink?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useWatchEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const hasGrouping = !!(groupOptions && onGroupChange);
+  const DirIcon = sortDir === "asc" ? ArrowUp : ArrowDown;
+
+  return (
+    <div ref={ref} className="relative flex-shrink-0">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-sol-border/40 text-xs text-sol-text-dim hover:text-sol-text hover:border-sol-border transition-colors"
+        title="Display options"
+      >
+        <SlidersHorizontal className="w-3 h-3 flex-shrink-0" />
+        <span className="cq-header-collapse">Display</span>
+        <ChevronDown className="w-3 h-3 opacity-60 flex-shrink-0 cq-caret" />
+      </button>
+      {open && (
+        <div className="absolute top-full right-0 mt-1 w-56 bg-sol-bg border border-sol-border rounded-lg shadow-xl z-[250] p-2 space-y-3">
+          {extra && <div className="flex flex-col gap-2">{extra}</div>}
+          {hasGrouping && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-sol-text-dim px-1 mb-1">Grouping</div>
+              <div className="space-y-0.5">
+                {groupOptions!.map((o) => (
+                  <DisplayOptionRow
+                    key={o.value}
+                    label={o.label}
+                    selected={o.value === groupBy}
+                    onClick={() => onGroupChange!(o.value)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          {/* A second grouping axis, folded into the same header rather than
+              nested: "Ashot · Codecast" is one group. Only offered once a
+              primary grouping is chosen — there is nothing to sub-divide
+              otherwise. */}
+          {subGroupOptions && subGroupOptions.length > 0 && onSubGroupChange && groupBy && groupBy !== "none" && (
+            <div>
+              <div className="text-[10px] uppercase tracking-wider text-sol-text-dim px-1 mb-1">Then by</div>
+              <div className="space-y-0.5">
+                {subGroupOptions.map((o) => (
+                  <DisplayOptionRow
+                    key={o.value}
+                    label={o.label}
+                    selected={o.value === subGroupBy}
+                    onClick={() => onSubGroupChange(o.value)}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <div className="flex items-center justify-between px-1 mb-1">
+              <span className="text-[10px] uppercase tracking-wider text-sol-text-dim">Sorting</span>
+              {sortDir && onSortDirChange && (
+                <button
+                  onClick={onSortDirChange}
+                  className="flex items-center gap-1 h-5 px-1.5 rounded text-[10px] text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-alt transition-colors"
+                  title={sortDir === "asc" ? "Ascending — click for descending" : "Descending — click for ascending"}
+                >
+                  <DirIcon className="w-3 h-3 flex-shrink-0" />
+                  <span>{sortDir === "asc" ? "Asc" : "Desc"}</span>
+                </button>
+              )}
+            </div>
+            <div className="space-y-0.5">
+              {sortOptions.map((o) => (
+                <DisplayOptionRow
+                  key={o.value}
+                  label={o.label}
+                  selected={o.value === sortBy}
+                  onClick={() => onSortChange(o.value)}
+                />
+              ))}
+            </div>
+          </div>
+          {onCopyLink && (
+            <button
+              onClick={() => { onCopyLink(); setOpen(false); }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-xs text-sol-text-muted hover:bg-sol-bg-alt hover:text-sol-text transition-colors border-t border-sol-border/30 pt-2"
+            >
+              <Link2 className="w-3 h-3 flex-shrink-0" />
+              <span className="flex-1 text-left whitespace-nowrap">Copy link to this view</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface ListFilterDef {
+  key: string;
+  label: string;
+  icon: ReactNode;
+  value: string;
+  options: FilterOption[];
+  onChange: (v: string) => void;
+  multi?: boolean;
+  /** Show the empty-key option in the add-menu too. For most filters "" means
+   *  "any" and is noise there, but when "" names a real default view (e.g. the
+   *  tasks Source filter's board), hiding it leaves the menu with no current
+   *  state — the reader can't tell the options are departures from a default. */
+  showEmptyOption?: boolean;
+  /** Values a prominent control elsewhere in the header already states (the
+   *  tasks status pills: All / Not done / Done). The popover still shows the
+   *  real selection ticked, but no chip repeats what the pill row is saying. */
+  presetValues?: string[];
+}
+
+/** Does this filter narrow the list BEYOND what the header already shows? Drives
+ *  the chip, the add-menu's remaining categories and whether the filter bar
+ *  exists at all — one rule, so the three can never disagree. */
+function filterIsSet(d: ListFilterDef): boolean {
+  return !!d.value && !(d.presetValues ?? []).includes(d.value);
+}
+
+/** Add-filter menu: a two-level popover (category → that category's options) for
+ *  filters that aren't set yet. Active filters render as removable chips, so this
+ *  lists only the not-yet-applied categories. Two triggers: the header "Filter"
+ *  button (variant="header", the entry point when the filter bar is hidden) and
+ *  the dashed "+ Filter" inside the bar (variant="add", for adding more). */
+function AddFilterMenu({
+  defs,
+  variant = "add",
+  active = false,
+}: {
+  defs: ListFilterDef[];
+  variant?: "add" | "header";
+  active?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [catKey, setCatKey] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useWatchEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) { setOpen(false); setCatKey(null); }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const available = defs.filter((d) => !filterIsSet(d));
+  const cat = defs.find((d) => d.key === catKey) || null;
+  const toggle = () => { setOpen((o) => !o); setCatKey(null); };
+
+  return (
+    <div ref={ref} className="relative">
+      {variant === "header" ? (
+        <button
+          onClick={toggle}
+          className={`flex items-center gap-1.5 text-xs h-7 px-2.5 rounded-md border transition-colors ${
+            open || active
+              ? "border-sol-cyan/40 text-sol-cyan bg-sol-cyan/5"
+              : "border-sol-border/40 text-sol-text-dim hover:text-sol-text hover:border-sol-border"
+          }`}
+          title="Filter"
+        >
+          <ListFilter className="w-3 h-3 flex-shrink-0" />
+          <span className="cq-header-collapse">Filter</span>
+          {active && <span className="w-1.5 h-1.5 rounded-full bg-sol-cyan flex-shrink-0" />}
+        </button>
+      ) : (
+        <button
+          onClick={toggle}
+          className="flex items-center gap-1 text-xs h-7 px-2 rounded-md border border-dashed border-sol-border/50 text-sol-text-dim hover:text-sol-text hover:border-sol-border transition-colors"
+          title="Add filter"
+        >
+          <Plus className="w-3 h-3" />
+          <span className="cq-addfilter-label">Filter</span>
+        </button>
+      )}
+      {open && (
+        <div className={`absolute top-full ${variant === "header" ? "right-0" : "left-0"} mt-1 w-48 bg-sol-bg border border-sol-border rounded-lg shadow-xl z-[250] py-1 max-h-72 overflow-y-auto`}>
+          {!cat ? (
+            available.length === 0 ? (
+              <div className="px-3 py-1.5 text-xs text-sol-text-dim">All filters added</div>
+            ) : (
+              available.map((d) => (
+                <button
+                  key={d.key}
+                  onClick={() => setCatKey(d.key)}
+                  className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-sol-text-muted hover:bg-sol-bg-alt transition-colors"
+                >
+                  <span className="flex-shrink-0 flex items-center">{d.icon}</span>
+                  <span className="flex-1 text-left">{d.label}</span>
+                  <ChevronRight className="w-3 h-3 opacity-50 flex-shrink-0" />
+                </button>
+              ))
+            )
+          ) : (
+            <>
+              <button
+                onClick={() => setCatKey(null)}
+                className="w-full flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium text-sol-text-dim hover:text-sol-text border-b border-sol-border/30 mb-1 transition-colors"
+              >
+                <ChevronLeft className="w-3 h-3" /> {cat.label}
+              </button>
+              <FilterOptionList
+                key={cat.key}
+                options={cat.showEmptyOption ? cat.options : cat.options.filter((o) => o.key !== "")}
+                value={cat.value}
+                multi={cat.multi}
+                onChange={cat.onChange}
+                onPicked={() => { setOpen(false); setCatKey(null); }}
+              />
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export interface ListGroup<T> {
+  key: string;
+  label: string;
+  icon?: ReactNode;
+  badge?: ReactNode;
+  extra?: ReactNode;
+  items: T[];
+  /** Nesting under the nearest earlier group with a smaller depth (the task
+   *  board's Chain grouping). The list stays one flat stream: depth only
+   *  indents the header and lets a collapsed parent take its nested groups
+   *  with it. Absent = a top level group. */
+  depth?: number;
+}
+
+/** How far each level of a nested group steps in, and where it stops: deeper
+ *  levels keep their order but stop eating the row's width. */
+const GROUP_INDENT_PX = 20;
+const MAX_GROUP_INDENT = 4;
+
+/** From how many items a hosted list's header offers its tools (views,
+ *  search, filter, display): the rule the Routines page keeps, so a short
+ *  list reads as a list rather than a toolbar. */
+const HOSTED_TOOLS_FROM = 6;
+
+export type { ItemRowState } from "./ListRowShell";
+
+export interface GenericListViewProps<T> {
+  title: string;
+  tabs: ListTab[];
+  /** The list's current preset. A value no tab carries is a finer selection the
+   *  consumer states elsewhere (tasks: a status chip in the filter bar), and no
+   *  pill lights up for it. */
+  activeTab: string;
+  onTabChange: (tab: string) => void;
+
+  /** Grouping axis — independent of sort. Omit all three to render a sort-only
+   *  Display popover (no Grouping section). Convention: a `"none"` option value
+   *  means "don't group" (flat list). */
+  groupBy?: string;
+  groupOptions?: ListSortOption[];
+  onGroupChange?: (group: string) => void;
+
+  /** Optional second grouping axis. Buckets stay one level deep — the two axes
+   *  combine into a single header — so the row model never grows a depth. */
+  subGroupBy?: string;
+  subGroupOptions?: ListSortOption[];
+  onSubGroupChange?: (group: string) => void;
+
+  sortBy: string;
+  sortOptions: ListSortOption[];
+  onSortChange: (sort: string) => void;
+  /** Sort direction. When provided alongside `onSortDirChange`, the Sorting
+   *  section shows an asc/desc toggle. */
+  sortDir?: "asc" | "desc";
+  onSortDirChange?: () => void;
+
+  filters?: {
+    hasActive: boolean;
+    defs: ListFilterDef[];
+    onClear: () => void;
+    onSaveView?: (name: string) => void;
+    /** The saved view this list was opened from, when it has been modified
+     *  since. Present only while dirty — an unchanged view needs no controls,
+     *  and the rail already shows which one you are in. */
+    dirtyView?: { name: string; onUpdate: () => void; onDiscard: () => void; canUpdate: boolean };
+  };
+
+  /** Returns a shareable absolute URL encoding the current view (filters, sort,
+   *  active tab). When provided, a "copy link" action appears in the Display
+   *  popover and — when a filter is active — in the filter bar's action cluster.
+   *  The consumer serializes its own URL params (it owns the param schema);
+   *  this component owns the clipboard write + toast. */
+  shareUrl?: () => string;
+
+  groups: ListGroup<T>[] | null;
+  flatItems: T[];
+
+  renderRow: (item: T, state: ItemRowState) => ReactNode;
+  getItemId: (item: T) => string;
+  getItemRoute: (item: T) => string;
+  emptyIcon?: ReactNode;
+  emptyMessage?: ReactNode;
+
+  onCreate: () => void;
+  /** What the create button says in hosted mode ("New note"), drawn as a
+   *  labelled secondary button in place of the bare +. A list with a
+   *  quickAdd row needs neither: the row is the way to add one. */
+  createLabel?: string;
+  /** An always-present add row at the head of the list: Enter adds what was
+   *  typed and keeps the field for the next, and "c" focuses it in place of
+   *  opening the create form. */
+  quickAdd?: { placeholder: string; onAdd: (title: string) => void };
+
+  hasMore?: boolean;
+  isLoadingMore?: boolean;
+  onLoadMore?: () => void;
+
+  paletteTargetType?: 'task' | 'doc';
+  /** Short-ID ref for an item (e.g. a task's `ct-…`). When provided, Ctrl+N with
+   *  rows multi-selected opens the new-session composer pre-filled with the
+   *  selection's refs, so the first message can just say what to do with them
+   *  ("merge these two"). */
+  getComposeRef?: (item: T) => string | null | undefined;
+  paletteShortcuts?: { action: ShortcutAction; mode: string; label: string }[];
+  paletteProps?: { teamMembers?: any[]; currentUser?: any };
+
+  renderPreview?: (item: T, onClose: () => void, onOpen: () => void) => ReactNode;
+
+  onItemEdit?: (item: T, newTitle: string) => void;
+
+  getSearchText?: (item: T) => string;
+  /** Corpus to search when a query is typed, overriding the tab-filtered
+   *  groups/flatItems. Lets a search span items hidden by the active browse tab
+   *  (e.g. a docs search finding a doc whose type isn't the selected tab) instead
+   *  of silently returning "No results". When omitted, search stays scoped to the
+   *  visible groups/flatItems (unchanged behavior). */
+  searchAllItems?: T[];
+  /** When set, a subtle "syncing N" whisper renders next to the title while the
+   *  reconcile crawl for this scope ("tasks" | "docs") is still streaming in. */
+  syncScope?: string;
+  headerExtra?: ReactNode;
+  /** Page-specific controls rendered inside the Display popover (e.g. a List/Board
+   *  view switch). Kept out of the always-visible toolbar to stay Linear-compact. */
+  displayExtra?: ReactNode;
+  listFooter?: ReactNode;
+  /** A full-width strip between the header and the list (an offer, a notice).
+   *  Outside the virtualized scroll, so it never shifts row positions. */
+  banner?: ReactNode;
+  customContent?: (helpers: {
+    openPaletteForItems: (items: T[], mode?: string) => void;
+    openContextMenuForItems: (e: React.MouseEvent, items: T[]) => void;
+  }) => ReactNode;
+  /** Right-click menu content for rows (and customContent surfaces). When set,
+   *  right-click opens a cursor-anchored menu instead of the palette overlay.
+   *  Receives the selection when the clicked row is part of it, else just the
+   *  clicked row — same targeting the keyboard palette entry uses. */
+  contextMenuContent?: (items: T[]) => ReactNode;
+  /** Optional drag & drop. Rows become draggable; group headers — and rows of
+   *  other groups — accept "move into that bucket" drops; the middle of a row
+   *  is a combine target; row edges are insertion gaps when onReorder is set. */
+  dnd?: {
+    /** Move `item` into the bucket named by `groupKey`. */
+    onDropOnGroup?: (item: T, groupKey: string) => void;
+    /** Whether that bucket can accept `item` (also gates the hover highlight).
+     *  Defaults to true when onDropOnGroup is set. */
+    canDropOnGroup?: (item: T, groupKey: string) => boolean;
+    /** Drop one row onto another (combine gesture — e.g. duplicate/subtask). */
+    onDropOnItem?: (item: T, target: T) => void;
+    /** Manual reorder: insert `item` between `before` and `after` (either null
+     *  at a group edge) inside `groupKey` (null when the list is flat). */
+    onReorder?: (item: T, before: T | null, after: T | null, groupKey: string | null) => void;
+  };
+  extraKeyHandler?: (e: KeyboardEvent, stop: () => void) => boolean;
+  /** The row's own toggle for x (a to-do's done or open), where the list has
+   *  no selection to toggle. */
+  onToggleItem?: (item: T) => void;
+  disableKeyboard?: boolean;
+  activeItemId?: string;
+  children?: ReactNode;
+}
+
+export function GenericListView<T>({
+  title,
+  tabs,
+  activeTab,
+  onTabChange,
+  groupBy,
+  groupOptions,
+  onGroupChange,
+  subGroupBy,
+  subGroupOptions,
+  onSubGroupChange,
+  sortBy,
+  sortOptions,
+  onSortChange,
+  sortDir,
+  onSortDirChange,
+  filters,
+  shareUrl,
+  groups,
+  flatItems,
+  renderRow,
+  getItemId,
+  getItemRoute,
+  emptyIcon,
+  emptyMessage,
+  onCreate,
+  createLabel,
+  quickAdd,
+  hasMore,
+  isLoadingMore,
+  onLoadMore,
+  paletteTargetType,
+  getComposeRef,
+  paletteShortcuts,
+  paletteProps,
+  renderPreview,
+  onItemEdit,
+  getSearchText,
+  searchAllItems,
+  syncScope,
+  headerExtra,
+  displayExtra,
+  listFooter,
+  banner,
+  customContent,
+  contextMenuContent,
+  dnd,
+  extraKeyHandler,
+  onToggleItem,
+  disableKeyboard,
+  activeItemId,
+  children,
+}: GenericListViewProps<T>) {
+  const paletteKeys = useShortcutParts("palette.toggle");
+  const router = useRouter();
+  const titlebarRef = useTitlebarHead<HTMLDivElement>();
+  const currentPath = usePathname();
+
+  // Open/close a row's detail by driving the URL: navigating to the row's route
+  // opens it (instant when the route shares this page's component — e.g.
+  // /tasks), and navigating back to the list route closes it, in place with no
+  // re-mount. Click always opens — re-clicking the open row is a no-op, closing
+  // belongs to Esc/✕ — while space keeps the keyboard toggle.
+  //
+  // A list with renderPreview peeks instead: space opens the focused row in a
+  // panel beside the list, the panel follows j/k and clicks, and the list keeps
+  // the keyboard, so a run of items reads without going in and out. Enter
+  // still opens the full page; space or Esc puts the peek away.
+  const openDetail = (item: T) => router.push(getItemRoute(item));
+  const toggleDetail = (item: T) => {
+    if (renderPreview) {
+      const id = getItemId(item);
+      setPreviewId((cur) => (cur === id ? null : id));
+      return;
+    }
+    const route = getItemRoute(item);
+    const base = route.replace(/\/[^/]+$/, "");
+    router.push(currentPath === route ? base : route);
+  };
+
+  const [focusIndex, setFocusIndex] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const storeOpenPalette = useInboxStore((s) => s.openPalette);
+  const storeOpenCompose = useInboxStore((s) => s.openCompose);
+  const paletteIsOpen = useInboxStore((s) => s.palette.open);
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const shortcutsPanelOpen = useInboxStore(s => s.shortcutsPanelOpen);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [savingView, setSavingView] = useState(false);
+  const [saveViewName, setSaveViewName] = useState("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const quickAddRef = useRef<HTMLInputElement | null>(null);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
+
+  const chatOn = useTeamFeature("chat");
+  const copyViewLink = useCallback(async () => {
+    if (!shareUrl) return;
+    const url = shareUrl();
+    try {
+      await copyToClipboard(url);
+      toast.success("Link to this view copied");
+    } catch {
+      toast.error("Couldn't copy link");
+    }
+  }, [shareUrl]);
+
+  const searching = !!searchQuery && !!getSearchText;
+  // A search with a `searchAllItems` corpus spans the whole set (ignoring the
+  // active browse tab / grouping) and renders as a flat result list.
+  const crossScopeSearch = searching && !!searchAllItems;
+
+  const displayGroups = useMemo((): ListGroup<T>[] | null => {
+    if (!groups) return null;
+    if (!searching) return groups;
+    if (crossScopeSearch) return null; // flat results from searchAllItems instead
+    const q = searchQuery.toLowerCase();
+    return groupsWithItems(
+      groups.map(g => ({ ...g, items: g.items.filter(item => getSearchText!(item).toLowerCase().includes(q)) }))
+    );
+  }, [groups, searching, crossScopeSearch, searchQuery, getSearchText]);
+
+  const displayFlatItems = useMemo(() => {
+    if (!searching) return flatItems;
+    const q = searchQuery.toLowerCase();
+    if (crossScopeSearch) return searchAllItems!.filter(item => getSearchText!(item).toLowerCase().includes(q));
+    if (groups) return flatItems; // grouped search handled in displayGroups
+    return flatItems.filter(item => getSearchText!(item).toLowerCase().includes(q));
+  }, [groups, flatItems, searching, crossScopeSearch, searchAllItems, searchQuery, getSearchText]);
+
+  const visibleItems = useMemo(() => {
+    if (displayGroups) {
+      return visibleGroups(displayGroups, collapsedGroups).flatMap(({ group, collapsed }) =>
+        collapsed ? [] : group.items
+      );
+    }
+    return displayFlatItems;
+  }, [displayGroups, collapsedGroups, displayFlatItems]);
+
+  const focusedItem = visibleItems[focusIndex] || null;
+
+  // Flatten groups + items into a single ordered list of "rows" so the whole
+  // view (group headers AND item rows) can be virtualized as one stream. Each
+  // item row carries its index into `visibleItems` so keyboard focus and the
+  // rendered row stay in lockstep. Without virtualization every task/doc in the
+  // workspace was a live DOM node and re-rendered on every j/k press — O(N) per
+  // keystroke. Now only the visible window (~window height) is mounted.
+  type RowEntry =
+    | { kind: "header"; key: string; group: ListGroup<T>; collapsed: boolean; depth: number }
+    | { kind: "item"; key: string; item: T; focusIndex: number; groupKey: string | null; depth: number };
+  const rowModel = useMemo<RowEntry[]>(() => {
+    const rows: RowEntry[] = [];
+    if (displayGroups) {
+      let fi = 0;
+      for (const { group: g, collapsed } of visibleGroups(displayGroups, collapsedGroups)) {
+        const depth = g.depth ?? 0;
+        rows.push({ kind: "header", key: `__hdr_${g.key}`, group: g, collapsed, depth });
+        if (!collapsed) {
+          for (const item of g.items) {
+            rows.push({ kind: "item", key: getItemId(item), item, focusIndex: fi, groupKey: g.key, depth });
+            fi++;
+          }
+        }
+      }
+    } else {
+      displayFlatItems.forEach((item, i) => {
+        rows.push({ kind: "item", key: getItemId(item), item, focusIndex: i, groupKey: null, depth: 0 });
+      });
+    }
+    return rows;
+  }, [displayGroups, displayFlatItems, collapsedGroups, getItemId]);
+
+  // focusIndex (index into visibleItems) → rowModel index, so keyboard nav can
+  // scroll the right virtual row into view.
+  const focusToRowIndex = useMemo(() => {
+    const map: number[] = [];
+    rowModel.forEach((r, idx) => { if (r.kind === "item") map[r.focusIndex] = idx; });
+    return map;
+  }, [rowModel]);
+
+  const rowVirtualizer = useVirtualizer({
+    count: rowModel.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => (rowModel[i]?.kind === "header" ? 38 : 45),
+    getItemKey: (i) => rowModel[i]?.key ?? i,
+    overscan: 12,
+  });
+
+  useWatchEffect(() => {
+    if (focusIndex >= visibleItems.length && visibleItems.length > 0) {
+      setFocusIndex(visibleItems.length - 1);
+    }
+  }, [visibleItems.length, focusIndex]);
+
+  useWatchEffect(() => {
+    if (previewId && focusedItem && getItemId(focusedItem) !== previewId) {
+      setPreviewId(getItemId(focusedItem));
+    }
+  }, [focusIndex]);
+
+  useWatchEffect(() => {
+    const rowIdx = focusToRowIndex[focusIndex];
+    if (rowIdx != null) rowVirtualizer.scrollToIndex(rowIdx, { align: "auto" });
+  }, [focusIndex]);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const getTargetItemsForPalette = useCallback((): any[] => {
+    if (selectedIds.size > 0) {
+      return visibleItems.filter((item) => selectedIds.has(getItemId(item)));
+    }
+    return focusedItem ? [focusedItem] : [];
+  }, [selectedIds, visibleItems, focusedItem, getItemId]);
+
+  const openPalette = useCallback((mode: string) => {
+    storeOpenPalette({ targets: getTargetItemsForPalette(), targetType: paletteTargetType, mode });
+  }, [storeOpenPalette, getTargetItemsForPalette, paletteTargetType]);
+
+  const openPaletteForItems = useCallback((items: T[], mode = "root") => {
+    storeOpenPalette({ targets: items as any[], targetType: paletteTargetType, mode });
+  }, [storeOpenPalette, paletteTargetType]);
+
+  // One cursor-anchored menu serves every row (virtualized lists included) and
+  // any customContent surface (e.g. kanban cards).
+  const ctxMenu = useContextMenu<T[]>();
+  const openContextMenuForItems = useCallback((e: React.MouseEvent, items: T[]) => {
+    ctxMenu.open(e, items);
+  }, [ctxMenu.open]);
+
+  // --- Drag & drop. One dragged row id + one hint describing what a release
+  // would do: move to a bucket, combine with a row, or insert into a gap. The
+  // hint drives every highlight, so what lights up is exactly what will happen.
+  type DropHint =
+    | { kind: "group"; key: string }
+    | { kind: "item"; id: string }
+    | { kind: "gap"; id: string; edge: "before" | "after" };
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropHint, setDropHint] = useState<DropHint | null>(null);
+  const dndMaps = useMemo(() => {
+    const byId = new Map<string, T>();
+    const groupOf = new Map<string, string | null>();
+    for (const r of rowModel) if (r.kind === "item") { byId.set(r.key, r.item); groupOf.set(r.key, r.groupKey); }
+    return { byId, groupOf };
+  }, [rowModel]);
+  const draggedItem = dragId ? dndMaps.byId.get(dragId) ?? null : null;
+  const clearDrag = useCallback(() => { setDragId(null); setDropHint(null); }, []);
+  const sameHint = (a: DropHint | null, b: DropHint) =>
+    !!a && a.kind === b.kind && (a as any).key === (b as any).key && (a as any).id === (b as any).id && (a as any).edge === (b as any).edge;
+  const setHint = useCallback((h: DropHint) => {
+    setDropHint((prev) => (sameHint(prev, h) ? prev : h));
+  }, []);
+
+  const performDrop = useCallback(() => {
+    const hint = dropHint;
+    const item = draggedItem;
+    clearDrag();
+    if (!hint || !item || !dnd) return;
+    if (hint.kind === "group") { dnd.onDropOnGroup?.(item, hint.key); return; }
+    if (hint.kind === "item") {
+      const target = dndMaps.byId.get(hint.id);
+      if (target && getItemId(target) !== getItemId(item)) dnd.onDropOnItem?.(item, target);
+      return;
+    }
+    // Gap: resolve the neighbors around the insertion point, staying inside the
+    // target row's group (a header or list edge leaves that side null).
+    const idx = rowModel.findIndex((r) => r.kind === "item" && r.key === hint.id);
+    const row = rowModel[idx];
+    if (!row || row.kind !== "item") return;
+    let before: T | null = null;
+    let after: T | null = null;
+    if (hint.edge === "before") {
+      after = row.item;
+      const prev = rowModel[idx - 1];
+      if (prev?.kind === "item" && prev.groupKey === row.groupKey) before = prev.item;
+    } else {
+      before = row.item;
+      const next = rowModel[idx + 1];
+      if (next?.kind === "item" && next.groupKey === row.groupKey) after = next.item;
+    }
+    const iid = getItemId(item);
+    if ((before && getItemId(before) === iid) || (after && getItemId(after) === iid)) return;
+    dnd.onReorder?.(item, before, after, row.groupKey);
+  }, [dropHint, draggedItem, dnd, dndMaps, rowModel, getItemId, clearDrag]);
+
+  // Ctrl+N with rows multi-selected: seed the new-session composer with the
+  // selection's refs (bare short IDs render as live reference cards), so the
+  // first message can just say what to do with them. With nothing selected,
+  // decline — DashboardLayout's default handler opens the blank composer.
+  useShortcutAction('session.compose', () => {
+    if (!getComposeRef || selectedIds.size === 0) return false;
+    const refs = visibleItems
+      .filter((item) => selectedIds.has(getItemId(item)))
+      .map(getComposeRef)
+      .filter((r): r is string => !!r);
+    if (refs.length === 0) return false;
+    storeOpenCompose(refs.join(" ") + " ");
+    return true;
+  });
+
+  const toggleGroup = useCallback((key: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  // The list listens on the window, so only the focused pane of the visible
+  // tab may answer: a list beside a focused conversation must leave its keys.
+  const paneActive = useTabActive();
+  useWatchEffect(() => {
+    if (!paneActive) return;
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      // A text field, or a focused region that owns its keys (the branch
+      // map, the vault explorer), keeps them all, by the same rule the
+      // shortcut dispatcher follows: its Enter, Space, Home, End and Esc are
+      // not the list's.
+      if (keyBelongsElsewhere(target)) return;
+      // Arrows belong to an open menu or listbox (filter dropdowns, pickers).
+      if (e.key.startsWith("Arrow") && target.closest?.('[role="menu"],[role="listbox"],[role="dialog"]')) return;
+
+      const stop = () => { e.preventDefault(); };
+
+      if (shortcutsPanelOpen) return;
+
+      if (disableKeyboard || paletteIsOpen || !!editingId) return;
+
+      if (extraKeyHandler?.(e, stop)) return;
+
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) { stop(); openPalette("root"); return; }
+      if (matchesAction(e, "list.select")) {
+        stop();
+        if (focusedItem) {
+          if (onToggleItem) onToggleItem(focusedItem);
+          else toggleSelect(getItemId(focusedItem));
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        if (previewId) { stop(); setPreviewId(null); return; }
+        if (selectedIds.size > 0) { stop(); setSelectedIds(new Set()); return; }
+      }
+
+      if (paletteShortcuts) {
+        for (const ps of paletteShortcuts) {
+          if (matchesAction(e, ps.action)) {
+            stop(); openPalette(ps.mode); return;
+          }
+        }
+      }
+
+      if (matchesAction(e, "list.actions")) { stop(); openPalette("actions"); return; }
+      if (matchesAction(e, "list.edit") && onItemEdit) {
+        stop();
+        if (focusedItem) setEditingId(getItemId(focusedItem));
+        return;
+      }
+      if (matchesAction(e, "list.selectAll")) {
+        stop();
+        setSelectedIds(new Set(visibleItems.map(getItemId)));
+        return;
+      }
+      if (matchesAction(e, "list.preview")) {
+        stop();
+        if (focusedItem) toggleDetail(focusedItem);
+        return;
+      }
+
+      if (matchesAction(e, "list.down") || (e.key === "ArrowDown" && !e.metaKey && !e.ctrlKey)) {
+        stop();
+        setFocusIndex((i) => Math.min(i + 1, visibleItems.length - 1));
+        return;
+      }
+      if (matchesAction(e, "list.up") || (e.key === "ArrowUp" && !e.metaKey && !e.ctrlKey)) {
+        stop();
+        setFocusIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (matchesAction(e, "list.open")) {
+        stop();
+        if (focusedItem) router.push(getItemRoute(focusedItem));
+        return;
+      }
+      if (matchesAction(e, "list.search") && getSearchText) { stop(); setShowSearch(true); return; }
+      if (matchesAction(e, "list.create")) {
+        stop();
+        if (quickAddRef.current) quickAddRef.current.focus();
+        else onCreate();
+        return;
+      }
+      if (matchesAction(e, "list.first")) { stop(); setFocusIndex(0); return; }
+      if (matchesAction(e, "list.last")) { stop(); setFocusIndex(Math.max(0, visibleItems.length - 1)); return; }
+
+      const tabKeys: Record<string, number> = {};
+      tabs.forEach((_, i) => { tabKeys[String(i + 1)] = i; });
+      if (tabKeys[e.key] !== undefined && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+        stop();
+        onTabChange(tabs[tabKeys[e.key]].key);
+        setFocusIndex(0);
+        return;
+      }
+    };
+
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [paneActive, shortcutsPanelOpen, disableKeyboard, paletteIsOpen, editingId, focusedItem, visibleItems, focusIndex, tabs,
+    previewId, selectedIds, paletteShortcuts, onTabChange, getItemRoute, getItemId, currentPath,
+    onCreate, openPalette, toggleSelect, router, extraKeyHandler, onToggleItem, onItemEdit, renderPreview, getSearchText]);
+
+  const previewItem = previewId ? visibleItems.find((item) => getItemId(item) === previewId) || null : null;
+
+  useEffect(() => {
+    if (!hasMore || !onLoadMore || isLoadingMore) return;
+    const root = scrollRef.current;
+    const target = loadMoreRef.current;
+    if (!root || !target) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) onLoadMore();
+      },
+      { root, rootMargin: "240px 0px", threshold: 0 }
+    );
+
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, onLoadMore, isLoadingMore, visibleItems.length]);
+
+  const renderItemRow = (item: T, globalIdx: number, groupKey: string | null) => {
+    const id = getItemId(item);
+    const isFocused = focusIndex === globalIdx;
+    const isSelected = selectedIds.has(id);
+    const isEditing = editingId === id;
+    const isActive = activeItemId === id;
+
+    // What a release right here would do (drives the row's highlight).
+    const combineTarget = dropHint?.kind === "item" && dropHint.id === id;
+    const gapEdge = dropHint?.kind === "gap" && dropHint.id === id ? dropHint.edge : null;
+    const inTargetGroup = dropHint?.kind === "group" && groupKey === dropHint.key;
+    const dragProps = dnd
+      ? {
+          draggable: !isEditing,
+          onDragStart: (e: React.DragEvent) => {
+            e.dataTransfer.setData("text/plain", id);
+            e.dataTransfer.effectAllowed = "move";
+            setDragId(id);
+          },
+          onDragEnd: clearDrag,
+          onDragOver: (e: React.DragEvent) => {
+            if (!draggedItem || dragId === id) return;
+            const rect = e.currentTarget.getBoundingClientRect();
+            const rel = (e.clientY - rect.top) / Math.max(1, rect.height);
+            const canReorder = !!dnd.onReorder;
+            const canCombine = !!dnd.onDropOnItem;
+            const canGroupMove =
+              !!dnd.onDropOnGroup &&
+              groupKey != null &&
+              groupKey !== dndMaps.groupOf.get(dragId!) &&
+              (dnd.canDropOnGroup?.(draggedItem, groupKey) ?? true);
+            // Edges insert (or, without reorder, move into this row's bucket);
+            // the middle combines. Whatever this row can't do falls through to
+            // what it can, so a drop is never silently dead over a valid move.
+            let hint: DropHint | null = null;
+            const edge: "before" | "after" = rel < 0.5 ? "before" : "after";
+            if (rel < 0.3 || rel > 0.7) {
+              if (canReorder) hint = { kind: "gap", id, edge };
+              else if (canGroupMove) hint = { kind: "group", key: groupKey! };
+              else if (canCombine) hint = { kind: "item", id };
+            } else if (canCombine) hint = { kind: "item", id };
+            else if (canGroupMove) hint = { kind: "group", key: groupKey! };
+            else if (canReorder) hint = { kind: "gap", id, edge };
+            if (!hint) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setHint(hint);
+          },
+          onDrop: (e: React.DragEvent) => { e.preventDefault(); performDrop(); },
+        }
+      : {};
+
+    const state: ItemRowState = {
+      isFocused,
+      isSelected,
+      isEditing,
+      // Click opens the detail in place (space toggles) by driving the URL.
+      // While a peek is open a click moves it rather than leaving the list.
+      onClick: () => { setFocusIndex(globalIdx); if (previewId) setPreviewId(id); else openDetail(item); },
+      onSelect: () => toggleSelect(id),
+      onContextMenu: (e: React.MouseEvent) => {
+        if (contextMenuContent) {
+          // The selection travels with the right-click when the clicked row is
+          // part of it — same targeting keyboard palette entry uses.
+          const targets = selectedIds.has(id)
+            ? visibleItems.filter((it) => selectedIds.has(getItemId(it)))
+            : [item];
+          setFocusIndex(globalIdx);
+          ctxMenu.open(e, targets);
+          return;
+        }
+        e.preventDefault();
+        storeOpenPalette({ targets: [item] as any[], targetType: paletteTargetType, mode: "root" });
+      },
+      onEditDone: () => setEditingId(null),
+      onTitleCommit: (newTitle: string) => {
+        if (onItemEdit) onItemEdit(item, newTitle);
+        setEditingId(null);
+      },
+      onOpenPalette: (mode: string) => {
+        storeOpenPalette({ targets: [item] as any[], targetType: paletteTargetType, mode });
+      },
+    };
+
+    return (
+      <ListRowShell
+        key={id}
+        state={state}
+        isActive={isActive}
+        dragging={dragId === id}
+        combineTarget={combineTarget}
+        inTargetGroup={inTargetGroup}
+        gapEdge={gapEdge}
+        dragProps={dragProps}
+      >
+        {renderRow(item, state)}
+      </ListRowShell>
+    );
+  };
+
+  const renderGroupHeader = (g: ListGroup<T>, isCollapsed: boolean) => (
+    <ListGroupHeader
+      label={g.label}
+      count={g.items.length}
+      icon={g.icon}
+      badge={g.badge}
+      extra={g.extra}
+      collapsed={isCollapsed}
+      onToggle={() => toggleGroup(g.key)}
+      dropTarget={dropHint?.kind === "group" && dropHint.key === g.key}
+      onDragOver={
+        dnd?.onDropOnGroup
+          ? (e) => {
+              if (!draggedItem) return;
+              if (!(dnd.canDropOnGroup?.(draggedItem, g.key) ?? true)) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
+              setHint({ kind: "group", key: g.key });
+            }
+          : undefined
+      }
+      onDrop={dnd?.onDropOnGroup ? (e) => { e.preventDefault(); performDrop(); } : undefined}
+    />
+  );
+
+
+  // The chip-able filter bar renders inside .cq-container (below). When it shows,
+  // the container's own bottom border would land at the bottom of the filter
+  // zone and stack with the next divider (a group header / first row) — at narrow
+  // width, where the action cluster wraps right up against it, that reads as a
+  // doubled line. So the container draws its bottom border only when the filter
+  // bar is hidden; when shown, the filter bar's own top border separates it from
+  // the toolbar and the content below owns the lower edge — one divider, not two.
+  // The bar also has to appear for a MODIFIED view even with no chips showing:
+  // clearing a view's only filter is a change you must be able to save or undo,
+  // and hiding the bar would take both actions away at exactly that moment.
+  const filterBarShown = !!filters && (filters.defs.some(filterIsSet) || !!filters.dirtyView);
+  const hosted = useHostedMode();
+  const viewInternals = useSurface("lists.internals");
+  const activeTabKey = activeTabOf(tabs, activeTab)?.key ?? null;
+  // Hosted mode keeps a short list's header to its title, scope and one way
+  // to add. The tools come back from HOSTED_TOOLS_FROM items on, and whenever
+  // one is already in use (another view, a filter, a grouping, a search), so it can be
+  // undone from where it was set.
+  const toolsShown = !hosted
+    || (tabs[0]?.count ?? flatItems.length) >= HOSTED_TOOLS_FROM
+    || (!!tabs[0] && activeTabKey !== tabs[0].key)
+    || !!filters?.defs.some(filterIsSet)
+    || (!!groupBy && groupBy !== "none")
+    || showSearch;
+
+  return (
+    // Hosted pages share one frame (lib/hostedPage), so To-dos and Notes
+    // keep the title where Routines and Approvals put it.
+    <div className={`h-full flex flex-col ${hosted ? HOSTED_PAGE_FRAME : ""}`} data-list-view>
+      {/* Header. The outer wrapper is the container-query context; the inner
+          .cq-header row is what adapts (wraps the toolbar below the tabs) as the
+          panel narrows — a container can't query its own width, only a child's. */}
+      {/* The header's own rule (.cc-panel__head) is the one line under it. */}
+      <div className={`cq-container ${hosted ? HOSTED_LIST_TOP : ""}`}>
+        <div ref={titlebarRef} className="cq-header cq-header-pad cc-panel__head cc-panel__head--flow flex-wrap justify-between gap-x-2">
+        <div className="flex items-center gap-2 min-w-0">
+          {/* Hosted mode names the page the way Whisk does, with its count;
+              the developer header keeps the name for screen readers only. */}
+          {/* An empty list says so below; a 0 beside its title says nothing more. */}
+          {hosted ? <PageHeading title={title} count={tabs[0]?.count || undefined} /> : <h1 className="sr-only">{title}</h1>}
+          {/* Hosted mode's scope chips qualify the title, so they sit beside it. */}
+          {hosted && headerExtra}
+          {/* The crawl's progress is developer chrome: hosted mode paints
+              from the cache and says nothing while it fills in. */}
+          {syncScope && !hosted && <SyncProgressBadge scope={syncScope} />}
+          {/* Wide header: segmented pill row. Once too tight for one row (≤1210px,
+              see .cq-tabs-compact in globals.css): a single compact dropdown. */}
+          {/* One tab is no choice (hosted Notes): the title's count says it. */}
+          {toolsShown && tabs.length > 1 && <>
+          <div data-list-tabs className="cq-tabs-pills flex items-center gap-0.5 p-0.5 rounded-lg bg-sol-bg-alt/40 border border-sol-border/30 flex-wrap">
+            {tabs.map((tab) => {
+              const isActive = activeTabKey === tab.key;
+              return (
+              <button
+                key={tab.key}
+                onClick={() => { onTabChange(tab.key); setFocusIndex(0); }}
+                title={tab.title}
+                className={`text-xs px-2.5 h-6 rounded-md transition-colors flex items-center gap-1.5 whitespace-nowrap flex-shrink-0 ${
+                  isActive
+                    ? "bg-sol-bg-highlight text-sol-text shadow-sm"
+                    : "text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-alt/60"
+                }`}
+              >
+                {tab.label}
+                {tab.count != null && tab.count > 0 && <span className="text-[10px] tabular-nums opacity-60">{tab.count}</span>}
+              </button>
+              );
+            })}
+          </div>
+          <div className="cq-tabs-compact">
+            <TabDropdown
+              tabs={tabs}
+              activeTab={activeTab}
+              onChange={(key) => { onTabChange(key); setFocusIndex(0); }}
+            />
+          </div>
+          </>}
+        </div>
+        <div data-list-toolbar className="cq-header-toolbar flex flex-wrap items-center justify-end gap-1.5 ml-auto">
+          {!hosted && headerExtra}
+          {selectedIds.size > 0 && (
+            <span className="text-xs text-sol-cyan">{selectedIds.size} selected</span>
+          )}
+          {showSearch && getSearchText && (
+            <input
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setFocusIndex(0); }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { setShowSearch(false); setSearchQuery(""); }
+              }}
+              placeholder="Search..."
+              autoFocus
+              className="text-xs w-40 h-7 px-2.5 rounded-md bg-sol-bg-alt border border-sol-cyan/40 text-sol-text placeholder:text-sol-text-dim focus:outline-none"
+            />
+          )}
+          {toolsShown && getSearchText && (
+            <button
+              onClick={() => {
+                if (showSearch && searchQuery) { setSearchQuery(""); }
+                setShowSearch((s) => !s);
+              }}
+              className={`flex items-center justify-center w-7 h-7 rounded-md border transition-colors ${
+                showSearch
+                  ? "border-sol-cyan/40 text-sol-cyan bg-sol-cyan/5"
+                  : "border-sol-border/40 text-sol-text-dim hover:text-sol-text hover:border-sol-border"
+              }`}
+              title="Search"
+              aria-label="Search"
+            >
+              <Search className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {/* A phone's hosted header keeps the title, the scope and one way
+              to add; filter and display wait for a wider screen. */}
+          {toolsShown && filters && <span className={hosted ? "max-sm:hidden contents" : "contents"}><AddFilterMenu defs={filters.defs} variant="header" active={filters.defs.some(filterIsSet)} /></span>}
+          {toolsShown && <span className={hosted ? "max-sm:hidden contents" : "contents"}><DisplayMenu
+            groupBy={groupBy}
+            groupOptions={groupOptions}
+            onGroupChange={onGroupChange ? (v) => { onGroupChange(v); setFocusIndex(0); } : undefined}
+            subGroupBy={subGroupBy}
+            subGroupOptions={subGroupOptions}
+            onSubGroupChange={onSubGroupChange ? (v) => { onSubGroupChange(v); setFocusIndex(0); } : undefined}
+            sortBy={sortBy}
+            sortOptions={sortOptions}
+            onSortChange={(v) => { onSortChange(v); setFocusIndex(0); }}
+            sortDir={sortDir}
+            onSortDirChange={onSortDirChange ? () => { onSortDirChange(); setFocusIndex(0); } : undefined}
+            extra={displayExtra}
+            onCopyLink={shareUrl ? copyViewLink : undefined}
+          /></span>}
+          {viewInternals && <button
+            onClick={() => openPalette("root")}
+            className="cq-header-collapse flex items-center gap-1.5 text-xs h-7 px-2.5 rounded-md border border-sol-border/40 text-sol-text-dim hover:text-sol-text hover:border-sol-border transition-colors"
+            title="Command palette"
+          >
+            {paletteKeys ? paletteKeys.map((k, i) => <KeyCap key={i} size="xs">{k}</KeyCap>) : <Command className="w-3 h-3" />}
+          </button>}
+          {hosted && quickAdd ? null : hosted && createLabel ? (
+            <button
+              onClick={onCreate}
+              data-cc-list-create
+              className="flex items-center gap-1.5 h-7 px-2.5 rounded-md border border-sol-border/60 text-xs text-sol-text-muted hover:text-sol-text hover:border-sol-border transition-colors flex-shrink-0"
+            >
+              <Plus className="w-3.5 h-3.5" aria-hidden />
+              {createLabel}
+            </button>
+          ) : (
+            <button
+              onClick={onCreate}
+              className="flex items-center justify-center w-7 h-7 rounded-full border border-sol-border/40 text-sol-text-dim hover:text-sol-text hover:border-sol-border transition-colors flex-shrink-0"
+              title="Create new"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+        </div>
+
+        {/* Filter bar — only present once at least one chip-able filter is set (NOT
+            filters.hasActive, which also counts the source toggle and would leave an
+            empty chipless row). The header "Filter" button adds the first one. Kept
+            INSIDE .cq-container so its labels and padding collapse with the panel
+            width — a container query needs a containment ancestor or it falls back to
+            the viewport (which is why these classes did nothing out here before). */}
+        {filterBarShown && (
+          <div className="cq-header-pad cq-filter-bar flex items-center flex-wrap gap-x-1.5 gap-y-1.5 px-6 py-2 border-t border-sol-border/30 bg-sol-bg-alt/20">
+          {/* Active filters as removable chips; everything unset lives behind "+ Filter". */}
+          {filters.defs.filter(filterIsSet).map((f) => (
+            <FilterDropdown
+              key={f.key}
+              chip
+              label={f.label}
+              icon={f.icon}
+              value={f.value}
+              options={f.options}
+              onChange={f.onChange}
+              multi={f.multi}
+            />
+          ))}
+          <AddFilterMenu defs={filters.defs} />
+
+          {/* View actions — a tight right-aligned cluster. Each button shows its
+              label at roomy widths and collapses to icon-only (cq-header-collapse)
+              when the bar is narrow, so save / link / clear stay on one row
+              instead of each wrapping to its own line. */}
+          <div className="ml-auto flex items-center gap-0.5">
+            {viewInternals && shareUrl && (
+              <button
+                onClick={copyViewLink}
+                title="Copy link to this view"
+                className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-text-dim hover:text-sol-cyan hover:bg-sol-cyan/5 transition-colors"
+              >
+                <Link2 className="w-3 h-3 flex-shrink-0" />
+                <span className="cq-header-collapse">Link</span>
+              </button>
+            )}
+            {viewInternals && shareUrl && chatOn && (
+              <button
+                onClick={() => openForwardToChat({ url: shareUrl(), label: "view" })}
+                title="Send this view to chat"
+                className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-text-dim hover:text-sol-cyan hover:bg-sol-cyan/5 transition-colors"
+              >
+                <Forward className="w-3 h-3 flex-shrink-0" />
+                <span className="cq-header-collapse">Send</span>
+              </button>
+            )}
+            {/* You changed the filters while inside a saved view. Offer to fold
+                the change back in, or to throw it away — and keep the save
+                button beside them, because the third honest answer is "this is
+                a different view now". Only the author can update a view, so a
+                teammate in a shared one gets discard and save-as instead. */}
+            {filters.dirtyView && !savingView && (
+              <>
+                {filters.dirtyView.canUpdate && (
+                  <button
+                    onClick={filters.dirtyView.onUpdate}
+                    title={`Save these filters into "${filters.dirtyView.name}"`}
+                    className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-cyan hover:bg-sol-cyan/10 transition-colors"
+                  >
+                    <Check className="w-3 h-3 flex-shrink-0" />
+                    <span className="cq-header-collapse">Update view</span>
+                  </button>
+                )}
+                <button
+                  onClick={filters.dirtyView.onDiscard}
+                  title={`Go back to "${filters.dirtyView.name}" as saved`}
+                  className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-alt transition-colors"
+                >
+                  {/* A revert arrow, NOT an X: the labels collapse to icons in a
+                      narrow pane, and Clear-filters beside it is already an X.
+                      Two identical icons a few pixels apart, meaning different
+                      things, is worse than no icon at all. */}
+                  <RotateCcw className="w-3 h-3 flex-shrink-0" />
+                  <span className="cq-header-collapse">Discard</span>
+                </button>
+              </>
+            )}
+            {viewInternals && filters.onSaveView && !savingView && (
+              <button
+                onClick={() => { setSavingView(true); setSaveViewName(""); }}
+                title={filters.dirtyView ? "Save these filters as a new view" : "Save current view as a shortcut"}
+                className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-text-dim hover:text-sol-cyan hover:bg-sol-cyan/5 transition-colors"
+              >
+                {filters.dirtyView
+                  ? <BookmarkPlus className="w-3 h-3 flex-shrink-0" />
+                  : <Bookmark className="w-3 h-3 flex-shrink-0" />}
+                <span className="cq-header-collapse">{filters.dirtyView ? "Save as new" : "Save view"}</span>
+              </button>
+            )}
+            {filters.onSaveView && savingView && (
+              <form
+                className="flex items-center gap-1.5"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const name = saveViewName.trim();
+                  if (name) {
+                    filters.onSaveView!(name);
+                    setSavingView(false);
+                    toast.success(`View "${name}" saved`);
+                  }
+                }}
+              >
+                <input
+                  autoFocus
+                  value={saveViewName}
+                  onChange={(e) => setSaveViewName(e.target.value)}
+                  placeholder="View name..."
+                  className="text-[11px] px-2 py-0.5 rounded bg-sol-bg border border-sol-border/60 text-sol-text outline-none focus:border-sol-cyan w-28"
+                  onKeyDown={(e) => { if (e.key === "Escape") setSavingView(false); }}
+                />
+                <button
+                  type="submit"
+                  disabled={!saveViewName.trim()}
+                  className="text-[10px] text-sol-cyan hover:text-sol-cyan/80 disabled:opacity-30 disabled:cursor-default flex items-center gap-0.5"
+                  title="Save"
+                >
+                  <Check className="w-3 h-3" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSavingView(false)}
+                  className="text-[10px] text-sol-text-dim hover:text-sol-text"
+                  title="Cancel"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </form>
+            )}
+            {filters.hasActive && (
+              <button
+                onClick={filters.onClear}
+                title="Clear filters"
+                className="flex items-center gap-1 h-6 px-1.5 rounded-md text-[10px] text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-alt transition-colors"
+              >
+                <X className="w-3 h-3 flex-shrink-0" />
+                <span className="cq-header-collapse">Clear</span>
+              </button>
+            )}
+          </div>
+        </div>
+        )}
+      </div>
+
+      {banner}
+
+      {/* Content area */}
+      {customContent ? customContent({ openPaletteForItems, openContextMenuForItems }) : (
+        <div className="flex-1 flex overflow-hidden">
+          <div ref={scrollRef} data-list-scroll className="flex-1 overflow-y-auto">
+            {quickAdd && <QuickAddRow inputRef={quickAddRef} {...quickAdd} />}
+            {rowModel.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-48 text-sol-text-dim">
+                {emptyIcon}
+                <p className="text-sm mt-2">{searchQuery ? "No results" : (emptyMessage || "No items found")}</p>
+                {/* The add row above is the way to make one. */}
+                {!searchQuery && !quickAdd && (
+                  <button onClick={onCreate} className="mt-3 text-sm text-sol-cyan hover:underline">
+                    Create one
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ height: rowVirtualizer.getTotalSize(), width: "100%", position: "relative" }}>
+                {rowVirtualizer.getVirtualItems().map((vi) => {
+                  const row = rowModel[vi.index];
+                  if (!row) return null;
+                  return (
+                    <div
+                      key={vi.key}
+                      data-index={vi.index}
+                      ref={rowVirtualizer.measureElement}
+                      // A nested group (ListGroup.depth) steps in as one block,
+                      // header and rows together, so the nesting reads at a glance.
+                      style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${vi.start}px)`, paddingLeft: row.depth ? Math.min(row.depth, MAX_GROUP_INDENT) * GROUP_INDENT_PX : undefined }}
+                    >
+                      {row.kind === "header"
+                        ? renderGroupHeader(row.group, row.collapsed)
+                        : renderItemRow(row.item, row.focusIndex, row.groupKey)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {listFooter}
+
+            {hasMore && onLoadMore && (
+              <div ref={loadMoreRef} className="px-6 py-3 border-t border-sol-border/20">
+                <button onClick={onLoadMore} className="text-xs text-sol-text-dim hover:text-sol-text transition-colors">
+                  {isLoadingMore ? "Loading..." : "Load more"}
+                </button>
+              </div>
+            )}
+          </div>
+          {previewItem && renderPreview && (
+            <div className="flex flex-shrink-0 animate-list-peek-in">
+              {renderPreview(
+                previewItem,
+                () => setPreviewId(null),
+                () => router.push(getItemRoute(previewItem))
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {children}
+
+      {contextMenuContent && (
+        <ContextMenu state={ctxMenu}>{(items) => contextMenuContent(items)}</ContextMenu>
+      )}
+    </div>
+  );
+}
+
+/** A list's add row: type, Enter, and it is on the list, the field kept for
+ *  the next. Esc leaves the field so the list's keys answer again. */
+function QuickAddRow({ placeholder, onAdd, inputRef }: { placeholder: string; onAdd: (title: string) => void; inputRef: React.RefObject<HTMLInputElement | null> }) {
+  const [text, setText] = useState("");
+  return (
+    <form
+      data-cc-quick-add
+      className="flex items-center gap-2.5 border-b border-sol-border/30 px-4 py-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const title = text.trim();
+        if (!title) return;
+        onAdd(title);
+        setText("");
+      }}
+    >
+      <Plus aria-hidden className="h-3.5 w-3.5 shrink-0 text-sol-text-dim" />
+      <input
+        ref={inputRef}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") e.currentTarget.blur(); }}
+        placeholder={placeholder}
+        aria-label={placeholder}
+        className="min-w-0 flex-1 bg-transparent text-sm text-sol-text placeholder:text-sol-text-dim focus:outline-none"
+      />
+      {/* No "c" keycap: the row is hosted mode's, where the key works only
+          on the list page and a lone letter on the row read as stray text. */}
+    </form>
+  );
+}

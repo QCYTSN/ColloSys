@@ -1,0 +1,131 @@
+.cc-review-tray-jump {
+  display: block;
+  text-align: left;
+  /* Room around the text for the hover wash, pulled back into the rail's
+     indent so the text stays put; the height matches the remove button. */
+  padding: 0.15rem 0.35rem;
+  margin-left: -0.35rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+.cc-review-tray-jump:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sol-cyan) 8%, transparent);
+}
+.cc-review-tray-jump:hover:not(:disabled) .cc-review-tray-quote {
+  color: var(--sol-cyan);
+}
+.cc-review-tray[data-applies] .cc-review-tray-jump:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sol-violet) 8%, transparent);
+}
+.cc-review-tray[data-applies] .cc-review-tray-jump:hover:not(:disabled) .cc-review-tray-quote {
+  color: var(--sol-violet);
+}
+.cc-review-tray-jump:focus-visible,
+.cc-review-edge:focus-visible {
+  outline: 2px solid var(--sol-cyan);
+  outline-offset: 3px;
+}
+/* The edge marker is a rail line, not a badge: the same bare left accent bar
+   and small text as the cards it stands in for, with a blurred wash so feed
+   text sliding under it stays legible. It renders only once the nearest card
+   has fully left the viewport and no card occupies its strip of the rail. */
+.cc-review-edge {
+  position: absolute;
+  left: 12px;
+  z-index: 25;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.15rem 0.5rem 0.15rem 0.55rem;
+  border: none;
+  border-left: 2px solid color-mix(in srgb, var(--sol-cyan) 70%, var(--sol-border));
+  border-radius: 0 4px 4px 0;
+  background: color-mix(in srgb, var(--sol-bg) 82%, transparent);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  color: var(--sol-text-dim);
+  font-size: 0.72rem;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+  animation: fadeIn 150ms ease-out;
+  transition: color 120ms, border-color 120ms;
+}
+.cc-review-edge svg {
+  color: var(--sol-cyan);
+}
+.cc-review-edge:hover {
+  color: var(--sol-text);
+  border-left-color: var(--sol-cyan);
+}
+.cc-review-edge[data-direction="above"] { top: 6px; }
+.cc-review-edge[data-direction="below"] { bottom: 6px; }
+/* A note pinned on an image leads its row with the picture and a dot where
+   the pin sits, so a batch of several reads at a glance. */
+.cc-review-tray-thumb {
+  position: relative;
+  float: left;
+  width: 2rem;
+  height: 2rem;
+  margin: 0.05rem 0.5rem 0 0;
+  border-radius: 3px;
+  border: 1px solid var(--sol-border);
+  overflow: hidden;
+}
+.cc-review-tray-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+.cc-review-tray-pin {
+  position: absolute;
+  width: 6px;
+  height: 6px;
+  margin: -3px 0 0 -3px;
+  border-radius: 50%;
+  background: var(--sol-yellow);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+/* An answer to an org proposal card (S39) shares the quote rows' density. The
+   proposal's title is one quiet line over its rows; the verdict word leads
+   each row in the verdict's colour; the card's sentence sits beside it in the
+   quote's quiet ink, and the person's words take the note line below. */
+.cc-review-tray-group {
+  color: var(--sol-text-dim);
+  font-size: 0.7rem;
+  line-height: 1.3;
+  margin-bottom: -0.2rem;
+  /* The list is a capped flex column that scrolls; with overflow hidden this
+     line is the one item allowed to shrink, and it went to zero height the
+     moment the rows overflowed. It keeps its line. */
+  flex-shrink: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cc-review-tray-verdict {
+  font-weight: 600;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  margin-right: 0.4rem;
+}
+.cc-review-tray-verdict[data-verdict="approve"] { color: var(--sol-violet); }
+.cc-review-tray-verdict[data-verdict="reject"] { color: color-mix(in srgb, var(--sol-red) 80%, var(--sol-text)); }
+.cc-review-tray-verdict[data-verdict="note"] { color: var(--sol-text-muted); }
+.cc-review-tray-item[data-review-answer="approve"] { border-left-color: color-mix(in srgb, var(--sol-violet) 70%, var(--sol-border)); }
+.cc-review-tray-item[data-review-answer="reject"] { border-left-color: color-mix(in srgb, var(--sol-red) 60%, var(--sol-border)); }
+.cc-review-tray-item[data-review-answer="note"] { border-left-color: var(--sol-border); }
+.cc-review-tray-sentence {
+  display: inline;
+  font-style: normal;
+}
+/* A list of answers lets the rows grow (the composer's
+   tray while it holds answers): the composer's strip caps a list of quotes at
+   a few rows because the textarea needs the room, but answers are the reply
+   being built, and a whole-proposal note cut mid row reads as lost. Past the
+   cap it scrolls; pair it with .canvas-scroll so the scrollbar stays visible. */
+.cc-review-tray-list.cc-review-tray-list-grow {
+  max-height: min(24rem, 50vh);
+}
+.cc-review-tray-jump:disabled { cursor: default; }

@@ -1,0 +1,431 @@
+// Text chat alongside a huddle. One thread per room: the call stage shows it
+// live, and the call page shows the same thread next to the transcript, so
+// links and asides dropped mid-call are there when the recording is read
+// later. Authorization is the room's own membership rule (grants admit a
+// guest to the running huddle, not to the room's history).
+//
+// AGENTS ARE PARTICIPANTS. A session fed the live transcript (a route of kind
+// "session", tracked in call_agent_feeds) takes part in this thread two ways:
+//   - what it answers at the end of a turn is mirrored here as its own line
+//     (mirrorAgentTurn, scheduled by managedSessions.updateAgentStatus when a
+//     turn settles), so the room sees the reply without opening the session;
+//   - a line a person types here is relayed into the session (post), so the
+//     chat is a way to talk to the agent in text while the huddle runs.
+// Both ride the transcript's own delivery identity: the agent speaks in the
+// room as whoever fed it, the way its transcript chunks arrive as them.
+//
+// THE ROOM SEES WHO CAME AND WENT. An agent added or removed, transcription
+// switched on or off: each is a row in this same thread with `event` set
+// (postEvent), so the timeline reads in one order with the words and the
+// typed lines. An event row is nobody's line: it is never relayed to the fed
+// sessions and never "mine".
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { internalMutation, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import { huddleChatLineHeader, isHuddlePass, isRecRoomKey, isToolResultCarrier } from "@codecast/shared/contracts";
+import { characterOf } from "@codecast/shared/contracts/sessionCharacter";
+import { authorizeRoom } from "./callRooms";
+import { MAX_ATTACHMENTS } from "./chatText";
+import { chatAttachmentValidator } from "./lib/chatAttachment";
+import { scheduleFaceLeave, scheduleFaceTell } from "./callFace";
+
+const MAX_TEXT = 4000;
+const PAGE = 200;
+// A chat bubble, not a report: a long answer is clipped here and the row
+// links to the session that holds the whole of it.
+export const AGENT_LINE_MAX = 1800;
+// Words land in the session by transcript sync a beat after the Stop hook
+// settles the status, so the mirror waits before reading the replies,
+// and looks once more if nothing new had landed yet.
+const MIRROR_DELAY_MS = 4_000;
+const MIRROR_RETRY_MS = 15_000;
+const MIRROR_ATTEMPTS = 2;
+// The most rows one mirror walks past the watermark: a few turns of tool calls.
+const MIRROR_SCAN = 200;
+
+export const list = query({
+  args: {
+    room_key: v.string(),
+    // One huddle's lines (the call page), rather than the room's newest.
+    transcript_id: v.optional(v.id("transcripts")),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    const auth = await authorizeRoom(ctx, userId, args.room_key);
+    if (!auth.ok) return null;
+    const take = Math.min(args.limit ?? PAGE, PAGE);
+    const rows = args.transcript_id
+      ? (
+          await ctx.db
+            .query("call_chat_messages")
+            .withIndex("by_transcript", (q) => q.eq("transcript_id", args.transcript_id))
+            .order("desc")
+            .take(take)
+        ).filter((r) => r.room_key === args.room_key)
+      : await ctx.db
+          .query("call_chat_messages")
+          .withIndex("by_room", (q) => q.eq("room_key", args.room_key))
+          .order("desc")
+          .take(take);
+    rows.reverse();
+    const users = new Map<string, { name: string; image?: string }>();
+    const agents = new Map<string, AgentIdentity | null>();
+    for (const r of rows) {
+      const key = String(r.user_id);
+      if (!users.has(key)) {
+        const u = await ctx.db.get(r.user_id);
+        users.set(key, { name: u?.name ?? u?.email ?? "someone", image: u?.image ?? undefined });
+      }
+      if (r.agent_conversation_id && !agents.has(String(r.agent_conversation_id))) {
+        agents.set(String(r.agent_conversation_id), await agentIdentity(ctx, r.agent_conversation_id));
+      }
+    }
+    return rows.map((r) => {
+      const u = users.get(String(r.user_id))!;
+      const agent = r.agent_conversation_id ? agents.get(String(r.agent_conversation_id)) ?? null : null;
+      // An event row names its ACTOR (the person who added the agent or
+      // pressed the switch) and carries the agent beside it, so the room can
+      // read "Ada added Ember". An agent's own line is the agent's: its name
+      // is what the room calls it, and it is never "mine" however the row is
+      // owned.
+      const spoken = agent && !r.event;
+      return {
+        _id: r._id,
+        user_id: String(r.user_id),
+        user_name: spoken ? agent.name : (r.event_guest_name ?? u.name),
+        user_image: spoken || r.event_guest_name ? undefined : u.image,
+        text: r.text,
+        attachments: r.attachments,
+        at: r._creationTime,
+        mine: !agent && !r.event && String(r.user_id) === String(userId),
+        transcript_id: r.transcript_id ? String(r.transcript_id) : null,
+        agent,
+        event: (r.event ?? null) as RoomEvent | null,
+        // A recording's end says why ("pressed", "huddle_ended", "limit",
+        // "failed"), and a guest who pressed Stop is named as themselves.
+        event_reason: r.event_reason ?? null,
+        event_guest_name: r.event_guest_name ?? null,
+        // Which run a recording line is about, and what a deleted one had
+        // filmed, so the thread marks a deleted run's lines as gone.
+        event_run_id: r.event_run_id ?? null,
+        event_span: r.event_span ?? null,
+      };
+    });
+  },
+});
+
+export type RoomEvent =
+  | "agent_joined"
+  | "agent_left"
+  | "transcribe_on"
+  | "transcribe_off"
+  | "record_on"
+  | "record_off"
+  | "record_lost"
+  | "record_deleted"
+  | "frame_shared"
+  | "video_shared"
+  | "video_unshared"
+  | "link_on"
+  | "link_off"
+  | "guest_admitted"
+  | "guest_removed";
+
+/** Something the room saw, as a row in its thread: an agent came or went,
+ *  transcription went on or off, somebody let a guest in or put one out. `user_id` is who did it. A recording has no
+ *  room and no thread (callChat.list refuses a rec key), so nothing is
+ *  written for one. Returns the row id, or null when nothing was written. */
+export async function postEvent(
+  ctx: any,
+  args: {
+    room_key: string;
+    team_id?: Id<"teams">;
+    user_id: Id<"users">;
+    event: RoomEvent;
+    agent_conversation_id?: Id<"conversations">;
+    // The huddle the event belongs to, when it is not the room's live one (a
+    // recording deleted after its call ended, a run ending as its record does).
+    transcript_id?: Id<"transcripts">;
+    // A recording event's why, guest actor and plain failure words (schema).
+    reason?: string;
+    guest_name?: string;
+    detail?: string;
+    // A recording event's run, and a deleted run's filmed stretch (schema).
+    run_id?: string;
+    span?: { from_ms: number; to_ms: number };
+  },
+): Promise<Id<"call_chat_messages"> | null> {
+  if (isRecRoomKey(args.room_key)) return null;
+  return await insertRoomRow(ctx, {
+    room_key: args.room_key,
+    team_id: args.team_id,
+    user_id: args.user_id,
+    text: args.detail ?? "",
+    event: args.event,
+    ...(args.agent_conversation_id ? { agent_conversation_id: args.agent_conversation_id } : {}),
+    ...(args.transcript_id ? { transcript_id: args.transcript_id } : {}),
+    ...(args.reason ? { event_reason: args.reason } : {}),
+    ...(args.guest_name ? { event_guest_name: args.guest_name } : {}),
+    ...(args.run_id ? { event_run_id: args.run_id } : {}),
+    ...(args.span ? { event_span: args.span } : {}),
+  });
+}
+
+/** The one way a row enters a room's thread: stamped with the huddle it was
+ *  said in. A row that names its huddle keeps it; otherwise it belongs to the
+ *  room's live record, and with none running it waits unstamped for the
+ *  record that starts next to claim it (claimRoomRows). */
+export async function insertRoomRow(
+  ctx: any,
+  row: Omit<Doc<"call_chat_messages">, "_id" | "_creationTime">,
+): Promise<Id<"call_chat_messages">> {
+  const transcript_id = row.transcript_id ?? (await liveTranscriptFor(ctx, row.room_key))?._id;
+  return await ctx.db.insert("call_chat_messages", { ...row, ...(transcript_id ? { transcript_id } : {}) });
+}
+
+/** A huddle's record just started: the lines typed in the room since the
+ *  huddle began (somebody waiting for a ring to be answered, a room with
+ *  transcription switched off before anyone spoke) are this huddle's. */
+export async function claimRoomRows(
+  ctx: any,
+  roomKey: string,
+  transcriptId: Id<"transcripts">,
+  since: number,
+): Promise<number> {
+  const rows: Doc<"call_chat_messages">[] = await ctx.db
+    .query("call_chat_messages")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey).gte("_creationTime", since))
+    .collect();
+  let n = 0;
+  for (const r of rows) {
+    if (r.transcript_id) continue;
+    await ctx.db.patch(r._id, { transcript_id: transcriptId });
+    n++;
+  }
+  return n;
+}
+
+type AgentIdentity = {
+  conversation_id: string;
+  short_id: string | null;
+  title: string;
+  agent_type: string;
+  /** What the room calls it: its character name (session-characters.md S1),
+   *  the name people say to address it and the name beside its lines. */
+  name: string;
+  character_avatar: string | null;
+  character_name: string | null;
+};
+
+export async function agentIdentity(ctx: any, id: Id<"conversations">): Promise<AgentIdentity | null> {
+  const conv: Doc<"conversations"> | null = await ctx.db.get(id);
+  if (!conv) return null;
+  return {
+    conversation_id: String(conv._id),
+    short_id: conv.short_id ?? null,
+    title: conv.title || "agent session",
+    agent_type: conv.agent_type,
+    name: characterOf({ _id: String(conv._id), character_avatar: conv.character_avatar, character_name: conv.character_name }).name,
+    character_avatar: conv.character_avatar ?? null,
+    character_name: conv.character_name ?? null,
+  };
+}
+
+export const post = mutation({
+  args: {
+    room_key: v.string(),
+    text: v.string(),
+    attachments: v.optional(v.array(chatAttachmentValidator)),
+    // The huddle the line is typed into, from an ended call's page. Absent on
+    // the stage: the line belongs to whatever huddle is running.
+    transcript_id: v.optional(v.id("transcripts")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Not authenticated");
+    // authorizeRoom (grant included): an invited guest in the live huddle can
+    // talk in its chat, same as they can speak in its audio.
+    const auth = await authorizeRoom(ctx, userId, args.room_key);
+    if (!auth.ok) throw new Error(`Cannot chat in this room: ${auth.reason}`);
+    const text = args.text.trim().slice(0, MAX_TEXT);
+    const attachments = args.attachments ?? [];
+    if (attachments.length > MAX_ATTACHMENTS) {
+      throw new Error(`At most ${MAX_ATTACHMENTS} attachments per message`);
+    }
+    if (!text && attachments.length === 0) return;
+    const named = args.transcript_id ? await ctx.db.get(args.transcript_id) : null;
+    await insertRoomRow(ctx, {
+      room_key: args.room_key,
+      team_id: auth.teamId,
+      user_id: userId,
+      text,
+      attachments: attachments.length > 0 ? attachments : undefined,
+      ...(named && named.room_key === args.room_key ? { transcript_id: named._id } : {}),
+    });
+    // The agents in the room hear the line too. Relayed as the transcript's
+    // routes deliver (as the feed's adder, off the request path), so a
+    // session the poster could not message directly still hears its huddle,
+    // and a relay that fails never loses the chat line itself.
+    const live = await liveTranscriptFor(ctx, args.room_key);
+    if (!live) return;
+    const feeds: Doc<"call_agent_feeds">[] = await ctx.db
+      .query("call_agent_feeds")
+      .withIndex("by_transcript", (q) => q.eq("transcript_id", live._id))
+      .collect();
+    if (feeds.length === 0) return;
+    const poster = await ctx.db.get(userId);
+    const name = poster?.name ?? poster?.email ?? "Someone";
+    const imageIds = attachments.map((a) => a.storage_id);
+    const line = text
+      ? `**${name}**: ${text}`
+      : `**${name}** attached ${imageIds.length === 1 ? "an image" : `${imageIds.length} images`}.`;
+    for (const feed of feeds) {
+      await ctx.scheduler.runAfter(0, internal.transcripts.deliverToSession, {
+        as_user: feed.added_by,
+        to: String(feed.conversation_id),
+        body: `${huddleChatLineHeader(name)}\n\n${line}`,
+        image_storage_ids: imageIds.length > 0 ? imageIds : undefined,
+      });
+    }
+  },
+});
+
+export async function liveTranscriptFor(ctx: any, roomKey: string): Promise<Doc<"transcripts"> | null> {
+  const rows: Doc<"transcripts">[] = await ctx.db
+    .query("transcripts")
+    .withIndex("by_room", (q: any) => q.eq("room_key", roomKey))
+    .collect();
+  return rows.find((t) => t.status === "live") ?? null;
+}
+
+// The text of an assistant message as a chat line: the message's own prose,
+// nothing from tool calls, clipped to a bubble. Empty when the turn ended on
+// a tool call with no words, or on content the server cannot read.
+export function agentLineText(m: { content?: string; is_encrypted?: boolean } | null | undefined): string {
+  if (!m || m.is_encrypted) return "";
+  const text = (m.content ?? "").trim();
+  if (!text) return "";
+  return text.length > AGENT_LINE_MAX ? `${text.slice(0, AGENT_LINE_MAX - 1).trimEnd()}…` : text;
+}
+
+/** Each turn's reply, oldest first: the last assistant words before the next
+ *  thing said to the session. A user row that only carries tool results is
+ *  the harness, not a new turn, so narration between tool calls never posts. */
+export function turnReplies<M extends { role: string; content?: string; is_encrypted?: boolean; tool_results?: readonly unknown[] }>(rows: M[]): M[] {
+  const out: M[] = [];
+  let last: M | null = null;
+  for (const m of rows) {
+    if (m.role === "assistant") {
+      if (agentLineText(m)) last = m;
+    } else if (m.role === "user" && !isToolResultCarrier(m)) {
+      if (last) out.push(last);
+      last = null;
+    }
+  }
+  if (last) out.push(last);
+  return out;
+}
+
+/** A fed session settled a turn: show its reply in the huddle chat.
+ *
+ *  Posts the reply of every turn past the feed's watermark (turnReplies), so a
+ *  settle republished for the same turn, a turn that ended without words, or a
+ *  turn that passed, posts nothing. The huddle may
+ *  have ended between the settle and now; then the feed row is already gone
+ *  and there is nothing to do. */
+export const mirrorAgentTurn = internalMutation({
+  args: { conversation_id: v.id("conversations"), attempt: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const feed: Doc<"call_agent_feeds"> | null = await ctx.db
+      .query("call_agent_feeds")
+      .withIndex("by_conversation", (q) => q.eq("conversation_id", args.conversation_id))
+      .first();
+    if (!feed) return { mirrored: false, reason: "not_fed" };
+    const transcript = await ctx.db.get(feed.transcript_id);
+    if (!transcript || transcript.status !== "live") {
+      await ctx.db.delete(feed._id);
+      await scheduleFaceLeave(ctx, feed);
+      return { mirrored: false, reason: "huddle_over" };
+    }
+    // Every turn since the watermark, oldest first. The settle hands the room's
+    // next words over at once but mirrors a beat later, so a quick next turn
+    // (a [pass] to those words) can land first; reading only the newest reply
+    // let it bury the one before. With no watermark yet, only the newest turn.
+    const seen = feed.last_mirrored_message_id ? await ctx.db.get(feed.last_mirrored_message_id) : null;
+    let since = seen?.timestamp;
+    if (since === undefined) {
+      const recent = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_role_timestamp", (q) =>
+          q.eq("conversation_id", args.conversation_id).eq("role", "assistant"),
+        )
+        .order("desc")
+        .take(4);
+      const newest = recent.find((m) => agentLineText(m).length > 0);
+      since = newest ? (newest.timestamp ?? 0) - 1 : Number.MAX_SAFE_INTEGER;
+    }
+    const after = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_timestamp", (q) =>
+        q.eq("conversation_id", args.conversation_id).gt("timestamp", since),
+      )
+      .order("asc")
+      .take(MIRROR_SCAN);
+    const replies = turnReplies(after);
+    const attempt = args.attempt ?? 0;
+    if (replies.length === 0) {
+      if (attempt + 1 < MIRROR_ATTEMPTS) {
+        await ctx.scheduler.runAfter(MIRROR_RETRY_MS, internal.callChat.mirrorAgentTurn, {
+          conversation_id: args.conversation_id,
+          attempt: attempt + 1,
+        });
+      }
+      return { mirrored: false, reason: seen ? "already_mirrored" : "no_words" };
+    }
+    // A turn that passed is seen, and the room gets nothing for it.
+    const posted = replies.filter((m) => !isHuddlePass(m.content));
+    for (const m of posted) {
+      await insertRoomRow(ctx, {
+        room_key: feed.room_key,
+        team_id: feed.team_id,
+        user_id: feed.added_by,
+        text: agentLineText(m),
+        agent_conversation_id: args.conversation_id,
+        source_message_id: m._id,
+        transcript_id: feed.transcript_id,
+      });
+    }
+    await ctx.db.patch(feed._id, { last_mirrored_message_id: replies[replies.length - 1]._id });
+    if (posted.length === 0) return { mirrored: false, reason: "passed" };
+    await scheduleFaceTell(ctx, feed, posted.map((m) => m.content ?? ""));
+    return { mirrored: true };
+  },
+});
+
+/** Called from the status settle: is this session in a huddle, and if so
+ *  arrange what a turn's end means there. Its reply is mirrored into the
+ *  room's chat once the words have synced, and the words the room said while
+ *  it worked (transcripts.deliverRoutes holds them for a busy agent) are
+ *  delivered now as one catch up. One indexed read on the hot path;
+ *  everything else runs later. */
+export async function scheduleFedSessionSettle(ctx: any, conversationId: Id<"conversations">): Promise<boolean> {
+  const feed = await ctx.db
+    .query("call_agent_feeds")
+    .withIndex("by_conversation", (q: any) => q.eq("conversation_id", conversationId))
+    .first();
+  if (!feed) return false;
+  await ctx.scheduler.runAfter(MIRROR_DELAY_MS, internal.callChat.mirrorAgentTurn, {
+    conversation_id: conversationId,
+    attempt: 0,
+  });
+  await ctx.scheduler.runAfter(0, internal.transcripts.deliverRoutes, {
+    transcript_id: feed.transcript_id,
+    include_after_routes: false,
+    reason: "settle",
+  });
+  return true;
+}

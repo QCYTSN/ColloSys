@@ -1,0 +1,287 @@
+// One list of notification types for every surface that renders one. The
+// notifications page and the bell carried byte-identical copies of these maps
+// and of the click router, which is how three chat types reached the table and
+// rendered with a blank label, a default colour, no filter tab, and a click that
+// fell through to the inbox.
+//
+// The server's list lives in convex/notificationRouter.ts; a convex test asserts
+// the schema, the router and the preference map agree. This is the client half.
+import { agentDisplayName, isHostedAgentType } from "@codecast/shared/contracts";
+
+export const sessionTypes = new Set([
+  "session_idle",
+  "session_error",
+  "permission_request",
+  // An alert about a whole machine, but it belongs where a reader looks for "my
+  // agents are not moving": a frozen daemon is why nothing is coming back.
+  "daemon_overloaded",
+  // A laptop under sustained load: every agent on it slows down.
+  "machine_overloaded",
+  // The hourly fold-up of sessions waiting for input. Names no conversation —
+  // it opens the inbox.
+  "sessions_need_input",
+]);
+
+// Which rows wear an agent's face. A row about a session does; the daemon's
+// machine alert is a session type so it files with "my agents are not moving",
+// but it names no conversation, so agent_type would fall back to Claude Code
+// and put that logo on a report about a frozen machine. Such a row takes the
+// generic icon. Shared because the bell and the notifications page render the
+// same row twice and drifted the last time each kept its own copy.
+export const showsAgentIcon = (n: { type: string; conversation?: unknown }): boolean =>
+  sessionTypes.has(n.type) && !!n.conversation;
+
+export const socialTypes = new Set([
+  "mention",
+  // A role telling a person who reports to it that a goal stalled: addressed
+  // to them by name, like a mention (org-roles-run-work.md R6).
+  "goal_stall",
+  "comment_reply",
+  "conversation_comment",
+  "team_invite",
+  // Someone answered a decision asked of you, for you.
+  "decision_answered_for_you",
+  "team_join_request",
+  "team_join_approved",
+  "artifact_commented",
+  "chat_mention",
+  "chat_reply",
+  "chat_here",
+  "chat_dm",
+  "chat_added",
+  "chat_post",
+]);
+
+export const taskTypes = new Set([
+  "task_assigned",
+  "task_status_changed",
+  "task_commented",
+  "task_completed",
+  "task_failed",
+  "task_unblocked",
+  "plan_status_changed",
+  "plan_task_completed",
+  "doc_updated",
+  "doc_commented",
+  // The line's news about a cause (the-line-end-to-end.md LE16).
+  "card_waiting",
+  "change_shipped",
+  "cause_reopened",
+]);
+
+export const typeLabels: Record<string, string> = {
+  team_session_start: "started coding",
+  session_idle: "ready",
+  session_error: "error",
+  permission_request: "needs permission",
+  mention: "mentioned you",
+  comment_reply: "replied",
+  conversation_comment: "commented",
+  team_invite: "team invite",
+  task_completed: "task done",
+  task_failed: "task failed",
+  task_unblocked: "unblocked",
+  task_assigned: "assigned to you",
+  task_status_changed: "status changed",
+  task_commented: "commented",
+  doc_updated: "doc updated",
+  doc_commented: "commented on doc",
+  plan_status_changed: "plan updated",
+  plan_task_completed: "plan task done",
+  artifact_commented: "commented on your page",
+  chat_mention: "mentioned you in chat",
+  chat_reply: "replied in a thread",
+  chat_here: "posted to everyone here",
+  chat_dm: "sent you a direct message",
+  chat_added: "added you to a channel",
+  chat_post: "posted in a channel you follow",
+  daemon_overloaded: "daemon under load",
+  machine_overloaded: "machine overloaded",
+  sessions_need_input: "waiting for you",
+  goal_stall: "focus stalled",
+  device_shared: "shared a machine",
+  card_waiting: "card waiting on you",
+  change_shipped: "change shipped",
+  cause_reopened: "problem came back",
+  decision_answered_for_you: "answered for you",
+  team_join_request: "asked to join your team",
+  team_join_approved: "let you into a team",
+};
+
+export const typeColors: Record<string, string> = {
+  team_session_start: "text-sol-green",
+  session_idle: "text-sol-green",
+  session_error: "text-red-400",
+  permission_request: "text-sol-orange",
+  mention: "text-sol-blue",
+  comment_reply: "text-sol-cyan",
+  conversation_comment: "text-sol-cyan",
+  team_invite: "text-sol-violet",
+  task_completed: "text-sol-green",
+  task_failed: "text-red-400",
+  task_unblocked: "text-sol-green",
+  task_assigned: "text-sol-yellow",
+  task_status_changed: "text-sol-yellow",
+  task_commented: "text-sol-cyan",
+  doc_updated: "text-sol-violet",
+  doc_commented: "text-sol-cyan",
+  plan_status_changed: "text-sol-green",
+  plan_task_completed: "text-sol-green",
+  artifact_commented: "text-sol-cyan",
+  chat_mention: "text-sol-blue",
+  chat_reply: "text-sol-cyan",
+  chat_here: "text-sol-orange",
+  chat_dm: "text-sol-orange",
+  chat_added: "text-sol-cyan",
+  chat_post: "text-sol-cyan",
+  daemon_overloaded: "text-sol-orange",
+  machine_overloaded: "text-red-400",
+  sessions_need_input: "text-sol-green",
+  goal_stall: "text-sol-yellow",
+  device_shared: "text-sol-cyan",
+  card_waiting: "text-sol-orange",
+  change_shipped: "text-sol-green",
+  cause_reopened: "text-red-400",
+  decision_answered_for_you: "text-sol-yellow",
+  team_join_request: "text-sol-violet",
+  team_join_approved: "text-sol-violet",
+};
+
+/** Who a notification is FROM. A snapshot on the row (Slack person, anonymous
+ *  commenter, session-typed line) wins over the live user, which for Slack
+ *  inbound is the workspace bridge rather than who posted. A line a session
+ *  typed is FROM the session (`actor_session`, notifications.list): it wears
+ *  the session's agent mark, never the photo of the human it ran as. */
+export function notificationActor(n: {
+  actor?: { name?: string; github_username?: string; github_avatar_url?: string } | null;
+  actor_name?: string;
+  actor_avatar?: string;
+  actor_session?: { id: string; agent_type: string } | null;
+}): { name: string | undefined; avatar: string | undefined; session: { id: string; agent_type: string } | null } {
+  const session = n.actor_session ?? null;
+  return {
+    name: n.actor_name || n.actor?.name || n.actor?.github_username,
+    avatar: session ? undefined : n.actor_avatar || n.actor?.github_avatar_url,
+    session,
+  };
+}
+
+export const agentNames: Record<string, string> = {
+  claude_code: "claude",
+  codex: "codex",
+  codex_cli: "codex",
+  cursor: "cursor",
+  gemini: "gemini",
+  opencode: "opencode",
+  pi: "pi",
+  grok: "grok",
+  muse: "muse",
+};
+
+/** How a conversation with the hosted assistant words the events a machine
+ *  session calls "ready" and "needs permission": it replied, or it waits on
+ *  the person's OK. */
+const hostedTypeLabels: Record<string, string> = {
+  session_idle: "replied",
+  permission_request: "needs your OK",
+};
+
+/** The small event word on a notification row, for the agent its
+ *  conversation runs on. An unlisted type reads as its own name in words. */
+export function notificationTypeLabel(type: string, agentType?: string | null): string {
+  return (isHostedAgentType(agentType) && hostedTypeLabels[type]) || typeLabels[type] || type.replace(/_/g, " ");
+}
+
+/** Who a session notification is from: the short agent name, and for an
+ *  agent that has none (the hosted assistant) its display name, never the
+ *  raw agent type. */
+export function notificationAgentName(agentType: string): string {
+  return agentNames[agentType] ?? agentDisplayName(agentType);
+}
+
+/** Display label for the session a notification belongs to: title, else project basename. */
+export function sessionLabel(
+  conversation: { title?: string; project_path?: string; agent_type?: string } | null | undefined,
+): string | null {
+  if (!conversation) return null;
+  if (conversation.title) return conversation.title;
+  if (conversation.project_path) {
+    const parts = conversation.project_path.split("/");
+    return parts[parts.length - 1] || parts[parts.length - 2] || conversation.project_path;
+  }
+  return null;
+}
+
+/**
+ * Where a notification's entity opens, given the entity it names and — for
+ * chat, which addresses a position inside a page — the message it points at.
+ * Returns null when the entity has no page of its own and the caller should fall
+ * back to the conversation or the inbox.
+ *
+ * The chat shape mirrors convex/chatText.ts `chatPermalink`, so the bell, the
+ * push payload and the CLI all name the same URL.
+ */
+export function notificationRoute(
+  entityType: string | undefined,
+  entityId: string | undefined,
+  chatMessageId?: string,
+): string | null {
+  if (!entityType || !entityId) return null;
+  const simple: Record<string, string> = { task: "/tasks/", doc: "/docs/", plan: "/plans/" };
+  if (simple[entityType]) return `${simple[entityType]}${entityId}`;
+  if (entityType === "chat_channel") {
+    return chatMessageId ? `/chat/${entityId}?m=${chatMessageId}` : `/chat/${entityId}`;
+  }
+  // A device has no page of its own; the roster with its health is the place a
+  // reader can act on the alert.
+  if (entityType === "device") return "/settings/devices";
+  // A machine by daemon device id: its offload review on Resources, ready to move load off.
+  if (entityType === "machine") return `/resources?offload=${encodeURIComponent(entityId)}`;
+  // A team: its settings, where join requests wait for an admin.
+  if (entityType === "team") return "/settings/team";
+  // A role's page opens on its Scope tab, where a person who reports to it
+  // reads their goals with what moved and what stalled.
+  if (entityType === "org_role") return `/org/${entityId}`;
+  // A place in a repository: `owner/repo#12` is a pull request, `owner/repo@sha`
+  // a commit — the two pages a code comment is read on.
+  if (entityType === "code") {
+    const pr = entityId.match(/^([^#@]+)#(\d+)$/);
+    if (pr) return `/pr/${pr[1]}/${pr[2]}`;
+    const commit = entityId.match(/^([^#@]+)@([0-9a-f]+)$/i);
+    if (commit) return `/commit/${commit[1]}/${commit[2]}`;
+    return null;
+  }
+  return null;
+}
+
+/** The URL a notification lands on — for opening it in a new tab, where the
+ *  in-app store navigation can't reach. Lives beside the route builder it
+ *  wraps, and out of the row component: a module that exports a component and
+ *  a helper breaks Fast Refresh (lib/__tests__/fastRefreshBoundaries.guard). */
+export function notificationHref(n: {
+  link?: string;
+  entity_type?: string;
+  entity_id?: string;
+  chat_message_id?: string;
+  conversation_id?: string;
+}): string {
+  if (n.link) return n.link;
+  return (
+    notificationRoute(n.entity_type, n.entity_id, n.chat_message_id) ??
+    (n.conversation_id ? `/conversation/${n.conversation_id}` : "/inbox")
+  );
+}
+
+/** The notification list's own clock: seconds for the newest rows, a date once
+ *  a row is older than a week. */
+export function timeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}

@@ -1,0 +1,295 @@
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { readFileSync } from "fs";
+import { join } from "path";
+import {
+  computeInboxSessions,
+  computeSessionsLiveness,
+  INBOX_LIVENESS_FIELDS,
+  INBOX_FAST_FIELDS,
+} from "./conversations";
+import { INBOX_FACT_FIELDS, INBOX_WINDOW_CAPS, inboxEpoch, selectWorkingSet, WORKING_SET_RECENCY_MS } from "@codecast/shared/contracts";
+import { makeFakeDb } from "./testDb";
+
+// FROZEN CONTRACTS for deployed binaries (sync-convergence C9). Mobile builds
+// live for months and read these payloads with the OLD classifiers; every
+// guarantee pinned here stays while they exist. Deleting any of them is tied to
+// a minimum supported mobile version of 1.3.0 (the first build whose store
+// classifies from the shared projection) — not an open-ended watch. A cleanup
+// cannot pass CI ahead of that floor.
+
+const ME = "users_me";
+const MIN = 60 * 1000;
+const H = 60 * MIN;
+const NOW = 1_800_000_000_000 + 25_000;
+const EPOCH = inboxEpoch(NOW);
+
+function conv(id: string, overrides: Record<string, any> = {}) {
+  return {
+    _id: `conversations_${id}`,
+    user_id: ME,
+    status: "active",
+    updated_at: EPOCH - 2 * H,
+    started_at: EPOCH - 3 * H,
+    message_count: 4,
+    last_message_role: "assistant",
+    title: `Session ${id}`,
+    ...overrides,
+  };
+}
+
+function db(tables: Record<string, any[]> = {}) {
+  return makeFakeDb({
+    users: [{ _id: ME, name: "Me", email: "me@example.com" }],
+    session_owners: [],
+    managed_sessions: [
+      { _id: "ms_a", user_id: ME, conversation_id: "conversations_a", last_heartbeat: EPOCH - 1000, agent_status: "working", agent_status_updated_at: EPOCH - MIN, tmux_session: "cc-1", permission_mode: "default" },
+    ],
+    messages: [],
+    session_decisions: [],
+    conversations: [conv("a", { updated_at: EPOCH - MIN, has_pending_messages: false })],
+    ...tables,
+  });
+}
+
+let nowSpy: ReturnType<typeof spyOn>;
+beforeEach(() => { nowSpy = spyOn(Date, "now").mockReturnValue(NOW); });
+afterEach(() => { nowSpy.mockRestore(); });
+
+// The fields the OLD mobile/web classifiers read, per channel that carries
+// them today. `has_pending` rides the enriched row channels; the overlay
+// carries the fact set instead.
+const OLD_CLASSIFIER_ROW_FIELDS = ["agent_status", "is_idle", "awaiting_input", "has_pending", "message_count"] as const;
+
+describe("frozen payload contracts (minimum supported mobile 1.3.0)", () => {
+  test("listInboxSessions: include_liveness DEFAULTS TO TRUE — an un-flagged call still carries every classifier field", async () => {
+    const { sessions } = await computeInboxSessions({ db: db() }, ME as any, {});
+    const row = sessions.find((s: any) => s._id === "conversations_a");
+    expect(row).toBeDefined();
+    for (const f of OLD_CLASSIFIER_ROW_FIELDS) expect(row[f]).not.toBeUndefined();
+    expect(row.agent_status).toBe("working");
+    // …and the arg is declared optional on the public query.
+    const src = readFileSync(join(import.meta.dir, "conversations.ts"), "utf8");
+    expect(src).toContain("include_liveness: v.optional(v.boolean())");
+    expect(src).toContain("const includeLiveness = opts.includeLiveness !== false;");
+  });
+
+  test("sessionsLiveness: the payload keeps its `liveness` key with the classifier facts on every row", async () => {
+    const { liveness } = await computeSessionsLiveness({ db: db() }, ME as any);
+    const row = (liveness as any).conversations_a;
+    expect(row).toBeDefined();
+    for (const f of ["agent_status", "is_idle", "awaiting_input", "message_count", "updated_at", "is_connected"]) {
+      expect(row[f]).not.toBeUndefined();
+    }
+    // The no-auth arm returns the same shape, never a bare {}.
+    const src = readFileSync(join(import.meta.dir, "conversations.ts"), "utf8");
+    expect(src.match(/return \{ liveness: \{\} \};/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  test("the enriched channels (crawl, byIds) keep has_pending and message_count on their rows", async () => {
+    const { sessions } = await computeInboxSessions({ db: db() }, ME as any, { includeLiveness: true });
+    for (const s of sessions) {
+      expect(s.has_pending).not.toBeUndefined();
+      expect(s.message_count).not.toBeUndefined();
+    }
+  });
+});
+
+describe("un-flagged listInboxSessions payload — golden shape", () => {
+  // The base list is byte compatible for deployed bundles: the fold cut stays
+  // a TRANSPORT omission (show_all:false omits below-fold row bodies), and no
+  // projection stamp ever rides a row. This pins the exact key set of an
+  // un-flagged row so an accidental field move fails CI instead of shipping a
+  // torn channel. Adding a key is fine (older bundles ignore JSON fields they
+  // do not read — is_workflow_sub joined the row this way for the web chime
+  // mirror); moving or dropping one is the change this list exists to catch.
+  test("row key set is pinned", async () => {
+    const { sessions, hidden_count, truncated } = await computeInboxSessions({ db: db() }, ME as any, {});
+    expect(hidden_count).toBe(0);
+    expect(truncated).toEqual([]);
+    const row = sessions.find((s: any) => s._id === "conversations_a");
+    expect(Object.keys(row).sort()).toEqual([
+      "_id", "acting_user_id", "active_plan", "active_task", "activity", "agent_name", "agent_started_at",
+      "agent_status", "agent_status_boundary", "agent_status_updated_at", "agent_task_id", "agent_team_name", "agent_type",
+      "anchor_id", "armed_trigger_kind", "auq_open", "author_avatar", "author_name",
+      "awaiting_input", "browser_pane_offer", "cc_account", "character_avatar", "character_name", "cloud_context_too_large", "cloud_placement", "cloud_placement_progress", "cloud_seed", "cloud_workspace", "context_tokens", "daemon_alive_until", "effort", "forked_from", "git_branch", "git_remote_url", "git_root",
+      "handed_off_from_conversation_id", "handed_off_from_details", "handed_off_to_conversation_id", "handed_off_to_details",
+      "has_pending", "hibernated_at", "hosted_stop", "icon", "icon_color", "idle_summary", "image_preview_url",
+      "implementation_session", "inbox_deferred_at", "inbox_dismissed_at", "inbox_killed_at",
+      "inbox_pinned_at", "inbox_rest", "inbox_rest_at", "inbox_snoozed_until", "inbox_stash_hidden", "inbox_stashed_at", "is_anchor", "is_connected",
+      "is_deferred", "is_favorite", "is_idle", "is_pinned", "is_private",
+      "is_subagent", "is_unresponsive", "is_workflow_primary", "is_workflow_sub", "last_comment_at",
+      "last_comment_author", "last_comment_author_id", "last_comment_excerpt", "last_heartbeat", "last_model_call_at",
+      "last_role_is_user", "last_user_message", "local_mirror", "loop_state", "merge_back", "message_count", "migration_batch_id", "model",
+      "open_comment_threads", "open_tasks", "open_tasks_at", "org_role_id", "owned_by_me", "owner_device_id",
+      "owner_user_id", "parent_conversation_id", "parent_message_uuid", "pending_api_error",
+      "pending_api_error_at", "pending_api_error_kind", "permission_mode", "pr_status", "producing_until",
+      "project_path", "role", "session_error", "session_id", "settle_verdict", "spawned_by_conversation_id",
+      "standing_role_id", "started_at", "status", "subagent_caps", "subagent_slot", "subagent_slot_at", "subagent_slot_device", "subtitle", "team_id", "team_visibility", "thread_state", "thread_state_at",
+      "thread_state_msg_count", "thread_state_status", "title", "tmux_session",
+      "transcript_revision", "turn_completed_at", "updated_at", "user_id", "user_rest", "workflow_run_activity",
+      "workflow_run_agents_done", "workflow_run_agents_total", "workflow_run_id",
+      "workflow_run_name", "workflow_run_started_at", "workflow_run_status", "worktree_branch",
+      "worktree_name",
+    ]);
+  });
+
+  test("show_all:false keeps omitting below-fold rows from transport (membership is unchanged)", async () => {
+    const tables = {
+      conversations: [
+        conv("a", { updated_at: EPOCH - MIN }),
+        // The row AT the gap is the cut and never folds itself; the one below
+        // it does.
+        conv("edge", { updated_at: EPOCH - 20 * H }),
+        conv("older", { updated_at: EPOCH - 21 * H }),
+      ],
+    };
+    const dflt = await computeInboxSessions({ db: db(tables) }, ME as any, {});
+    expect(dflt.sessions.map((s: any) => s._id)).toContain("conversations_edge");
+    expect(dflt.sessions.map((s: any) => s._id)).not.toContain("conversations_older");
+    expect(dflt.hidden_count).toBe(1);
+  });
+});
+
+describe("fact-field signature (sync-convergence C1)", () => {
+  test("the server strip list derives exactly from the shared INBOX_FACT_FIELDS", () => {
+    expect([...INBOX_LIVENESS_FIELDS, ...INBOX_FAST_FIELDS].sort()).toEqual([...INBOX_FACT_FIELDS].sort());
+    // The fast split is pinned: the per-message and per-model-call churn fields.
+    expect([...INBOX_FAST_FIELDS]).toEqual(["message_count", "updated_at", "context_tokens", "last_model_call_at"]);
+  });
+
+  test("an un-flagged (liveness-on) row and an overlay row cover every fact field between them", async () => {
+    const { liveness } = await computeSessionsLiveness({ db: db() }, ME as any);
+    const overlayRow = (liveness as any).conversations_a;
+    for (const f of INBOX_FACT_FIELDS) expect(overlayRow[f]).not.toBeUndefined();
+  });
+});
+
+describe("one visibility rule, one selection (sync-convergence C4)", () => {
+  test("inboxFilters re-exports the shared shouldShowInInbox — no local implementation survives", () => {
+    const src = readFileSync(join(import.meta.dir, "inboxFilters.ts"), "utf8");
+    expect(src).not.toContain("export function shouldShowInInbox");
+    expect(src).toMatch(/export \{[^}]*shouldShowInInbox[^}]*\} from "@codecast\/shared\/contracts"/);
+    const conversations = readFileSync(join(import.meta.dir, "conversations.ts"), "utf8");
+    expect(conversations).toContain("INBOX_WINDOW_CAPS.recent");
+    const projection = readFileSync(join(import.meta.dir, "inboxProjection.ts"), "utf8");
+    expect(projection).toContain("INBOX_WINDOW_CAPS.pinned");
+  });
+
+  test("the scan's candidate set equals selectWorkingSet over one fixture set", async () => {
+    // One fixture with every window represented plus rows each side must drop.
+    const rows = [
+      conv("recent1", { updated_at: EPOCH - MIN }),
+      conv("recent2", { updated_at: EPOCH - 2 * H }),
+      conv("pin_old", { updated_at: EPOCH - 40 * 24 * H, inbox_pinned_at: EPOCH - H }),
+      conv("dismissed1", { inbox_dismissed_at: EPOCH - H }),
+      conv("stashed1", { inbox_stashed_at: EPOCH - H }),
+      conv("too_old", { updated_at: EPOCH - 40 * 24 * H }),
+      conv("killed", { inbox_killed_at: EPOCH - H, inbox_dismissed_at: EPOCH - H }),
+      conv("sub", { is_subagent: true, updated_at: EPOCH - MIN }),
+      conv("noise", { title: "[Using: claude]", updated_at: EPOCH - MIN }),
+      conv("blank_done", { status: "completed", message_count: 0, updated_at: EPOCH - MIN }),
+    ];
+    const { liveness } = await computeSessionsLiveness({ db: db({ conversations: rows }) }, ME as any);
+    const stamped = Object.entries(liveness)
+      .filter(([, r]) => (r as any).bucket !== undefined)
+      .map(([id]) => id)
+      .sort();
+    const { members, truncated } = selectWorkingSet(rows as any, EPOCH);
+    expect(truncated).toEqual([]);
+    // conversations_a from the base fixture is not in this table; both sides
+    // see exactly the same members.
+    expect(stamped).toEqual([...members.keys()].sort());
+    expect(stamped).toEqual([
+      "conversations_dismissed1", "conversations_pin_old", "conversations_recent1",
+      "conversations_recent2", "conversations_stashed1",
+    ]);
+  });
+
+  test("the window caps re-derive from the shared single source", () => {
+    expect(INBOX_WINDOW_CAPS.recent).toBe(200);
+    expect(INBOX_WINDOW_CAPS.pinned).toBe(100);
+  });
+
+  test("the 30-day recency horizon is ONE constant: the scan windows derive from WORKING_SET_RECENCY_MS", () => {
+    // The scan cutoffs (recent, dismissed/stashed) and the replica's
+    // inWorkingSet must agree at the horizon; five agreeing literals only
+    // agree until one is edited.
+    const conversations = readFileSync(join(import.meta.dir, "conversations.ts"), "utf8");
+    expect(conversations).toContain("const INBOX_SESSION_WINDOW_MS = WORKING_SET_RECENCY_MS;");
+    expect(conversations).toContain("const INBOX_DISMISSED_WINDOW_MS = WORKING_SET_RECENCY_MS;");
+    // No inbox window constant carries its own literal any more.
+    expect(conversations).not.toMatch(/INBOX_(?:SESSION|DISMISSED)_WINDOW_MS = \d/);
+    expect(WORKING_SET_RECENCY_MS).toBe(30 * 24 * 60 * 60 * 1000);
+  });
+});
+
+describe("session identity on the row (session-characters.md S1, S6)", () => {
+  test("a plain session carries its chosen character parts and no role", async () => {
+    const tables = { conversations: [conv("a", { updated_at: EPOCH - MIN, character_avatar: "owl", character_name: "Minerva" })] };
+    const { sessions } = await computeInboxSessions({ db: db(tables) }, ME as any, {});
+    const row = sessions.find((s: any) => s._id === "conversations_a");
+    expect(row.character_avatar).toBe("owl");
+    expect(row.character_name).toBe("Minerva");
+    expect(row.role).toBeNull();
+    expect(row.standing_role_id).toBeNull();
+    expect(row.org_role_id).toBeNull();
+  });
+
+  test("a role's standing session carries a snapshot of the role it wears", async () => {
+    const tables = {
+      org_roles: [{ _id: "org_roles_infra", short_id: "or-7", name: "Infra lead", handle: "infra", avatar: "stag", status: "active", tenure: { kind: "program", ends: { date: 1 }, then: "review" } }],
+      conversations: [
+        conv("a", { updated_at: EPOCH - MIN, standing_role_id: "org_roles_infra", character_avatar: "fox" }),
+        conv("hand", { updated_at: EPOCH - 2 * MIN, org_role_id: "org_roles_infra" }),
+      ],
+    };
+    const { sessions } = await computeInboxSessions({ db: db(tables) }, ME as any, {});
+    const standing = sessions.find((s: any) => s._id === "conversations_a");
+    expect(standing.standing_role_id).toBe("org_roles_infra");
+    expect(standing.role).toEqual({ _id: "org_roles_infra", short_id: "or-7", name: "Infra lead", handle: "infra", avatar: "stag", status: "active", tenure_kind: "program" });
+    // the character fields still travel; the web resolver decides the role wins
+    expect(standing.character_avatar).toBe("fox");
+    const hand = sessions.find((s: any) => s._id === "conversations_hand");
+    expect(hand.org_role_id).toBe("org_roles_infra");
+    expect(hand.standing_role_id).toBeNull();
+    expect(hand.role?.handle).toBe("infra");
+  });
+
+  // org-roles-run-work.md R1 and org-staffing.md S28, on rows through the
+  // server's own overlay: a role's session files with the role and leaves
+  // needs input, whatever it waits on; the role's card files by its own facts
+  // (blocked or waiting: needs input; asking: questions), and nothing under it
+  // lifts it.
+  test("a role's sessions ride its standing session; the role's card files by its own facts", async () => {
+    const tables = {
+      org_roles: [{ _id: "org_roles_infra", short_id: "or-7", name: "Infra lead", handle: "infra", avatar: "stag", status: "active" }],
+      managed_sessions: [
+        { _id: "ms_standing", user_id: ME, conversation_id: "conversations_standing", last_heartbeat: EPOCH - 1000, agent_status: "idle", agent_status_updated_at: EPOCH - MIN, tmux_session: "cc-2", permission_mode: "default" },
+      ],
+      conversations: [
+        // The lead raised something in its own thread: it declared blocked.
+        conv("standing", { updated_at: EPOCH - MIN, anchor_id: "anchors_infra", standing_role_id: "org_roles_infra", thread_state_status: "blocked", thread_state: "Which price band for Texas?" }),
+        conv("waiting", { updated_at: EPOCH - 2 * MIN, org_role_id: "org_roles_infra" }),
+        conv("blocked_hand", { updated_at: EPOCH - 3 * MIN, org_role_id: "org_roles_infra", thread_state_status: "blocked", thread_state: "needs a key" }),
+        conv("mine", { updated_at: EPOCH - 4 * MIN }),
+        conv("quiet", { updated_at: EPOCH - MIN, anchor_id: "anchors_quiet", standing_role_id: "org_roles_quiet" }),
+      ],
+    };
+    const { liveness } = await computeSessionsLiveness({ db: db(tables) }, ME as any);
+    const bucketOf = (id: string) => (liveness as any)[`conversations_${id}`]?.bucket;
+    expect(bucketOf("mine")).toBe("needs_input");
+    // The lead's own declaration puts its card in needs input; everything
+    // under it files there with it, and a blocked hand is still the role's.
+    expect(bucketOf("standing")).toBe("needs_input");
+    expect(bucketOf("waiting")).toBe("needs_input");
+    expect(bucketOf("blocked_hand")).toBe("needs_input");
+    // A standing session with nothing under it and nothing to raise stays out.
+    expect(bucketOf("quiet")).toBe("hidden");
+
+    const { sessions } = await computeInboxSessions({ db: db(tables) }, ME as any, {});
+    const hand = sessions.find((s: any) => s._id === "conversations_blocked_hand");
+    expect(hand.role?.handle).toBe("infra");
+    expect("escalated_by_role" in hand).toBe(false);
+    expect("escalations" in sessions.find((s: any) => s._id === "conversations_standing")).toBe(false);
+  });
+});

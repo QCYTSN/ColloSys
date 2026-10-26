@@ -1,0 +1,745 @@
+"use client";
+
+import { approvalButtonLabel } from "@codecast/shared/contracts/assistant";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useDecisionAnswer } from "../hooks/useDecisionAnswer";
+import { PermissionStack } from "./PermissionCard";
+import { useInboxStore, getProjectName } from "../store/inboxStore";
+import { type DecisionStepper } from "../hooks/useDecisionQueue";
+import { keyScopeHasFocus, keysOwnedElsewhere } from "../shortcuts/keyOwnership";
+import { queueTier, routeQueueKey, messagesSinceAsk, optionPageSlugs, findDecisionAnchorMessage, type QueueItem } from "../lib/decisionQueue";
+import { isOnThreadRoute } from "../lib/openSessionAtMessage";
+import { decisionHref } from "../lib/decisionLinks";
+import { DecisionAnswerControls } from "./decisions/DecisionAnswerControls";
+import { DecisionOptionList, TypeAnswerButton } from "./decisions/DecisionOptionList";
+import { OptionPages } from "./decisions/OptionPages";
+import { ChangeCardHeadline, ChangeCardVerdictBar, ChangeCardView } from "./decisions/ChangeCardView";
+import { DecisionDiscussion } from "./decisions/DecisionDiscussion";
+import { PassDecision } from "./decisions/PassDecision";
+import { DecisionBody, DecisionFacts, DecisionLadder, hasDecisionBody } from "./decisions/DecisionSections";
+import { GateRunChip } from "./decisions/DecisionCompactCard";
+import { useSyncDecisionDetail, useDecisionDetail } from "../hooks/useSyncDecisionDetail";
+import { useJumpToDecisionAsk } from "../hooks/useJumpToDecisionAsk";
+import { useOpenSession } from "../hooks/useOpenSession";
+import { formatTimeAgo } from "../lib/messageNavigator";
+import { useCoarseNow } from "../hooks/useCoarseNow";
+import { MarkdownRenderer } from "./tools/MarkdownRenderer";
+import { KeyCap } from "./KeyboardShortcutsHelp";
+import { hasOpenModal } from "../shortcuts";
+import { PublishedPageEmbed } from "./PublishedPageEmbed";
+import { ChevronUp, ChevronDown, Link2 } from "lucide-react";
+import { toast } from "sonner";
+import { copyToClipboard, shareOrigin } from "../lib/utils";
+import "./decisions/decisions.css";
+
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { DecisionProposalOrigin } from "./org/ProposalAuthorPill";
+import { RoleFace } from "./org/RoleFace";
+import { useIsHostedConversation } from "../hooks/useConversationAgentType";
+import { LANE_COPY } from "./simple/lane";
+// The decision card lives INSIDE the conversation — it is how a session asks
+// its human something, so it renders wherever the session renders (inbox,
+// queue, a deep link). It has two sizes:
+//
+//   full  The sheet. The card owns the pane and reads like the decision page:
+//         one row of chrome, then the question, the reasoning, the options
+//         and the keys in ONE flow, scrolled together. Nothing is pinned, so
+//         a long context never squeezes the options and tall options never
+//         squeeze the context. Where the pane is wide enough the reasoning
+//         and the options sit side by side and the options stick while the
+//         reasoning scrolls; in one column a strip at the foot names the
+//         options while they are below the fold and jumps to them.
+//   line  The fold: one small badge at the right edge above the composer,
+//         the question on its tooltip. The thread is the main event and
+//         the fold spends one thin row on it; opening it is the sheet.
+//
+// A blocking ask parks the session, so it opens as the sheet. The queue is a
+// place to decide, so everything there opens as the sheet. An advisory ask in
+// a plain session view starts folded: the agent declared a default and kept
+// working, and the thread is what the reader came for.
+//
+// The sheet sets its text in the conversation column (conv-col), the measure
+// the messages and the composer use, so a wide pane does not stretch a
+// paragraph across the whole screen; two columns widen that only to seat the
+// options beside it.
+//
+// The queue (/questions) renders the same conversation pane and only adds a
+// stepper through DecisionStepperContext (hooks/useDecisionQueue): position,
+// advance, skip, leave.
+//
+// VIEWING IS READ-ONLY. Rendering this card must never write to the store or
+// the server — a question leaves the queue only through an explicit gesture
+// (an answer, a dismissal, Approve/Deny) or through server truth flipping the
+// session row. A buffered AskUserQuestion is the case that makes this a hard
+// rule: Claude Code holds the question in memory until it is answered, so the
+// transcript has no poll and the permissions table has no row — the session
+// row's permission_blocked status is the ONLY evidence, and any "nothing
+// pending, must be resolved" inference on mount destroys a real question.
+
+// A session can hold several open asks. Its card shows them one at a time:
+// an answer brings up the next, already open, so a run of them is one digit
+// each. `more` is how many wait behind this one.
+type Size = "full" | "line";
+
+// The last conversation whose ask was settled from its open sheet, and when:
+// the next ask of that session opens as the sheet too, where the reader is.
+let settledFromSheet: { conversationId: string; at: number } | null = null;
+const CONTINUE_MS = 5_000;
+
+// A jump to a message in this thread (targetNonce is when it was asked for)
+// is a request to read the thread, so the sheet stays out of its way. An old
+// target says nothing about an ask that arrives later.
+const JUMP_FRESH_MS = 10_000;
+const jumpedHere = (targetNonce: number | undefined) => targetNonce !== undefined && Date.now() - targetNonce < JUMP_FRESH_MS;
+
+export function SessionDecisionCard({ item, stepper, more = 0, targetNonce, scrollToMessage }: {
+  item: QueueItem;
+  stepper: DecisionStepper | null;
+  more?: number;
+  /** When the pane was last asked to open at a message, if it was. */
+  targetNonce?: number;
+  /** Scrolls this pane's thread to a loaded message. */
+  scrollToMessage?: (messageId: string) => void;
+}) {
+  const {
+    messages, needsMessages, poll, recentText, question, options, permissions, isPermissionCard, isInfraDialog,
+    answer: answerItem, answerFreeText: answerItemFreeText, dismiss: dismissItem,
+  } = useDecisionAnswer(item);
+  const answerDecision = useInboxStore((s) => s.answerDecision);
+  const openSessionRoute = useOpenSession();
+  // A hosted conversation waits on this answer and has no agent to speak of:
+  // no dismiss (setting it aside would leave the assistant stuck) and no
+  // agent in the wording.
+  const hosted = useIsHostedConversation(item.conversationId);
+
+  const [size, setSize] = useState<Size>(() => {
+    const continuing = settledFromSheet?.conversationId === item.conversationId && Date.now() - settledFromSheet.at < CONTINUE_MS;
+    if (!stepper && jumpedHere(targetNonce)) return "line";
+    return item.blocking || stepper || continuing ? "full" : "line";
+  });
+  useWatchEffect(() => {
+    if (!stepper && jumpedHere(targetNonce)) setSize("line");
+  }, [targetNonce]);
+  const full = size === "full";
+  const [otherOpen, setOtherOpen] = useState(false);
+  const [passOpen, setPassOpen] = useState(false);
+  const [otherText, setOtherText] = useState("");
+  const otherRef = useRef<HTMLTextAreaElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  const optionsRef = useRef<HTMLDivElement>(null);
+
+  // While the card owns the pane, the rest of the conversation (header, feed,
+  // composer) is inert: the composer takes focus on mount, and every card key
+  // was landing in its textarea. Set imperatively — `inert` only became a real
+  // React attribute in 19. Folded, the thread gets itself back.
+  useWatchEffect(() => {
+    const root = rootRef.current;
+    const pane = root?.parentElement;
+    if (!root || !pane) return;
+    const siblings = Array.from(pane.children).filter((el) => el !== root) as HTMLElement[];
+    for (const el of siblings) (el as any).inert = full;
+    if (full) {
+      const active = document.activeElement as HTMLElement | null;
+      if (active && active !== root && !root.contains(active)) active.blur();
+      root.focus({ preventScroll: true });
+    }
+    return () => { for (const el of siblings) (el as any).inert = false; };
+  }, [full]);
+
+
+  // How far behind the ask is: wall clock and — the sharper signal — how many
+  // messages the session has produced since. A blocking ask with traffic after
+  // it means someone answered in the thread; an advisory one tells you whether
+  // an override steers the agent or unwinds it.
+  //
+  // The live count is a direct primitive subscription: the queue's session row
+  // rides a wake signature that deliberately drops message_count (heartbeat
+  // churn), so item.session's copy goes stale between structural changes.
+  const liveMessageCount = useInboxStore((s) => s.sessions[item.conversationId]?.message_count);
+  const sinceAsk = useMemo(
+    () => messagesSinceAsk(item, liveMessageCount !== undefined ? { message_count: liveMessageCount } : undefined, messages as any[]),
+    [item, liveMessageCount, messages]
+  );
+  // An authored row's created_at is the ask time; a poll's honest timestamp is
+  // its tool call's message. A permission prompt has neither (the client-side
+  // first-seen stamp resets on reload), so it shows no age.
+  const askedAt = item.source === "decide" ? item.createdAt : poll?.createdAt;
+  const now = useCoarseNow(30_000);
+  const askedRel = askedAt !== undefined ? formatTimeAgo(askedAt, now) : null;
+  const askedLabel = askedRel === null ? null : askedRel === "now" ? "asked just now" : /^\d+[mhd]$/.test(askedRel) ? `asked ${askedRel} ago` : `asked ${askedRel}`;
+
+  // Jump to the ask itself — the `cast decide` call rendered in the transcript
+  // (useJumpToDecisionAsk, shared with the answer bubble's "the ask" link).
+  const canJumpToAsk = item.source === "decide";
+  const jumpToDecisionAsk = useJumpToDecisionAsk(item.conversationId, item.decisionId, item.question);
+  const jumpToAsk = useCallback(async () => {
+    if (!canJumpToAsk) return;
+    if (!(await jumpToDecisionAsk())) return;
+    // The card may be covering the thread (full size). Hand the pane back
+    // so the jump is visible. Do not leave the queue for the list — the
+    // jump already opened the session at the ask.
+    if (!stepper) setSize("line");
+  }, [canJumpToAsk, jumpToDecisionAsk, stepper]);
+
+  const defaultLabel = item.defaultOption !== undefined ? options.find((o) => o.index === item.defaultOption)?.label : undefined;
+
+
+  // The kinds beyond a single choice (the-line.md L10: multi, rank, form)
+  // answer through DecisionAnswerControls on the live store row, which
+  // carries the form and takes the digit and Enter keys itself; the card's
+  // own digits stand down for them.
+  const decisionRow = useInboxStore((s) => (item.source === "decide" && item.decisionId ? s.sessionDecisions[item.decisionId] : undefined));
+  const kind = item.source === "decide" ? (item.kind ?? "single") : "single";
+  // A change card (LE11) answers Ship, Revise or Drop through its own
+  // controls, which hold the digits and the Revise note.
+  const card = decisionRow?.card;
+  const richControls = (kind !== "single" || !!card) && !!decisionRow;
+  // A card's Ship / Revise / Drop sit in the decision page's pinned bar, above
+  // the card, so the card takes the sheet's width and the call stays in view.
+  const cardBar = !!card && richControls;
+  const pageSlugs = item.source === "decide" ? optionPageSlugs(item.options) : [];
+  const shareHref = item.source === "decide" && item.decisionId ? decisionHref({ _id: item.decisionId, short_id: item.shortId }) : null;
+  // The open sheet reads the decision the way its page does: the attached
+  // document, the facts and the ladder come from the same detail
+  // (DecisionSections), so the sheet never sends the reader elsewhere to
+  // see what they are answering. Folded, nothing is drawn, so nothing loads.
+  const decideId = item.source === "decide" ? item.decisionId : undefined;
+  useSyncDecisionDetail(full ? decideId : undefined);
+  const detail = useDecisionDetail(decideId);
+  const detailDecision = detail ? (decisionRow ?? detail.decision) : null;
+
+  const stepperDone = stepper?.onDone;
+  const onDone = useCallback(() => {
+    if (size === "full") settledFromSheet = { conversationId: item.conversationId, at: Date.now() };
+    stepperDone?.();
+  }, [size, item.conversationId, stepperDone]);
+  const answer = useCallback((index: number) => { answerItem(index); onDone(); }, [answerItem, onDone]);
+  const answerFreeText = useCallback((text: string) => {
+    if (!text.trim()) return;
+    answerItemFreeText(text);
+    onDone();
+  }, [answerItemFreeText, onDone]);
+  const dismiss = useCallback(() => { dismissItem(); onDone(); }, [dismissItem, onDone]);
+  // A `cast decide` row can be handed on; a terminal prompt and a hosted
+  // assistant's ask (only its owner answers) cannot. A trial's stays put.
+  const canPass = item.source === "decide" && !!item.decisionId && !hosted && !item.trial;
+
+  const onExit = stepper?.onExit;
+  // Off the inbox (the /questions stepper) "open" must leave for the inbox;
+  // exiting the queue afterwards would push /questions back over it.
+  const openSession = useCallback(() => openSessionRoute(item.conversationId), [openSessionRoute, item.conversationId]);
+
+  // A fold by scrolling is undone by scrolling: wheel up at the top of the
+  // sheet hands the pane to the thread, so wheel down at the bottom of the
+  // thread hands it back. A fold by a button or a key stays folded.
+  const foldedByScroll = useRef(false);
+  const shrink = useCallback(() => { foldedByScroll.current = false; setSize("line"); }, []);
+  // Scrolling away from the question is asking what led to it: the thread
+  // opens at the ask, not at its tail.
+  const shrinkByScroll = useCallback(() => {
+    foldedByScroll.current = true;
+    setSize("line");
+    if (!canJumpToAsk) return;
+    const ask = findDecisionAnchorMessage(messages as any[], item.decisionId, item.question);
+    if (ask && scrollToMessage) scrollToMessage(ask._id);
+    else if (isOnThreadRoute()) void jumpToDecisionAsk();
+  }, [canJumpToAsk, messages, item.decisionId, item.question, scrollToMessage, jumpToDecisionAsk]);
+  const grow = useCallback(() => setSize("full"), []);
+
+  // Folding swaps the sheet for the pill in one frame, and the eye loses it.
+  // A faint veil the size of the sheet collapses into the pill, which answers
+  // with one ring: the motion says where the question went.
+  const wasFull = useRef(full);
+  useLayoutEffect(() => {
+    const folded = wasFull.current && !full;
+    wasFull.current = full;
+    const root = rootRef.current;
+    const pane = root?.parentElement;
+    const pill = root?.querySelector<HTMLElement>("[data-decision-fold-pill]");
+    if (!folded || !root || !pane || !pill || typeof pill.animate !== "function") return;
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const from = pane.getBoundingClientRect(), to = pill.getBoundingClientRect(), base = root.getBoundingClientRect();
+    const tint = `var(${item.blocking ? "--sol-yellow" : "--sol-blue"})`;
+    const veil = document.createElement("div");
+    veil.style.cssText = `position:absolute;pointer-events:none;left:${from.left - base.left}px;top:${from.top - base.top}px;width:${from.width}px;height:${from.height}px;background:color-mix(in srgb, ${tint} 14%, transparent)`;
+    root.appendChild(veil);
+    const landed = `inset(${to.top - from.top}px ${from.right - to.right}px ${from.bottom - to.bottom}px ${to.left - from.left}px round 999px)`;
+    const collapse = veil.animate(
+      [{ clipPath: "inset(0px 0px 0px 0px round 0px)", opacity: 1 }, { clipPath: landed, opacity: 1, offset: 0.8 }, { clipPath: landed, opacity: 0 }],
+      { duration: 340, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+    );
+    collapse.onfinish = collapse.oncancel = () => veil.remove();
+    const ring = pill.animate(
+      [{ boxShadow: "0 0 0 0 transparent" }, { boxShadow: `0 0 0 3px color-mix(in srgb, ${tint} 35%, transparent)`, offset: 0.5 }, { boxShadow: "0 0 0 7px transparent" }],
+      { duration: 620, easing: "ease-out" },
+    );
+    return () => { collapse.cancel(); ring.cancel(); };
+  }, [full, item.blocking]);
+
+  useWatchEffect(() => {
+    if (full || !foldedByScroll.current) return;
+    const feed = rootRef.current?.parentElement?.querySelector<HTMLElement>("[data-sv-feed]");
+    if (!feed) return;
+    let pushed = 0;
+    const onWheel = (e: WheelEvent) => {
+      const atBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 2;
+      if (e.deltaY <= 0 || !atBottom) { pushed = 0; return; }
+      // A little past the end, so the last notch of a scroll down the thread
+      // does not raise the sheet by itself.
+      pushed += e.deltaY;
+      if (pushed > 60) grow();
+    };
+    feed.addEventListener("wheel", onWheel, { passive: true });
+    return () => feed.removeEventListener("wheel", onWheel);
+  }, [full, grow]);
+
+  const onSkip = stepper?.onSkip;
+  useWatchEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      // The pass menu owns the keys while it is open: its search and Escape.
+      if (passOpen) return;
+      const target = e.target as HTMLElement | null;
+      const action = routeQueueKey(e, {
+        modalOpen: hasOpenModal(),
+        ownedElsewhere: keysOwnedElsewhere(target, rootRef.current),
+        editing: !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable),
+        inOwnFreeTextBox: !!target && target === otherRef.current,
+        isPermissionCard,
+        // An infra dialog's options commit money — no digit may reach them;
+        // a multi, rank or form takes its own digits in its controls.
+        optionCount: isInfraDialog || richControls ? 0 : options.length,
+        sheet: full ? "full" : "peek",
+      });
+      if (!action) return;
+      // Outside the queue, a folded card must not claim the thread's keys:
+      // j/k/digits belong to the conversation until the card owns the pane.
+      // Only a blocking ask comes back on a key: an advisory one never
+      // interrupts, and raising it on the thread's own j would put its
+      // answers one digit away from a reader who never opened it.
+      if (!stepper && !full && action.kind !== "commit-free-text" && action.kind !== "close-free-text") {
+        if (action.kind !== "full" || !item.blocking) return;
+      }
+      // An answer, a dismissal or a typed answer is the card's only while it
+      // is the thing in focus: a digit typed into anything else in this
+      // window (another pane, a tab an agent drives) never answers it.
+      if ((action.kind === "answer" || action.kind === "dismiss" || action.kind === "pass" || action.kind === "open-free-text") && !keyScopeHasFocus(rootRef.current)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      switch (action.kind) {
+        case "commit-free-text": answerFreeText(otherText); break;
+        case "close-free-text": setOtherOpen(false); break;
+        case "answer": { const opt = options[action.option]; if (opt) answer(opt.index); break; }
+        case "open-session": if (stepper) openSession(); break;
+        case "skip": onSkip?.(); break;
+        case "dismiss": if (!hosted) dismiss(); break;
+        case "pass": if (canPass) setPassOpen(true); break;
+        case "open-free-text": if (!isPermissionCard && !isInfraDialog && !richControls) { setOtherOpen(true); setTimeout(() => otherRef.current?.focus(), 0); } break;
+        case "peek": shrink(); break;
+        case "full": grow(); break;
+        case "restore-question": grow(); break;
+        // Escape from the full card: leave the queue, or — in a plain session
+        // view — hand the pane back to the thread.
+        case "exit-queue": if (onExit) onExit(); else shrink(); break;
+      }
+    };
+    // CAPTURE phase: the global shortcut layer claims arrows and digits for
+    // list navigation and would eat them first.
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [options, answer, answerFreeText, otherText, openSession, onSkip, dismiss, onExit, full, stepper, item.blocking, isPermissionCard, isInfraDialog, richControls, shrink, grow, hosted, passOpen, canPass]);
+
+  const answerRich = useCallback((input: Parameters<typeof answerDecision>[1]) => {
+    if (!item.decisionId) return;
+    answerDecision(item.decisionId, input);
+    onDone();
+  }, [item.decisionId, answerDecision, onDone]);
+
+  // Where this ask sits: in the queue being stepped, else among its own
+  // session's open asks when there are several.
+  const place = stepper ?? (more > 0 ? { position: 1, total: more + 1 } : null);
+  const tier = queueTier(item);
+  const session = item.session;
+  const project = session?.project_path ? getProjectName(session.project_path) : undefined;
+  // A decision posted from a role's own standing thread is the role's ask
+  // (org-staffing.md S28): the header reads as that role, its face and
+  // handle, the way the inbox card draws it.
+  const askingRole = session?.standing_role_id && session.role && String(session.role._id) === String(session.standing_role_id) ? session.role : null;
+
+  // In one column the options come after the reasoning, so a long context
+  // pushes them below the fold. A strip at the sheet's foot then names them
+  // (the digits answer from anywhere; the strip says what they answer) and
+  // scrolls to them on click. Two columns keep the options sticky and in
+  // view, so the strip never fires there.
+  const [optionsBelow, setOptionsBelow] = useState(false);
+  useWatchEffect(() => {
+    const root = bodyRef.current;
+    const target = optionsRef.current;
+    if (!full || !root || !target || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => {
+      if (!e) return;
+      setOptionsBelow(!e.isIntersecting && e.boundingClientRect.top >= (e.rootBounds?.bottom ?? Infinity));
+    }, { root, threshold: 0 });
+    io.observe(target);
+    return () => io.disconnect();
+  }, [full]);
+
+  const dot = (
+    <span className={`inline-block align-middle w-1.5 h-1.5 shrink-0 rounded-full ${tier === 1 ? "bg-sol-yellow animate-pulse" : tier === 2 ? "bg-sol-text-dim" : "bg-sol-blue"}`} />
+  );
+
+  const badges = (
+    <>
+      {item.trial && (
+        <span className="inline-block whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded border border-sol-magenta/30 text-sol-magenta shrink-0" data-decision-trial>trial · nothing ships</span>
+      )}
+      {tier === 3 && (
+        <span className="inline-block whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded border border-sol-blue/30 text-sol-blue shrink-0">advisory</span>
+      )}
+      {tier === 2 && (
+        <span className="inline-block whitespace-nowrap text-[10px] px-1.5 py-0.5 rounded border border-sol-border text-sol-text-dim shrink-0">session not running</span>
+      )}
+    </>
+  );
+
+  // Age in wall clock and in conversation distance. In the sheet it is also
+  // the way back to the ask itself: clicking scrolls the thread to the
+  // `cast decide` call. The fold is one button, so there it is plain text.
+  const askedText = askedLabel === null ? null : (
+    <>
+      {askedLabel}
+      {sinceAsk > 0 && <> · {sinceAsk} message{sinceAsk === 1 ? "" : "s"} since</>}
+    </>
+  );
+  const askedLine = askedText === null ? null : (
+    <button
+      onClick={jumpToAsk}
+      disabled={!canJumpToAsk}
+      className={`text-[11px] text-sol-text-dim ${canJumpToAsk ? "hover:text-sol-text hover:underline" : "cursor-default"} transition-colors`}
+      title={canJumpToAsk ? "Go to the ask in the conversation" : undefined}
+    >
+      {askedText}
+    </button>
+  );
+
+  // A gate on a workflow run (the-line.md L4): the run this question pauses.
+  const runChip = detailDecision?.workflow_run_id ? <GateRunChip runId={detailDecision.workflow_run_id} nodeId={detailDecision.gate_node_id} className="text-[11px]" /> : null;
+  const facts = detail && detailDecision ? <DecisionFacts decision={detailDecision} detail={detail} className={card ? "" : "mt-4 mb-5"} /> : null;
+
+  const whoIsAsking = askingRole ? (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 min-w-0 flex-[1_1_14rem]" data-decision-asker={askingRole.handle}>
+      {dot}
+      <RoleFace role={askingRole} size={18} className="shrink-0" />
+      <button onClick={stepper ? openSession : undefined} className={`text-sm text-sol-text truncate ${stepper ? "hover:text-sol-blue transition-colors" : "cursor-default"}`}>
+        <span className="text-sol-violet">@{askingRole.handle}</span> asks
+      </button>
+      {badges}
+    </div>
+  ) : (
+    // One flow of words, not a row of boxes: a long title wraps and the chips
+    // follow it, so nothing is cut short in a narrow pane.
+    <div className="min-w-0 flex-[1_1_14rem] leading-relaxed [&>*+*]:ml-2">
+      {dot}
+      {stepper ? (
+        // A button lays out as a box; an inline element lets the chips follow its last line.
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={openSession}
+          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openSession(); } }}
+          className="cursor-pointer text-sm text-sol-text hover:text-sol-blue transition-colors [overflow-wrap:anywhere] focus-visible:outline focus-visible:outline-1 focus-visible:outline-sol-blue"
+        >
+          {session?.title || "Session"}
+        </span>
+      ) : (
+        <span className="text-sm text-sol-text">{item.blocking ? "Waiting on your decision" : "Asked for your steer"}</span>
+      )}
+      {stepper && project && <span className="decision-head-wide whitespace-nowrap text-[11px] text-sol-text-dim">{project}</span>}
+      {badges}
+    </div>
+  );
+
+  const escapeHatch = (
+    <div className="flex items-center flex-wrap gap-4 text-[11px] text-sol-text-dim mt-4">
+      {stepper && (
+        <>
+          <button onClick={openSession} className="flex items-center gap-1.5 hover:text-sol-text transition-colors">
+            <KeyCap size="xs">o</KeyCap><span>open the session</span>
+          </button>
+          <button onClick={stepper.onSkip} className="flex items-center gap-1.5 hover:text-sol-text transition-colors">
+            <KeyCap size="xs">s</KeyCap><span>skip for now</span>
+          </button>
+        </>
+      )}
+      {canPass && <PassDecision decisionId={item.decisionId!} open={passOpen} onOpenChange={setPassOpen} onPassed={onDone} label="pass to…" />}
+      {!hosted && <button
+        onClick={dismiss}
+        className="flex items-center gap-1.5 hover:text-sol-red transition-colors"
+        title={item.source === "decide"
+          ? "Dismiss without answering — the agent is not told, and the question leaves your queue"
+          : "Set this aside — it leaves your questions until the agent speaks again; the session keeps waiting"}
+      >
+        <KeyCap size="xs">x</KeyCap><span>dismiss</span>
+      </button>}
+      {stepper?.onExit && (
+        <button onClick={stepper.onExit} className="flex items-center gap-1.5 hover:text-sol-text transition-colors">
+          <KeyCap size="xs">esc</KeyCap><span>leave the queue</span>
+        </button>
+      )}
+    </div>
+  );
+
+  // The reasoning, in the page's body type: the authored context of a
+  // `cast decide`, or the detail an AskUserQuestion carries.
+  const body = detail && detailDecision && hasDecisionBody(detailDecision, detail) ? <DecisionBody decision={detailDecision} detail={detail} /> : null;
+  const reasoning = detail
+    ? null
+    : item.contextMd
+    ? <MarkdownRenderer content={item.contextMd} />
+    : poll?.question.detail
+      ? <span className="whitespace-pre-line">{poll.question.detail}</span>
+      : null;
+
+  // A hosted approval's card already carries the call (context_md); the
+  // assistant's latest words sit right above it in the conversation.
+  const showRecent = !item.contextMd && !!recentText && !hosted;
+  const showThreadState = !item.contextMd && !recentText && !!session?.thread_state;
+  const showUnreadable = needsMessages && !poll && !isPermissionCard && !isInfraDialog;
+  const contextBlock = (card || detail || reasoning || showRecent || showThreadState || item.reportSlug || showUnreadable) ? (
+    <div className="decision-sheet-context min-w-0 space-y-4" data-reveal-span>
+      {/* The headline above already says the change and its cause. */}
+      {card && <ChangeCardView card={card} density="inline" change={false} recommend={!richControls} summarized={cardBar} />}
+      {/* A run's gate is owned by the session that started the run or the
+          project's lead, not this log: discuss it with them (ct-58330). */}
+      {decideId && decisionRow?.workflow_run_id && <DecisionDiscussion decisionId={decideId} compact />}
+      {reasoning && (
+        <div className="decision-body text-sm text-sol-text-muted border-l-2 border-sol-border pl-4" data-decision-context>
+          {reasoning}
+        </div>
+      )}
+      {showRecent && (
+        <div>
+          <div className="text-[10px] uppercase tracking-wide text-sol-text-dim mb-1">most recent from the agent</div>
+          <div className="text-sm text-sol-text-muted border-l-2 border-sol-border pl-3">
+            <MarkdownRenderer content={recentText!} />
+          </div>
+        </div>
+      )}
+      {showThreadState && (
+        <div className="text-sm text-sol-text-muted border-l-2 border-sol-border pl-3 whitespace-pre-wrap">{session!.thread_state}</div>
+      )}
+      {body}
+      {card && facts}
+      {item.reportSlug && !card && !detail && <PublishedPageEmbed slug={item.reportSlug} decision={decideId} />}
+      {detail && detailDecision && detail.ladder.length > 0 && (
+        <div>
+          <div className="decision-kicker">The ladder</div>
+          <DecisionLadder decision={detailDecision} detail={detail} now={now} />
+        </div>
+      )}
+      {showUnreadable && (
+        <div className="text-sm text-sol-text-dim">
+          This session is waiting on you, but its question is only visible in its terminal so far.
+          Open the session to read it, or type an answer below.
+        </div>
+      )}
+    </div>
+  ) : null;
+
+  // The answer surface: one row per option, its meaning under its label, the
+  // row itself the answer; the digits are live whenever the sheet is open
+  // (the key handler above). Pages compare above the rows; a permission
+  // prompt renders the real Approve/Deny stack with its own y/n keys.
+  const answerBlock = (
+    <div ref={optionsRef} className="decision-sheet-options min-w-0" data-decision-options data-reveal-span>
+      {pageSlugs.length > 0 && (
+        <div className="mb-3">
+          <div className="text-[10px] uppercase tracking-wide text-sol-text-dim mb-1">the options, as pages</div>
+          <OptionPages decision={decisionRow ?? { options: item.options, status: "pending" }} answerable={kind === "single"} onAnswer={answer} />
+        </div>
+      )}
+      {isPermissionCard && (
+        <div className="mb-3">
+          <div className="text-[10px] uppercase tracking-wide text-sol-text-dim mb-1">waiting on your approval</div>
+          <PermissionStack permissions={permissions} />
+        </div>
+      )}
+      {isInfraDialog && (
+        <div className="text-[12px] text-sol-text-dim mb-2">
+          This is a usage prompt from the agent's harness, not a decision — open the session to handle it.
+        </div>
+      )}
+      {richControls && decisionRow && (
+        <DecisionAnswerControls decision={decisionRow} onAnswer={answerRich} keys keyScope={rootRef} />
+      )}
+      {!isInfraDialog && !richControls && (
+        <div className="space-y-2">
+          {options.length > 0 && <DecisionOptionList
+            options={hosted ? options.map((o) => ({ ...o, label: approvalButtonLabel(o.label) })) : options}
+            keys
+            onPick={(n) => { const opt = options[n]; if (opt) answer(opt.index); }}
+            // A hosted conversation marks no option before the person picks one.
+            tone={(n) => (n === 0 && !hosted ? "primary" : "plain")}
+            tags={(n) => item.defaultOption === options[n]?.index && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded border border-sol-border text-sol-text-dim">proceeding with this</span>
+            )}
+          />}
+          {/* A permission prompt is answered by Approve/Deny only; an infra
+              dialog is handled in the session. Neither takes typed answers. */}
+          {!isPermissionCard && (
+            <TypeAnswerButton keys onOpen={() => { setOtherOpen(true); setTimeout(() => otherRef.current?.focus(), 0); }} />
+          )}
+        </div>
+      )}
+      {otherOpen && (
+        <div className="mt-3">
+          <textarea
+            ref={otherRef}
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            rows={3}
+            placeholder={hosted ? LANE_COPY.approval.typeAnswer : "Answer in your own words; this goes to the agent as a message."}
+            className="w-full bg-sol-card border border-sol-border rounded px-2 py-1.5 text-sm text-sol-text placeholder:text-sol-text-dim focus:outline-none focus:border-sol-blue/50"
+          />
+          <div className="flex items-center gap-2 mt-1 text-[11px] text-sol-text-dim">
+            <KeyCap size="xs">return</KeyCap><span>send</span>
+            <KeyCap size="xs">esc</KeyCap><span>cancel</span>
+          </div>
+        </div>
+      )}
+      {!cardBar && escapeHatch}
+    </div>
+  );
+
+  if (full) {
+    return (
+      <div
+        ref={rootRef}
+        tabIndex={-1}
+        data-session-decision={item.conversationId}
+        // z-40 is load-bearing: the pane carries sticky header, state bar,
+        // composer and a z-30 scroll button, each its own stacking context.
+        // decision-doc: the document page's type (the serif question, the
+        // body's leading), so the sheet reads like the page it stands for.
+        // decision-sheet: the container the two-column layout queries.
+        className="decision-doc decision-sheet absolute inset-0 z-40 flex flex-col bg-sol-bg outline-none"
+        data-card={cardBar ? "true" : undefined}
+        onWheel={(e) => {
+          // Scrolling up at the top of the question hands the pane to the thread.
+          if (e.deltaY < 0 && (bodyRef.current?.scrollTop ?? 0) <= 0) shrinkByScroll();
+        }}
+      >
+        {/* One row of chrome, kept while the rest scrolls: who is asking,
+            where this sits in the queue, and the way back to the thread. */}
+        <div className="decision-sheet-head-cq shrink-0 border-b border-sol-border/70">
+          <div className="decision-sheet-col mx-auto w-full px-6 min-h-10 py-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 min-w-0">
+            {whoIsAsking}
+            {place && (
+              <span className="shrink-0 text-[11px] text-sol-text-dim tabular-nums" data-decision-place>
+                <span className="decision-head-wide">decision {place.position} of {place.total}</span>
+                <span className="decision-head-short">{place.position}/{place.total}</span>
+              </span>
+            )}
+            {/* A hosted approval is the person's own: no link to share it, and
+                its conversation is one tap away in the escape hatch. */}
+            {shareHref && !hosted && (
+              <button
+                onClick={() => copyToClipboard(`${shareOrigin()}${shareHref}`).then(() => toast.success("Link copied"))}
+                className="shrink-0 flex items-center gap-1 px-2.5 py-0.5 rounded-full border border-sol-border text-[11px] text-sol-text-muted hover:text-sol-text hover:bg-sol-card transition-colors"
+                title="Copy a link to this decision"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                <span className="decision-head-wide">Copy link</span>
+              </button>
+            )}
+            {!hosted && <button
+              onClick={shrink}
+              className="shrink-0 flex items-center gap-1 pl-2 pr-3 py-0.5 rounded-full border border-sol-border text-[11px] text-sol-text-muted hover:text-sol-text hover:bg-sol-card transition-colors"
+              title="Fold the question away and read the thread"
+            >
+              <ChevronDown className="w-3.5 h-3.5" />
+              <span className="decision-head-wide">Read the thread</span>
+            </button>}
+          </div>
+        </div>
+        <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto">
+          <div className="decision-sheet-col mx-auto w-full px-6 pt-4 pb-6">
+            {(askedLine || runChip) && <div className="mb-2 flex items-center gap-3 flex-wrap">{askedLine}{runChip}</div>}
+            <DecisionProposalOrigin contextMd={item.contextMd} className="mb-2 text-[12px]" size="md" />
+            {/* A card leads with its change, the way its page does. */}
+            {card
+              ? <ChangeCardHeadline card={card} question={question} className="mb-2" />
+              : question && <h1 className={`decision-question text-sol-text ${facts ? "" : "mb-5"}`}>{question}</h1>}
+            {!card && facts}
+            {cardBar ? (
+              <>
+                <ChangeCardVerdictBar card={card!}>{answerBlock}</ChangeCardVerdictBar>
+                <div className="mt-6">{contextBlock}</div>
+                {escapeHatch}
+              </>
+            ) : (
+              <div className="decision-sheet-grid" data-split={contextBlock ? "true" : "false"}>
+                {contextBlock}
+                {answerBlock}
+              </div>
+            )}
+          </div>
+        </div>
+        {optionsBelow && options.length > 0 && (
+          <button
+            onClick={() => optionsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" })}
+            className="shrink-0 w-full border-t border-sol-border bg-sol-bg hover:bg-sol-card transition-colors"
+            title="The options are below the reasoning: jump to them"
+            data-decision-options-strip
+          >
+            {/* Each answer reads whole: a long one wraps in its column, and in a narrow pane they stack. */}
+            <div className="decision-sheet-col mx-auto w-full px-6 py-2 flex items-start gap-x-4 gap-y-1.5 min-w-0 text-left text-[11px] leading-snug text-sol-text-muted">
+              <ChevronDown className="w-3.5 h-3.5 mt-px shrink-0 text-sol-text-dim" />
+              <span className="flex flex-1 flex-wrap gap-x-4 gap-y-1.5 min-w-0">
+                {options.map((o, n) => (
+                  <span key={n} className="flex-[1_1_12rem] min-w-0 flex items-start gap-1.5">
+                    {n < 9 && <KeyCap size="xs">{String(n + 1)}</KeyCap>}
+                    <span className="min-w-0 [overflow-wrap:anywhere]">{o.label.replace(" (Recommended)", "")}</span>
+                  </span>
+                ))}
+              </span>
+            </div>
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // The fold: a badge, not a bar. One small pill at the right edge above the
+  // composer says an ask is waiting (and where it sits in the queue); the
+  // question itself is the pill's tooltip and one click away. The thread is
+  // the main event, so the fold spends one thin row and nothing more.
+  const foldTitle = [askingRole ? [`@${askingRole.handle} asks`, question].filter(Boolean).join(": ") : question || "Waiting on you", defaultLabel ? `proceeding with ${defaultLabel}` : null].filter(Boolean).join(" — ");
+  return (
+    <div
+      ref={rootRef}
+      tabIndex={-1}
+      data-session-decision={item.conversationId}
+      // relative z-20: the composer below paints a fade gradient up over its
+      // neighbour, which would wash out the pill.
+      className="decision-card decision-fold relative z-20 shrink-0 flex justify-end px-4 py-1 outline-none"
+      onWheel={(e) => { if (e.deltaY > 0 && stepper) grow(); }}
+    >
+      <button
+        onClick={grow}
+        title={foldTitle}
+        data-decision-fold-pill
+        className={`flex items-center gap-1.5 pl-2 pr-2.5 py-0.5 rounded-full border text-[11px] transition-colors ${
+          item.blocking ? "border-sol-yellow/50 text-sol-text hover:bg-sol-yellow/10" : "border-sol-blue/40 text-sol-blue hover:bg-sol-blue hover:text-sol-bg"
+        }`}
+      >
+        {dot}
+        {askingRole && <RoleFace role={askingRole} size={14} className="shrink-0" />}
+        <span className="truncate max-w-[16rem]">{askingRole ? `@${askingRole.handle} asks` : stepper ? (session?.title || "Session") : item.blocking ? "Waiting on your decision" : "Asked for your steer"}</span>
+        <span className="opacity-70">{place ? `· ${place.position} of ${place.total}` : "· answer"}</span>
+        <ChevronUp className="w-3.5 h-3.5" />
+      </button>
+    </div>
+  );
+}

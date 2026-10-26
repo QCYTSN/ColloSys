@@ -1,0 +1,690 @@
+import { mutation, query, internalMutation } from "./functions";
+import { internal } from "./_generated/api";
+import type { MutationCtx } from "./_generated/server";
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { verifyApiToken } from "./apiTokens";
+import { getSystemConfig } from "./systemConfig";
+import { DEVICE_ONLINE_MS } from "./deviceRouting";
+import { isStaff } from "./lib/staff";
+
+const MAX_LOGS_PER_BATCH = 100;
+const MAX_MESSAGE_LENGTH = 2000;
+
+// daemon_logs was the dominant unpruned write-leak (~300k rows/day, mostly
+// [HEARTBEAT] lines at "info" level). Persist only actionable levels; drop the
+// routine debug/info firehose before it hits Postgres. This is the single
+// chokepoint for both /cli/log and /cli/log-batch, so it takes effect for every
+// daemon on deploy regardless of the daemon's own version.
+export function shouldPersistLog(level: string): boolean {
+  return level === "warn" || level === "error";
+}
+
+// Steady-state retention window for warn/error logs (info/debug are dropped at
+// ingestion by shouldPersistLog, so they never accumulate). The pre-gate backlog
+// of ~9.6M rows is NOT drained here — bulk-deleting it through Convex during live
+// traffic saturates the backend; that reclaim belongs in a maintenance window.
+const RETENTION_MS = 3 * 24 * 60 * 60 * 1000;
+
+export const insertBatch = mutation({
+  args: {
+    api_token: v.string(),
+    logs: v.array(
+      v.object({
+        level: v.union(
+          v.literal("debug"),
+          v.literal("info"),
+          v.literal("warn"),
+          v.literal("error")
+        ),
+        message: v.string(),
+        metadata: v.optional(
+          v.object({
+            session_id: v.optional(v.string()),
+            error_code: v.optional(v.string()),
+            stack: v.optional(v.string()),
+            command: v.optional(v.string()),
+            args: v.optional(v.string()),
+            error: v.optional(v.string()),
+          })
+        ),
+        daemon_version: v.optional(v.string()),
+        platform: v.optional(v.string()),
+        timestamp: v.number(),
+      })
+    ),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) {
+      throw new Error("Unauthorized: invalid API token");
+    }
+
+    const logs = args.logs
+      .slice(0, MAX_LOGS_PER_BATCH)
+      .filter((log) => shouldPersistLog(log.level));
+    let inserted = 0;
+
+    for (const log of logs) {
+      await ctx.db.insert("daemon_logs", {
+        user_id: auth.userId,
+        level: log.level,
+        message: log.message.slice(0, MAX_MESSAGE_LENGTH),
+        metadata: log.metadata,
+        daemon_version: log.daemon_version,
+        platform: log.platform,
+        timestamp: log.timestamp,
+      });
+      inserted++;
+    }
+
+    return { inserted };
+  },
+});
+
+export const list = query({
+  args: {
+    limit: v.optional(v.number()),
+    level: v.optional(
+      v.union(
+        v.literal("debug"),
+        v.literal("info"),
+        v.literal("warn"),
+        v.literal("error")
+      )
+    ),
+    since: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      return [];
+    }
+
+    const limit = args.limit ?? 500;
+
+    const query = ctx.db
+      .query("daemon_logs")
+      .withIndex("by_user_timestamp", (q) => q.eq("user_id", userId))
+      .order("desc");
+
+    let logs = await query.take(limit * 2);
+
+    if (args.since) {
+      logs = logs.filter((log) => log.timestamp >= args.since!);
+    }
+
+    if (args.level) {
+      logs = logs.filter((log) => log.level === args.level);
+    }
+
+    return logs.slice(0, limit);
+  },
+});
+
+export const clear = mutation({
+  args: {
+    before: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) {
+      throw new Error("Unauthorized");
+    }
+
+    const before = args.before ?? Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    const logsToDelete = await ctx.db
+      .query("daemon_logs")
+      .withIndex("by_user_timestamp", (q) =>
+        q.eq("user_id", userId).lt("timestamp", before)
+      )
+      .take(500);
+
+    for (const log of logsToDelete) {
+      await ctx.db.delete(log._id);
+    }
+
+    return { deleted: logsToDelete.length };
+  },
+});
+
+export const adminList = query({
+  args: {
+    limit: v.optional(v.number()),
+    level: v.optional(
+      v.union(
+        v.literal("debug"),
+        v.literal("info"),
+        v.literal("warn"),
+        v.literal("error")
+      )
+    ),
+    userId: v.optional(v.id("users")),
+    since: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      return { logs: [], users: [], isAdmin: false };
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      return { logs: [], users: [], isAdmin: false };
+    }
+
+    const limit = args.limit ?? 500;
+
+    const logsQuery = args.userId
+      ? ctx.db
+          .query("daemon_logs")
+          .withIndex("by_user_timestamp", (q) => q.eq("user_id", args.userId!))
+          .order("desc")
+      : ctx.db.query("daemon_logs").order("desc");
+
+    let logs = await logsQuery.take(limit * 2);
+
+    if (args.since) {
+      logs = logs.filter((log) => log.timestamp >= args.since!);
+    }
+
+    if (args.level) {
+      logs = logs.filter((log) => log.level === args.level);
+    }
+
+    logs = logs.slice(0, limit);
+
+    const userIds = [...new Set(logs.map((l) => l.user_id))];
+    const users = await Promise.all(
+      userIds.map(async (id) => {
+        const user = await ctx.db.get(id);
+        return user ? { _id: id, email: user.email, name: user.name } : null;
+      })
+    );
+
+    return {
+      logs,
+      users: users.filter(Boolean),
+      isAdmin: true,
+    };
+  },
+});
+
+export const adminGetUsers = query({
+  args: {},
+  handler: async (ctx) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      return [];
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      return [];
+    }
+
+    // desc = tail-first. A bare ascending take() starts at the index head,
+    // which is the retention pruner's tombstone graveyard (see advanceLogPrune)
+    // — walking it blows the syscall budget ("too many system operations").
+    // Sized to the syscall TIME budget: under backend load a doc read costs
+    // ~1ms, so a few thousand is the ceiling for a query that must stay
+    // responsive (5000 took ~7s during the 2026-07-17 saturation).
+    const logs = await ctx.db.query("daemon_logs").order("desc").take(3000);
+    const logUserIds = new Set(logs.map((l) => l.user_id));
+
+    const heartbeatUsers = await ctx.db
+      .query("users")
+      .withIndex("by_last_heartbeat", (q) => q.gte("last_heartbeat", 1))
+      .collect();
+    const usersById = new Map(heartbeatUsers.map((u) => [u._id, u]));
+
+    const userIds = [...new Set([...logUserIds, ...usersById.keys()])];
+
+    const users = await Promise.all(
+      userIds.map(async (id) => {
+        const user = usersById.get(id) ?? (await ctx.db.get(id));
+        if (!user) return null;
+        const userLogs = logs.filter((l) => l.user_id === id);
+        const errorCount = userLogs.filter((l) => l.level === "error").length;
+        const warnCount = userLogs.filter((l) => l.level === "warn").length;
+        const lastLog = userLogs.length > 0
+          ? Math.max(...userLogs.map((l) => l.timestamp))
+          : 0;
+        return {
+          _id: id,
+          email: user.email,
+          name: user.name,
+          logCount: userLogs.length,
+          errorCount,
+          warnCount,
+          lastLog,
+          cli_version: user.cli_version,
+          cli_platform: user.cli_platform,
+          daemon_pid: user.daemon_pid,
+          autostart_enabled: user.autostart_enabled,
+          last_heartbeat: user.last_heartbeat,
+        };
+      })
+    );
+
+    return users
+      .filter(Boolean)
+      .sort((a, b) => (b?.last_heartbeat ?? b?.lastLog ?? 0) - (a?.last_heartbeat ?? a?.lastLog ?? 0));
+  },
+});
+
+// Counts are capped by this take either way; 10000 blew the syscall time
+// budget under load (~1ms/doc when saturated). Keep it inside the budget.
+const STATS_SAMPLE = 4000;
+
+// One error with a different path, id or count per user is still one error.
+export function errorShape(message: string): string {
+  return message
+    .replace(/(?:\/Users|\/home|\/private|\/var|\/tmp|~)\/[^\s)'"]*/g, "<path>")
+    .replace(/\b[0-9a-f]{8,}\b/gi, "<id>")
+    .replace(/\d+/g, "N")
+    .slice(0, 100);
+}
+
+export const adminGetStats = query({
+  args: {},
+  handler: async (ctx) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) {
+      return null;
+    }
+
+    const currentUser = await ctx.db.get(authUserId);
+    if (!currentUser || !isStaff(currentUser)) {
+      return null;
+    }
+
+    const now = Date.now();
+    const oneHourAgo = now - 60 * 60 * 1000;
+    const oneDayAgo = now - 24 * 60 * 60 * 1000;
+    const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+    const logs = await ctx.db.query("daemon_logs").order("desc").take(STATS_SAMPLE);
+
+    const logsLastHour = logs.filter((l) => l.timestamp >= oneHourAgo);
+    const logsLastDay = logs.filter((l) => l.timestamp >= oneDayAgo);
+    const logsLastWeek = logs.filter((l) => l.timestamp >= oneWeekAgo);
+
+    const countByLevel = (logList: typeof logs) => ({
+      error: logList.filter((l) => l.level === "error").length,
+      warn: logList.filter((l) => l.level === "warn").length,
+      info: logList.filter((l) => l.level === "info").length,
+      debug: logList.filter((l) => l.level === "debug").length,
+    });
+
+    const uniqueUsers = (logList: typeof logs) =>
+      new Set(logList.map((l) => l.user_id)).size;
+
+    const topErrors = logs
+      .filter((l) => l.level === "error")
+      .reduce((acc, log) => {
+        const key = errorShape(log.message);
+        acc[key] = (acc[key] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>);
+
+    const topErrorsList = Object.entries(topErrors)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, 5)
+      .map(([message, count]) => ({ message, count }));
+
+    return {
+      lastHour: {
+        total: logsLastHour.length,
+        ...countByLevel(logsLastHour),
+        uniqueUsers: uniqueUsers(logsLastHour),
+      },
+      lastDay: {
+        total: logsLastDay.length,
+        ...countByLevel(logsLastDay),
+        uniqueUsers: uniqueUsers(logsLastDay),
+      },
+      lastWeek: {
+        total: logsLastWeek.length,
+        ...countByLevel(logsLastWeek),
+        uniqueUsers: uniqueUsers(logsLastWeek),
+      },
+      topErrors: topErrorsList,
+      // A window that reaches past the oldest sampled row is a floor, not a count.
+      sampledSince: logs.length === STATS_SAMPLE ? logs[logs.length - 1].timestamp : null,
+    };
+  },
+});
+
+// Only care about daemons that beat inside the last 24h.
+const RECENTLY_ACTIVE_MS = 24 * 60 * 60 * 1000;
+
+// Range-scan only the daemons that beat inside the window via the
+// by_last_heartbeat index, instead of loading the whole (growing) users table
+// on every 5 minute cron tick. Both health crons read the same set, so the
+// query and the window live here rather than in each handler.
+async function recentlyActiveDaemonUsers(
+  ctx: MutationCtx,
+  now: number,
+  windowMs: number = RECENTLY_ACTIVE_MS,
+) {
+  return await ctx.db
+    .query("users")
+    .withIndex("by_last_heartbeat", (q) => q.gte("last_heartbeat", now - windowMs))
+    .collect();
+}
+
+export const checkDaemonHealth = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const OFFLINE_THRESHOLD_MS = 10 * 60 * 1000; // 10 min no heartbeat = offline
+
+    const activeUsers = await recentlyActiveDaemonUsers(ctx, now);
+
+    let alertsCreated = 0;
+
+    for (const user of activeUsers) {
+      const silenceDuration = now - (user.last_heartbeat ?? 0);
+      if (silenceDuration < OFFLINE_THRESHOLD_MS) continue;
+
+      // Only alert once per offline episode: check if the most recent log for this
+      // user is already an offline alert (meaning we already noticed this outage)
+      const lastLogs = await ctx.db
+        .query("daemon_logs")
+        .withIndex("by_user_timestamp", (q) => q.eq("user_id", user._id))
+        .order("desc")
+        .take(3);
+
+      const alreadyAlerted = lastLogs.some(
+        (l) => l.metadata?.error_code === "server_offline_detected"
+          && now - l.timestamp < silenceDuration
+      );
+      if (alreadyAlerted) continue;
+
+      const minutes = Math.round(silenceDuration / 60000);
+      await ctx.db.insert("daemon_logs", {
+        user_id: user._id,
+        level: "error",
+        message: `DAEMON OFFLINE: No heartbeat for ${minutes}min (last seen: ${new Date(user.last_heartbeat!).toISOString()}, v${user.cli_version || "?"})`,
+        metadata: { error_code: "server_offline_detected" },
+        daemon_version: user.cli_version,
+        platform: user.cli_platform,
+        timestamp: now,
+      });
+      alertsCreated++;
+    }
+
+    return { checked: activeUsers.length, alertsCreated };
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Loop-freeze SLO alert: one aggregated notification per machine per incident
+// ---------------------------------------------------------------------------
+
+// More than two minutes of the last hour blocked is the bar. Under it the web
+// still shows "under load"; past it a person should know, because every
+// delivery and echo on that machine is running late.
+export const LOOP_FREEZE_ALERT_MS = 120_000;
+// The same cooldown accountSwitch uses for blocked sessions: past it, a WORSE
+// hour announces itself again.
+export const FREEZE_NOTIFY_COOLDOWN_MS = 30 * 60 * 1000;
+// A machine that keeps breaching the bar without ever beating its own peak is
+// still broken, and the person still needs to hear about it. It just does not
+// need to hear about it every half hour, so a breach that is not worse waits
+// this long instead.
+export const FREEZE_RENOTIFY_MS = 6 * 60 * 60 * 1000;
+
+/** The whole decision, so the cron handler stays a loop over rows.
+ * Three cases past the bar, and the split matters because the founder's own
+ * laptop is the chronic case:
+ * - The number has not moved at all. That is an old daemon that stopped
+ *   reporting and left its last value frozen on the row, so it never alerts
+ *   again. A bare cooldown would announce that stale number forever.
+ * - The number is worse than the one we announced. That is a deteriorating
+ *   machine, and it gets the short cooldown.
+ * - The number moved but is not worse. That is a machine sitting between the
+ *   bar and its own past peak, which the earlier "worse than last time" rule
+ *   silenced for the life of the row. It re-alerts on the long interval.
+ * The handler also clears the stamp once a recovered machine has stayed under
+ * the bar past the cooldown, so a recovered machine alerts again on its next
+ * incident however small. A frozen value never falls under the bar, so it is
+ * never cleared. */
+export function shouldNotifyDeviceFreeze(input: {
+  hourMs: number | undefined;
+  thresholdMs: number;
+  online: boolean;
+  state?: { last_notified_at: number; last_hour_ms: number };
+  now: number;
+}): boolean {
+  if (!input.online) return false;
+  if (!input.hourMs || input.hourMs < input.thresholdMs) return false;
+  const state = input.state;
+  if (!state) return true;
+  if (input.hourMs === state.last_hour_ms) return false;
+  const sinceLast = input.now - state.last_notified_at;
+  if (input.hourMs > state.last_hour_ms) return sinceLast >= FREEZE_NOTIFY_COOLDOWN_MS;
+  return sinceLast >= FREEZE_RENOTIFY_MS;
+}
+
+const secs = (ms: number) => `${Math.round(ms / 1000)}s`;
+
+/** Runs on the same 5 minute cron as checkDaemonHealth, as its own entry so a
+ * failure in one alert never stops the other. The cron cadence IS the debounce,
+ * so there is no scheduler hop here. */
+export const checkDeviceLoopFreeze = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const configured = Number(await getSystemConfig(ctx, "loop_freeze_alert_ms"));
+    const thresholdMs = Number.isFinite(configured) && configured > 0 ? configured : LOOP_FREEZE_ALERT_MS;
+
+    // Only a machine that is beating right now can alert, so read the ten
+    // minute window rather than the whole day. The user doc's last_heartbeat
+    // lags the device's last_seen by at most the 50s user doc throttle, so ten
+    // minutes covers every device inside the two minute online bar with room to
+    // spare, and it keeps this tick from reading rows daemonHeartbeat is
+    // writing every 30 seconds.
+    const activeUsers = await recentlyActiveDaemonUsers(ctx, now, 10 * 60_000);
+
+    let notified = 0;
+    let devicesChecked = 0;
+
+    for (const user of activeUsers) {
+      const devices = await ctx.db
+        .query("devices")
+        .withIndex("by_user_id", (q) => q.eq("user_id", user._id))
+        .collect();
+
+      for (const device of devices) {
+        devicesChecked++;
+        const hourMs = device.loop_freeze_1h_ms;
+        const online = now - device.last_seen < DEVICE_ONLINE_MS;
+
+        // The incident is over: forget the stamp so the next one alerts on its
+        // own merits. Without this the stored hour total only ever ratchets
+        // upward, and a machine's second real incident goes unreported for the
+        // life of the row because it was smaller than the first.
+        // Only past the cooldown, though. A machine hovering at the bar dips
+        // under it every few ticks, and clearing on the dip would hand the next
+        // tick a clean slate and alert again five minutes later, forever.
+        if ((hourMs ?? 0) < thresholdMs) {
+          const stamp = device.freeze_notify_state;
+          if (stamp && now - stamp.last_notified_at >= FREEZE_NOTIFY_COOLDOWN_MS) {
+            await ctx.db.patch(device._id, { freeze_notify_state: undefined });
+          }
+          continue;
+        }
+
+        if (!shouldNotifyDeviceFreeze({ hourMs, thresholdMs, online, state: device.freeze_notify_state, now })) {
+          continue;
+        }
+
+        const machine = device.label || device.hostname || device.platform || "This machine";
+        const worst = device.loop_freeze_max_ms ? ` Worst single freeze ${secs(device.loop_freeze_max_ms)}.` : "";
+        const cause = device.loop_freeze_top ? ` Top cause: ${device.loop_freeze_top}.` : "";
+        const message =
+          `The daemon's event loop was frozen ${secs(hourMs!)} in the last hour.${worst}${cause}` +
+          ` Deliveries and echoes on this machine are delayed, not lost.`;
+
+        // Stamp BEFORE delivering so a racing tick cannot deliver twice.
+        await ctx.db.patch(device._id, {
+          freeze_notify_state: { last_notified_at: now, last_hour_ms: hourMs! },
+        });
+        // The router drops the row when the recipient muted the preference this
+        // event maps to, so count what it actually wrote. The stamp stays where
+        // it is: a muted user has been told as far as this machine is
+        // concerned, and re-running the decision every tick would only build a
+        // backlog of rows nobody sees.
+        const res = await ctx.runMutation(internal.notificationRouter.emit, {
+          event_type: "daemon_overloaded" as const,
+          entity_type: "device" as const,
+          entity_id: device._id,
+          direct_recipient_id: user._id,
+          actor_name: machine,
+          message,
+          // Bell only. A slow daemon is a diagnostic with nothing for the
+          // person to do in the moment, so it never raises a banner or a push.
+          quiet: true,
+          // No `link`: that field is for pages OUTSIDE the app and the bell
+          // opens it in a new tab. The device entity routes in-app to
+          // /settings/devices through notificationRoute.
+        });
+        notified += res?.notified ?? 0;
+      }
+    }
+
+    return { devicesChecked, notified };
+  },
+});
+
+export const clearOfflineAlerts = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const logs = await ctx.db
+      .query("daemon_logs")
+      .order("desc")
+      .take(10000);
+
+    const offlineLogs = logs.filter((l) => l.message.startsWith("DAEMON OFFLINE"));
+    for (const log of offlineLogs) {
+      await ctx.db.delete(log._id);
+    }
+    return { deleted: offlineLogs.length };
+  },
+});
+
+// Steady-state retention only: trims a SMALL bounded batch of the oldest rows per
+// cron tick and does NOT self-reschedule. Reuses the DEFAULT (_creationTime) order
+// (rows insert in timestamp order, so oldest-by-creation == oldest-by-timestamp) so
+// no index backfill is needed. The ingestion gate (shouldPersistLog) is what stops
+// the growth; this just keeps warn/error logs from accumulating past the window.
+//
+// NOTE: an aggressive self-rescheduling drain of the multi-million-row pre-gate
+// backlog saturated the backend (46-63s mutation latency) — deleting at that scale
+// through Convex's MVCC (each delete = tombstone + index removals) is too heavy for
+// live traffic. The one-time backlog reclaim belongs in a low-traffic maintenance
+// window, not here. ctx.db.delete only — never raw SQL.
+const PRUNE_PER_TICK = 300;
+
+// Cursor-based sweep shared by the cron tick and the backlog drain. A deleted
+// row leaves a tombstone in the index until INDEX_RETENTION_DELAY (3d) purges
+// it, so a scan that restarts at the index head re-walks every tombstone this
+// pruner ever created — after ~60k backlog deletions even a take(1) blew the
+// system-op budget, which killed the drain's self-reschedule chain AND every
+// cron tick after it (2026-07-13). The cursor (log_prune_state singleton,
+// search_mirror_state pattern) resumes each tick just past the last deleted
+// row, so a tick never re-reads its own graveyard.
+//
+// The cursor advances only THROUGH deleted rows and parks at the first
+// still-live one: rows expire later as the cutoff slides, so parking (never
+// skipping) keeps them reachable. A late-uploaded old-timestamp row that sits
+// above a parked live row is swept once the cutoff passes the parked row —
+// retention slack, not a leak. Concurrent cron+drain ticks OCC-conflict on the
+// state row; the loser retries against the advanced cursor and continues
+// cleanly.
+async function advanceLogPrune(ctx: MutationCtx, batchArg?: number, seedCursor?: number) {
+  const cutoff = Date.now() - RETENTION_MS;
+  const batch = Math.min(batchArg ?? PRUNE_PER_TICK, 2000);
+  let state = await ctx.db.query("log_prune_state").first();
+  if (!state) {
+    // seedCursor lets the first run start past an existing tombstone field
+    // (derived externally, e.g. oldest live row's _creationTime - 1). A failed
+    // mutation rolls back its insert, so a budget-blown unseeded first run
+    // cannot poison the seed.
+    const id = await ctx.db.insert("log_prune_state", {
+      cursor: seedCursor ?? 0,
+      updated_at: Date.now(),
+    });
+    state = (await ctx.db.get(id))!;
+  }
+
+  const candidates = await ctx.db
+    .query("daemon_logs")
+    .withIndex("by_creation_time", (q) => q.gt("_creationTime", state.cursor))
+    .order("asc")
+    .take(batch);
+
+  let deleted = 0;
+  let cursor = state.cursor;
+  // Short page and all-deleted = end of table; a live row mid-page = reached
+  // the retention frontier. Either way the backlog below the cutoff is gone.
+  let caughtUp = candidates.length < batch;
+  for (const log of candidates) {
+    if (log.timestamp >= cutoff) {
+      caughtUp = true;
+      break;
+    }
+    await ctx.db.delete(log._id);
+    cursor = log._creationTime;
+    deleted++;
+  }
+  if (cursor !== state.cursor) {
+    await ctx.db.patch(state._id, { cursor, updated_at: Date.now() });
+  }
+  return { deleted, scanned: candidates.length, caughtUp, cursor };
+}
+
+export const pruneOldLogs = internalMutation({
+  args: {
+    // Maintenance-window override: `npx convex run daemonLogs:pruneOldLogs
+    // '{"batch":N}'` from a PACED external loop (sleep between calls, watch
+    // latency). The cron always runs the gentle default.
+    batch: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => advanceLogPrune(ctx, args.batch),
+});
+
+// One-time paced drain of the multi-million-row pre-gate backlog. Deletes one
+// bounded batch, then reschedules itself pauseMs later until the oldest rows
+// are inside the retention window. The pause IS the safety mechanism: the May
+// incident (see pruneOldLogs NOTE) came from a drain that rescheduled with no
+// gap and monopolized the worker pool. Kick off manually:
+//   npx convex run daemonLogs:drainLogBacklog '{"batch":1000,"pauseMs":45000}'
+// Stop it by letting it hit caughtUp, or deploy with this function body
+// short-circuited, or cancel the pending run in _scheduled_functions.
+export const drainLogBacklog = internalMutation({
+  args: {
+    batch: v.optional(v.number()),
+    pauseMs: v.optional(v.number()),
+    // First-run seed for log_prune_state.cursor (see advanceLogPrune) —
+    // ignored once the state row exists.
+    cursor: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batch = Math.min(args.batch ?? 1000, 2000);
+    const pauseMs = Math.max(args.pauseMs ?? 45_000, 5_000);
+
+    const result = await advanceLogPrune(ctx, batch, args.cursor);
+
+    if (!result.caughtUp) {
+      await ctx.scheduler.runAfter(pauseMs, internal.daemonLogs.drainLogBacklog, {
+        batch,
+        pauseMs,
+      });
+    }
+    return { deleted: result.deleted, caughtUp: result.caughtUp, cursor: result.cursor };
+  },
+});

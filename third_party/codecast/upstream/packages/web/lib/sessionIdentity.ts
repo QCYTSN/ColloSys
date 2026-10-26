@@ -1,0 +1,124 @@
+// The one resolver for who a session is (docs/architecture/session-characters.md
+// S1). Every surface that draws a face or a name for a session calls this and
+// nothing else reads the character fields or the role pointers.
+//
+// Three answers, and the first one that fits wins:
+//   role      a role's standing session wears the ROLE — its face and name are
+//             the role's, and it is personified whether or not anyone opted in,
+//             because the role IS the identity (org-staffing.md S13).
+//   character somebody gave this session a face or a name, or the workspace
+//             asked for every session to have one.
+//   plain     nobody opted in: the session renders the way it always has, a
+//             title and its agent's icon. This is the DEFAULT, so turning the
+//             feature on is a choice rather than something that happens to you.
+import { characterOf, defaultCharacterFor, type Character } from "@codecast/shared/contracts/sessionCharacter";
+import { isAvatarKey, defaultAvatarFor, type AvatarKey } from "@codecast/shared/contracts/orgAvatars";
+import type { SessionRoleSnapshot } from "../store/inboxStore";
+
+export type IdentityRow = {
+  _id: string;
+  title?: string | null;
+  character_avatar?: string | null;
+  character_name?: string | null;
+  standing_role_id?: string | null;
+  org_role_id?: string | null;
+  role?: SessionRoleSnapshot | null;
+};
+
+export type SessionIdentity =
+  | { kind: "plain"; reportsTo: SessionRoleSnapshot | null }
+  | { kind: "character"; avatar: AvatarKey; name: string; chosen: boolean; reportsTo: SessionRoleSnapshot | null }
+  | { kind: "role"; avatar: AvatarKey; name: string; handle: string; role: SessionRoleSnapshot };
+
+/** The one resolver every surface calls. `personifyAll` is the workspace
+ *  switch; identity components read it via usePersonifyAll (hooks/) rather
+ *  than importing the store from this module. */
+export function sessionIdentity(row: IdentityRow, personifyAll = false): SessionIdentity {
+  if (row.standing_role_id && row.role) {
+    const r = row.role;
+    return { kind: "role", avatar: isAvatarKey(r.avatar) ? r.avatar : defaultAvatarFor(r.handle), name: r.name, handle: r.handle, role: r };
+  }
+  const reportsTo = row.org_role_id && row.role ? row.role : null;
+  const c: Character = characterOf(row);
+  if (!c.chosen && !personifyAll) return { kind: "plain", reportsTo };
+  return { kind: "character", avatar: c.avatar, name: c.name, chosen: c.chosen, reportsTo };
+}
+
+/** The character a row WOULD wear — what the picker opens on, and what the
+ *  "personify this session" gesture writes. Independent of whether it is
+ *  personified yet, so opting in shows the same face the preview promised. */
+export function characterFor(row: IdentityRow): Character {
+  const c = characterOf(row);
+  return c.chosen ? c : defaultCharacterFor(row._id);
+}
+
+/** The face a row draws when a surface asks for one regardless of opt-in: its
+ *  role's, its character's, or the default it WOULD wear. SessionFace on web
+ *  and on mobile both draw from this, so the picker's preview, a hover card
+ *  and a phone row agree on the animal. */
+export function faceIdentity(row: IdentityRow): { kind: "role" | "character"; avatar: AvatarKey; name?: string } {
+  const id = sessionIdentity(row, true);
+  return id.kind === "plain" ? { kind: "character", avatar: characterFor(row).avatar } : id;
+}
+
+/** The corner badge's box on a face of `size` px: 0 under 16 px, where the
+ *  badge would be a smudge. */
+export function faceBadgeSize(size: number): number {
+  return size >= 16 ? Math.round(size * 0.46) : 0;
+}
+
+/** The card line's parts. `name` is null for a plain session, which renders
+ *  exactly as it always did: the title alone. A role drops a title that only
+ *  repeats its name (a standing session's title IS the role's name, S16). */
+export function identityLine(
+  row: IdentityRow,
+  title: string | null | undefined,
+  personifyAll = false,
+): { name: string | null; title: string | null; handle: string | null } {
+  const id = sessionIdentity(row, personifyAll);
+  const t = (title ?? "").trim();
+  if (id.kind === "plain") return { name: null, title: t || null, handle: null };
+  if (id.kind === "role") return { name: id.name, title: t && t !== id.name ? t : null, handle: id.handle };
+  return { name: id.name, title: t || null, handle: null };
+}
+
+/** The role a row IS the standing session of, or null. The inbox reads it to
+ *  put the role's one number on its card (org-roles-run-work.md R1). */
+export function standingRoleIdOf(row: IdentityRow): string | null {
+  return row.standing_role_id ?? null;
+}
+
+/** The role a session reports to, when the role looks after it: the session
+ *  renders as a small row under that role's card. A role's own standing
+ *  session answers null; it is the card. */
+export function roleLookingAfter(row: IdentityRow): SessionRoleSnapshot | null {
+  if (row.standing_role_id) return null;
+  return row.org_role_id && row.role ? row.role : null;
+}
+
+/** The identity fields alone, lifted off a bigger row. Surfaces that carry a
+ *  session into another shape — a mention item, a dropdown's live snapshot —
+ *  pass this instead of the whole row, so they neither copy a session's churn
+ *  nor read the character fields themselves. */
+export function identityRowOf(row: IdentityRow & Record<string, unknown>): IdentityRow {
+  return {
+    _id: row._id,
+    title: row.title ?? null,
+    character_avatar: row.character_avatar ?? null,
+    character_name: row.character_name ?? null,
+    standing_role_id: row.standing_role_id ?? null,
+    org_role_id: row.org_role_id ?? null,
+    role: row.role ?? null,
+  };
+}
+
+/** A wake signature of the identity fields alone. A surface that draws a face
+ *  subscribes to this rather than to the row, whose ref flips on every
+ *  heartbeat; built on identityRowOf so the two can never disagree on which
+ *  fields make an identity. */
+export function identitySig(row: (IdentityRow & Record<string, unknown>) | null | undefined): string {
+  if (!row) return "";
+  const r = identityRowOf(row);
+  const role = r.role ? `${r.role._id}:${r.role.avatar}:${r.role.name}:${r.role.handle}` : "";
+  return [r._id, r.character_avatar ?? "", r.character_name ?? "", r.standing_role_id ?? "", r.org_role_id ?? "", role].join("|");
+}

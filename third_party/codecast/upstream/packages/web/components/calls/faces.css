@@ -1,0 +1,406 @@
+/*
+ * The floating faces: the call reduced to circles of people's faces,
+ * transparent everywhere else, over whatever you are working in.
+ *
+ * Everything here is written for a window with no background. The page paints
+ * nothing. A circle is the cropped face and nothing else — no hairline, no
+ * drop shadow, no plate behind it — because anything drawn around the face
+ * turns a person floating over your screen into a chip pinned to it. The only
+ * marks this surface ever draws are the ones that carry a fact: a cyan ring
+ * while somebody is talking, a glyph when somebody is muted, and a name pill
+ * while the pointer is on a face.
+ */
+
+.faces-window {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* Circles at the top, not centered. Hovering grows the window downward to
+     make room for the name and the controls, and faces that re-centred on
+     every hover would jump under the pointer. */
+  justify-content: flex-start;
+  /* The only margin, and it is the speaking ring's room — see FACES_PADDING
+     in faceCrop.ts, which sizes the window to the same 8px. */
+  padding: 8px;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Everyone: a row. Speaker: one circle with the rest stacked behind it at zero
+   opacity, so a swap is a crossfade and no video is ever torn down and rebuilt
+   for a person who is about to speak again. */
+.faces-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.faces-row--speaker .face-slot {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.faces-row--speaker .face-slot:has(.face--shown) {
+  position: relative;
+  pointer-events: auto;
+  z-index: 1;
+}
+
+/* The circle's square, and the frame the name hangs below. The circle clips its
+   own contents so the crop stays a disc; anything that belongs OUTSIDE the disc
+   lives here instead. */
+.face-slot {
+  position: relative;
+  flex: none;
+}
+
+/* The circle at rest carries nothing. The diameter is written inline from
+   TIER_DIAMETER, because the crop maths needs the same number in pixels and
+   two places holding one measurement is how they drift apart. */
+.face {
+  position: relative;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--sol-bg-alt);
+  opacity: 1;
+  /* Slow out. A ring that vanished as fast as it arrived would flicker through
+     every gap between two words. */
+  transition: opacity 220ms ease, box-shadow 400ms ease;
+}
+.face--hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Talking. The same cyan the walkie uses for a voice arriving, because it means
+   the same thing here. Fast in: the ring has to land on the first syllable. */
+.face[data-speaking="true"] {
+  box-shadow:
+    0 0 0 3px var(--sol-cyan),
+    0 0 14px color-mix(in srgb, var(--sol-cyan) 40%, transparent);
+  transition: opacity 220ms ease, box-shadow 120ms ease;
+}
+
+/* Followed. The team bar's selected ring, here: a steady cyan band, no glow,
+   so it never reads as speech. Speech still wins while it lasts. */
+.face[data-followed="true"]:not([data-speaking="true"]) {
+  box-shadow:
+    0 0 0 2px var(--sol-bg-alt),
+    0 0 0 4px var(--sol-cyan);
+}
+
+.face-slot[data-local="true"] .face {
+  box-shadow:
+    0 0 0 calc(var(--level, 0) * 5px) var(--sol-orange),
+    0 0 calc(var(--level, 0) * 18px) color-mix(in srgb, var(--sol-orange) 50%, transparent);
+  transition: opacity 220ms ease, box-shadow 75ms ease;
+}
+
+/* The video is laid out as a plain square and moved entirely by transform —
+   the crop loop writes one composited property per frame and never touches
+   layout. `fill` rather than `cover` because the transform is already doing
+   the aspect correction; `cover` would crop first and fight it. */
+.face video {
+  position: absolute;
+  left: 0;
+  top: 0;
+  object-fit: fill;
+  transform-origin: 0 0;
+  will-change: transform;
+  background: var(--sol-bg-alt);
+}
+
+/* Camera off: the person's picture, cropped to the circle exactly as their
+   video would be, so a row does not go ragged when somebody switches off. */
+.face-avatar-img,
+.face-avatar-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.face-avatar-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sol-bg-alt);
+  color: var(--sol-text-muted);
+  font-family: var(--font-mono);
+}
+
+/* Muted: a badge, not a ring. The ring means one thing on this surface and a
+   second meaning would cost the first one its clarity. Bottom right, away from
+   the eyes, and small enough to read as a mark on the person rather than a
+   control. */
+.face-mute {
+  position: absolute;
+  right: 5%;
+  bottom: 5%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--sol-red);
+  backdrop-filter: blur(4px);
+}
+[data-face-tier="mini"] .face-mute {
+  width: 14px;
+  height: 14px;
+}
+
+/* A guest: the face row's guest mark, the same disc with a link in it in the
+   guest's yellow (faceRow.css .face-guest), at the circle's lower left where
+   it never meets the mute badge. It sits on the slot because the circle clips
+   itself, so it follows the circle out when speaker mode fades a face away. */
+.faces-window .face-guest-mark {
+  position: absolute;
+  left: 14.64%;
+  bottom: 14.64%;
+  transform: translate(-50%, 50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--sol-bg-alt);
+  box-shadow: 0 0 0 2px var(--sol-bg);
+  color: #b58900;
+  pointer-events: none;
+  z-index: 1;
+  transition: opacity 220ms ease;
+}
+.faces-window .face-guest-mark svg {
+  width: 11px;
+  height: 11px;
+  stroke-width: 2.5;
+}
+.faces-window [data-face-tier="mini"] .face-guest-mark {
+  width: 12px;
+  height: 12px;
+}
+.faces-window [data-face-tier="mini"] .face-guest-mark svg {
+  width: 8px;
+  height: 8px;
+}
+.faces-window .face-slot:has(.face--hidden) .face-guest-mark {
+  opacity: 0;
+}
+
+/* The room is being filmed: said at rest, on the row's top left corner, in
+   the stage's own REC mark on the chrome's solid plate. It is the one fact
+   that may not wait for a hover: somebody working in another app is still
+   on camera, and the circles are all of the call they can see. */
+.faces-rec {
+  position: absolute;
+  left: -2px;
+  top: -2px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px 2px 5px;
+  border-radius: 999px;
+  background: #101418;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+  pointer-events: none;
+}
+
+/* The name, only while the pointer is on that face, and under the face rather
+   than on it. A name printed on every circle all call is a caption on somebody
+   you already recognize; a name written across their chin is a caption on their
+   face. Under the circle it covers nothing, and the window makes room for it at
+   the moment it appears. */
+.face-name {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  /* As wide as the window can hold. 100vw is the window: this page IS the
+     window, so a name is only ever cut when it would run off the glass. */
+  max-width: calc(100vw - 16px);
+  padding: 2px 6px;
+  border-radius: 999px;
+  /* Dark plate rather than a surface token: this sits on a person's face,
+     and a face can be any color. The muted badge reads the same way. */
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.94);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+  transform: translate(-50%, 2px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+}
+.face-slot:hover .face-name {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.face-waiting {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--sol-text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+/* The chrome: a row of its own under the circles, and nothing reserves that row
+   while the pointer is away — an idle window is its circles and 8px, and a
+   control bar waiting under a floating face is what turns a glance into a
+   widget. Hovering grows the window down to hold it, so it never covers a face.
+   It keeps a hairline: unlike a face, a row of buttons has no shape of its own
+   to read against whatever application is underneath. */
+.faces-chrome {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  /* SOLID, with a bright edge: over a dark editor a translucent plate and its
+     grey words disappeared. */
+  background: #101418;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28), 0 6px 20px rgba(0, 0, 0, 0.5);
+  opacity: 0;
+  transform: translate(-50%, 3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+  pointer-events: none;
+  z-index: 2;
+}
+.faces-window--hover .faces-chrome {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+
+/* A button is an icon AND its word — a circle floating over somebody's work
+   has nowhere else to say what a button does. Fixed width (CHROME_BUTTON_W in
+   faceCrop.ts) so the window can be sized for the chrome before it is drawn. */
+.faces-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 68px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.92);
+  background: transparent;
+  transition: background 120ms ease, color 120ms ease;
+}
+.faces-btn-word {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.faces-btn:hover {
+  background: color-mix(in srgb, var(--sol-text) 12%, transparent);
+  color: var(--sol-text);
+}
+.faces-btn--on {
+  color: var(--sol-cyan);
+}
+.faces-mic {
+  position: relative;
+}
+.faces-mic-level {
+  position: absolute;
+  bottom: 2px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--sol-orange);
+  transform-origin: left;
+  transform: scaleX(var(--level, 0));
+  transition: transform 75ms ease;
+}
+.faces-btn--alert {
+  color: var(--sol-red);
+}
+.faces-btn--alert:hover {
+  background: color-mix(in srgb, var(--sol-red) 18%, transparent);
+  color: var(--sol-red);
+}
+
+/* Reduced motion: everything still says what it said, it just says it at once.
+   The ring lands on the syllable with no ease and leaves with none; the glow
+   is a static edge, so it stays. Knowing who is talking is the product; the
+   easing was only ever the manners. */
+@media (prefers-reduced-motion: reduce) {
+  .face,
+  .face[data-speaking="true"],
+  .face-name,
+  .faces-chrome,
+  .faces-btn {
+    transition: none;
+  }
+}
+
+/* At the menu-bar size the word would cover the face: the dot alone. */
+/* The media dropped and is coming back: the faces fade to what they were a
+   moment ago, and the pill says why the room went quiet. */
+.faces-row[data-reconnecting] .face {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+  transition: opacity 200ms ease, filter 200ms ease;
+}
+.faces-reconnecting {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 7px 2px 6px;
+  border-radius: 999px;
+  background: #101418;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+  color: var(--sol-yellow);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  pointer-events: none;
+}
+.faces-reconnecting-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sol-yellow);
+}
+[data-face-tier="mini"] .faces-reconnecting {
+  padding: 3px;
+  font-size: 0;
+  gap: 0;
+}
+[data-face-tier="mini"] .faces-rec {
+  padding: 3px;
+}
+[data-face-tier="mini"] .faces-rec > span {
+  gap: 0;
+  font-size: 0;
+}

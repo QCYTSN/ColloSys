@@ -1,0 +1,1073 @@
+import { HOSTED_AGENT_TYPE } from "./assistant";
+import { DORMANT_CLAIM_TTL_MS } from "./agentStatus";
+import { deriveLiveAt, isUnderRole, rowLiveDeadlines, type LiveFactsRow } from "./inboxProjection";
+import { describe, expect, test } from "bun:test";
+import {
+  INBOX_BUCKETS,
+  INBOX_FACT_FIELDS,
+  INBOX_PROJECTION_FIELDS,
+  INBOX_PROJECTION_VERSION,
+  INBOX_WINDOW_CAPS,
+  classifyWorkState,
+  isStashHidden,
+  computeBucketStale,
+  computeFold,
+  digestProjection,
+  emptyInboxTally,
+  fnv1a32,
+  fnv1a32Update,
+  FNV1A32_OFFSET,
+  isBelowFoldAt,
+  isFoldExempt,
+  isWorkingSetWindow,
+  rollupParentIdOf,
+  isStackedAsk,
+  rideLeadPlacements,
+  inWorkingSet,
+  inboxEpoch,
+  inboxSortTime,
+  inboxSortTimeOfRow,
+  INBOX_CREATE_GRACE_MS,
+  isHardBlocked,
+  placeInboxRow,
+  placeProjectableRow,
+  projectInbox,
+  selectWorkingSet,
+  shouldShowInInbox,
+  isAssignedAwayFromViewer,
+  isAssignedAwayFromOwnerSet,
+  type InboxBucket,
+  type InboxPlacementInput,
+  type InboxSortTimeInput,
+  type RollupRow,
+  type WorkingSetRow,
+} from "./inboxProjection";
+
+function input(partial: Partial<InboxPlacementInput> = {}): InboxPlacementInput {
+  return {
+    agentStatus: undefined,
+    isIdle: true,
+    awaitingInput: false,
+    hasPending: false,
+    isUnresponsive: false,
+    messageCount: 5,
+    dismissed: false,
+    stashed: false,
+    pinned: false,
+    isAnchor: false,
+    asking: false,
+    ...partial,
+  };
+}
+
+describe("digestProjection", () => {
+  test("fnv1a32 matches the reference vectors", () => {
+    expect(fnv1a32("")).toBe(0x811c9dc5);
+    expect(fnv1a32("a")).toBe(0xe40c292c);
+  });
+
+  // The fixed vector: the server and every client must produce exactly this
+  // string for exactly these triples. Change it only with a projection version
+  // bump (v2: fold entered the digest).
+  test("fixed test vector", () => {
+    const entries: Array<[string, string, boolean]> = [
+      ["conv_a", "working", false],
+      ["conv_b", "needs_input", false],
+      ["conv_c", "hidden", true],
+    ];
+    expect(digestProjection(entries)).toBe("5f7b16c8a03820a8");
+  });
+
+  test("empty set digests to sixteen zeros", () => {
+    expect(digestProjection([])).toBe("0000000000000000");
+  });
+
+  test("order independent, bucket sensitive, id sensitive", () => {
+    const a = digestProjection([["x", "working", false], ["y", "done", false]]);
+    expect(digestProjection([["y", "done", false], ["x", "working", false]])).toBe(a);
+    expect(digestProjection([["x", "done", false], ["y", "working", false]])).not.toBe(a);
+    expect(digestProjection([["x", "working", false], ["z", "done", false]])).not.toBe(a);
+    expect(a).toMatch(/^[0-9a-f]{16}$/);
+  });
+
+  // A fold flip with unchanged buckets MUST change the digest: with show old
+  // off the headline count is the shown tally, so two replicas that agree on
+  // every bucket but cut the fold differently are diverged (design C3).
+  test("a fold flip with unchanged buckets changes the digest", () => {
+    const base: Array<[string, string, boolean]> = [
+      ["conv_a", "working", false],
+      ["conv_b", "needs_input", false],
+      ["conv_c", "hidden", true],
+    ];
+    for (let i = 0; i < base.length; i++) {
+      const flipped = base.map(([id, b, f], j) => [id, b, j === i ? !f : f] as [string, string, boolean]);
+      expect(digestProjection(flipped)).not.toBe(digestProjection(base));
+    }
+  });
+});
+
+describe("inboxEpoch", () => {
+  test("quantizes to the minute", () => {
+    expect(inboxEpoch(1_700_000_059_999)).toBe(1_700_000_040_000);
+    expect(inboxEpoch(1_700_000_040_000)).toBe(1_700_000_040_000);
+  });
+});
+
+// A resume, a clear or a manual /compact lands the pane at an idle prompt with
+// no turn behind it. The status is honest — the agent really is quiet — but it
+// is not a verdict, and before ct-49533 nothing said so: the hook reported
+// nothing at all, and whatever the daemon later observed was read as the end of
+// a turn that never happened.
+describe("classifyWorkState — a session boundary carries no verdict", () => {
+  const boundary = (partial = {}) => input({ agentStatus: "idle", sessionBoundary: true, ...partial });
+
+  test("a resume does not spend the row's own declaration", () => {
+    // The regression: the boundary status is present, so without the flag the
+    // declaredStatus fallback is skipped and the row falls through to
+    // needs_input — a delivered session re-filed as one waiting on its human.
+    expect(classifyWorkState(boundary({ declaredStatus: "done" }))).toBe("done");
+    expect(classifyWorkState(input({ agentStatus: "idle", declaredStatus: "done" }))).toBe("needs_input");
+  });
+
+  test("a current settle verdict survives a resume", () => {
+    expect(classifyWorkState(boundary({ settleVerdict: "done" }))).toBe("done");
+  });
+
+  test("with nothing declared the ball is still the human's", () => {
+    expect(classifyWorkState(boundary())).toBe("needs_input");
+  });
+
+  test("the flag reaches only the verdict, never a hard block or a live status", () => {
+    expect(classifyWorkState(boundary({ awaitingInput: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ agentStatus: "permission_blocked", sessionBoundary: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ agentStatus: "stopped", sessionBoundary: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ agentStatus: "working", isIdle: false, sessionBoundary: true }))).toBe("working");
+  });
+
+  test("a blank session is still idle, and a killed one still killed", () => {
+    expect(classifyWorkState(boundary({ messageCount: 0 }))).toBe("idle");
+    expect(classifyWorkState(boundary({ killed: true }))).toBe("idle");
+  });
+});
+
+describe("classifyWorkState — the pending API error rule", () => {
+  test("an unresolved banner on a row with content is needs_input over every live signal", () => {
+    expect(classifyWorkState(input({ pendingApiError: true, agentStatus: "working", isIdle: false }))).toBe("needs_input");
+    expect(classifyWorkState(input({ pendingApiError: true, hasPending: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ pendingApiError: true, agentStatus: "done" }))).toBe("needs_input");
+  });
+
+  test("a blank row with a banner is still idle, and a killed row still idle", () => {
+    expect(classifyWorkState(input({ pendingApiError: true, messageCount: 0 }))).toBe("idle");
+    expect(classifyWorkState(input({ pendingApiError: true, killed: true }))).toBe("idle");
+  });
+});
+
+// A process that exits AFTER the agent declared the work delivered owes nobody
+// anything: every headless trigger run ends this way, and reading that exit as
+// a death filed each clean run under Needs Input.
+describe("classifyWorkState — an exit after a declared done", () => {
+  test("a stopped agent whose row says done files under done", () => {
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done" }))).toBe("done");
+    expect(isHardBlocked(input({ agentStatus: "stopped", declaredStatus: "done" }))).toBe(false);
+  });
+
+  test("a done row with an armed once trigger parks, same as a live done", () => {
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done", armedOnceTriggerHome: true }))).toBe("dormant");
+  });
+
+  test("any other declaration still reads as a death", () => {
+    for (const declaredStatus of [null, "working", "dormant", "blocked"]) {
+      expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus }))).toBe("needs_input");
+      expect(isHardBlocked(input({ agentStatus: "stopped", declaredStatus }))).toBe(true);
+    }
+  });
+
+  test("queued work or a hanging message on a dead agent still needs a human", () => {
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done", hasPending: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done", isUnresponsive: true }))).toBe("needs_input");
+    expect(isHardBlocked(input({ agentStatus: "stopped", declaredStatus: "done", hasPending: true }))).toBe(true);
+  });
+
+  test("the hard blocks above it still win", () => {
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done", awaitingInput: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ agentStatus: "stopped", declaredStatus: "done", pendingApiError: true }))).toBe("needs_input");
+  });
+});
+
+describe("placeInboxRow — bucket precedence", () => {
+  test("dismissed outranks everything, stashed next", () => {
+    expect(placeInboxRow(input({ dismissed: true, stashed: true, asking: true, pinned: true })).bucket).toBe("dismissed");
+    expect(placeInboxRow(input({ stashed: true, asking: true, pinned: true })).bucket).toBe("stashed");
+  });
+
+  test("an anchor is hidden unless hard blocked or asking", () => {
+    expect(placeInboxRow(input({ isAnchor: true })).bucket).toBe("hidden");
+    expect(placeInboxRow(input({ isAnchor: true, pinned: true })).bucket).toBe("hidden");
+    // A `cast decide` in a standing session's own thread is how a lead raises
+    // a choice (org-staffing.md S28): it files as a question like any row.
+    expect(placeInboxRow(input({ isAnchor: true, asking: true })).bucket).toBe("questions");
+    expect(placeInboxRow(input({ isAnchor: true, pinned: true, asking: true })).bucket).toBe("questions");
+    expect(placeInboxRow(input({ isAnchor: true, awaitingInput: true, asking: true })).bucket).toBe("questions");
+    expect(placeInboxRow(input({ isAnchor: true, agentStatus: "permission_blocked" })).bucket).toBe("needs_input");
+    expect(placeInboxRow(input({ isAnchor: true, pendingApiError: true })).bucket).toBe("needs_input");
+    expect(placeInboxRow(input({ isAnchor: true, agentStatus: "stopped" })).bucket).toBe("needs_input");
+    expect(placeInboxRow(input({ isAnchor: true, isUnresponsive: true })).bucket).toBe("needs_input");
+    // A dead anchor with no content is not blocked on anyone.
+    expect(placeInboxRow(input({ isAnchor: true, agentStatus: "stopped", messageCount: 0 })).bucket).toBe("hidden");
+  });
+
+  test("asking outranks pinned, pinned outranks the work buckets", () => {
+    expect(placeInboxRow(input({ asking: true, pinned: true })).bucket).toBe("questions");
+    const pinned = placeInboxRow(input({ pinned: true }));
+    expect(pinned.bucket).toBe("pinned");
+    // …and the verdict is still stamped underneath the pin.
+    expect(pinned.work_state).toBe("needs_input");
+    expect(placeInboxRow(input({ pinned: true, agentStatus: "working", isIdle: false })).work_state).toBe("working");
+  });
+
+  test("a blank row is new; content rows take their work state", () => {
+    expect(placeInboxRow(input({ messageCount: 0 })).bucket).toBe("new");
+    expect(placeInboxRow(input({})).bucket).toBe("needs_input");
+    expect(placeInboxRow(input({ agentStatus: "done" })).bucket).toBe("done");
+    expect(placeInboxRow(input({ agentStatus: "dormant" })).bucket).toBe("dormant");
+    expect(placeInboxRow(input({ agentStatus: "working", isIdle: false })).bucket).toBe("working");
+    expect(placeInboxRow(input({ killed: true })).bucket).toBe("idle");
+    // A killed row never files as a question, whatever asked: nobody can
+    // answer a torn-down session's prompt or pending decide. Pinned keeps it
+    // visible under Pinned (two-replica simulation, seed 86).
+    expect(placeInboxRow(input({ killed: true, asking: true })).bucket).toBe("idle");
+    expect(placeInboxRow(input({ killed: true, asking: true, pinned: true })).bucket).toBe("pinned");
+  });
+
+  test("a child's ask reaches the parent only through the asking flag", () => {
+    expect(placeInboxRow(input({ asking: true })).bucket).toBe("questions");
+    expect(placeInboxRow(input({ asking: false })).bucket).toBe("needs_input");
+  });
+
+  test("every bucket the function can produce is in the alphabet", () => {
+    const seen = new Set<string>();
+    for (const i of [
+      input({ dismissed: true }), input({ stashed: true }), input({ snoozed: true }), input({ isAnchor: true }), input({ asking: true }),
+      input({ pinned: true }), input({ messageCount: 0 }), input({}), input({ agentStatus: "done" }),
+      input({ agentStatus: "dormant" }), input({ agentStatus: "working", isIdle: false }), input({ killed: true }),
+    ]) seen.add(placeInboxRow(i).bucket);
+    expect([...seen].sort()).toEqual([...INBOX_BUCKETS].sort());
+    expect(Object.keys(emptyInboxTally()).sort()).toEqual([...INBOX_BUCKETS].sort());
+  });
+});
+
+describe("isHardBlocked", () => {
+  test("each blocking condition", () => {
+    expect(isHardBlocked(input({}))).toBe(false);
+    expect(isHardBlocked(input({ awaitingInput: true }))).toBe(true);
+    expect(isHardBlocked(input({ pendingApiError: true }))).toBe(true);
+    expect(isHardBlocked(input({ pendingApiError: true, messageCount: 0 }))).toBe(false);
+    expect(isHardBlocked(input({ agentStatus: "permission_blocked" }))).toBe(true);
+    expect(isHardBlocked(input({ agentStatus: "stopped" }))).toBe(true);
+    expect(isHardBlocked(input({ agentStatus: "stopped", messageCount: 0 }))).toBe(false);
+    expect(isHardBlocked(input({ isUnresponsive: true }))).toBe(true);
+  });
+
+  test("a declared block counts while the turn is settled or the daemon is gone", () => {
+    expect(isHardBlocked(input({ declaredStatus: "blocked" }))).toBe(true);
+    expect(isHardBlocked(input({ declaredStatus: "blocked", agentStatus: "idle" }))).toBe(true);
+    expect(isHardBlocked(input({ declaredStatus: "blocked", messageCount: 0 }))).toBe(false);
+    // A live status that is not idle is fresher than the pin.
+    expect(isHardBlocked(input({ declaredStatus: "blocked", agentStatus: "working" }))).toBe(false);
+    expect(isHardBlocked(input({ declaredStatus: "blocked", agentStatus: "dormant" }))).toBe(false);
+    expect(isHardBlocked(input({ declaredStatus: "done" }))).toBe(false);
+  });
+
+  test("an anchor that declares itself blocked surfaces out of hidden", () => {
+    expect(placeInboxRow(input({ isAnchor: true, declaredStatus: "blocked" })).bucket).toBe("needs_input");
+  });
+});
+
+describe("computeBucketStale", () => {
+  const T = 1_700_000_000_000;
+
+  test("returns the earliest deadline whose passing changes the bucket, and the bucket there", () => {
+    // Working until T+30s (grace), then needs_input; the T+10s deadline flips nothing.
+    const placeAt = (now: number) =>
+      placeInboxRow(input({ isIdle: now > T + 30_000, agentStatus: undefined }));
+    const r = computeBucketStale(
+      { deadlines: [T + 60_000, T + 10_000, T + 30_000, T - 5, null, undefined, NaN], placeAt, current: "working" },
+      T,
+    );
+    expect(r).toEqual({ bucket_stale_at: T + 30_000, stale_bucket: "needs_input" });
+  });
+
+  test("null when no deadline flips the bucket", () => {
+    const placeAt = () => placeInboxRow(input({}));
+    expect(computeBucketStale({ deadlines: [T + 1, T + 2], placeAt, current: "needs_input" }, T))
+      .toEqual({ bucket_stale_at: null, stale_bucket: null });
+    expect(computeBucketStale({ deadlines: [], placeAt, current: "needs_input" }, T))
+      .toEqual({ bucket_stale_at: null, stale_bucket: null });
+  });
+
+  test("deadlines at or before the placement clock are ignored", () => {
+    let calls = 0;
+    const placeAt = () => { calls++; return placeInboxRow(input({ agentStatus: "done" })); };
+    computeBucketStale({ deadlines: [T, T - 1], placeAt, current: "needs_input" }, T);
+    expect(calls).toBe(0);
+  });
+});
+
+// A live harness /loop asleep on a wakeup parks its session exactly like an
+// armed inject trigger — the machine owns the next move (2026-08-31: these
+// sessions filed under Needs Input with no visible wake).
+describe("classifyWorkState armedLoopHome", () => {
+  test("a settled session with an armed loop rests dormant", () => {
+    expect(classifyWorkState(input({ armedLoopHome: true }))).toBe("dormant");
+  });
+
+  test("hard blocks outrank the loop park", () => {
+    expect(classifyWorkState(input({ armedLoopHome: true, awaitingInput: true }))).toBe("needs_input");
+    expect(classifyWorkState(input({ armedLoopHome: true, agentStatus: "permission_blocked" }))).toBe("needs_input");
+    // The agent's declared block is one of them.
+    expect(classifyWorkState(input({ armedLoopHome: true, agentStatus: "idle", declaredStatus: "blocked" }))).toBe("needs_input");
+    expect(classifyWorkState(input({ armedTriggerHome: true, declaredStatus: "blocked" }))).toBe("needs_input");
+  });
+
+  test("an active turn outranks the loop park", () => {
+    expect(classifyWorkState(input({ armedLoopHome: true, agentStatus: "working", isIdle: false }))).toBe("working");
+  });
+});
+
+// ── The working set, fold and whole-projection call (design C4/C5) ──────────
+
+const EPOCH = inboxEpoch(1_800_000_000_000);
+const DAY = 24 * 60 * 60 * 1000;
+const HOUR = 60 * 60 * 1000;
+
+function row(id: string, overrides: Record<string, any> = {}): WorkingSetRow & Record<string, any> {
+  return {
+    _id: id,
+    status: "active",
+    updated_at: EPOCH - 2 * HOUR,
+    message_count: 4,
+    title: `Session ${id}`,
+    ...overrides,
+  };
+}
+
+describe("isAssignedAwayFromViewer", () => {
+  const ME = "users_me";
+  const THEM = "users_them";
+
+  test("unowned rows stay with the runner", () => {
+    expect(isAssignedAwayFromViewer({ owner_user_id: null }, ME)).toBe(false);
+    expect(isAssignedAwayFromViewer({}, ME)).toBe(false);
+  });
+
+  test("a session I own is mine even when another account runs it", () => {
+    expect(isAssignedAwayFromViewer({ owner_user_id: ME }, ME)).toBe(false);
+    expect(isAssignedAwayFromViewer({ owner_user_id: THEM, owned_by_me: true }, ME)).toBe(false);
+  });
+
+  test("a session assigned to someone else leaves my inbox, even if I run it", () => {
+    expect(isAssignedAwayFromViewer({ owner_user_id: THEM }, ME)).toBe(true);
+    expect(isAssignedAwayFromViewer({ owner_user_id: THEM, owned_by_me: false }, ME)).toBe(true);
+  });
+
+  test("no viewer means do not hide", () => {
+    expect(isAssignedAwayFromViewer({ owner_user_id: THEM }, null)).toBe(false);
+  });
+
+  test("the owner-set form answers the same question", () => {
+    expect(isAssignedAwayFromOwnerSet([], ME)).toBe(false);
+    expect(isAssignedAwayFromOwnerSet([ME], ME)).toBe(false);
+    expect(isAssignedAwayFromOwnerSet([THEM, ME], ME)).toBe(false);
+    expect(isAssignedAwayFromOwnerSet([THEM], ME)).toBe(true);
+    expect(isAssignedAwayFromOwnerSet([THEM], null)).toBe(false);
+    // Convex ids arrive as objects with toString, not as strings.
+    expect(isAssignedAwayFromOwnerSet([{ toString: () => ME }], ME)).toBe(false);
+  });
+});
+
+describe("shouldShowInInbox (the lifted pure rule)", () => {
+  test("drops subagents, orphans, blank completed rows, noise titles, killed unless pinned", () => {
+    expect(shouldShowInInbox(row("a"))).toBe(true);
+    expect(shouldShowInInbox(row("s", { is_subagent: true }))).toBe(false);
+    expect(shouldShowInInbox(row("w", { is_workflow_sub: true }))).toBe(false);
+    expect(shouldShowInInbox(row("o", { parent_conversation_id: "p", parent_message_uuid: undefined }))).toBe(false);
+    expect(shouldShowInInbox(row("f", { parent_conversation_id: "p", parent_message_uuid: "m" }))).toBe(true);
+    expect(shouldShowInInbox(row("b", { status: "completed", message_count: 0 }))).toBe(false);
+    expect(shouldShowInInbox(row("n", { title: "[Using: claude]" }))).toBe(false);
+    expect(shouldShowInInbox(row("wu", { title: "Warmup" }))).toBe(false);
+    expect(shouldShowInInbox(row("k", { inbox_killed_at: EPOCH }))).toBe(false);
+    expect(shouldShowInInbox(row("kp", { inbox_killed_at: EPOCH, inbox_pinned_at: EPOCH }))).toBe(true);
+  });
+});
+
+describe("inWorkingSet", () => {
+  test("window eligibility per the C4 table", () => {
+    expect(inWorkingSet(row("recent"), EPOCH)).toEqual(["recent"]);
+    expect(inWorkingSet(row("old", { updated_at: EPOCH - 31 * DAY }), EPOCH)).toEqual([]);
+    expect(inWorkingSet(row("failed", { status: "failed" }), EPOCH)).toEqual([]);
+    // A filed row is not recent material: its own window decides its seat.
+    expect(inWorkingSet(row("pin", { inbox_pinned_at: EPOCH - HOUR }), EPOCH)).toEqual(["pinned"]);
+    // A pin holds its seat past the recency window.
+    expect(inWorkingSet(row("oldpin", { updated_at: EPOCH - 40 * DAY, inbox_pinned_at: EPOCH - 40 * DAY }), EPOCH)).toEqual(["pinned"]);
+    expect(inWorkingSet(row("d", { inbox_dismissed_at: EPOCH - DAY }), EPOCH)).toEqual(["dismissed"]);
+    // A dismiss past its window falls off the shelf; fresh activity cannot
+    // bring it back through the recent window.
+    expect(inWorkingSet(row("dold", { inbox_dismissed_at: EPOCH - 31 * DAY }), EPOCH)).toEqual([]);
+    expect(inWorkingSet(row("st", { inbox_stashed_at: EPOCH - DAY }), EPOCH)).toEqual(["stashed"]);
+    expect(inWorkingSet(row("sn", { inbox_snoozed_until: EPOCH + DAY }), EPOCH)).toEqual(["snoozed"]);
+    // Killed: out of the dismissed/stashed windows (per the C4 table); the pin
+    // keeps it visible.
+    expect(inWorkingSet(row("kd", { inbox_killed_at: EPOCH, inbox_dismissed_at: EPOCH - DAY, inbox_pinned_at: EPOCH - DAY }), EPOCH)).toEqual(["pinned"]);
+    expect(inWorkingSet(row("kdo", { inbox_killed_at: EPOCH, inbox_dismissed_at: EPOCH - DAY, inbox_pinned_at: EPOCH - DAY, updated_at: EPOCH - 40 * DAY }), EPOCH)).toEqual(["pinned"]);
+    expect(inWorkingSet(row("own", { owned_by_me: true }), EPOCH)).toEqual(["recent", "owned"]);
+    // An owner seat holds on its own: assignment puts the session in that
+    // person's inbox whatever state it is in, so neither the recency window nor
+    // the status gate can age it out.
+    expect(inWorkingSet(row("ownold", { owned_by_me: true, updated_at: EPOCH - 31 * DAY }), EPOCH)).toEqual(["owned"]);
+    expect(inWorkingSet(row("ownfailed", { owned_by_me: true, status: "failed" }), EPOCH)).toEqual(["owned"]);
+    // Still a nonmember when the row itself is not inbox material.
+    expect(inWorkingSet(row("ownsub", { owned_by_me: true, is_subagent: true }), EPOCH)).toEqual([]);
+    // Nonmembers stay nonmembers whatever their stamps.
+    expect(inWorkingSet(row("sub", { is_subagent: true, inbox_pinned_at: EPOCH }), EPOCH)).toEqual([]);
+  });
+});
+
+describe("selectWorkingSet", () => {
+  test("per-window top K by the pinned sort keys, overflow named in truncated", () => {
+    const rows = Array.from({ length: INBOX_WINDOW_CAPS.recent + 1 }, (_, i) =>
+      row(`r${i}`, { updated_at: EPOCH - HOUR - i * 1000 }));
+    const { members, truncated } = selectWorkingSet(rows, EPOCH);
+    expect(truncated).toEqual(["recent"]);
+    expect(members.size).toBe(INBOX_WINDOW_CAPS.recent);
+    expect(members.has("r0")).toBe(true); // newest survives
+    expect(members.has(`r${INBOX_WINDOW_CAPS.recent}`)).toBe(false); // oldest dropped
+  });
+
+  test("pinned overflow drops the oldest pin, never a fresh one", () => {
+    const rows = Array.from({ length: INBOX_WINDOW_CAPS.pinned + 1 }, (_, i) =>
+      row(`p${i}`, { updated_at: EPOCH - 40 * DAY, inbox_pinned_at: EPOCH - HOUR - i * 1000 }));
+    const { members, truncated } = selectWorkingSet(rows, EPOCH);
+    expect(truncated).toEqual(["pinned"]);
+    expect(members.has("p0")).toBe(true);
+    expect(members.has(`p${INBOX_WINDOW_CAPS.pinned}`)).toBe(false);
+  });
+
+  test("a row eligible in several windows is one member carrying its eligibility windows", () => {
+    const { members, truncated } = selectWorkingSet([row("a", { inbox_pinned_at: EPOCH - HOUR, owned_by_me: true })], EPOCH);
+    expect(truncated).toEqual([]);
+    expect(members.size).toBe(1);
+    expect(members.get("a")!.windows).toEqual(["pinned", "owned"]);
+  });
+
+  test("filed rows with fresh activity never take a recent seat from a plain settled row", () => {
+    // Two hundred stashed sessions whose agents kept heartbeating, all fresher
+    // than one plain session that settled two days ago (the "Delta ideas"
+    // case, 2026-09-23). The plain row keeps its recent seat; the stashed
+    // rows sit in the stashed window only, and nothing is truncated.
+    const rows = [
+      row("plain", { updated_at: EPOCH - 2 * DAY }),
+      ...Array.from({ length: INBOX_WINDOW_CAPS.recent }, (_, i) =>
+        row(`s${i}`, { updated_at: EPOCH - HOUR - i * 1000, inbox_stashed_at: EPOCH - DAY - i * 1000 })),
+    ];
+    const { members, truncated } = selectWorkingSet(rows, EPOCH);
+    expect(truncated).toEqual([]);
+    expect(members.get("plain")!.windows).toEqual(["recent"]);
+    expect(members.get("s0")!.windows).toEqual(["stashed"]);
+    expect(members.size).toBe(INBOX_WINDOW_CAPS.recent + 1);
+  });
+
+  test("every truncation flag fires at its cap", () => {
+    const rows = [
+      ...Array.from({ length: INBOX_WINDOW_CAPS.recent + 1 }, (_, i) => row(`r${i}`, { updated_at: EPOCH - HOUR - i * 1000 })),
+      ...Array.from({ length: INBOX_WINDOW_CAPS.pinned + 1 }, (_, i) => row(`p${i}`, { updated_at: EPOCH - 40 * DAY, inbox_pinned_at: EPOCH - i * 1000 })),
+      ...Array.from({ length: INBOX_WINDOW_CAPS.dismissed + 1 }, (_, i) => row(`d${i}`, { updated_at: EPOCH - 40 * DAY, inbox_dismissed_at: EPOCH - DAY - i * 1000 })),
+      ...Array.from({ length: INBOX_WINDOW_CAPS.stashed + 1 }, (_, i) => row(`s${i}`, { updated_at: EPOCH - 40 * DAY, inbox_stashed_at: EPOCH - DAY - i * 1000 })),
+      ...Array.from({ length: INBOX_WINDOW_CAPS.owned + 1 }, (_, i) => row(`o${i}`, { updated_at: EPOCH - 39 * DAY - i * 1000, owned_by_me: true })),
+    ];
+    // An owner seat needs no recency, so all five fire — the 39d-old owned rows
+    // are members on the owner row alone.
+    expect(selectWorkingSet(rows, EPOCH).truncated).toEqual(["recent", "pinned", "dismissed", "stashed", "owned"]);
+    const fresh = rows.map((r) => (String(r._id).startsWith("o") ? { ...r, updated_at: EPOCH - 2 * HOUR } : r));
+    expect(selectWorkingSet(fresh, EPOCH).truncated).toEqual(["recent", "pinned", "dismissed", "stashed", "owned"]);
+  });
+});
+
+describe("computeFold", () => {
+  test("12h gap cut over recent-only members; deliberate windows and queued work exempt", () => {
+    const rows = [
+      row("fresh", { updated_at: EPOCH - HOUR }),
+      row("edge", { updated_at: EPOCH - 15 * HOUR }),
+      row("old", { updated_at: EPOCH - 16 * HOUR }),
+      row("old_pin", { updated_at: EPOCH - 17 * HOUR, inbox_pinned_at: EPOCH - HOUR }),
+      row("old_owned", { updated_at: EPOCH - 18 * HOUR, owned_by_me: true }),
+      row("old_pending", { updated_at: EPOCH - 19 * HOUR, has_pending_messages: true }),
+      row("old_dismissed", { updated_at: EPOCH - 20 * HOUR, inbox_dismissed_at: EPOCH - HOUR }),
+    ];
+    const { members } = selectWorkingSet(rows, EPOCH);
+    const { belowFold, cutoff } = computeFold(members);
+    // The row AT the gap is the cut and never folds itself.
+    expect(cutoff).toBe(EPOCH - 15 * HOUR);
+    expect(belowFold.has("edge")).toBe(false);
+    expect(belowFold.has("old")).toBe(true);
+    expect(belowFold.has("old_pin")).toBe(false);
+    expect(belowFold.has("old_owned")).toBe(false);
+    expect(belowFold.has("old_pending")).toBe(false);
+    expect(belowFold.has("old_dismissed")).toBe(false);
+    expect(belowFold.has("fresh")).toBe(false);
+  });
+
+  test("no gap, no fold; deliberate rows cannot bridge a gap", () => {
+    const noGap = selectWorkingSet([row("a"), row("b", { updated_at: EPOCH - 3 * HOUR })], EPOCH);
+    expect(computeFold(noGap.members)).toEqual({ belowFold: new Set(), cutoff: 0 });
+    // A pinned row sitting inside the gap must not hide it.
+    const bridged = selectWorkingSet([
+      row("fresh", { updated_at: EPOCH - HOUR }),
+      row("bridge", { updated_at: EPOCH - 8 * HOUR, inbox_pinned_at: EPOCH - HOUR }),
+      row("old", { updated_at: EPOCH - 16 * HOUR }),
+    ], EPOCH);
+    const { belowFold, cutoff } = computeFold(bridged.members);
+    expect(cutoff).toBe(EPOCH - 16 * HOUR);
+    expect(belowFold.has("old")).toBe(false); // at the cut, not under it
+  });
+});
+
+describe("projectInbox", () => {
+  const rows = () => [
+    row("working", { agent_status: "working", is_idle: false, updated_at: EPOCH - HOUR }),
+    row("needs", { is_idle: true, updated_at: EPOCH - 2 * HOUR }),
+    row("ask", { is_idle: true, awaiting_input: true, updated_at: EPOCH - 2 * HOUR }),
+    row("pin", { is_idle: true, inbox_pinned_at: EPOCH - HOUR, updated_at: EPOCH - 2 * HOUR }),
+    row("anchor", { is_idle: true, anchor_id: "anchors_1", updated_at: EPOCH - 2 * HOUR }),
+    // "edge" is the row AT the gap (the cut, never folded itself); "folded"
+    // sits under it.
+    row("edge", { is_idle: true, updated_at: EPOCH - 20 * HOUR }),
+    row("folded", { is_idle: true, updated_at: EPOCH - 21 * HOUR }),
+    row("sub", { is_subagent: true, agent_status: "working" }),
+  ];
+
+  test("membership, fold, placement, tallies and digest in one call", () => {
+    const p = projectInbox(rows(), EPOCH, { asking: (id) => id === "ask" });
+    expect(p.placements.get("working")).toMatchObject({ bucket: "working", below_fold: false });
+    expect(p.placements.get("needs")).toMatchObject({ bucket: "needs_input", work_state: "needs_input" });
+    expect(p.placements.get("ask")).toMatchObject({ bucket: "questions" });
+    expect(p.placements.get("pin")).toMatchObject({ bucket: "pinned" });
+    expect(p.placements.get("anchor")).toMatchObject({ bucket: "hidden" });
+    expect(p.placements.get("folded")).toMatchObject({ bucket: "needs_input", below_fold: true });
+    expect(p.placements.has("sub")).toBe(false);
+    expect(p.placements.get("edge")).toMatchObject({ bucket: "needs_input", below_fold: false });
+    // Hidden rows enter entries and the digest but never the tallies.
+    expect(p.entries.find(([id]) => id === "anchor")).toEqual(["anchor", "hidden", false]);
+    expect(p.tally.shown.hidden).toBe(0);
+    expect(p.tally.shown.needs_input).toBe(2);
+    expect(p.tally.folded.needs_input).toBe(1);
+    expect(p.tally.shown.questions).toBe(1);
+    expect(p.tally.shown.pinned).toBe(1);
+    expect(p.tally.shown.working).toBe(1);
+    expect(p.set_digest).toBe(digestProjection(p.entries));
+  });
+
+  test("a teammate rides its lead's bucket and fold; the tally counts it there", () => {
+    const p = projectInbox(
+      [
+        ...rows(),
+        // Under the cut on its own age, shown under a fresh lead.
+        row("mate", { is_idle: true, updated_at: EPOCH - 21 * HOUR, spawned_by_conversation_id: "working", agent_team_name: "team" }),
+        // Fresh on its own, folded with a lead under the cut.
+        row("mate_of_folded", { is_idle: true, updated_at: EPOCH - HOUR, spawned_by_conversation_id: "folded", agent_team_name: "team" }),
+      ],
+      EPOCH,
+    );
+    expect(p.placements.get("mate")).toMatchObject({ bucket: "working", work_state: "needs_input", below_fold: false });
+    expect(p.placements.get("mate_of_folded")).toMatchObject({ bucket: "needs_input", below_fold: true });
+    expect(p.tally.shown.working).toBe(2);
+    expect(p.tally.folded.needs_input).toBe(2);
+    expect(p.set_digest).toBe(digestProjection(p.entries));
+  });
+
+  test("deterministic: same rows and epoch give identical output; showOld never changes it", () => {
+    const a = projectInbox(rows(), EPOCH);
+    const b = projectInbox([...rows()].reverse(), EPOCH);
+    expect(b.set_digest).toBe(a.set_digest);
+    expect(b.tally).toEqual(a.tally);
+    expect(new Map(b.placements)).toEqual(new Map(a.placements));
+  });
+});
+
+describe("placeProjectableRow — the park facts", () => {
+  test("armed trigger home parks on the replicated last_turn_allows_park fact", () => {
+    const base = row("t", { is_idle: true, armed_trigger_kind: "standing" });
+    expect(placeProjectableRow({ ...base, last_turn_allows_park: true }, false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow({ ...base, last_turn_allows_park: false }, false, EPOCH).bucket).toBe("needs_input");
+    // Absent fact: fall back to the machine-delivered preview rule.
+    expect(placeProjectableRow({ ...base, last_message_preview: '<session-message from="x">hi</session-message>' }, false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow({ ...base, last_message_preview: "a human typed this" }, false, EPOCH).bucket).toBe("needs_input");
+    expect(placeProjectableRow(base, false, EPOCH).bucket).toBe("dormant"); // no last user turn at all
+  });
+
+  test("a hosted conversation's routine never parks it: each run's answer files like any turn", () => {
+    for (const kind of ["standing", "once"] as const) {
+      const hosted = row("h", { is_idle: true, armed_trigger_kind: kind, last_turn_allows_park: true, agent_type: HOSTED_AGENT_TYPE });
+      expect(placeProjectableRow(hosted, false, EPOCH).bucket).not.toBe("dormant");
+      expect(placeProjectableRow({ ...hosted, thread_state_status: "done" }, false, EPOCH).bucket).toBe("done");
+    }
+  });
+
+  test("armed loop home parks while fresh, un-parks when overdue", () => {
+    const loop = (wakeupAt: number) => row("l", {
+      is_idle: true,
+      loop_state: { status: "armed", wakeup_at: wakeupAt, event_at: EPOCH - HOUR },
+    });
+    expect(placeProjectableRow(loop(EPOCH + HOUR), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(loop(EPOCH - HOUR), false, EPOCH).bucket).toBe("needs_input");
+  });
+
+  // A declared dormant is a promise about a wake. The status only re-derives
+  // when the wake lands (that IS the next turn), so a promise nothing can
+  // verify had no expiry at all: a session parked on "another session's reply"
+  // that never came sat in Dormant for days. Past DORMANT_CLAIM_TTL_MS of quiet
+  // a bare claim files needs_input; a verifiable wake keeps the park.
+  test("a bare dormant claim expires into needs_input; a verifiable wake keeps it parked", () => {
+    const claim = (quietFor: number, extra: Record<string, any> = {}) =>
+      row("d", { is_idle: true, agent_status: "dormant", updated_at: EPOCH - quietFor, ...extra });
+    expect(placeProjectableRow(claim(HOUR), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(claim(DORMANT_CLAIM_TTL_MS), false, EPOCH).bucket).toBe("needs_input");
+    expect(placeProjectableRow(claim(11 * HOUR), false, EPOCH).bucket).toBe("needs_input");
+    // Any wake the system can stand behind outlives the claim window.
+    expect(placeProjectableRow(claim(11 * HOUR, { armed_trigger_kind: "once" }), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(claim(11 * HOUR, { armed_trigger_kind: "standing" }), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(claim(11 * HOUR, { loop_state: { status: "armed", wakeup_at: EPOCH + HOUR, event_at: EPOCH - HOUR } }), false, EPOCH).bucket).toBe("dormant");
+    // Open tasks vouch only while the daemon that reported them heartbeats.
+    const openTasks = { open_tasks: [{ id: "t1" }], open_tasks_at: EPOCH - 60_000 };
+    expect(placeProjectableRow(claim(11 * HOUR, { ...openTasks, last_heartbeat: EPOCH - 1_000 }), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(claim(11 * HOUR, openTasks), false, EPOCH).bucket).toBe("needs_input");
+    // A worker still producing: its result will wake the parent. Once it stops, the claim is judged again.
+    expect(placeProjectableRow(claim(11 * HOUR, { producing_until: EPOCH + 60_000 }), false, EPOCH).bucket).toBe("dormant");
+    expect(placeProjectableRow(claim(11 * HOUR, { producing_until: EPOCH - 60_000 }), false, EPOCH).bucket).toBe("needs_input");
+    // Stale open-task report: the daemon has not vouched recently, so it is no wake.
+    expect(placeProjectableRow(claim(11 * HOUR, { open_tasks: [{ id: "t1" }], open_tasks_at: EPOCH - 11 * HOUR }), false, EPOCH).bucket).toBe("needs_input");
+    // A verified `waiting` (open work) has its own trust rule and is untouched.
+    expect(placeProjectableRow(claim(11 * HOUR, { agent_status: "waiting", open_tasks: [{ id: "t1" }], open_tasks_at: EPOCH - 60_000 }), false, EPOCH).bucket).toBe("dormant");
+  });
+
+  // A hosted turn's status is the engine's own settle, written as the turn
+  // ends. A finished answer used to sit under Working on it for the 45
+  // second idle grace, though the reply was on screen (pl-840 round 10).
+  test("a hosted row that just settled done files as done, without the idle grace", () => {
+    const hosted = (extra: Record<string, any>) => {
+      const facts = row("h", {
+        agent_type: "codecast", message_count: 4, updated_at: EPOCH - 2_000,
+        agent_status_updated_at: EPOCH - 1_000, is_idle: false, ...extra,
+      });
+      return placeProjectableRow({ ...facts, ...deriveLiveAt(facts, EPOCH) }, false, EPOCH).work_state;
+    };
+    expect(hosted({ agent_status: "done" })).toBe("done");
+    expect(hosted({ agent_status: "working" })).toBe("working");
+    // A daemon session in the same instant still waits out the grace.
+    expect(hosted({ agent_type: "claude_code", agent_status: "done" })).toBe("working");
+  });
+
+  // A lead that ended its turn while its subagents (a background workflow's
+  // workers, a background Agent) still produce is parked on them: their result
+  // is its next turn. It used to read as working for the whole run (jx73a5s).
+  test("a settled lead with a producing subagent child is dormant, not working", () => {
+    const lead = (extra: Record<string, any>) => {
+      const facts = row("lead", {
+        message_count: 40, updated_at: EPOCH - HOUR / 2, last_heartbeat: EPOCH - 10_000,
+        agent_status_updated_at: EPOCH - HOUR / 2, producing_until: EPOCH + 60_000, ...extra,
+      });
+      return placeProjectableRow({ ...facts, ...deriveLiveAt(facts, EPOCH) }, false, EPOCH);
+    };
+    const tasks = { open_tasks: [{ id: "w1", kind: "workflow" }], open_tasks_at: EPOCH - 60_000 };
+    expect(lead({ agent_status: "waiting", ...tasks }).work_state).toBe("dormant");
+    expect(lead({ agent_status: "idle" }).work_state).toBe("dormant");
+    expect(lead({ agent_status: "idle", producing_until: EPOCH - 60_000 }).work_state).toBe("needs_input");
+    expect(lead({ agent_status: "working" }).work_state).toBe("working");
+    // A declared block still reaches the human while the workers run.
+    expect(lead({ agent_status: "idle", thread_state_status: "blocked" }).work_state).toBe("needs_input");
+  });
+
+  test("the claim expiry is a shared deadline: the time flip lands on needs_input at updated_at + TTL", () => {
+    const placedAt = EPOCH - HOUR;
+    const r = row("d", { is_idle: true, agent_status: "dormant", updated_at: placedAt });
+    const placeAt = (t: number) => placeProjectableRow(r, false, t);
+    expect(placeAt(placedAt + 60_000).bucket).toBe("dormant");
+    const stale = computeBucketStale(
+      { deadlines: rowLiveDeadlines(r as any), placeAt, current: "dormant" },
+      placedAt + 60_000,
+    );
+    expect(stale).toEqual({ bucket_stale_at: placedAt + DORMANT_CLAIM_TTL_MS, stale_bucket: "needs_input" });
+  });
+});
+
+describe("field ownership constants", () => {
+  test("the fact and stamp alphabets are disjoint and pinned", () => {
+    expect([...INBOX_FACT_FIELDS]).toEqual([
+      "agent_status", "is_idle", "is_unresponsive", "awaiting_input", "is_connected",
+      "tmux_session", "permission_mode", "agent_started_at", "open_tasks", "open_tasks_at",
+      "message_count", "updated_at", "last_turn_allows_park",
+      "agent_status_updated_at", "agent_status_boundary", "turn_completed_at", "hibernated_at", "last_heartbeat", "last_role_is_user", "auq_open", "daemon_alive_until", "producing_until",
+      "child_asking", "child_asking_until", "activity", "context_tokens", "last_model_call_at",
+    ]);
+    expect([...INBOX_PROJECTION_FIELDS]).toEqual([
+      "bucket", "work_state", "asking", "below_fold", "bucket_stale_at", "stale_bucket",
+    ]);
+    for (const f of INBOX_PROJECTION_FIELDS) expect(INBOX_FACT_FIELDS).not.toContain(f);
+  });
+
+  test("the caps are the single source and the version is 22", () => {
+    expect(INBOX_WINDOW_CAPS).toEqual({ recent: 200, pinned: 100, dismissed: 200, stashed: 200, snoozed: 200, owned: 200 });
+    expect(INBOX_PROJECTION_VERSION).toBe(22);
+  });
+});
+
+describe("isStashHidden — the stash mode flag", () => {
+  test("true only while the stash stamp is set", () => {
+    expect(isStashHidden({ inbox_stashed_at: 1, inbox_stash_hidden: true })).toBe(true);
+    expect(isStashHidden({ inbox_stashed_at: 1, inbox_stash_hidden: false })).toBe(false);
+    expect(isStashHidden({ inbox_stashed_at: 1 })).toBe(false);
+    // A stale flag on an unstashed row is dead state, not a hide.
+    expect(isStashHidden({ inbox_stashed_at: null, inbox_stash_hidden: true })).toBe(false);
+    expect(isStashHidden({})).toBe(false);
+  });
+});
+
+describe("rollupParentIdOf — the one child → parent rule", () => {
+  test("a subagent or orphan rolls up to its parent; a plan handoff speaks for itself", () => {
+    expect(rollupParentIdOf({ parent_conversation_id: "p", is_subagent: true, parent_message_uuid: "m" })).toBe("p");
+    expect(rollupParentIdOf({ parent_conversation_id: "p" })).toBe("p"); // orphan: no parent message
+    expect(rollupParentIdOf({ parent_conversation_id: "p", parent_message_uuid: "plan-handoff" })).toBeNull();
+  });
+  test("an agent-team teammate rolls up to its lead; a plain spawned session does not", () => {
+    expect(rollupParentIdOf({ spawned_by_conversation_id: "lead", agent_team_name: "team" })).toBe("lead");
+    expect(rollupParentIdOf({ spawned_by_conversation_id: "lead", agent_team_name: "team", agent_name: "team-lead" })).toBeNull();
+    expect(rollupParentIdOf({ spawned_by_conversation_id: "lead" })).toBeNull();
+    expect(rollupParentIdOf({})).toBeNull();
+  });
+});
+
+describe("isStackedAsk — which pending decide lifts its session", () => {
+  test("a blocking ask lifts; an advisory one lifts only from a named stack; a resolved one never", () => {
+    expect(isStackedAsk({ status: "pending", blocking: true })).toBe(true);
+    expect(isStackedAsk({ status: "pending", blocking: false })).toBe(false);
+    expect(isStackedAsk({ status: "pending", blocking: false, stack_id: "ds1" })).toBe(true);
+    expect(isStackedAsk({ status: "answered", blocking: true })).toBe(false);
+  });
+});
+
+describe("rideLeadPlacements — a teammate rides its present lead", () => {
+  const rowsById: Record<string, RollupRow> = {
+    lead: {},
+    mate: { spawned_by_conversation_id: "lead", agent_team_name: "team" },
+    mate_of_mate: { spawned_by_conversation_id: "mate", agent_team_name: "team" },
+    lead_absent: { spawned_by_conversation_id: "nobody", agent_team_name: "team" },
+    handoff: { parent_conversation_id: "lead", parent_message_uuid: "plan-handoff" },
+    a: { spawned_by_conversation_id: "b", agent_team_name: "team" },
+    b: { spawned_by_conversation_id: "a", agent_team_name: "team" },
+  };
+  const placementsOf = (buckets: Record<string, InboxBucket>) =>
+    new Map(Object.entries(buckets).map(([id, bucket]) => [id, { bucket, stamp: id }]));
+
+  test("the bucket follows the lead through a chain; a plan handoff and a parentless teammate keep their own", () => {
+    const p = placementsOf({ lead: "working", mate: "done", mate_of_mate: "needs_input", lead_absent: "needs_input", handoff: "done" });
+    rideLeadPlacements(p, (id) => rowsById[id]);
+    expect(p.get("mate")!.bucket).toBe("working");
+    expect(p.get("mate_of_mate")!.bucket).toBe("working");
+    expect(p.get("lead_absent")!.bucket).toBe("needs_input");
+    expect(p.get("handoff")!.bucket).toBe("done");
+    // Only the bucket rides unless the caller copies more.
+    expect(p.get("mate")!.stamp).toBe("mate");
+  });
+
+  test("a pinned, stashed or dismissed teammate keeps its place and becomes the root its own riders take; a cycle rides nowhere", () => {
+    const p = placementsOf({ lead: "working", mate: "stashed", mate_of_mate: "done", a: "done", b: "needs_input" });
+    rideLeadPlacements(p, (id) => rowsById[id]);
+    expect(p.get("mate")!.bucket).toBe("stashed");
+    expect(p.get("mate_of_mate")!.bucket).toBe("stashed");
+    expect(p.get("a")!.bucket).toBe("done");
+    expect(p.get("b")!.bucket).toBe("needs_input");
+    for (const own of ["pinned", "dismissed"] as const) {
+      const q = placementsOf({ lead: "working", mate: own });
+      rideLeadPlacements(q, (id) => rowsById[id]);
+      expect(q.get("mate")!.bucket).toBe(own);
+    }
+  });
+
+  test("copy carries more of the lead's stamp, read after the lead settled", () => {
+    const p = placementsOf({ mate_of_mate: "done", mate: "done", lead: "working" });
+    rideLeadPlacements(p, (id) => rowsById[id], (rider, lead) => { rider.stamp = lead.stamp; });
+    expect(p.get("mate")!.stamp).toBe("lead");
+    expect(p.get("mate_of_mate")!.stamp).toBe("lead");
+  });
+
+  test("input order never matters", () => {
+    const ids = ["lead", "mate", "mate_of_mate", "lead_absent", "handoff"];
+    const expectFrom = (order: string[]) => {
+      const p = new Map(order.map((id) => [id, { bucket: (id === "lead" ? "working" : "done") as InboxBucket }]));
+      rideLeadPlacements(p, (id) => rowsById[id]);
+      return Object.fromEntries([...p].map(([id, v]) => [id, v.bucket]).sort());
+    };
+    expect(expectFrom([...ids].reverse())).toEqual(expectFrom(ids));
+  });
+});
+
+describe("isBelowFoldAt — the per-row fold rule computeFold's loop reads", () => {
+  const base: WorkingSetRow = { _id: "x", status: "active", updated_at: 100, message_count: 3 };
+  test("no cut, exempt rows and queued work never fold; otherwise under the cut folds", () => {
+    expect(isBelowFoldAt(base, 0)).toBe(false);
+    expect(isBelowFoldAt(base, 200)).toBe(true);
+    expect(isBelowFoldAt({ ...base, updated_at: 200 }, 200)).toBe(false);
+    expect(isBelowFoldAt({ ...base, has_pending_messages: true }, 200)).toBe(false);
+    for (const exempt of [{ inbox_pinned_at: 1 }, { inbox_dismissed_at: 1 }, { inbox_stashed_at: 1 }, { owned_by_me: true }]) {
+      expect(isFoldExempt({ ...base, ...exempt })).toBe(true);
+      expect(isBelowFoldAt({ ...base, ...exempt }, 200)).toBe(false);
+    }
+  });
+});
+
+describe("fnv1a32Update — the incremental form of the digest hash", () => {
+  test("folding a string in pieces equals hashing it whole", () => {
+    const whole = fnv1a32("abc:working:0");
+    expect(fnv1a32Update(fnv1a32Update(FNV1A32_OFFSET, "abc:"), "working:0")).toBe(whole);
+  });
+  test("isWorkingSetWindow names exactly the five windows", () => {
+    for (const w of ["recent", "pinned", "dismissed", "stashed", "owned"] as const) expect(isWorkingSetWindow(w)).toBe(true);
+    for (const t of ["members", "member_rows", "foreign_scan"] as const) expect(isWorkingSetWindow(t)).toBe(false);
+  });
+});
+
+
+// ── deriveLiveAt (ct-47609) ──────────────────────────────────────────────────
+describe("deriveLiveAt: one idle rule at any instant", () => {
+  const T0 = 1_800_000_000_000;
+  const S = 1_000, MIN = 60 * S, H = 60 * MIN;
+  // A tiny seeded generator so the property runs the same way every time.
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  const pick = <T,>(xs: readonly T[]): T => xs[Math.floor(rnd() * xs.length)];
+  const maybe = <T,>(v: T): T | null => (rnd() < 0.3 ? null : v);
+  const facts = (): LiveFactsRow => ({
+    status: pick(["active", "active", "completed"]),
+    updated_at: T0 - Math.floor(rnd() * 3 * H),
+    message_count: pick([0, 3, 40]),
+    has_pending_messages: rnd() < 0.2,
+    inbox_dismissed_at: rnd() < 0.15 ? T0 - MIN : null,
+    inbox_stashed_at: rnd() < 0.1 ? T0 - MIN : null,
+    agent_status: maybe(pick(["working", "idle", "waiting", "dormant", "done", "stopped", "permission_blocked", "compacting"])),
+    agent_status_updated_at: maybe(T0 - Math.floor(rnd() * 2 * H)),
+    last_heartbeat: maybe(T0 - Math.floor(rnd() * 3 * MIN)),
+    daemon_alive_until: maybe(T0 + Math.floor(rnd() * 10 * MIN) - 2 * MIN),
+    producing_until: maybe(T0 + Math.floor(rnd() * 10 * MIN) - 2 * MIN),
+    last_role_is_user: rnd() < 0.4,
+    auq_open: rnd() < 0.2,
+    open_tasks: rnd() < 0.3 ? [{}] : null,
+    open_tasks_at: maybe(T0 - Math.floor(rnd() * 15 * MIN)),
+    loop_state: null,
+  });
+  const live = (r: LiveFactsRow, t: number) => deriveLiveAt(r, t);
+
+  test("re-running over the shipped (already coerced) live fields is idempotent", () => {
+    for (let i = 0; i < 150; i++) {
+      const r = facts();
+      for (const t of [T0, T0 + 50 * S, T0 + 2 * MIN, T0 + 2 * H]) {
+        const once = live(r, t);
+        const twice = live({ ...r, agent_status: once.agent_status, awaiting_input: once.awaiting_input }, t);
+        expect(twice).toEqual(once);
+      }
+    }
+  });
+
+  // A replica derives at its own clock from a payload the overlay shipped
+  // earlier: the payload carries the daemon's raw status, never a verdict
+  // coerced at the overlay's instant. A working row whose trust decayed to
+  // idle while its heartbeat lived is stopped once the heartbeat lapses
+  // (ct-56054).
+  test("a payload shipped at one instant derives every later instant exactly as the raw facts do", () => {
+    const shipped = (r: LiveFactsRow, t: number): LiveFactsRow => ({ ...r, awaiting_input: live(r, t).awaiting_input });
+    for (let i = 0; i < 150; i++) {
+      const r = facts();
+      for (const t1 of [T0 - 2 * MIN, T0, T0 + 50 * S]) {
+        const payload = shipped(r, t1);
+        for (const t2 of [t1, t1 + 50 * S, t1 + 2 * MIN, t1 + 2 * H]) expect(live(payload, t2)).toEqual(live(r, t2));
+      }
+    }
+    const decayed: LiveFactsRow = {
+      status: "completed", updated_at: T0 - 14 * 24 * H, message_count: 14, agent_status: "working",
+      agent_status_updated_at: T0 - 25 * MIN, last_heartbeat: T0 - 17 * S, daemon_alive_until: T0 + 103 * S,
+    };
+    expect(live(decayed, T0 + 35 * S).agent_status).toBe("idle");
+    expect(live(shipped(decayed, T0 + 35 * S), T0 + 120 * S).agent_status).toBe("stopped");
+  });
+
+  test("for fixed facts, is_idle never returns to false as time passes; an ask and a daemon never come back", () => {
+    for (let i = 0; i < 150; i++) {
+      const r = facts();
+      let prev = live(r, T0 - H);
+      for (let t = T0 - H + 5 * S; t <= T0 + 3 * H; t += 25 * S) {
+        const cur = live(r, t);
+        if (prev.is_idle) expect(cur.is_idle).toBe(true);
+        if (!prev.awaiting_input) expect(cur.awaiting_input).toBe(false);
+        if (!prev.daemon_alive) expect(cur.daemon_alive).toBe(false);
+        prev = cur;
+      }
+    }
+  });
+
+  test("rowLiveDeadlines names every instant the derivation can change: it is constant between adjacent deadlines", () => {
+    for (let i = 0; i < 150; i++) {
+      const r = facts();
+      const ds = [...new Set(rowLiveDeadlines(r).filter((d): d is number => d != null))].sort((a, b) => a - b);
+      const points = [T0 - 4 * H, ...ds, T0 + 4 * H];
+      for (let k = 0; k + 1 < points.length; k++) {
+        const a = points[k], b = points[k + 1];
+        if (b - a < 2) continue;
+        expect(live(r, a)).toEqual(live(r, b - 1));
+      }
+    }
+  });
+});
+
+// ── The sort time inside a bucket (ct-49550) ────────────────────────────────
+
+describe("inboxSortTime — one stamp per class", () => {
+  const MIN = 60_000;
+  const sort = (partial: Partial<InboxSortTimeInput>, now = EPOCH) =>
+    inboxSortTime({ work_state: "needs_input", ...partial } as InboxSortTimeInput, now);
+
+  // The table: which stamp each class reads when every stamp is present, and
+  // which one it falls back to as the ones above it go missing. Written as
+  // (class, row facts) → the event the order must name.
+  const CASES: Array<{ name: string; input: Partial<InboxSortTimeInput>; at: number }> = [
+    // needs_input: when the state started, whatever the last turn did.
+    { name: "needs_input reads the status start", input: { work_state: "needs_input", statusStartedAt: EPOCH - MIN, turnCompletedAt: EPOCH - HOUR, activityAt: EPOCH - 3 * HOUR }, at: EPOCH - MIN },
+    { name: "needs_input with no daemon falls back to activity", input: { work_state: "needs_input", activityAt: EPOCH - 3 * HOUR }, at: EPOCH - 3 * HOUR },
+    // done: when the turn ended — the stamp outlives later status writes.
+    { name: "done reads the completed turn", input: { work_state: "done", turnCompletedAt: EPOCH - MIN, statusStartedAt: EPOCH - HOUR, activityAt: EPOCH - 3 * HOUR }, at: EPOCH - MIN },
+    { name: "done without the turn stamp falls back to the status start", input: { work_state: "done", statusStartedAt: EPOCH - HOUR, activityAt: EPOCH - 3 * HOUR }, at: EPOCH - HOUR },
+    // working: the most recent PRIOR attention event, so a session that just
+    // came back from a settle outranks one grinding for an hour.
+    { name: "working reads the previous turn's end", input: { work_state: "working", turnCompletedAt: EPOCH - MIN, statusStartedAt: EPOCH - 30 * MIN, activityAt: EPOCH }, at: EPOCH - MIN },
+    { name: "working that never settled falls back to when it started working", input: { work_state: "working", statusStartedAt: EPOCH - 30 * MIN, activityAt: EPOCH }, at: EPOCH - 30 * MIN },
+    // dormant: when it parked.
+    { name: "dormant reads when it parked", input: { work_state: "dormant", statusStartedAt: EPOCH - MIN, activityAt: EPOCH - 3 * HOUR }, at: EPOCH - MIN },
+    { name: "dormant with no daemon falls back to activity", input: { work_state: "dormant", activityAt: EPOCH - 3 * HOUR }, at: EPOCH - 3 * HOUR },
+    // idle: blank or retired — plain recency.
+    { name: "idle reads plain recency", input: { work_state: "idle", activityAt: EPOCH - HOUR, statusStartedAt: EPOCH - MIN, turnCompletedAt: EPOCH - MIN }, at: EPOCH - HOUR },
+  ];
+
+  for (const c of CASES) {
+    test(c.name, () => {
+      expect(sort(c.input).at).toBe(c.at);
+    });
+  }
+
+  test("every class but dormant orders newest first", () => {
+    for (const ws of ["needs_input", "done", "working", "idle"] as const) {
+      const fresh = sort({ work_state: ws, statusStartedAt: EPOCH - MIN, turnCompletedAt: EPOCH - MIN, activityAt: EPOCH - MIN });
+      const old = sort({ work_state: ws, statusStartedAt: EPOCH - HOUR, turnCompletedAt: EPOCH - HOUR, activityAt: EPOCH - HOUR });
+      expect(fresh.key).toBeLessThan(old.key);
+    }
+  });
+
+  test("dormant orders oldest park first", () => {
+    const fresh = sort({ work_state: "dormant", statusStartedAt: EPOCH - MIN });
+    const stale = sort({ work_state: "dormant", statusStartedAt: EPOCH - HOUR });
+    expect(stale.key).toBeLessThan(fresh.key);
+    expect(stale.at).toBeLessThan(fresh.at);
+  });
+
+  // A session the user just started has none of the events above, so ambient
+  // output on older rows would push it out of sight (Orca CREATE_GRACE_MS).
+  test("a brand new session holds the top of a freshest-first list for the grace, then rejoins", () => {
+    const createdAt = EPOCH - MIN;
+    const born = (now: number) => sort({ work_state: "working", statusStartedAt: EPOCH - 3 * HOUR, activityAt: EPOCH - 3 * HOUR, createdAt }, now);
+    const busy = sort({ work_state: "working", turnCompletedAt: EPOCH - MIN });
+    expect(born(EPOCH).key).toBeLessThan(busy.key);
+    expect(born(EPOCH).key).toBe(-(createdAt + INBOX_CREATE_GRACE_MS));
+    // Past the window the floor lifts and the row's own stamp speaks again.
+    const after = createdAt + INBOX_CREATE_GRACE_MS;
+    expect(born(after).key).toBe(-(EPOCH - 3 * HOUR));
+    // Two sessions inside the window keep their creation order.
+    const older = sort({ work_state: "working", createdAt: createdAt - MIN }, EPOCH);
+    expect(sort({ work_state: "working", createdAt }, EPOCH).key).toBeLessThan(older.key);
+  });
+
+  // The stamp itself never moves: a queue the reader clears top-down orders by
+  // it, and a floor that lifts a row in a freshest-first list would sink it
+  // there — where a brand new row belongs anyway.
+  test("the grace floors the key only, never the stamp", () => {
+    const createdAt = EPOCH - MIN;
+    expect(sort({ work_state: "needs_input", statusStartedAt: EPOCH - 3 * HOUR, createdAt }, EPOCH).at).toBe(EPOCH - 3 * HOUR);
+  });
+
+  test("the grace never applies to dormant, a section read oldest first", () => {
+    const parked = sort({ work_state: "dormant", statusStartedAt: EPOCH - HOUR, createdAt: EPOCH - MIN }, EPOCH);
+    expect(parked).toEqual({ at: EPOCH - HOUR, key: EPOCH - HOUR });
+  });
+
+  // An Infinity off a corrupted row would pin the session to the top of its
+  // group forever; a zero or a missing stamp means "no such event".
+  test("a non-finite or absent stamp reads as no event", () => {
+    expect(sort({ work_state: "done", turnCompletedAt: Infinity, statusStartedAt: EPOCH - HOUR }).at).toBe(EPOCH - HOUR);
+    expect(sort({ work_state: "done", turnCompletedAt: NaN, activityAt: EPOCH - HOUR }).at).toBe(EPOCH - HOUR);
+    expect(sort({ work_state: "done" }).at).toBe(0);
+    expect(sort({ work_state: "working", createdAt: Infinity }, EPOCH).key).toBe(0);
+  });
+});
+
+describe("inboxSortTimeOfRow — the replicated fields the sort reads", () => {
+  test("the stamps come off the row exactly once, for web, mobile and the server alike", () => {
+    const r = row("s", {
+      updated_at: EPOCH - 3 * HOUR,
+      started_at: EPOCH - 3 * DAY,
+      agent_status_updated_at: EPOCH - 2 * HOUR,
+      turn_completed_at: EPOCH - HOUR,
+    });
+    expect(inboxSortTimeOfRow(r, "needs_input", EPOCH).at).toBe(EPOCH - 2 * HOUR);
+    expect(inboxSortTimeOfRow(r, "done", EPOCH).at).toBe(EPOCH - HOUR);
+    expect(inboxSortTimeOfRow(r, "idle", EPOCH).at).toBe(EPOCH - 3 * HOUR);
+  });
+
+  test("a dormant row orders by when it parked, whatever wake it names", () => {
+    const base = { updated_at: EPOCH - 2 * HOUR, agent_status_updated_at: EPOCH - HOUR };
+    expect(inboxSortTimeOfRow(row("z", { ...base, inbox_snoozed_until: EPOCH + HOUR }), "dormant", EPOCH)).toEqual({ at: EPOCH - HOUR, key: EPOCH - HOUR });
+    expect(inboxSortTimeOfRow(row("l", { ...base, loop_state: { status: "armed", wakeup_at: EPOCH + 2 * HOUR, event_at: EPOCH - HOUR } }), "dormant", EPOCH).at).toBe(EPOCH - HOUR);
+  });
+
+  test("a brand new row floors its key on started_at", () => {
+    const r = row("n", { updated_at: EPOCH - 2 * DAY, started_at: EPOCH - 60_000 });
+    expect(inboxSortTimeOfRow(r, "idle", EPOCH).key).toBe(-(EPOCH - 60_000 + INBOX_CREATE_GRACE_MS));
+  });
+});
+
+// A role's standing session that reports to a role carries that role's id
+// (org-staffing.md S28) and rides the parent lead's card like a hand: it
+// never surfaces on its own, whatever it declares, and a blocked parent is the
+// card. Only a role that reports to a person reaches that person.
+describe("a sub-lead rides its parent lead", () => {
+  const E = inboxEpoch(1_800_000_000_000);
+  const base = (id: string, over: Record<string, unknown> = {}) => ({ _id: id, status: "active", updated_at: E - 120_000, message_count: 12, is_idle: true, ...over }) as any;
+  const top = (over: Record<string, unknown> = {}) => base("top", { anchor_id: "a_top", standing_role_id: "role_top", agent_status: "dormant", thread_state_status: "dormant", ...over });
+  const sub = (over: Record<string, unknown> = {}) => base("sub", { anchor_id: "a_sub", standing_role_id: "role_sub", org_role_id: "role_top", agent_status: "idle", thread_state_status: "blocked", ...over });
+  const bucket = (p: ReturnType<typeof projectInbox>, id: string) => p.placements.get(id)?.bucket;
+
+  test("a blocked sub-lead files with its parent, which files by its own facts", () => {
+    const quiet = projectInbox([top(), sub()], E);
+    // The parent is dormant on its own facts; the blocked sub-lead is a row under it, not a card.
+    expect(bucket(quiet, "top")).toBe("dormant");
+    expect(bucket(quiet, "sub")).toBe("dormant");
+    expect(isUnderRole(sub())).toBe(true);
+    const raised = projectInbox([top({ thread_state_status: "blocked", agent_status: "idle" }), sub()], E);
+    expect(bucket(raised, "top")).toBe("needs_input");
+    expect(bucket(raised, "sub")).toBe("needs_input");
+  });
+
+  test("a top lead reaches the person on its own; a sub-lead whose parent is off the list stands on its facts", () => {
+    const alone = projectInbox([top({ thread_state_status: "blocked", agent_status: "idle" })], E);
+    expect(bucket(alone, "top")).toBe("needs_input");
+    const orphan = projectInbox([sub()], E);
+    expect(bucket(orphan, "sub")).toBe("needs_input");
+    const quietOrphan = projectInbox([sub({ thread_state_status: "dormant", agent_status: "dormant" })], E);
+    expect(bucket(quietOrphan, "sub")).toBe("hidden");
+  });
+});

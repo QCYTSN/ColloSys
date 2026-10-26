@@ -1,0 +1,1091 @@
+# External data: sources, events, replays, metrics and app connectors
+
+Codecast takes in what happens in a team's running product and makes it part
+of the work: errors, job failures, health checks, product metrics, session
+replays and the product's own data. Agents read it through `cast`, it wakes
+them through triggers, it files causes on the line through `signals.ingestAs`,
+and people see it in the Ops page.
+
+Codecast does not become an observability store. Its value is the join, from
+an outside fact to a release, a commit, the `Codecast-Session` trailer and the
+session that wrote the code. So it keeps three shapes of data apart:
+
+| Shape | Examples | Treatment |
+|---|---|---|
+| Grouped facts | an error group, a failing job, a red invariant, a metric crossing a line | Stored as `event_groups` with counts. Transitions become `external_events`, fire triggers and promote to signals |
+| Raw streams | log lines, analytics events, traces | Never stored. Grouped at the door (errors, warnings) or queried in place through the source |
+| Artifacts | session replays | Chunks in a private R2 bucket. Convex holds a manifest row and a cached text summary |
+
+Business data stays in the product. The app connector reads and acts through
+named readers and actions the product declares; codecast stores the call audit,
+never the rows.
+
+Litmus test: the Union ops agent (Aivery, `union-mobile/outreach/backend/src/lib/agent/agents/ops.ts`)
+must be replaceable by a codecast role on the Union team that sees and does
+everything it does. The parity table is in X9.
+
+## X1. Sources
+
+A source is one configured feed into a workspace. `event_sources`:
+
+```
+event_sources {
+  workspace, team_id?        access key and routing, stamped by computeWorkspaceKey
+  owner_user_id              who set it up; signals file as them (X6)
+  project_id?                the codecast project its signals attach under
+  short_id                   src-N
+  provider                   sentry | posthog | sdk | http | app, which a person adds, and github, which codecast
+                             creates itself (github-ci, X7); createSource refuses github and the name github-ci
+  name                       unique per workspace, used by --source filters
+  connection_id?             app_installations row holding the credential (sentry, posthog, app)
+  ingest_key_hash?           sha256 of the write-only ingest key (sdk, http)
+  key_prefix?                first 8 chars of the key, shown in the UI
+  fingerprint_prefix?        e.g. "union": promoted signals file as union:<kind>:<fp>, the scheme line finders
+                             use; the group keeps the bare <kind>:<fp> (groupFingerprint, X6)
+  config                     non-secret, what it reads inside its connection: org, project slugs, project_id,
+                             environments, sample rates, allowed_origins (the browser origins the door
+                             accepts, X2). Host and base_url are the connection's alone. Checked per
+                             provider (sourceConfigProblem); a bad value is refused, never replaced
+
+  manifest_fetched_at?       when the app connector manifest (X8) was fetched; the manifest itself is
+                             in app_manifests (keyed by source), off the row every query reads
+  next_watch_at?             when the earliest manifest watch is due; the watch cron reads by it
+  grants?                    [{ action, granted_by, granted_at, until?, via? }] the actions a person allowed (X8);
+                             via is session (the web) or api_token (their CLI)
+  watch_state?               [{ key, polled_at, cursor?, last_error? }] one per manifest watch (X8)
+  promote                    which group transitions become signals (X6), default on for new and regressed errors
+  status                     active | paused | error, last_error
+}
+
+event_source_stats {         one per source: what moves on every batch and poll, kept off the source
+  source_id, workspace       row so a batch does not re-run every query that reads the source
+  counters_day               the UTC day the *_today counts are for; a new day reads as zero
+  events_today, dropped_today, groups_open, last_event_at, last_poll_at
+  event_names?               analytics event names counted per hour, never stored (X2)
+}
+```
+
+A workspace holds one app connector: its base url (and a secret, if it has
+one) are the workspace's one `app` connection (`connectionIdForSource`), so a
+second app source would call the same app, and `createSource` refuses it.
+
+Credentials live in `app_installations` (`oauthConnectorsSchema.ts`), the one
+credential table, through a new token connector (`tokenConnectors.ts`): a pasted
+token is validated by a live call in an action, encrypted with the googleOAuth
+AES-GCM helpers under its own HKDF info string and the deployment key
+`CONNECTION_SECRETS_KEY`, and stored confirmed. Non-secret settings go in a new
+optional `config` field. `appDescriptors.ts` gains `sentry`, `posthog` and `app`
+with `connectKind: "token-paste"` (`app` with `tokenOptional`: its secret is
+optional, X8 signed requests); `appConnections.connectedAt` answers for
+every `app_installations` provider from one registry, not literal branches.
+Tokens never leave the backend. `CONNECTION_SECRETS_KEY` is a Convex
+deployment env var holding at least 32 random bytes (for example
+`openssl rand -base64 32`); without it `connectWithToken` refuses with "Token
+connections not configured", and rotating it orphans every stored token
+connection, so people reconnect.
+
+A connection is a write, so it names its workspace. A team connection takes
+an explicit `team` (an id, or a name among the caller's own teams,
+`connectTarget`); without one, or with a team the caller is not in,
+`connectWithToken` refuses and lists their teams. It never falls back to
+`active_team_id` or `users.team_id`. The web passes the workspace being looked
+at; the CLI needs `cast integrations connect <provider> --team <name>` or
+`--personal`.
+
+**Lost connections** (`lib/sourceHealth.ts`). Every adapter that polls through
+a connection (app watches and the manifest refresh, the Sentry poll, PostHog
+metric watches) follows one rule: a poll that finds no connection, cannot read
+it, or gets a 401 or 403 from the vendor puts the source in `error` with
+`last_error` naming the cause (`markConnectionLost`, through the
+`ingest.sourceConnectionLost` mutation from an action). Every poller reads
+only active sources, so polling stops there: no fetch and no audit row on
+later ticks. A paused source stays paused. Storing a connection again
+(`storeTokenConnection`) resumes every errored source of that provider in its
+workspace (`resumeSourcesOnConnect`; an app source also refetches its
+manifest, and a source naming a deleted connection row reads through the new
+one), and so does a person's resume (`cast sources resume`, or Resume on the
+Ops source list). `cast sources ls` and the web source list print the status
+and `last_error`.
+
+Write-only ingest keys (`cc_ing_<random>`) are safe to ship in a browser
+bundle. Only the hash is stored; the key is shown once and can be rotated.
+
+**Committed config: codecast.json.** A product sets up codecast with no env
+vars and no shared secret in its own deployment. Everything it needs is in a
+committed `codecast.json` (schema and merge in
+`packages/shared/contracts/codecastConfig.ts`), which holds nothing secret:
+
+```
+{
+  "endpoint": "https://...",          only when not codecast prod (https://convex.codecast.sh/cli/ingest)
+  "ingestKey": "cc_ing_...",          the keyed source's write-only key, public by design like a Sentry DSN
+  "sources": { "<name>": { "id": "src-N", "workspace": "team:<id>" } },
+  "replay": { "dom": "off", "sampleRate": 0 }   optional; the browser recorder's settings (X5)
+}
+```
+
+`cast sources add` and `cast sources key rotate` write it (`packages/cli/src/
+codecastJson.ts`): `--write <path>` names the file (a directory means its
+codecast.json), otherwise the nearest existing codecast.json from the working
+directory up to the checkout root, else one at the root; `--no-write` writes
+nothing, and outside a checkout nothing is written and the command says so.
+The merge records the source under its name, a keyed source's new key (one
+key per file; a new one replaces the old and the command says so) and a
+non-prod endpoint, keeps a `replay` block as it is, keeps key order stable,
+and prints every change; a file
+that does not parse, or carries a key the schema does not know, is left
+alone. The web's Add source shows the same file (`codecastJsonFor`,
+`components/ops/opsModel.ts`). Readers: the platform SDK
+(`createCodecastSink({ config })`, `initAnalytics({ codecastConfig })`), the
+verifier (X8) and Union's client. An explicit value or env var still wins
+over the file, as an override. `cast sources test` reads the key from the
+file before `$CODECAST_INGEST_KEY`. Codecast's own web reads the committed
+`packages/web/codecast.json`, with `VITE_CODECAST_INGEST_KEY` as the override.
+
+## X2. The ingest door
+
+`POST /cli/ingest/<key>` (the Caddy proxy forwards `/cli`; `/api/ingest/<key>`
+is also registered for when it forwards that too), in `ingestHttp.ts`, with its
+own CORS (Content-Type, Content-Encoding, Authorization). Body:
+
+```
+{ sdk: { name, version }, release?, environment?, items: [IngestItem] }   at most 500 items and 1 MB
+IngestItem =
+  | { type: "error", message, stack?, level?, fingerprint?, tags?, context?, url?, user?, at }
+  | { type: "log", level, message, fingerprint?, context?, at }               only warn and above are grouped
+  | { type: "job_failed", job, error, attempt?, job_id?, at }
+  | { type: "check", id, ok, title?, detail?, at }                             invariants and health checks
+  | { type: "event", name, props?, at }                                         counted per name and hour, not stored
+  | { type: "deploy", version, sha?, environment?, at }
+  | { type: "replay", replay_id, ... }                                          manifest updates (X5)
+```
+
+The handler verifies the key, rate limits per batch (`keyRateLimited`,
+failClosed), validates sizes, and hands the batch to one internal mutation that
+upserts groups. It answers 202 with `{ accepted, dropped }` and a status the
+SDK can retry on (429, 5xx), drop the batch on (400), or stop on (401, and 403
+for a refused origin). An unknown key is counted against the caller's address
+(`UNKNOWN_KEY_RATE`, 30 per 10 minutes, through `ipRateLimited`); an address
+past it gets a 429 before its next key is even looked up, so a right guess
+earns nothing either and guessing is bounded. A known key spends nothing from
+that window. A paused source answers 503 with a Retry-After, never a
+stop status, so running SDKs keep backing off and resume on their own after
+`cast sources resume`.
+
+`config.allowed_origins` limits which browser pages may post with a key. With
+the list set, a request whose `Origin` header is not on it gets the 403, and
+the CORS answer names the caller's origin instead of `*`. Without the list any
+origin may post, and a request with no `Origin` header (a server) always may.
+
+The key ships in browser pages, so what one source can cost is capped per
+hour, whoever holds its key (`SOURCE_CAPS` in `ingest.ts`): at most 200 new
+groups an hour and 1,000 open; a new fingerprint past either folds into the
+source's overflow group of its kind (the batch's `folded` count). At most 30
+promotions an hour (past it a transition still writes the timeline and fires
+triggers) and 30 new deploy markers. Replays have their own cap (X5).
+
+An `event` item is counted, not kept: its name goes into the source row's
+`event_names`, one list of hourly buckets per name over the same 72 hours a
+group keeps (`countEventNames` in `lib/ingestGroups.ts`), and its props are
+dropped. A source counts at most 50 names separately; a new name past that
+counts under `(other)`, and a name with nothing left in the window frees its
+place. `cast sources show` and the source card list the busiest names over the
+last day (`eventNameRows`).
+
+The Sentry webhook is `/api/webhooks/sentry`; PostHog has no webhook of its
+own, and a PostHog destination posts to the generic door (X7). A vendor webhook
+must fail closed without a secret, verify HMAC with `lib/hmac.ts`, dedupe by
+delivery id, schedule the processor, and answer 200 fast.
+
+## X3. Groups
+
+All grouped facts share one table, so the same reader, renderer and trigger
+path serves errors, jobs, checks and metrics:
+
+```
+event_groups {
+  workspace, team_id?, source_id, short_id (eg-N)
+  kind            error | log | job | check | metric | replay_issue
+  fingerprint     source-scoped and stable; the shared helpers in signalFingerprint.ts compute it
+  title, culprit?, level?
+  status          open | resolved | ignored | muted
+  first_seen, last_seen, count, users?
+  buckets         hourly counts for the last 72 hours (a capped array), for sparklines and spike detection
+  last_release?, last_sha?, first_release?
+  regressed_at?, resolved_at?, resolved_in?
+  external?       { provider, id, url }   the Sentry issue, PostHog insight or app reader this mirrors
+  signal_task_id? the cause it promoted to
+  meta            check: ok, metric: value, threshold, direction
+}
+```
+
+A sample of recent occurrences (stack, context, url, tags, linked replay)
+lives in `event_samples`, capped at 20 per group and pruned by a cron. Bodies
+never ride list queries.
+
+The upsert uses one rule set (`lib/ingestGroups.ts`):
+
+- **new**: first occurrence of a fingerprint.
+- **regressed**: an occurrence on a resolved group, or one from a newer release than `resolved_in`. A release is ordered only when it reads as `name@1.2.3`, `v1.2.3` or `1.2.3` (`releaseParts`); a sha or `name-1.2.3` has no order and counts as newer, so `resolve --in` holds back nothing for it.
+- **spike**: the current hour is at least 5 times the trailing 24-hour mean and at least 20 occurrences, with a 6-hour cooldown per group.
+- **check failed / recovered**: a check flips state. A check that stays red is counted, not re-announced.
+- **job failed**: a new job group, or 3 or more failures of one job within an hour, with a 6-hour cooldown.
+- **metric alert / recovered**: a watched metric crosses its threshold (X7).
+
+Only a transition writes an `external_events` row (through
+`recordExternalEvent`, now carrying `workspace`, `source_id`, `group_id` and a
+small generic `data` object), fires triggers (X4) and may promote (X6). An
+occurrence that is not a transition only moves counts, and within a minute of
+the group row's last write it moves them on the group's tally
+(`event_group_tallies`) instead of the row, flushed after the minute, so the
+issues list (which subscribes to the rows) re-runs at most once a minute per
+busy group. A reader of one group overlays the tally (`withTally`). A
+retried batch that repeats a transition already on the timeline fires nothing
+again (`recordExternalEventOnce`). Each group keeps `sample_count`, so the
+sample trim reads only the rows it deletes.
+
+`last_sha` joins a group to the commit its release was built from: an
+occurrence whose release has a deploy marker with a sha (in the same batch or
+recorded before) stamps it, and a release with none clears it. `getGroup`
+returns that commit and the session that wrote it when the reader may see it,
+and `cast events show` prints it.
+
+`external_events` stays the one timeline. Ingestion rows carry `source_id`;
+`listForTeam` and the Changes scans exclude them through the
+`by_team_source_created` index (`source_id` unset), the source's own timeline
+reads `by_source_created`, and the workspace's reads `by_workspace_created`, so a noisy product never pushes git activity out of the team feed.
+`external_events` gains a `workspace` key; access for ingestion rows is
+equality on it.
+
+## X4. Triggers
+
+New derived names in `triggerEvents.ts`: `error_new`, `error_regressed`,
+`error_spike`, `job_failed`, `check_failed`, `check_recovered`,
+`metric_alert`, `metric_recovered`, `deploy`. Every transition a group kind
+can make, apart from `resolved`, has a name a trigger can be armed on. `event_filter` gains `source` (a source name),
+hoisted into one shared validator that schema.ts and agentTasks.ts import. The
+CLI gets `--source <name|src-N>` for these names, and the web trigger form
+keeps it on save. Create and edit resolve it against the sources of the
+workspace the trigger fires in and store the canonical name
+(`storedEventFilter`); an unknown source is refused with the known ones listed,
+since a firing matches on the name and a wrong one would never fire.
+
+A firing carries the event. `matchTaskTriggers` takes an optional `event_ref`
+(external event id, title, group short id) and appends it to the task's
+capped `pending_events`; the run frame lists them. They are spent when the run
+ends and the trigger re-arms (`nextArmingAfterRun`), not at the claim, because
+an inject run reads its frame from the row after claiming. Two transitions
+before a claim still make one run, which knows about both. A firing that lands
+while a run holds the trigger is appended marked `after_claim`; completion
+keeps those and makes the trigger due again at once, so a transition during a
+run gets the next run rather than none. An ingestion firing wakes only a
+trigger whose runs land in the event's workspace: the one its project path
+resolves to (`triggerWorkspaceKey`), personal when it names none, so one
+team's product errors never reach a session another team can read.
+`agent_tasks` gets an index on `event_filter.event_type`, so a firing reads
+only the triggers armed on that name.
+
+## X5. Replays
+
+A replay is a semantic stream, not pixels. An agent reads it as text and turns
+it into a repro.
+
+```
+ReplayEvent (packages/shared/contracts/replay.ts)
+  nav      { url, title }
+  click    { label, role, selector, text? }
+  input    { label, selector, length, redacted: true }       values are never recorded
+  submit   { label, selector }
+  key      { key }                                            Enter, Escape, Tab only
+  scroll   { y, of }                                          coarse, at most 1 per second
+  console  { level, message }                                 warn and error
+  network  { method, url, status, ms }                        failures, plus anything over 2s
+  error    { message, stack? }
+  view     { outline }                                        visible text outline of the page, at nav and before errors, max 4 KB
+  mark     { name, data? }                                    app-defined state markers
+  each with t (ms since start)
+```
+
+`replays` holds one manifest row per recording: source, workspace, provider
+(`sdk`, `posthog`, `sentry`), external id, url at start, user, started_at,
+duration, counts (clicks, errors, failed requests), linked group ids, chunk
+keys. The cached `timeline_md` (the text timeline, at most 32 KB) lives in
+`replay_timelines`, keyed by replay, so a list read never carries it; only one
+replay's detail reads it. Assembly is queued only while the timeline is older
+than the chunk list and none is already queued (`assemble_at`), so a re-sent
+manifest cannot pile up downloads. An assembly that could not read a chunk
+signed in the last ten minutes (an upload still landing, or a PUT the SDK
+retries) leaves the timeline older than the chunk list, so that chunk's own
+manifest queues another. The presigned PUT signs the declared size as its
+content-length, so R2 refuses another size; the hash is not signed, so
+assembly still checks each chunk's sha, holds it to the 2 MB cap while
+streaming it and gives up on one that inflates past 8 MB. A source opens at
+most 300 new recordings an hour (`REPLAYS_NEW_PER_HOUR`); past it a sign for an
+unknown replay id answers 400. A replay id outside `[A-Za-z0-9_-]` becomes a path
+segment with `~` and a hash of the raw id appended, so two ids that sanitize
+alike never share a prefix. Chunks are
+gzipped JSON, uploaded by the SDK straight to a private R2 bucket
+(`codecast-replays`, `replaysBucketFromEnv`) through a presigned PUT from
+`POST /cli/ingest/<key>/replay-sign`. Reads go through a short-lived signed
+redirect after an access check. A lifecycle rule on `replays/` expires chunks after 30 days.
+The sign route is registered as `POST /cli/ingest/replay-sign/<key>` (and
+`/api/...`): Convex's router holds one handler per path prefix and the door
+owns `/cli/ingest/`, so the longer prefix routes here, and the door forwards
+the `<key>/replay-sign` spelling to the same handler (`replaysHttp.handleReplaySign`).
+The bucket credentials are `REPLAYS_R2_ACCESS_KEY_ID` and
+`REPLAYS_R2_SECRET_ACCESS_KEY` (a token scoped to the bucket alone), with
+`R2_ENDPOINT` shared and `REPLAYS_R2_BUCKET` defaulting to `codecast-replays`.
+
+Four things read the stream (`packages/shared/replay/`); the fourth, `replayMoment` (`moment.ts`), is one moment as text (below, "Playing a replay"):
+
+- `renderTimeline(events)`: the text timeline `cast replay show` prints and the summary stores.
+- `toRepro(events, baseUrl)`: a Playwright test that replays navigation, clicks, typed placeholders and submits up to the error, then asserts the error does not happen.
+- `fromRrweb(rrwebEvents)`: converts PostHog and Sentry rrweb recordings (meta, incremental mouse interactions, inputs, the console and network plugins) into the same events, so mirrored replays read the same way. A request with no status is a failure only when the browser could have seen one: a performance entry from a browser without `responseStatus` (Safari leaves the field off every entry) counts as failed only when its timings are visible and show no response arrived, and a cross-origin resource or an entry whose timings the browser zeroed is not judged (VENDOR_CONVERTER_VERSION 4).
+- `readVendorCapture(raw)` (`capture.ts`): what an import stores, read once. It runs `fromRrweb` for the stream and `prepareDomCapture` for the page capture, and first converts a PostHog mobile recording (below) into an ordinary rrweb capture.
+
+**Mobile recordings.** PostHog's iOS, Android, React Native (Expo) and
+Flutter SDKs record no DOM. A full snapshot carries `data.wireframes`, a tree
+of boxes with absolute x/y/width/height, a type (text, image, screenshot,
+rectangle, div, input, radio_group, web_view, placeholder, status_bar,
+navigation_bar), a small style object and base64 images, and later screens
+arrive as mutations whose `adds` and `updates` hold wireframes. Read as rrweb,
+that is a page with no document, and the player drew it white.
+`shared/replay/mobile.ts` (`fromMobileWireframes`; ported from PostHog's MIT
+transformer in `common/replay-shared/src/mobile`, outside its `ee/`) turns it
+at import into a capture of a plain page: html, head and body, each box a
+`position:fixed` element, text as text, images as data URIs, inputs as
+`input`, `textarea`, `select`, `button` or a labelled checkbox, a web view
+or placeholder as a labelled box, the status and navigation bars lifted
+above the app, and the keyboard as a box at the bottom. Every wireframe id is
+remapped into one sequence the converter owns, so a synthetic node never takes
+a real view's id. A wireframe's id always names the outermost node drawn for
+it (a labelled checkbox's `label`, not the `input` inside), so a removal takes
+the whole drawing with it. Every mutation goes through the converter, a
+removals-only one included: a removal names the node's drawn parent, and a
+removal of a node the converter never drew is dropped, because a raw
+wireframe id could name a fixed node such as the body. An update is a removal
+and a parent-first flattened add, because rrweb adds one node per mutation. A
+status or navigation bar that arrives in a mutation replaces the one in its
+slot above the app, as in a full snapshot. Style values are checked before
+they reach a style attribute (a value that could close its declaration, or a
+background image that is not a data URI, is dropped), so a recording cannot
+make the replayed page fetch anything. rrweb seeks from the last Meta event at
+or before a moment and drops everything earlier, assuming a full snapshot
+follows each Meta as a web checkout does. A mobile SDK sends a Meta alone at
+each screen change, so the converter draws the current screen as a full
+snapshot right after it. A tap (a touch start and end within 12 px and 1 s)
+also becomes an rrweb click on the topmost, deepest box under the finger, so
+the stream names what was tapped; the touches stay for the player. Each
+screen's visible text is read off the wireframes into `view` outlines (at a
+full snapshot, the first change after a screen change, before a tap and
+before an error, and otherwise at most every 5 s while the screen changes);
+a field contributes `[field]` and its label, never its value. Masking is
+then the same `prepareDomCapture`: an input's value is a value attribute on
+a field, starred like any other. The SDK applies its own masking first
+(masked text inputs and images), and a screenshot-mode recording, whose
+screens are images, is drawn as those images (VENDOR_CONVERTER_VERSION 5).
+
+A PostHog or Sentry recording is imported the first time it is read (X7), or
+all at once by a source's bulk import (`sources/replayBackfill.ts`), shaped
+like the Slack history import (slack-chat-mirror.md, "Bringing channels
+over"). `cast replay import --source <name> [--since 7d|30d|90d|all]`, the
+source card on Settings, Integrations and the Ops Replays tab all start the
+same `replayBackfill.start`. Its one state object is the source row's
+`replay_backfill` (status running, done, paused or error; window, since and
+an `until` pinned at the start so pages walk a set new recordings do not
+shift; cursor; listed, imported, skipped, failed; last error), written once
+per page, and every surface reads it (`cast sources show`, `cast replay
+import --status`, the web line). One scheduled action runs one page: list 10
+recordings (PostHog's `session_recordings` by offset inside `date_from` and
+`date_to`; Sentry's org `replays` list by cursor inside `start` and `end`),
+skip those already imported (`replays.importedReplays`), and import the rest
+two at a time, each in its own action, through the same
+`importVendorRecording` a read takes, with its byte caps. A page that imported
+anything pauses 15 s before the next, which keeps PostHog near 150 calls a
+minute. A 429 waits the vendor's Retry-After (60 s without one, 10 min at
+most) and redoes the page from where it stopped: the ids it already handled
+ride `page_seen`, so each recording counts once and the cursor moves only past
+a finished page. Rate limited for two hours with nothing imported
+(`rate_limited_since`), the import stops on that error instead of waiting
+forever. A refused token pauses the import and stops the source
+through `lib/sourceHealth.markConnectionLost`; ten failures in a row stop it on
+the error. A stop, a pause or a stalled run (no page for 30 minutes, longer
+than the longest wait plus the longest action, so a live import never reads as
+stalled) continues from the cursor on the next start; `--restart` or another
+window starts over.
+`started_at` names the run, so a page left scheduled by an earlier run does
+nothing. An imported recording links to the replay issue groups its stream
+shows (below), and a Sentry replay is also linked through its issue as before.
+Chunks still expire with the bucket's 30-day lifecycle rule, so "all" brings
+older recordings over only for a month.
+
+Once a source has an import, the "tend replay imports" cron
+(`replayBackfill.tend`, every 15 minutes) keeps it going. A run still marked
+running whose pages stopped (an action killed mid page leaves nothing
+scheduled, which stalled Union's import for 13 days in October 2026) continues
+from its cursor. A run that finished more than 30 minutes ago is followed by
+one over the recordings since its `until`, less a two-hour overlap for
+recordings the vendor lists late; the overlap costs list calls only, since
+imported recordings are skipped by id. A stop on the vendor's rate limit is
+tried again six hours later; a pause or a stop on any other error stays
+until a person starts it again.
+
+**Replay issues.** A recording that shows a person hitting a wall feeds
+`replay_issue` groups, so replays reach the line the way errors do.
+`replayIssues(events)` (`shared/replay/issues.ts`) reads the stream once and
+names each wall by what failed, one per fingerprint per recording:
+
+- `error`: a page error or console error, keyed by its first line with the
+  inline stack (V8 or Safari frames) cut and ids and numbers normalized. Not
+  keyed by page: an error a layout or provider throws shows on every page
+  under it and is one problem. One failure written by several sites at once
+  (an SDK, then the provider wrapping it) is one: errors within `ECHO_MS`
+  (100 ms) of each other take the line among them that sorts first, so the
+  key does not depend on which site wrote first. An error whose text names a
+  request that failed just before it is that request's and files nothing.
+- `request`: a request to the product's own site (its host or a sibling on
+  the same registrable domain, so a vendor's ingest refusing is not counted)
+  that answered 4xx or 5xx, or a write that got no answer, keyed by method,
+  endpoint with ids folded (`/api/users/:id`) and status. A GET with no answer
+  is left out (navigations, unmounts and long polls cancel those all the
+  time), and so is Cloudflare's `/cdn-cgi/`. A gateway status (502, 503, 504,
+  520 to 524) says the service behind the endpoint did not answer, so it is
+  keyed by the service (`/api/<service>`), one outage however many endpoints
+  a page called; a 500 is the endpoint's own handler and keeps its endpoint.
+  On Union's 717 recordings (2026-10-20) these two rules took 106 keys to 77,
+  every merge one failure or one outage.
+- `rage_click`: three clicks within a second on one button or link, keyed by
+  page and target. Text, fields, radios and checkboxes are clicked repeatedly
+  on purpose and never count.
+
+The route first seen rides along as the group's culprit and on each sample,
+with the recording's id. Every action that reads a stream (assembly, a vendor
+import, the regroup pass `replayIssues.regroupSource`, which also has a
+`dry_run` that answers the groups without writing) hands the issues to
+`ingest.applyReplayIssues`, which plans each through `planReplayIssue`
+(lib/ingestGroups.ts) into the one upsert, spends the source's group caps and
+links the recording to the group. A recording already linked to a group adds
+nothing to it, so a re-read never counts twice. The groups open, regress and
+promote by the error rules: a new one files a `bug` signal with source
+`<provider>:<name>` and fingerprint `<prefix>:replay:<kind>-<hash>`, and a
+line finder on that source with `opens_causes` makes it a problem. A vendor
+stream's clock starts at its first event, so occurrence times count from
+there; ours counts from `started_at`.
+
+Chunks this backend writes (`putChunk`: vendor imports, moment bodies, review
+transcripts) are stored as their exact gzip bytes with no Content-Encoding,
+as the SDK uploads them, so a server read hashes to the key. Chunks put
+before that were marked gzip and come back inflated; `readReplayChunks` takes
+those as plain JSON only for a recording the backend wrote itself
+(`serverWritten`), and holds an uploader's chunk to its hash.
+
+The import is paced, not cheap on the scheduler. Each recording costs up to
+three actions (the page, `importOne`, and `replays.importExternal` inside
+it), so 10,000 recordings are about 1,000 pages, 20,000 to 30,000 scheduled
+functions and, at 15 s between pages, five hours or more. That stays inside
+Convex's limits, but on a project with that many recordings prefer a window
+(`--since 30d`) to `all`, and watch the scheduler backlog while it runs.
+
+The SDK recorder (`@platform/analytics/replay`) keeps a ring buffer of the last
+60 seconds and uploads it when an error happens (always), or for a sampled
+share of sessions (`sampleRate`, default 0). It never records an input
+value, and drops URLs matching `redactUrl`. It costs one capture listener per
+event type and a throttled outline walk at navigation, nothing per mutation.
+This is the lesson from the August 2026 rrweb slowdown.
+
+Its DOM mode (`replayDom: "off" | "onError" | "sampled"`, default off) adds
+the page capture the player plays, and is the one part that does cost per
+mutation, so an app turns it on knowing that. `"onError"` uploads the capture
+only when an error keeps the recording; `"sampled"` also uploads it from the
+start in sessions the sample keeps. rrweb's record (`@rrweb/record` 2.1.7, an
+optional peer, the version the player pins) is imported on demand only when
+the mode is on, configured in `replayDom.ts`: no mouse movement, clicks only
+among mouse interactions, scroll every 500 ms and media every 800 ms at most,
+every input masked, the text of any editable region masked, `[data-private]`
+blocked whole (an empty box its size), no canvas, fonts, inline images or
+cross-origin iframes. A checkout (fresh full snapshot) every 30 s or 5,000
+events bounds the ring: until the capture ships, the recorder holds the
+current segment and the one before, so the oldest event it ships is always a
+snapshot the player can start from. Each event is serialized once at upload,
+its strings through the app's `scrubUrl` (per string, never over the JSON
+text) and a Meta href through `cleanUrl` too. A door that keeps refusing drops
+the capture back to a ring opening on a fresh snapshot; past 60 DOM chunks the
+DOM recording stops and the semantic one carries on.
+
+An app sets both in its codecast.json `replay` block (X1), which the platform
+and codecast parsers read alike (a drift test holds the two, and the DOM caps,
+equal). Codecast's own web ships `"dom": "off"`, `"sampleRate": 0`.
+
+Measured in Chrome (`platform/packages/analytics/bench/replayDomBench.ts`,
+2026-10-07, layout settled before each step, means over 450 steps). On a
+2,000-row synthetic list (8,015 nodes), a burst of 50 text updates, 20 class
+toggles and 5 rows in and out costs 0.83 ms with no recorder, 1.05 ms with the
+semantic recorder and 3.5 ms with DOM mode on: about 2.5 ms per burst for
+rrweb (p95 8.4 ms against 3.4 ms). A click plus a keystroke costs 0.2 ms more.
+The one-off costs are larger. rrweb's start (its first full snapshot) took
+51 to 66 ms and a checkout 25 ms on that page. On the codecast inbox (5,200 to
+5,500 nodes, stylesheets inlined) they were 83 to 90 ms and 56 ms, so DOM mode
+there is a ~56 ms long task every 30 s. Two snapshots of the inbox were
+4.3 MB of JSON and 520 KB gzipped, with 17 ms to serialize at upload.
+
+### Playing a replay
+
+The semantic stream is what an agent reads. Beside it a recording may keep
+its page capture, the raw rrweb events, so people can watch it and agents can
+see frames of it. The contract every piece below shares is
+`packages/shared/contracts/replayPlayer.ts`.
+
+**Storage.** A vendor import keeps the capture (VENDOR_CONVERTER_VERSION 3 and later,
+so older copies re-import on their next read or backfill pass). An older
+copy whose refresh fails keeps serving, and the row's `vendor_refresh_after`
+holds the vendor off (`VENDOR_REFRESH_RETRY`: an hour, or the vendor's
+Retry-After, after a failure; a month once the vendor says the recording is
+gone), so reads in between do not each spend PostHog's ~60 snapshot reads an
+hour. It is masked
+first by the semantic stream's own rule (`shared/replay/dom.ts`
+`prepareDomCapture`): an input event's text, a field's value attribute, a
+textarea's text and every text node under `[data-private]`, an editable
+region or rrweb's and the vendors' block classes become stars of the same
+length, in snapshots, added nodes and later mutations, and a Meta href goes
+through `cleanUrl`. A capture rrweb could not draw is not kept: one with no
+full snapshot, or whose full snapshots hold no serialized document
+(`replayCaptureProblem` in the contract, the one rule the import and the
+player share). The masked events are packed into gzipped chunks of about 6 MB of
+JSON (`REPLAY_DOM_LIMITS`: 8 MB gzipped per chunk, 60 chunks; a single event
+past the cap is dropped) and uploaded by the adapter's own action
+(`vendorReplay.storeDomCapture`, `replays.storeReplayDom`), because a capture
+of tens of MB cannot ride an action's arguments. Keys are
+`replays/<source>/<replay>/dom/<seq>-<sha256>.json.gz`: content addressed, in
+the same private bucket, expired by the same 30 day rule on `replays/`. The row
+lists them as `dom_chunk_keys` with `dom_bytes`, and `dom_t0`, the epoch ms of
+the replay clock's zero. A failed upload costs the player, not the import.
+A re-import that kept no capture clears the old keys.
+
+**The replay clock.** Every time the player, a reference and the CLI speak is
+ms since the stream's first event, the clock `renderTimeline` prints. For an
+import `dom_t0` is the capture's first rrweb timestamp plus the stream's first
+`t`; for our recorder the assembly sets it to `started_at` plus the first `t`.
+The player maps an rrweb timestamp to the clock as `timestamp - dom_t0`
+(`infra/replay-player/src/clock.ts`), and the clock ends at the row's
+`duration_ms` (the capture's end only when the row has none): its bar, its
+`time`, `ready` and `frame` posts and its frames all count on it. A capture
+can run past the stream's last event (a page that kept mutating after the
+person stopped; rp-39's runs 6:01 against a 5:00 stream), so playback stops
+at the replay's end and a frame asked for past it draws the end.
+rrweb draws only events strictly before the offset it is given, so a moment
+is drawn one millisecond past, and an event at exactly `t` shows.
+
+**The capability.** The player holds no codecast session.
+`replays.playerLink` (an action; `/cli/replays/player-link` for the CLI)
+checks the caller can read the replay and mints
+`<base64url {v, r, u, exp}>.<hex HMAC-SHA256>` for one replay and one person,
+good for ten minutes (`lib/replayCap.ts`). The key is derived from
+`REPLAYS_R2_SECRET_ACCESS_KEY` with a fixed label, so there is no new secret
+and only Convex signs or verifies. `GET /cli/replays/player?cap=` opens it,
+re-checks that the named person can still read the replay (a removal lands
+on the next load), and answers `ReplayPlayerManifest`: the replay's summary,
+`t0` and the DOM chunks as GETs signed for a few minutes. A forged, lapsed or
+revoked capability and a replay with no capture answer the same 404. The
+answer carries CORS `*`: the capability is the whole authorization. The
+replays bucket already allows GET from any origin.
+
+**The player** is `infra/replay-player`, a Worker on `replay.codecast.sh`, its
+own origin: customer DOM never renders on codecast.sh, nor on a.codecast.sh
+where anyone's published HTML runs. `GET /p/<cap>?t=<ms>&mode=frame&controls=0&autoplay=1&assets=remote`
+(`replayPlayerUrl`) serves a page with `script-src 'self'`,
+`Referrer-Policy: no-referrer` and no caching; its script (`src/player.ts`,
+bundled with `@rrweb/replay` into `public/player.js`) reads the manifest and
+the chunks and, unless `replayCaptureProblem` names a reason the capture
+cannot be drawn (then that reason is the page's error, which a frame request
+answers as a 422 and `cast replay snap` prints, instead of a white frame),
+hands them to rrweb's Replayer, whose iframe is sandboxed with
+`allow-same-origin` only (no scripts; rrweb also turns `<script>` into
+`<noscript>`). The replayed page always scrolls at once (an inserted
+`scroll-behavior: auto !important` rule): a recording whose page sets
+`scroll-behavior: smooth` would otherwise animate every scroll rrweb applies,
+so a seek glides instead of landing and a frame is right only if the
+animation ends before it is shot. A second inserted rule hides the cast
+browser extension's agent-tab frame (`html > div[id^=cast-][data-cast-color]`,
+a fixed red border the extension mounts while an agent drives a tab): a
+recording made in such a tab captured it, and it is codecast's chrome, not
+the customer's page. Interactive mode has a control bar (hidden by `controls=0`)
+and speaks postMessage with whatever embeds it: the player posts `ready`,
+`time` (on every seek and four times a second while playing), `state`,
+`frame` and `error`, tagged `source: "codecast-replay-player"`, to its
+parent's origin and nowhere else. It knows that origin from
+`location.ancestorOrigins` where the browser has it; elsewhere (Firefox) it
+holds every message and posts only a bare `hello` to `*`, carrying nothing,
+until its parent sends any command, whose origin it then posts the held
+messages to. The host posts `seek` (`t_ms`, optional `play`), `play`,
+`pause`, `speed` and `hello` (the answer to the player's `hello`, which the
+web channel hook `useReplayPlayerChannel` sends for every host), tagged
+`codecast-replay-host`, and checks `event.origin` against
+`REPLAY_PLAYER_ORIGIN`. The player obeys a command only from its parent
+window (`event.source === window.parent`), never from another window that
+found it. Frame mode draws the page at `t`, waits for its images and fonts
+(at most 4 s), exposes `window.__codecastReplay` (state, url, visible text,
+size) and `window.__codecastReplaySeek(t)`, and posts `frame`.
+
+The page reads the chunks four at a time and counts the bytes as they
+inflate: a chunk past `REPLAY_DOM_LIMITS.chunk_max_inflated_bytes` (48 MB)
+or a capture past four of those stops with an error, in the viewer's tab and
+in the renderer alike, because an SDK chunk is a few MB of gzip anyone with a
+source's public ingest key may upload. Every open still reads the whole
+capture before it draws (chunks carry no time index), so a moment late in a
+long recording costs the full download.
+
+**What the replayed page may fetch.** A recording names its own images,
+stylesheets and fonts, and a recording uploaded with a source's public
+ingest key can name any URL, so a replay being readable only inside its
+workspace says nothing about the hosts it names. By default nothing remote
+loads, in either mode: the page's CSP allows no remote host in `img-src`,
+`style-src`, `font-src` or `media-src`, so remote images show as empty boxes
+(stylesheets are inlined by the recorder and still apply). In interactive
+mode the viewer may opt in on one view: when the capture names remote assets
+(`remoteAssetHosts`: src, srcset and poster, href on `<link>`, url() and
+@import in styles; never an `<a>` target), the player shows a button naming
+the hosts ("Load images from shop.example and 2 other sites"), never over the
+recorded page: at the end of its control bar, or, with `controls=0`, in a
+28 px strip under the page (`ready` reports what it draws below the page as
+`below_px`, and a host sizing the iframe to the page adds it). A click
+reloads the page with `assets=remote` at the time it stood at, under a CSP
+that adds `https:` (never `http:`) to those four directives. Only then does
+the viewer's browser fetch them, and those hosts learn the viewer's IP and
+user agent, never a referrer. Frame mode ignores `assets=remote`, and its
+browser is Cloudflare's: the renderer also intercepts every request
+(`frameRequestAllowed`) and lets through only the player's origin, Convex,
+the replays bucket and `data:`/`blob:`. The bucket is pinned: the worker's
+`REPLAYS_BUCKET_URL` (`https://<account>.r2.cloudflarestorage.com/codecast-replays/`,
+path style, as Convex signs chunk URLs) is the one R2 prefix the renderer
+and the page's `connect-src` allow; unset, they allow no bucket.
+
+**Frames** are rendered server side, so a cloud host sees what a laptop sees.
+`POST https://replay.codecast.sh/frame { cap, times_ms }` (at most 12 per
+request) is first admitted by Convex (`POST /cli/replays/frame-admit { cap }`,
+`replaysHttp.replayFrameAdmit`): the capability opens and its person can
+still read the replay, and both still have frame budget. Each request is a
+billable browser session from a pool every replay shares, so one capability
+buys `REPLAY_FRAME_LIMITS.requests_per_cap` (8) requests and one person 30
+per ten minutes across every capability they mint (`ipRateLimit` counters,
+failing closed); past either the worker answers 429 with the counter's
+Retry-After. Admission signs nothing, so a forged capability costs one POST
+and no browser time. The worker then loads the frame-mode page
+in Cloudflare Browser Rendering (the Worker's `browser` binding; the account
+is on Workers Paid, checked 2026-10-07 with `cf accounts subscriptions get`,
+and a REST screenshot probe answered), screenshots the stage per time and
+answers `{ frames: [{ t_ms, png_base64, url, outline, width, height, error? }] }`.
+A full browser pool answers 429 with Retry-After. A recording is drawn at its
+own size, scaled down past 1600 px.
+
+**In codecast** one host embeds the player (`packages/web/hooks/useReplayPlayer.ts`
+and `components/ops/ReplayPlayerFrame.tsx`): `useReplayPlayerLink`
+mints a capability through `replays.playerLink` each time a player opens,
+`ReplayPlayerIframe` loads it sandboxed `allow-scripts allow-same-origin` (the
+player's own script, on its own origin) with no referrer, and
+`useReplayPlayerChannel` trusts a message only from the minted URL's origin
+(Convex builds it from `REPLAY_PLAYER_ORIGIN`) and from that iframe's window,
+and posts commands to that origin alone. The capability lives in component
+state and nowhere else: it is a short bearer, not a store row.
+
+- A detail page (`ReplayPage`, and the issue page alike) reads its row by
+  short id or id from the whole collection (`useOpsReplay`, `useOpsGroup`),
+  not through the workspace-scoped list readers: the detail feeder's read is
+  the access check, so a link to another workspace's replay opens it the way
+  a task page does, and a refusal drops the row.
+- The `/ops/replays/:id` page (`ReplayPage`, `useReplayStage`) puts the page
+  above its scrubber when the row lists DOM chunks (`dom_chunks` on the list
+  and detail views), with the player's bar hidden (`controls=0`). Its box keeps
+  the page's shape with the player's `below_px` as padding under it, so the
+  page fills the width and the remote-assets strip sits beneath it. Until the
+  player posts `ready` the page keeps its own clock; on `ready` it is told
+  where the page stands (seek, play, speed), and from then on its `time` and
+  `state` posts move the scrubber, the event list and the play button (for
+  300 ms after a seek from here, only the player's echo of that seek is
+  followed, so a time post it queued before the seek cannot pull the
+  scrubber back), while
+  every seek here (scrubber, an event, a console or network row, the arrows,
+  Home, End, Page Up and Down), play, pause and speed is posted to it. A
+  player that posts `error` (a lapsed link, a capture with nothing to draw)
+  says why in one line and the page goes on with its own clock. A replay
+  with no capture never asks for a player.
+- References: `rp` is a registered short-id prefix (shared/entities, type
+  `replay`, digits only), so `rp-N` is a pill everywhere markdown renders
+  (transcripts, chat, task and doc bodies, mobile), named by the page it
+  recorded (`replayTitle`) and opening `/ops/replays/rp-N`. Mobile has no
+  replay screen: its pill opens that web page, at the moment, in the in-app
+  browser. A moment
+  (`rp-N@1:23`) or a stretch (`rp-N@1:00-2:30`, `REPLAY_REF_SOURCE`) is the
+  same pill with the time, opening the page at that second (`?t=<ms>`, and a
+  pasted `/ops/replays/rp-N?t=<ms>` link reads back as the moment). The pill
+  reads `replays.webGetReplay` (the list row, null for no access, never the
+  timeline), seeded from the Ops replays in the store. Alone on its line a
+  moment is the player itself (`ReplayMomentEmbed`, through
+  `remarkEntityCards`, the call moment's rule: in running text it stays the
+  pill), with the player's own bar, opened at that second. The embed is only
+  where `remarkEntityCards` runs, agent transcripts and team chat, the same
+  reach as a call moment; task and doc bodies and mobile show the pill. Where Ops is hidden (hosted mode, `surfaceShown("nav.ops")`)
+  a reference reads as the text it was written as, like any pill to a hidden
+  page. It
+  mints when it first comes near the screen and then keeps the player (letting
+  it go would mint and download the whole capture again on every scroll
+  back); at most three embeds on a page open by themselves
+  (`LIVE_PLAYERS_MAX`), and the rest wait behind a play button. Its height
+  follows the recording's shape at the smaller of the embed's width and the
+  recording's own, because the player never scales a page up. An agent transcript promotes a lone
+  `rp-N` to its card and a lone moment to the player; a tool result reading
+  `Frame of the replay: rp-N@m:ss` (`cast replay snap`) renders as the same
+  embed where the picture would have been.
+
+**SDK captures** (DOM mode, above) upload through the same sign
+route: `POST /cli/ingest/replay-sign/<key> { replay_id, seq, sha256, size, kind: "dom" }`
+signs a DOM chunk (a gzipped JSON array of rrweb events with epoch
+timestamps) under the recording's `dom/` prefix, held to `REPLAY_DOM_LIMITS`,
+and lists it in `dom_chunk_keys`, never in `chunk_keys`, so the assembly never
+reads it. The chunk read redirect takes `&kind=dom` too. An SDK DOM chunk is
+untrusted: it goes straight from the browser to R2 and never passes
+`prepareDomCapture`, so its masking is only the client recorder's, and anyone
+holding a source's public ingest key can store unmasked or crafted DOM for
+that source. What bounds it is the player: scripts never run (the sandbox and
+`script-src 'self'`), inflation is capped, frames fetch nothing remote, and
+the replay is readable only in the source's own workspace.
+
+## X6. Promotion to the line
+
+A transition listed in the source's `promote` set schedules
+`internal.signals.ingestAs` with the source's owner as filer, an explicit
+`{ workspace, team_id }`, the source's `project_id`, `source: <provider>:<name>`,
+and the kind map: error new is `bug`, error regressed and spike are
+`regression`, check failed is `bug`, job failed is `bug`, metric alert is `ux`.
+The fingerprint is the group fingerprint, prefixed by the source's
+`fingerprint_prefix` when set, so a Union check promoted here joins the same
+cause the line-union `invariantFinder` files (`union:invariant:<id>`).
+`signals.ts` does not change. A filer who has left the team pauses the source
+with the reason rather than retrying.
+
+The cause is written back (`linkSignal`): the group keeps it as
+`signal_task_id`, and the transition that promoted gains it as `task_id` and
+`task_ids` on its `external_events` row. Every later transition of the group
+is recorded with that task, so the cause task's timeline
+(`externalEvents.listForTask`) shows the promotion and everything the group
+did after it.
+
+## X7. Provider adapters
+
+**Sentry** (`sources/sentry.ts`). Connection: auth token plus org slug,
+validated with `GET /api/0/organizations/<org>/`. A poll every 2 minutes
+(cron, one action per source) reads unresolved issues sorted by date for the
+configured projects and environments, and mirrors each into a group
+(`external.provider = "sentry"`, count, first and last seen, release, level).
+Status changes in Sentry (resolved, regressed) become group transitions. The
+optional webhook (an internal integration's issue and error alert hooks)
+removes the 2-minute lag. Reads on demand: issue detail, latest event with
+stack, and the replay id when present, which is linked to the group. The
+replay is imported the first time it is read (`cast replay show`, or the web
+replay page opening it): the replay's detail names its project, then its
+recording segments (`GET /api/0/projects/<org>/<project>/replays/<id>/recording-segments/?download`,
+a list of segments, each a list of rrweb events) are read page by page, at most
+10 pages and 24 MB, and go through `fromRrweb` and `replays.importExternal`.
+The steps PostHog and Sentry share live in `sources/vendorReplay.ts`
+(`importVendorRecording`, and `importLinked` for an existing replay row); each
+adapter supplies only its read. Writes are the actions `issue.resolve`
+(resolve, and reopen) and `issue.ignore`, run by `cast events resolve` and
+`cast events ignore` on a mirrored group only while a person's grant covers
+them, checked and audited exactly as an app connector's actions are (X8).
+
+Sentry counts are totals, so issues fold through `applyMirror` (lib/ingestGroups.ts),
+not the occurrence rules: vendor counts and hourly stats replace ours, a read
+that changes nothing writes nothing, and the transition names and silences are
+the same. An issue first seen before the source was created is backfill and is
+never announced as new. Sentry's resolve and ignore are followed, a local mute
+sticks, and a group resolved here stays resolved until Sentry shows activity
+after the resolve. An open issue that drops out of the poll's list is re-read by
+id (10 per run), which is how a resolve reaches the mirror without the webhook.
+The webhook secret is the internal integration's client secret in
+`SENTRY_WEBHOOK_SECRET`; a delivery is matched to sources by the org slug in its
+URLs and the source's projects, and deduped by `Request-ID` in
+`webhook_deliveries` (shared by every vendor webhook, pruned after 7 days).
+
+**PostHog** (`sources/posthog.ts`). Connection: personal API key, host and
+project id, validated with `GET /api/projects/<id>/`. PostHog stays the
+analytics product: codecast keeps watched metrics, not events.
+`metric_watches` rows (a HogQL query or an insight id, a threshold, a
+direction, an interval) are polled, their last 60 values kept on the row, and
+crossings become `metric` group transitions. `cast metrics query "<hogql>"`
+passes a query through and stores nothing.
+
+A watch fills its past instead of waiting 60 polls for a chart
+(`metrics.loadHistory` and `readHistory`, `cast metrics backfill [mw-N]
+[--source s] [--days 30]`, the Metrics tab's "Load history"; a new watch
+runs it on creation). An insight answers its own dated series. A HogQL
+query is asked again at past instants with now() bound to each one
+(`bindHogqlNow`): every now() compared straight against a column becomes
+`toDateTime('<iso>Z')`, and a lower bound (`timestamp > now() - interval 1
+day`) also gains `timestamp <= <instant>`, because the window must end at
+the instant and not at the present. Anything else that reads the clock
+(today(), now('UTC'), toStartOfDay(now()), arithmetic around the bound, no
+now() at all) is refused with the reason on the watch, since binding it
+would answer a different question. Instants run back from the oldest point
+the watch holds, a day apart when the query's window is a day or more and
+one interval apart otherwise, within `--days` and at most the 60 the row
+keeps. Each is read through `fetchMetricValue`, the poll's own read, newest
+first; a 429 is retried after its Retry-After, and a read that stops partway
+keeps what it has and says why. Watches on one source start 20 s apart.
+Past points go under the polled ones (`mergeMetricHistory`, oldest first)
+and never pass through the group upsert: history fires no alert and the
+watch's state and group follow the live polls alone. Recordings: `cast replay ls
+--source posthog` lists them from the API; `show` imports one (snapshots to
+`fromRrweb` to chunks and `timeline_md`) the first time it is read, and
+`cast replay import` brings every retained one over (X5). Each PostHog and
+Sentry call keeps its status and Retry-After (`VendorCallError`,
+`lib/tokenHttp` `retry_after_ms`) so the bulk import can wait out a 429 and
+stop on a refused token. A PostHog
+destination webhook can post actions to the generic door.
+
+**Generic HTTP** (`provider: http`). Any system that can POST JSON uses the
+ingest door with its key. Documented with curl.
+
+**GitHub CI** (`provider: github`, name `github-ci`). CI on a repository's
+default branch arrives through the GitHub App's webhook
+(`/api/webhooks/github-app`) with no setup. `processWorkflowRunEvent` hands
+every completed `workflow_run` to `defaultBranchCiRun` (githubWebhooks.ts),
+which takes a run only when its `head_branch` is the payload repository's
+`default_branch`, its event is not a pull request one, and its head
+repository is the repository itself (a pull request from a fork's `main`
+reports `head_branch: main` too). Pull request runs stay the PR pipeline's
+(`pr_check_failed`, `pr_checks_green`) and never touch this source. A
+cancelled, skipped, neutral, stale or action_required run says nothing about
+the branch and is dropped; success is green, any other conclusion (failure,
+timed_out, startup_failure) is red. `check_suite` is not read here: an
+Actions suite does not name its workflow.
+
+`ingest.recordCiRun` files the run. The source is the team workspace's (the
+team `resolveTeamForRepository` routes the repository to; a repository no team
+routes to files nowhere), created on the first run with the team's earliest
+admin as owner and `promote: []`, so it fires triggers but files no cause
+until a person turns promotion on with `cast sources set github-ci --promote
+<transitions>`. It is listed by `cast sources ls` like any other, and pausing
+it stops CI filing. A person's
+own source already named `github-ci` keeps the name and CI then files nowhere.
+Each run is one `check` occurrence through `upsertGroup`, the path every feed
+shares: one group per repository and workflow, fingerprint
+`ci:<repo>:<workflow>` (`ciCheckFingerprint`, stored as
+`invariant:ci:<repo>:<workflow>`), so a red run after red is counted, a
+flip announces `check_failed` or `check_recovered`, and a green first run is on
+record without announcing. Runs are judged by `run_started_at` (a re-run
+attempt restarts it): a run that started no later than the group's
+`last_seen` (an older run finishing after a newer one, a redelivery) is
+skipped. The timeline row carries the repository, branch, sha and run url,
+and the firing passes the repository, so `--source github-ci` and `--repo`
+both filter triggers. `--source github-ci` is accepted in a team workspace
+before the first run creates the source (`triggerSourceName`).
+
+## X8. App connector
+
+The product declares what codecast may read and do. `GET <base_url>/codecast/manifest`
+(signed, below) returns:
+
+```
+{ name, version,
+  readers: [{ name, title, description, method, path, input: JSONSchema, output_hint? }],
+  actions: [{ name, title, description, method, path, input: JSONSchema, idempotent: boolean, risk: "low"|"high" }],
+  watches: [{ reader, every: "5m"|"1h"|..., kind: "check"|"job", map: { id, ok, title?, detail?, at? } }] }
+```
+
+Each `map` entry names a field of the reader's rows. `at` is required on a job
+watch: the time the failure happened, used as the poll cursor, so a failure
+listed again on the next poll counts once. A watch missing a required field is
+dropped, and the manifest parse reports why.
+
+Connecting stores the base url (and a secret, when one is given) as an
+`app_installations` row (`provider: "app"`), fetches and caches the manifest
+in `app_manifests`, and refreshes it daily or on `cast connector refresh`.
+`cast sources add app <name> --base-url <url> --team <t>` (and the web's Add
+source, kind App) creates the source and its connection in one step, with no
+secret: `createSource` stores a signed connection (`connectSignedApp` in
+`ingest.ts`, through `tokenConnectors.storeConnection`) in the same
+transaction, and keeps an existing connection to the same base url as it is,
+secret and all. `cast integrations connect app --base-url <url> --signed`, or
+leaving the secret empty on the web form, makes the same connection on its
+own. A signed connection is not called when it is made: the app accepts the
+signature only once its codecast.json names the source, so the manifest is
+fetched when the source exists, and a refusal then puts the source in `error`
+saying which source and workspace the app's codecast.json must name; after
+the app deploys, `cast connector refresh` recovers it.
+
+**Signed requests.** Codecast signs every request it makes to an app
+connector (the manifest, `read`, `do`, watch polls) with one Ed25519 key, so a
+product verifies codecast with no shared secret. The scheme is one module,
+`packages/shared/contracts/codecastSignature.ts`. Headers:
+`Codecast-Signature` (base64url Ed25519 signature), `Codecast-Key-Id`,
+`Codecast-Timestamp` (unix seconds), `Codecast-Source` (src-N),
+`Codecast-Workspace` (`team:<id>` or `user:<id>`), `Codecast-Nonce` (16
+random bytes, base64url), beside `X-Codecast-Actor`. The signed bytes are the
+UTF-8 of seven lines joined by `\n`:
+
+```
+codecast-signature-v1
+<METHOD, uppercase>
+<path and query as requested>
+<lowercase hex sha256 of the body bytes, of the empty string without a body>
+<Codecast-Timestamp>
+<Codecast-Source>
+<Codecast-Workspace>
+<Codecast-Nonce>
+```
+
+The private key is `CODECAST_SIGNING_KEY`, a Convex deployment env var on
+codecast's side only (`convex/lib/codecastSigning.ts`): one private Ed25519
+JWK with a `kid`, or a JSON array of them. The first signs and every one is
+published as a JWKS at `GET /.well-known/codecast-keys.json` on the Convex
+site (the Caddy proxy forwards `/.well-known`; cached an hour). Generate one
+with `bun packages/convex/scripts/codecast-signing-key.ts <kid>`. To rotate,
+put the new key first in the array (a verifier refetches the key set when a
+request names a kid it has not seen), then drop the old one once its last
+requests are past the 5 minute window. WebCrypto Ed25519 runs in Convex's
+default runtime, so no dependency is added. Without the env var nothing is
+published or signed: a connection with a bearer secret still works, and a
+signed connection's calls fail before anything is sent, naming the env var.
+
+A verifier accepts a request when the signature verifies under the published
+key the kid names, the timestamp is within 5 minutes of its clock, the nonce
+was not seen in that window (an in-memory memory; only a valid signature
+spends a nonce), and `Codecast-Source` and `Codecast-Workspace` name a source
+its codecast.json lists. Two copies verify: `@platform/analytics/codecast-verify`
+(`createCodecastVerifier({ config })`, `verify(request)` for a Fetch Request or
+`verifyParts` for any server; fetches and caches the key set) for any product,
+and Union's inline copy (`outreach/backend/src/lib/codecastSignature.ts`,
+which takes no dependency). Both are drift tested against the committed
+vectors (`contracts/__fixtures__/codecastSignature.vectors.json`) in
+`codecastSignature.drift.test.ts`; Union's half runs where that checkout
+exists and is skipped in CI. A path rewriting proxy in front of an app must
+hand its verifier the path codecast requested.
+
+A bearer secret stays supported for apps that prefer one: a connection made
+with a secret sends it as `Authorization: Bearer` beside the signature.
+
+- `cast connector readers|actions <source>` lists them. The token is `connector` because `cast app` already drives the codecast app itself.
+- `cast connector read <source> <reader> [--arg k=v ...] [--args -] [--json]` calls the reader from a Convex action, signed (and with the secret, if the connection has one). The response goes back to the caller and is not stored. Output is capped at 256 KB.
+- `cast connector do <source> <action> ...` runs only when the action is granted. A high-risk action also needs `--yes` per call. A non-idempotent action takes an idempotency key, sent as a header.
+- Every call writes an `app_calls` row: who (session, person), reader or action, args hash, status, ms, bytes. Bodies are not stored.
+
+**Grants are a person's.** One grant model covers every write codecast makes
+outside itself: the source's `grants` list, keyed by action name. An app
+connector's actions are the ones its manifest declares; a vendor source's are
+fixed (`VENDOR_ACTIONS`: Sentry's `issue.resolve` and `issue.ignore`). A grant
+may run for a while (`until`) and records who made it. Granting and revoking
+take a signed-in web session, a person in the browser under Ops, Apps
+(`sources/app.ts` `grant` and `revoke`, reached from the web through dispatch);
+a call carrying an api token is refused, because an agent runs with one and
+must never approve its own writes. A grant an api token made before this rule
+counts for nothing. `cast connector grant|revoke` only print the page where a
+person does it (`/ops/apps?app=<src-N>`) and exit non-zero. Every outside write,
+an app's `do` and a Sentry status change alike, passes the one check
+`writeRefusal` (`@codecast/shared/contracts/appConnector`), and a refusal names
+that page.
+- Watches turn polled readers into `check` or `job` groups, which is how Union's invariants and job failures arrive without codecast reading its database. A watch that fails (an HTTP error, rows that do not map) records `last_error` in `watch_state` and an error row in the call audit, and nothing else: the source stays `active`, no group or transition is written, no trigger fires. A lost connection is different (X1, Lost connections): no connection, or a 401 or 403 from the app, stops the source in `error` after at most one audited call, and the watches are not polled again until a connection is stored or a person resumes it.
+
+Raw SQL is never a reader.
+
+## X9. Union parity
+
+| Aivery sees or does | Codecast |
+|---|---|
+| Slack DMs, mentions, threads | chat mirror plus anchor (shipped) |
+| Huddle transcripts | `cast calls` (shipped) |
+| Check-in every 3h | `trigger --every 3h` (shipped) |
+| CI failed | `pr_check_failed` on pull requests; on the default branch `check_failed` and `check_recovered` from the system `github-ci` source, one group per repository and workflow, with no setup (X7) |
+| Claude Code sessions: create, read, send, kill | `cast spawn --subagent`, `read`, `send`, `kill` (shipped) |
+| Job failures (`job_failed` activities) | SDK `job_failed` from `logError`, plus a `jobs.failed` watch |
+| `error_logs` and Sentry | SDK errors from `logError` and a Sentry source |
+| Invariants (61 checks, every 6h) | an `invariants.list` watch on the app connector |
+| `read_history` over contacts, calls, emails | app connector readers `history.timeline`, `history.search`, `history.item` |
+| `rerun_job`, `cancel_job` | app connector actions `jobs.rerun`, `jobs.cancel` (granted) |
+| AgentWatch findings and spotlights | the line (signals, causes, owned by the line sessions) |
+| Admin chat with page context | out of scope for this plan; noted in the parity doc |
+
+The Union side is one router (`outreach/backend/src/routes/codecast.ts`)
+reached only by a request codecast signed for a source in Union's committed
+`outreach/backend/codecast.json` (`lib/codecastSignature.ts`, checked in
+`middleware/auth.ts`; a `CODECAST_CONNECTOR_KEY` bearer is an optional
+fallback when that env var is set), with its own service identity and the
+`aiveryRoutePolicy` deny-list, readers and actions that point at existing
+routes, two new job routes, and one call in `logError`. Union sets no env var
+for codecast: `lib/codecastConfig.ts` imports codecast.json statically (so
+`bun build` bundles it), and `CODECAST_INGEST_KEY` and `CODECAST_INGEST_URL`
+are optional overrides (an empty `CODECAST_INGEST_KEY` turns the hook off).
+Its ingest client (`src/lib/codecastIngest.ts`) sends `GIT_SHA` (CI's short
+sha) as every batch's release, and the api process posts one `deploy` item at
+boot (`postDeployToCodecast` in `src/index.ts`, fire and forget, skipped
+without a key or a built sha) whose version and environment are that same release and
+errorLog's environment, so `last_sha` joins Union error groups to their
+commit. Every api machine of a rollout announces; the door's version and
+environment dedupe keeps it one marker, and the other process groups (worker,
+calls, agents) never announce. The ops role on the
+Union team is armed on `error_new`, `error_regressed`, `job_failed`,
+`check_failed` (which covers both its app connector's invariants and CI on
+main from `github-ci`) and every 3h, and its standing text covers what Aivery's ops
+prompt does with `cast` verbs. Retiring Aivery is the human's call, asked once
+parity is verified end to end.
+
+## X10. Surfaces
+
+**CLI**: `cast sources` (ls, add, show, key rotate, pause, resume, rm, test),
+`cast events` (ls, groups, show, resolve, ignore, -w), `cast replay` (ls, show,
+repro, snap; `show --at 1:23` prints one moment), `cast metrics` (ls, add, show, query, rm), `cast connector` (ls, readers,
+actions, read, do, calls, refresh; grant and revoke print the browser page
+where a person grants), and `--source` on `cast
+trigger add` and `update` (an unknown source is refused in one line, the
+server's message without its stack, through `cliErrorMessage`). Every verb
+takes `--json` and `--team <name|id|personal>`. An eg-N is global, so on
+`events show`, `resolve` and `ignore` `--team` only narrows the lookup: a group
+in another workspace is refused in one line before anything is written.
+`cast sources add` takes no `--host`: where a Sentry or PostHog source reads
+(host, token) is its connection's, made with `cast integrations connect
+<provider>`; add only picks what to read through it (`--org`, `--projects`,
+`--project-id`). An app source takes `--base-url`, which makes its signed
+connection in the same step (X8). add and `key rotate` write codecast.json
+(X1, `--write`, `--no-write`). An External data
+subsection of the Triggers snippet teaches agents the verbs. The web trigger
+form saves through `eventFilterForSave`, so a `--source` or `--repo` armed from
+the CLI survives an edit.
+
+`cast replay snap rp-N@1:23` (a stretch: `rp-N@1:00-2:30 --every 10s`, or
+`--every` alone across the whole replay; a lone moment with `--every` is
+refused, since it means a stretch) mints a capability, has the replay player
+render the frames server side, and writes
+each PNG to the owner-only scratch directory, remembered by `callFrameRefs`
+so a Read of it syncs as `Frame of the replay: rp-N@1:23`, never as the
+customer's page. Beside each frame it prints, fenced as product text, the
+moment (`replayMoment`): the page's URL, its visible text (the rendered
+frame's, else the stream's last outline), the last few actions before it, and
+the console and failed or slow requests within 5 s. A snap draws at most 50
+frames; a stretch that wants more says where it stopped (the last moment
+drawn, and `truncated` in `--json`). A capability that lapses partway through
+a long snap is minted again for the next batch, and a batch that still fails
+keeps the frames already drawn and marks the rest with the error. A replay
+with no capture says so and prints the text alone. `cast replay show rp-N --at 1:23` (or
+`show rp-N@1:23`) prints the moment without a frame. A moment reference is
+`rp-N@m:ss` (`parseReplayRef`, the call moment's clock grammar); an event
+index form is left out because the timeline prints times, not indices.
+
+**Web**: `/ops` with tabs Timeline (transitions across sources, with deploy and
+release markers), Issues (groups, with sparklines from `buckets`), Replays,
+Metrics, and Apps (each app connector's manifest and each Sentry source's
+writes, with the grant toggles a person uses, and the call audit). Detail pages
+`/ops/issues/:id` (stack, samples, release, commit, the session that wrote it,
+cause, triggers fired, replays) and `/ops/replays/:id` (a player with a
+scrubber, event list, view outline, console and network panes, and buttons to
+copy the repro or start a fix session; when the replay keeps a page capture
+the page itself plays above the scrubber, synced both ways with it, X5
+"Playing a replay"). `rp-N` and `rp-N@1:23` render as pills in any markdown,
+and a moment alone on its line embeds the player at that second. Source setup sits on Settings →
+Integrations next to the other connections. Ingestion transitions render
+inline in transcripts and timelines through `registerExternalEventStyles`.
+
+## X11. Limits and safety
+
+- Payloads are attacker-controlled text. Runs woken by ingestion get the event as quoted data in the frame, under a line saying so.
+- Every public function authenticates itself and never returns `access_token_enc`, config secrets or key hashes (`publicFunctionSecretLeak.test.ts`).
+- Codecast's signing key never leaves the deployment env; the key set route publishes only the public halves (`publicJwks`). A signed connection stores no secret at all (`access_token_enc` is empty, `tokenConnectors.SIGNED_CONNECTION`).
+- Batch caps: 500 items or 1 MB per request, 20 samples per group, 72 hourly buckets, 60 metric points.
+- Convex is deployed with `packages/convex/deploy.sh` before any web or CLI push that calls new functions.

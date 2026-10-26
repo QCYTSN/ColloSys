@@ -1,0 +1,107 @@
+"use client";
+
+import { ArrowUpRight, Check, Columns2 } from "lucide-react";
+import { useTrackedStore, type SessionDecisionItem } from "../../store/inboxStore";
+import { pageFrameSrc, pageShareUrl } from "../../lib/publishedPageUrls";
+import { PageThumb } from "../PageThumb";
+import { usePageInfo } from "../../hooks/usePageInfo";
+import { openBrowserPane } from "../../lib/stage";
+import { optionPageSlugs } from "../../lib/decisionQueue";
+import "./decisions.css";
+
+
+// Option pages (docs/architecture/the-line.md L6): when an option carries a
+// published page, the options compare as a row of cards above the option
+// list: the page's thumbnail and title, the option's number and label, open
+// in a pane, open in full. The card is also the answer target: its number
+// answers that option while the decision is pending and the viewer may
+// answer. Side by side where the width allows, stacked on a phone (the css).
+export function OptionPages({
+  decision,
+  answerable = false,
+  onAnswer,
+  chosen,
+}: {
+  decision: Pick<SessionDecisionItem, "options" | "status"> & { _id?: string };
+  answerable?: boolean;
+  onAnswer?: (index: number) => void;
+  chosen?: ReadonlySet<number>;
+}) {
+  if (optionPageSlugs(decision.options).length === 0) return null;
+  const canAnswer = answerable && decision.status === "pending" && !!onAnswer;
+  return (
+    <div className="decision-option-pages" data-option-pages>
+      {decision.options.map((o, i) =>
+        o.page_slug ? (
+          <OptionPageCard
+            key={i}
+            index={i}
+            label={o.label.replace(" (Recommended)", "")}
+            slug={o.page_slug}
+            picked={!!chosen?.has(i)}
+            decisionId={decision._id}
+            onAnswer={canAnswer ? () => onAnswer!(i) : undefined}
+          />
+        ) : null,
+      )}
+    </div>
+  );
+}
+
+function OptionPageCard({ index, label, slug, picked, decisionId, onAnswer }: { index: number; label: string; slug: string; picked: boolean; decisionId?: string; onAnswer?: () => void }) {
+  // The artifacts store row (fed by listForWeb) names the page when the
+  // viewer owns it or a teammate shared it; the page's embed info names any
+  // page and holds the way past its gates. The thumb needs neither.
+  const s = useTrackedStore([
+    (st) => (st as any).artifacts?.[slug]?.title,
+    (st) => (st as any).artifacts?.[slug]?.version,
+    (st) => (st as any).artifacts?.[slug]?.has_thumb,
+  ]);
+  const row = (s as any).artifacts?.[slug] as { title?: string; version?: number; has_thumb?: boolean; has_password?: boolean; email_gate?: boolean } | undefined;
+  // A gated page (a trial's, which quotes a customer) opens in the pane for the decision's readers, past its password.
+  const { info: meta, keys } = usePageInfo(slug, decisionId);
+  const title: string = row?.title ?? meta?.title ?? "Published page";
+  const version = row?.version ?? meta?.version ?? 0;
+  const openPane = () => openBrowserPane({ kind: "url", url: `${pageFrameSrc(slug)}${keys.replace(/^&/, "?")}` });
+
+  return (
+    <div className="decision-option-page" data-option-page={index} data-picked={picked ? "true" : "false"}>
+      <div className="flex items-center gap-2 px-3 py-2 min-w-0">
+        {onAnswer ? (
+          <button
+            type="button"
+            onClick={onAnswer}
+            data-option-answer={index}
+            className="w-6 h-6 shrink-0 rounded-full border border-sol-yellow/50 text-sol-text font-mono text-[11px] flex items-center justify-center hover:bg-sol-yellow hover:text-sol-bg transition-colors"
+            title={`Answer with option ${index + 1}`}
+          >
+            {index + 1}
+          </button>
+        ) : (
+          <span className={`w-6 h-6 shrink-0 rounded-full border flex items-center justify-center font-mono text-[11px] ${picked ? "border-sol-green text-sol-green" : "border-sol-border text-sol-text-dim"}`}>
+            {picked ? <Check className="w-3.5 h-3.5" /> : index + 1}
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate text-[13px] text-sol-text" title={label}>{label}</span>
+      </div>
+      <button type="button" onClick={openPane} className="decision-option-page-thumb" title="Open beside your work, as a pane" aria-label={`Open ${title} in a pane`}>
+        <PageThumb
+          slug={slug}
+          version={version}
+          hasThumb={row?.has_thumb}
+          gated={!!row?.has_password || !!row?.email_gate}
+          fallback={<span className="w-full h-full flex items-center justify-center text-sol-text-dim font-mono text-2xl select-none">{"</>"}</span>}
+        />
+      </button>
+      <div className="flex items-center gap-2 px-3 py-1.5 text-[11px] min-w-0">
+        <span className="min-w-0 flex-1 truncate text-sol-text-muted" title={title}>{title}</span>
+        <button type="button" onClick={openPane} className="flex items-center gap-1 text-sol-text-dim hover:text-sol-blue transition-colors shrink-0" title="Open in a pane">
+          <Columns2 className="w-3 h-3" />pane
+        </button>
+        <a href={pageShareUrl(slug)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-sol-text-dim hover:text-sol-blue transition-colors shrink-0 no-underline" title="Open in full">
+          full<ArrowUpRight className="w-3 h-3" />
+        </a>
+      </div>
+    </div>
+  );
+}

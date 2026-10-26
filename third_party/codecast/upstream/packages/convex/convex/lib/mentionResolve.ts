@@ -1,0 +1,301 @@
+// Who a message names.
+//
+// Two grammars, one module. A person is `@handle`, resolved against ONE
+// team's roster (chat, code comments). A session is `@[Title jx7c6zk]`, the
+// entity mention every composer inserts, resolved through the same lookup
+// `cast send` uses. Chat and code comments both call these, so the rules
+// about who may be named live here once.
+
+import type { Doc, Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import {
+  MAX_MENTIONS,
+  SESSION_SHORT_ID_RE,
+  botHandle,
+  extractMentionHandles,
+  matchHandle,
+  type ChatMentionRef,
+} from "@codecast/shared/chat";
+import { entityMentionRegex } from "@codecast/shared/entities";
+import { emailLocalHandle } from "../chatText";
+import { liveRoleByHandle } from "./orgAccess";
+import { EXECUTIVE_ASSISTANT_HANDLE, HEAD_OF_PEOPLE_HANDLE } from "@codecast/shared/contracts/orgLead";
+import { findConversationByAnyRefWhere } from "../conversationSessionLookup";
+import { canSendProductMessage } from "../pendingMessages";
+
+type ReadCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
+
+export async function teamRoster(ctx: ReadCtx, teamId: Id<"teams">): Promise<Doc<"users">[]> {
+  const memberships = await ctx.db
+    .query("team_memberships")
+    .withIndex("by_team_id", (q: any) => q.eq("team_id", teamId))
+    .collect();
+  const users = await Promise.all(
+    memberships.map((m: { user_id: Id<"users"> }) => ctx.db.get(m.user_id)),
+  );
+  return users.filter((u): u is Doc<"users"> => u !== null);
+}
+
+// Resolve the handles WRITTEN in a message to real users, against this team's
+// roster only. Never against `user.name` for a human: display names are
+// self-editable, so matching them would let a member rename themselves to
+// intercept a teammate's mentions. Bots are matched on their name because an
+// anchor's name is admin-set, and a bot has no GitHub handle to match instead.
+// The rule is shared/chat's (matchHandle), re-exported here for @mention
+// resolution, `--dm <handle>` and every server caller that names a person.
+export { matchHandle };
+
+export async function resolveMentions(
+  ctx: ReadCtx,
+  teamId: Id<"teams">,
+  content: string,
+  senderId: Id<"users">,
+): Promise<Id<"users">[]> {
+  const handles = extractMentionHandles(content);
+  if (handles.length === 0) return [];
+  const roster = await teamRoster(ctx, teamId);
+
+  const resolved: Id<"users">[] = [];
+  const seen = new Set<string>();
+  for (const handle of handles) {
+    const match = matchHandle(roster, handle);
+    if (!match) continue;
+    const key = match._id.toString();
+    if (key === senderId.toString() || seen.has(key)) continue;
+    seen.add(key);
+    resolved.push(match._id);
+    if (resolved.length >= MAX_MENTIONS) break;
+  }
+  return resolved;
+}
+
+/** Everything one chat line names: people (the roster rule above), org roles
+ *  (`@<handle>`: the team's roles, then the sender's personal roles) and
+ *  sessions (`@<7-char short id>`, only ones the sender may send into). A
+ *  handle resolves to ONE thing. A human's login or email outranks a role so
+ *  an existing mention never silently changes addressee. A role outranks a
+ *  BOT whose name slugs to the same handle: a role's standing agent is a bot
+ *  user named after the role, so without this rule `@growth` would resolve
+ *  to that bot (a plain user mention that wakes nothing) and never to the
+ *  role. Retired roles are not addressable; a paused one resolves (its wake
+ *  rail holds it). */
+/** The handle the workspace anchor answered to before the head of people. */
+export const ANCHOR_ALIAS = "anchor";
+
+export type ChatMentions = {
+  users: Id<"users">[];
+  roles: Doc<"org_roles">[];
+  sessions: Doc<"conversations">[];
+  /** People who exist only in the team's mirrored Slack workspace. */
+  slack: Array<{ user: string; handle: string; name: string }>;
+  /** The stored shape (chat_messages.mentions). */
+  refs: ChatMentionRef[];
+};
+
+/** How many of a workspace's people one handle lookup may read. Big enough for
+ *  any real workspace, bounded so the scan can never run away. */
+const SLACK_PEOPLE_SCAN = 2000;
+
+// A handle nobody in codecast answers to may be somebody in the team's Slack
+// workspace (slack_users, filled by the roster sync and as people speak in
+// mirrored channels). Their handle is Slack's own @name. A Slack person already
+// matched to a teammate IS that teammate: the mention reaches them here, and
+// the Slack copy pages them there through the ordinary mapping.
+//
+// People write the name they see, not the login Slack keeps underneath, so one
+// exact @name is not enough: "Avery" is a display name, "avery.chen" is the
+// login behind it, and an agent posting into the room is a bot user with no
+// login at all. Three tiers, each answered only when exactly ONE row matches,
+// so an ambiguous handle names nobody rather than the wrong person:
+//   1. the Slack @name, exactly
+//   2. the slug of the @name, display name, real name or email local part
+//   3. the slug of the FIRST word of the display or real name
+// Display names are self-editable in Slack, but this path is reached only
+// after every codecast teammate handle has already missed, so a Slack name can
+// never intercept a teammate's mentions.
+export async function slackPersonForHandle(
+  ctx: ReadCtx,
+  workspaceId: string,
+  handle: string,
+): Promise<Doc<"slack_users"> | null> {
+  const want = handle.replace(/^@/, "").toLowerCase();
+  if (!want) return null;
+  const exact = await ctx.db
+    .query("slack_users")
+    .withIndex("by_workspace_handle", (q: any) => q.eq("workspace_id", workspaceId).eq("handle", want))
+    .first();
+  if (exact && !exact.deleted) return exact;
+  const rows = (await ctx.db
+    .query("slack_users")
+    .withIndex("by_workspace_user", (q: any) => q.eq("workspace_id", workspaceId))
+    .take(SLACK_PEOPLE_SCAN)) as Doc<"slack_users">[];
+  const live = rows.filter((r) => !r.deleted && r.slack_user_id !== "USLACKBOT");
+  const firstWord = (value: string | undefined): string | null =>
+    botHandle(value?.trim().split(/\s+/)[0]);
+  const one = (match: (r: Doc<"slack_users">) => boolean): Doc<"slack_users"> | null => {
+    const hits = live.filter(match);
+    return hits.length === 1 ? hits[0] : null;
+  };
+  return (
+    one((r) =>
+      (r.handle ?? "").toLowerCase() === want ||
+      botHandle(r.handle) === want ||
+      botHandle(r.name) === want ||
+      botHandle(r.real_name) === want ||
+      emailLocalHandle(r.email) === want)
+    ?? one((r) => firstWord(r.name) === want || firstWord(r.real_name) === want)
+  );
+}
+
+export async function resolveChatMentions(
+  ctx: ReadCtx,
+  teamId: Id<"teams">,
+  content: string,
+  senderId: Id<"users">,
+): Promise<ChatMentions> {
+  const empty: ChatMentions = { users: [], roles: [], sessions: [], slack: [], refs: [] };
+  const handles = extractMentionHandles(content);
+  if (handles.length === 0) return empty;
+  let users = await resolveMentions(ctx, teamId, content, senderId);
+  const roster = await teamRoster(ctx, teamId);
+  const roles: Doc<"org_roles">[] = [];
+  const sessions: Doc<"conversations">[] = [];
+  const slack: ChatMentions["slack"] = [];
+  const seen = new Set<string>();
+  // The team's Slack workspace, looked up once and only if a handle misses
+  // everything codecast knows.
+  let workspaceId: string | null | undefined;
+  const slackWorkspace = async (): Promise<string | null> => {
+    if (workspaceId === undefined) {
+      const install = await ctx.db
+        .query("slack_installations")
+        .withIndex("by_team", (q: any) => q.eq("team_id", teamId))
+        .first();
+      workspaceId = install?.workspace_id ?? null;
+    }
+    return workspaceId;
+  };
+  // The team's role, then the sender's personal one; never a retired seat.
+  const roleByHandle = async (handle: string): Promise<Doc<"org_roles"> | null> =>
+    (await liveRoleByHandle(ctx, { team_id: teamId }, handle)) ?? (await liveRoleByHandle(ctx, { scope_user_id: senderId }, handle));
+  // A role's standing agent is a bot named after the role ("Market Growth
+  // lead" answers to @marketgrowthlead), so its own handle is a second name
+  // for the seat: the mention reaches the role, not the bot. Same boundary as
+  // roleByHandle.
+  const roleOfBot = async (botId: Id<"users">): Promise<Doc<"org_roles"> | null> => {
+    const anchor = await ctx.db
+      .query("anchors")
+      .withIndex("by_bot_user", (q: any) => q.eq("bot_user_id", botId))
+      .first();
+    if (!anchor?.org_role_id) return null;
+    const role = await ctx.db.get(anchor.org_role_id);
+    if (!role) return null;
+    const inBoundary = role.team_id
+      ? role.team_id.toString() === teamId.toString()
+      : role.scope_user_id?.toString() === senderId.toString();
+    return inBoundary ? role : null;
+  };
+  const workspaceAgentRole = async (): Promise<Doc<"org_roles"> | null> => {
+    for (const boundary of [{ team_id: teamId }, { scope_user_id: senderId }]) {
+      for (const h of [EXECUTIVE_ASSISTANT_HANDLE, HEAD_OF_PEOPLE_HANDLE]) {
+        const role = await liveRoleByHandle(ctx, boundary, h);
+        if (role) return role;
+      }
+    }
+    return null;
+  };
+  for (const written of handles) {
+    // `@anchor` names the workspace's agent once one stands (org-staffing.md
+    // S12, S30): the team's Executive Assistant when one does, else the Head of
+    // People. The bot named Anchor is its identity, so the mention reaches
+    // the seat, not the bot. `@chief-of-staff` reaches the Head of People
+    // through rolesByHandle's legacy rule.
+    const handle = written.toLowerCase() === ANCHOR_ALIAS ? (await workspaceAgentRole())?.handle ?? written : written;
+    const person = matchHandle(roster, written);
+    if (person && !person.is_bot) continue;
+    if (SESSION_SHORT_ID_RE.test(handle)) {
+      const conversation = await findConversationByAnyRefWhere(
+        ctx as any,
+        handle,
+        (candidate) => canSendProductMessage(ctx as any, senderId, candidate),
+      );
+      if (conversation && !seen.has(String(conversation._id))) {
+        seen.add(String(conversation._id));
+        sessions.push(conversation as Doc<"conversations">);
+      }
+      continue;
+    }
+    const role = (await roleByHandle(handle)) ?? (person ? await roleOfBot(person._id) : null);
+    if (role && role.status !== "retired") {
+      // The role wins over its own bot: one handle names one party.
+      if (person) users = users.filter((id) => id.toString() !== person._id.toString());
+      if (seen.has(String(role._id))) continue;
+      seen.add(String(role._id));
+      roles.push(role);
+      continue;
+    }
+    if (person) continue;
+    const workspace = await slackWorkspace();
+    const slackPerson = workspace ? await slackPersonForHandle(ctx, workspace, handle) : null;
+    if (!slackPerson) continue;
+    if (slackPerson.codecast_user_id) {
+      // Matched to a teammate: address the teammate. Same membership gate as
+      // resolveMentions, so a mapping to someone who has since left the team
+      // cannot page them from outside it.
+      const teammate = slackPerson.codecast_user_id;
+      const member = roster.some((u) => u._id.toString() === teammate.toString());
+      if (member && !users.some((id) => id.toString() === teammate.toString())) users.push(teammate);
+      continue;
+    }
+    if (seen.has(`slack:${slackPerson.slack_user_id}`)) continue;
+    seen.add(`slack:${slackPerson.slack_user_id}`);
+    slack.push({ user: slackPerson.slack_user_id, handle: slackPerson.handle ?? handle, name: slackPerson.name });
+  }
+  const refs: ChatMentionRef[] = [
+    ...users.map((id) => id.toString()),
+    ...roles.map((r) => ({ kind: "role" as const, role_id: r._id.toString(), short_id: r.short_id, handle: r.handle })),
+    ...sessions.map((c) => ({
+      kind: "session" as const,
+      conversation_id: c._id.toString(),
+      short_id: (c as any).short_id ?? c._id.toString().slice(0, 7),
+    })),
+    ...slack.map((p) => ({ kind: "slack" as const, ...p })),
+  ].slice(0, MAX_MENTIONS);
+  return { users, roles, sessions, slack, refs };
+}
+
+/** The ids inside `@[Title id]` mentions that name a session: a short id
+ *  (`jx…`) or a raw conversation id. Tasks, plans and docs are left alone. */
+export function sessionRefsIn(content: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const match of content.matchAll(entityMentionRegex({ requireId: true }))) {
+    const id = (match[2] ?? "").trim();
+    if (!id || !/^(jx\w+|[a-z0-9]{32})$/i.test(id)) continue;
+    const key = id.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(id);
+    if (out.length >= MAX_MENTIONS) break;
+  }
+  return out;
+}
+
+/** The sessions a message names that pass `accept` (the caller's own rule:
+ *  may the writer send to it, may the reader see it). Unknown references are
+ *  dropped, never an error: a mention is prose. */
+export async function resolveSessionMentions(
+  ctx: ReadCtx,
+  content: string,
+  accept: (conversation: Doc<"conversations">) => boolean | Promise<boolean>,
+): Promise<Doc<"conversations">[]> {
+  const out: Doc<"conversations">[] = [];
+  const seen = new Set<string>();
+  for (const ref of sessionRefsIn(content)) {
+    const conversation = await findConversationByAnyRefWhere(ctx as any, ref, accept as any);
+    if (!conversation || seen.has(String(conversation._id))) continue;
+    seen.add(String(conversation._id));
+    out.push(conversation as Doc<"conversations">);
+  }
+  return out;
+}

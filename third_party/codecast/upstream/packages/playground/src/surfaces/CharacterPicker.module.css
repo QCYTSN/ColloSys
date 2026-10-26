@@ -1,0 +1,69 @@
+.modal { width: 880px; max-width: 100%; display: grid; grid-template-columns: 320px 1fr; overflow: hidden !important; }
+.me {
+  display: flex; flex-direction: column; align-items: center; text-align: center; padding: 28px;
+  background: var(--paper); border-right: var(--hair);
+}
+.title { font: 700 24px/1.1 var(--ui); }
+.bigFace {
+  width: 140px; height: 140px; margin: 22px 0 20px; overflow: hidden; border-radius: 30%;
+  background: var(--sunk); box-shadow: var(--shadow-md), 0 0 0 1px rgba(43, 37, 32, .06);
+  animation: global(fade-in) var(--t-move) var(--ease-out);
+}
+.bigFace img { width: 100%; height: 100%; object-fit: cover; }
+.nameRow { width: 100%; display: flex; gap: var(--s2); }
+.nameField {
+  flex: 1; min-width: 0; height: 44px; display: flex; align-items: center; gap: var(--s2); padding: 0 12px;
+  border-radius: var(--r-md); background: var(--surface); box-shadow: var(--ring-line-2); transition: box-shadow var(--t-quick);
+}
+.nameField:focus-within { box-shadow: inset 0 0 0 1px var(--ink-3), 0 0 0 3px rgba(196, 73, 31, .1); }
+.nameField input {
+  flex: 1; min-width: 0; border: 0; background: none; color: var(--ink);
+  font: 700 18px/1 var(--ui);
+}
+.count { flex: none; font: var(--t-mono); color: var(--ink-3); font-feature-settings: "tnum" 1; }
+.dice { background: var(--surface); box-shadow: var(--ring-line-2); border-radius: var(--r-md); }
+.dice svg { width: 18px; height: 18px; }
+.suggest { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin-top: 14px; }
+.suggestion {
+  height: 28px; padding: 0 11px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line);
+  font: 500 12.5px/1 var(--ui); color: var(--ink-2); transition: color var(--t-quick), box-shadow var(--t-quick);
+}
+.suggestion:hover { color: var(--ink); box-shadow: 0 0 0 1px var(--line-2); }
+.current, .current:hover { background: var(--ink); color: var(--surface); box-shadow: none; }
+.suggestion:focus-visible { box-shadow: var(--focus); }
+.footnote { margin-top: auto; padding-top: 20px; font: 400 12.5px/1.45 var(--ui); color: var(--ink-3); }
+
+.zooSide { padding: 28px; display: flex; flex-direction: column; min-width: 0; }
+.zooHead { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s4); }
+.zooTitle { font: 650 15px/1.2 var(--ui); }
+.legend { display: flex; align-items: center; gap: 7px; font: 400 12.5px var(--ui); color: var(--ink-3); }
+.zoo { display: grid; grid-template-columns: repeat(6, 64px); gap: 12px; justify-content: space-between; }
+.animal {
+  position: relative; width: 64px; height: 64px; border-radius: 30%; background: var(--sunk);
+  box-shadow: 0 0 0 1px rgba(43, 37, 32, .06); transition: transform var(--t-quick) var(--ease-out), box-shadow var(--t-quick);
+}
+.animal img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
+.animal:hover { transform: translateY(-2px); }
+/* Selection is the ink ring; keyboard focus is a persimmon ring outside it,
+   so the face Enter will choose never looks like the one already chosen. */
+.animal:focus-visible { box-shadow: 0 0 0 1px rgba(43, 37, 32, .06); outline: 2px solid var(--accent); outline-offset: 6px; }
+.selected, .selected:focus-visible { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
+.wornDot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--live); box-shadow: 0 0 0 2px var(--surface); }
+.animal .wornDot { position: absolute; top: 1px; right: 1px; }
+.keys { display: flex; gap: var(--s4); flex-wrap: wrap; margin-top: 18px; font: var(--t-meta); color: var(--ink-3); }
+.foot { display: flex; align-items: center; gap: var(--s2); margin-top: auto; padding-top: var(--s4); border-top: var(--hair); }
+.zooSide .foot { margin-top: 24px; }
+.repeat { flex: 1; font: 400 12.5px/1.4 var(--ui); color: var(--ink-3); }
+.be { max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 1023px) {
+  .modal { display: flex; flex-direction: column; overflow: auto !important; }
+  .me { border-right: 0; border-bottom: var(--hair); padding: 24px 20px 20px; }
+  .bigFace { width: 96px; height: 96px; margin: 14px 0; }
+  .footnote { display: none; }
+  .zooSide { padding: 20px 20px 0; }
+  .zoo { grid-template-columns: repeat(4, 64px); }
+  .foot { position: sticky; bottom: 0; background: var(--surface); padding: 12px 0 16px; flex-wrap: wrap; }
+  .repeat { flex-basis: 100%; }
+  .foot > button { flex: 1; height: 44px; }
+}

@@ -1,0 +1,12 @@
+{
+ "asOf": "2026-01-15T14:00:00.000Z",
+ "notes": "synthetic name-only pass for a plan title with context",
+ "snapshot": {
+  "mode": "short-title",
+  "shortTitle": {
+   "kind": "plan",
+   "title": "Move webhook rate limits into Redis with per sender overrides",
+   "context": "Four instances share one limit; the reseller account gets 200 a minute."
+  }
+ }
+}

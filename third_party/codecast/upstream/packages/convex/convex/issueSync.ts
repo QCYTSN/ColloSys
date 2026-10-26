@@ -1,0 +1,1894 @@
+// Issue sync: Linear and GitHub issues as tasks.
+// Contract: docs/architecture/issue-sync.md (S1..S10). Section ids in comments.
+//
+// Layout
+//   lib/issueMapping.ts   pure field mapping + conflict policy (S2, S3), unit tested
+//   linearApi.ts          Linear GraphQL client (S5, S6)
+//   githubIssuesApi.ts    GitHub issues REST client (S5, S6)
+//   issueSync.ts          this file: inbound handlers, applyRemote, outbound, sources
+//
+// Loop rule (S4): inbound handlers write through applyRemote and NEVER schedule
+// pushTask / pushComment. Only the public task mutations schedule outbound.
+//
+// Builders come from ./functions, not ./_generated/server: this file writes
+// tasks, and the change-feed interceptor lives in the wrapped builders.
+
+import { v } from "convex/values";
+import { scheduleTriggerMatch } from "./lib/triggerMatch";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import {
+  action,
+  internalAction,
+  internalMutation,
+  internalQuery,
+  mutation,
+  query,
+} from "./functions";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import { issueProviderValidator, issueSyncSourceKindValidator } from "./issueSyncSchema";
+import {
+  diffAgainstTask,
+  githubStateFor,
+  kindFromDiff,
+  linearPriorityFor,
+  linearStateFor,
+  normalizeGithubComment,
+  normalizeGithubIssue,
+  normalizeLinearComment,
+  normalizeLinearIssue,
+  type NormalizedComment,
+  type NormalizedIssue,
+  type TaskDiff,
+} from "./lib/issueMapping";
+import * as linearApi from "./linearApi";
+import * as githubIssuesApi from "./githubIssuesApi";
+import { createDataContext } from "./data";
+import { nextShortId } from "./counters";
+import { heldKeysFor, requireTeamMembership, resolveWorkspaceKey, workspaceForResource } from "./lib/access";
+import { forbidden, notFound } from "./lib/auth";
+import {
+  insertTaskComment,
+  recalcPlanProgress,
+  reconcilePlanMembership,
+  resolveAssigneeToUserId,
+  resolveParentTask,
+} from "./tasks";
+import { afterStatusEdges } from "./taskLinks";
+import { recordTaskChange, type TaskChangeBy, type TaskFieldChange } from "./lib/taskHistory";
+import { verifyApiToken } from "./apiTokens";
+import { installationCoversRepo } from "./githubApp";
+import { connectionForWork } from "./oauthConnectors";
+import { teamTaskStatuses } from "@codecast/shared/tasks";
+import { inlineForeignText } from "@codecast/shared/contracts";
+import { mintProjectShortId } from "./lib/projectShortId";
+
+/** A provider issue normalized to one shape before it touches a task (S2). */
+export const normalizedIssueValidator = v.object({
+  provider: issueProviderValidator,
+  id: v.string(),
+  identifier: v.string(),
+  url: v.string(),
+  number: v.optional(v.number()),
+  repo: v.optional(v.string()),
+  team_key: v.optional(v.string()),
+  team_id: v.optional(v.string()),
+  project_id: v.optional(v.string()),
+  parent_issue_id: v.optional(v.string()),
+  title: v.string(),
+  description: v.optional(v.string()),
+  status: v.string(),                       // our category
+  state_name: v.optional(v.string()),
+  priority: v.optional(v.string()),         // our priority word; absent = don't touch
+  assignee_email: v.optional(v.string()),
+  assignee_login: v.optional(v.string()),
+  assignee_label: v.optional(v.string()),
+  labels: v.array(v.string()),
+  remote_updated_at: v.number(),
+  remote_created_at: v.optional(v.number()),
+  actor: v.optional(v.string()),
+  deleted: v.optional(v.boolean()),
+});
+
+export const normalizedCommentValidator = v.object({
+  provider: issueProviderValidator,
+  id: v.string(),
+  issue_id: v.string(),
+  body: v.string(),
+  author: v.optional(v.string()),
+  author_email: v.optional(v.string()),
+  author_login: v.optional(v.string()),
+  url: v.optional(v.string()),
+  created_at: v.number(),
+  updated_at: v.optional(v.number()),
+  deleted: v.optional(v.boolean()),
+});
+
+/** How long an unlinked local comment with identical text is treated as ours (S4.4). */
+const COMMENT_LINK_WINDOW_MS = 5 * 60 * 1000;
+/** Pages pulled per source per run. 50 issues a page; a reconcile rarely fills one. */
+const IMPORT_MAX_PAGES = 10;
+/** Reconcile overlap so a webhook that never arrived is still inside the window (S6). */
+const RECONCILE_OVERLAP_MS = 5 * 60 * 1000;
+
+type SourceDoc = {
+  _id: Id<"issue_sync_sources">;
+  provider: "linear" | "github";
+  kind: string;
+  external_id: string;
+  project_id: Id<"projects">;
+  user_id: Id<"users">;
+  team_id?: Id<"teams">;
+  workspace: string;
+  status: string;
+  delegate_label?: string;
+  delegate_assignee?: string;
+  auto_spawn: boolean;
+  push_new_tasks: boolean;
+  last_synced_at?: number;
+};
+
+/* ---------------- Shared lookups ---------------- */
+
+async function sourceFor(ctx: any, provider: string, externalId: string) {
+  return await ctx.db
+    .query("issue_sync_sources")
+    .withIndex("by_provider_external", (q: any) =>
+      q.eq("provider", provider).eq("external_id", externalId))
+    .first();
+}
+
+async function taskByExternal(ctx: any, provider: string, id: string) {
+  if (!id) return null;
+  return await ctx.db
+    .query("tasks")
+    .withIndex("by_external", (q: any) => q.eq("external.provider", provider).eq("external.id", id))
+    .first();
+}
+
+/**
+ * The provider assignee as one of our users, or null.
+ *
+ * GitHub gives a login and Linear an email; both funnel into the same resolver
+ * the CLI uses, which also covers alternate_emails through the team roster. A
+ * miss is not an error — the display lands in external.assignee_label and our
+ * assignee is left alone (S2).
+ */
+async function resolveProviderUser(
+  ctx: any,
+  issue: NormalizedIssue,
+  teamId?: Id<"teams">,
+): Promise<Id<"users"> | null> {
+  if (issue.assignee_login) {
+    const byGh = await ctx.db
+      .query("users")
+      .withIndex("by_github_username", (q: any) => q.eq("github_username", issue.assignee_login!.toLowerCase()))
+      .first();
+    if (byGh) return byGh._id;
+  }
+  if (issue.assignee_email) {
+    const byEmail = await ctx.db
+      .query("users")
+      .withIndex("email", (q: any) => q.eq("email", issue.assignee_email))
+      .first();
+    if (byEmail) return byEmail._id;
+    return await resolveAssigneeToUserId(ctx, issue.assignee_email, teamId);
+  }
+  return null;
+}
+
+/**
+ * The `external` object for a task (S1.1).
+ *
+ * `field_ts` survives from the previous value: it records OUR pushes, and an
+ * inbound event must never erase the record of a local write it might be
+ * racing. `remote_updated_at` only moves forward for the same reason.
+ */
+type TaskExternal = NonNullable<Doc<"tasks">["external"]>;
+
+function externalFor(
+  issue: NormalizedIssue,
+  source: SourceDoc | null,
+  now: number,
+  prev?: any,
+): TaskExternal {
+  return {
+    provider: issue.provider,
+    id: issue.id,
+    identifier: issue.identifier,
+    url: issue.url,
+    number: issue.number,
+    repo: issue.repo,
+    team_key: issue.team_key,
+    team_id: issue.team_id,
+    project_id: issue.project_id,
+    parent_issue_id: issue.parent_issue_id,
+    source_id: source?._id ?? prev?.source_id,
+    remote_updated_at: Math.max(issue.remote_updated_at, prev?.remote_updated_at ?? 0),
+    synced_at: now,
+    field_ts: prev?.field_ts,
+    assignee_label: issue.assignee_label,
+    state_name: issue.state_name,
+    // The error is the last PUSH's verdict, and only the next push may clear
+    // it (stampPushed): an inbound proves the provider can reach us, not that
+    // our write reached the provider, and wiping it here would both hide the
+    // failure and cost a write on every reconcile that saw the issue.
+    last_error: prev?.last_error,
+  };
+}
+
+/** A provider's change, as the task's field history records it (TG11). */
+const SYNC: TaskChangeBy = { actor_type: "system" };
+
+/** A sync event on the task's history; field changes go through recordTaskChange. */
+async function history(
+  ctx: any,
+  taskId: Id<"tasks">,
+  action: string,
+  field?: string,
+  oldValue?: unknown,
+  newValue?: unknown,
+) {
+  await ctx.db.insert("task_history", {
+    task_id: taskId,
+    actor_type: "system",
+    action,
+    field,
+    old_value: oldValue === undefined ? undefined : String(oldValue),
+    new_value: newValue === undefined ? undefined : String(newValue),
+    created_at: Date.now(),
+  });
+}
+
+/* ---------------- Inbound (S6) ---------------- */
+
+/**
+ * Record the inbound event on the source and on the connection it came
+ * through, so the integrations page can say "last heard from Linear 4 minutes
+ * ago" without a probe (S1.5).
+ *
+ * A connection row is stamped at most once per HEALTH_STAMP_MS. Every client
+ * subscribes to the whole row (githubApp.listInstallations carries the
+ * repository list), so a stamp per webhook re-pushed half a megabyte to every
+ * open tab every few seconds on a busy repository (2026-10-01).
+ */
+const HEALTH_STAMP_MS = 60_000;
+export async function stampInboundHealth(ctx: any, source: SourceDoc, now: number) {
+  await ctx.db.patch(source._id, { last_webhook_at: now, updated_at: now });
+  if (!source.team_id) return;
+  const rows = source.provider === "linear"
+    ? [await ctx.db
+      .query("app_installations")
+      .withIndex("by_provider_team", (q: any) => q.eq("provider", "linear").eq("team_id", source.team_id))
+      .first()]
+    : await ctx.db
+      .query("github_app_installations")
+      .withIndex("by_team_id", (q: any) => q.eq("team_id", source.team_id))
+      .collect();
+  for (const row of rows) {
+    if (row && !(now - (row.last_webhook_at ?? 0) < HEALTH_STAMP_MS)) await ctx.db.patch(row._id, { last_webhook_at: now });
+  }
+}
+
+/**
+ * What KIND of change a Linear update was (S8). Linear sends `updatedFrom`
+ * with only the fields that moved, which is the whole classification.
+ */
+export function linearEventKind(action: string, payload: any, issue: NormalizedIssue): string {
+  if (action === "create") return "issue_opened";
+  if (action === "remove") return "issue_closed";
+  const changed = payload?.updatedFrom ?? {};
+  if ("assigneeId" in changed) return "issue_assigned";
+  if ("stateId" in changed) {
+    if (issue.status === "done" || issue.status === "dropped") return "issue_closed";
+    return "issue_status";
+  }
+  if ("labelIds" in changed) return "issue_labeled";
+  return "issue_edited";
+}
+
+export const GITHUB_EVENT_KINDS: Record<string, string> = {
+  opened: "issue_opened",
+  reopened: "issue_reopened",
+  closed: "issue_closed",
+  assigned: "issue_assigned",
+  unassigned: "issue_assigned",
+  labeled: "issue_labeled",
+  unlabeled: "issue_labeled",
+  edited: "issue_edited",
+  deleted: "issue_closed",
+};
+
+export const onLinearEvent = internalMutation({
+  args: { event_id: v.id("linear_webhook_events") },
+  handler: async (ctx, args) => {
+    const event = await ctx.db.get(args.event_id);
+    if (!event || event.processed) return { skipped: "processed" as const };
+
+    const done = async (reason: string) => {
+      await ctx.db.patch(args.event_id, { processed: true });
+      return { skipped: reason };
+    };
+
+    let payload: any;
+    try {
+      payload = JSON.parse(event.payload);
+    } catch {
+      return await done("unparseable");
+    }
+
+    const data = payload?.data ?? {};
+    const action: string = payload?.action ?? event.action ?? "update";
+    // A Comment event's container is its issue's; an Issue event's is its own.
+    const container = event.event_type === "Comment" ? (data.issue ?? {}) : data;
+    const source = (await sourceFor(ctx, "linear", container?.project?.id ?? "__none__"))
+      ?? (await sourceFor(ctx, "linear", container?.team?.id ?? "__none__"));
+    if (!source) return await done("no_source");
+
+    const now = Date.now();
+    await stampInboundHealth(ctx, source as SourceDoc, now);
+
+    if (event.event_type === "Comment") {
+      const comment = normalizeLinearComment(data, { deleted: action === "remove", now });
+      // The comment's parent may not be in the payload. The task already knows
+      // the issue, so rebuild the minimum applyRemote needs to touch comments.
+      const issue = data.issue
+        ? normalizeLinearIssue(data.issue, { now })
+        : await issueFromTask(ctx, "linear", comment.issue_id);
+      if (!issue) return await done("no_issue");
+      await applyRemoteInner(ctx, {
+        source_id: source._id,
+        issue,
+        comments: [comment],
+        event_kind: "issue_commented",
+        comment_only: true,
+      });
+      return await done("applied");
+    }
+
+    if (event.event_type !== "Issue") return await done("unhandled_type");
+
+    const issue = normalizeLinearIssue(data, {
+      deleted: action === "remove",
+      actor: payload?.actor?.name,
+      now,
+    });
+    await applyRemoteInner(ctx, {
+      source_id: source._id,
+      issue,
+      event_kind: linearEventKind(action, payload, issue),
+    });
+    return await done("applied");
+  },
+});
+
+/**
+ * The issue a task already carries, for a comment event that arrived without
+ * its parent. Comment-only, so the fields that would drive a diff are the
+ * task's own — nothing can move on this path.
+ */
+async function issueFromTask(ctx: any, provider: string, issueId: string): Promise<NormalizedIssue | null> {
+  const task = await taskByExternal(ctx, provider, issueId);
+  if (!task?.external) return null;
+  const ext = task.external;
+  return {
+    provider: ext.provider,
+    id: ext.id,
+    identifier: ext.identifier,
+    url: ext.url,
+    number: ext.number,
+    repo: ext.repo,
+    team_key: ext.team_key,
+    team_id: ext.team_id,
+    project_id: ext.project_id,
+    parent_issue_id: ext.parent_issue_id,
+    title: task.title,
+    description: task.description ?? "",
+    status: task.status,
+    state_name: ext.state_name,
+    priority: task.priority,
+    labels: task.labels ?? [],
+    remote_updated_at: ext.remote_updated_at,
+  };
+}
+
+/**
+ * A GitHub delivery this integration must ignore (S4.3): our own app's writes
+ * come back as webhooks, and re-applying them would be the echo the diff rule
+ * already stops — but dropping them at the door is cheaper and clearer.
+ */
+function isOwnBotEvent(payload: any): boolean {
+  return payload?.sender?.type === "Bot" && String(payload?.sender?.login ?? "").startsWith("codecast-sh");
+}
+
+/**
+ * GitHub webhook rows are SHARED with githubWebhooks.ts (a PR comment is an
+ * issue_comment too), so these handlers never claim the `processed` flag and
+ * never gate on it. They do not need it: applyRemote is idempotent by
+ * construction — a replay maps to values equal to ours and diffs to nothing.
+ */
+async function githubEventPayload(ctx: any, eventId: Id<"github_webhook_events">) {
+  const event = await ctx.db.get(eventId);
+  if (!event) return null;
+  try {
+    return { event, payload: JSON.parse(event.payload) as any };
+  } catch {
+    return null;
+  }
+}
+
+export const onGithubIssue = internalMutation({
+  args: { event_id: v.id("github_webhook_events") },
+  handler: async (ctx, args) => {
+    const loaded = await githubEventPayload(ctx, args.event_id);
+    if (!loaded) return { skipped: "no_event" as const };
+    const { event, payload } = loaded;
+    if (isOwnBotEvent(payload)) return { skipped: "own_bot" as const };
+
+    const repo: string | undefined = payload?.repository?.full_name;
+    if (!repo || !payload?.issue) return { skipped: "no_repo" as const };
+    if (githubIssuesApi.isPullRequest(payload.issue)) return { skipped: "pull_request" as const };
+
+    const source = await sourceFor(ctx, "github", repo);
+    if (!source) return { skipped: "no_source" as const };
+
+    const action: string = payload?.action ?? event.action ?? "edited";
+    const now = Date.now();
+    await stampInboundHealth(ctx, source as SourceDoc, now);
+
+    const issue = normalizeGithubIssue(payload.issue, repo, {
+      deleted: action === "deleted",
+      actor: payload?.sender?.login,
+      now,
+    });
+    await applyRemoteInner(ctx, {
+      source_id: source._id,
+      issue,
+      event_kind: GITHUB_EVENT_KINDS[action] ?? "issue_edited",
+      github_action: action,
+    });
+    return { applied: true as const };
+  },
+});
+
+export const onGithubIssueComment = internalMutation({
+  args: { event_id: v.id("github_webhook_events") },
+  handler: async (ctx, args) => {
+    const loaded = await githubEventPayload(ctx, args.event_id);
+    if (!loaded) return { skipped: "no_event" as const };
+    const { event, payload } = loaded;
+    if (isOwnBotEvent(payload)) return { skipped: "own_bot" as const };
+
+    const repo: string | undefined = payload?.repository?.full_name;
+    // A comment on a pull request is the PR integration's, not ours.
+    if (!repo || !payload?.issue || githubIssuesApi.isPullRequest(payload.issue)) {
+      return { skipped: "pull_request" as const };
+    }
+
+    const source = await sourceFor(ctx, "github", repo);
+    if (!source) return { skipped: "no_source" as const };
+
+    const now = Date.now();
+    await stampInboundHealth(ctx, source as SourceDoc, now);
+
+    const issue = normalizeGithubIssue(payload.issue, repo, { actor: payload?.sender?.login, now });
+    const comment = normalizeGithubComment(payload.comment, issue.id, {
+      deleted: (payload?.action ?? event.action) === "deleted",
+      now,
+    });
+    await applyRemoteInner(ctx, {
+      source_id: source._id,
+      issue,
+      comments: [comment],
+      event_kind: "issue_commented",
+      comment_only: true,
+      github_action: payload?.action ?? "created",
+    });
+    return { applied: true as const };
+  },
+});
+
+/* ---------------- applyRemote: the one write path (S3, S4) ---------------- */
+
+type ApplyArgs = {
+  source_id?: Id<"issue_sync_sources">;
+  issue: NormalizedIssue;
+  comments?: NormalizedComment[];
+  event_kind?: string;
+  /** Touch comments only — the issue fields are a stand-in, not an observation. */
+  comment_only?: boolean;
+  /** The raw GitHub action, so triggers keep firing on their native names (S7). */
+  github_action?: string;
+};
+
+/** The one write path for provider data (S3, S4). */
+export const applyRemote = internalMutation({
+  args: {
+    source_id: v.optional(v.id("issue_sync_sources")),
+    issue: normalizedIssueValidator,
+    comments: v.optional(v.array(normalizedCommentValidator)),
+    event_kind: v.optional(v.string()),   // S8 kind hint from the webhook action
+    comment_only: v.optional(v.boolean()),
+    github_action: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => await applyRemoteInner(ctx, args as ApplyArgs),
+});
+
+async function applyRemoteInner(ctx: any, args: ApplyArgs) {
+  const { issue } = args;
+  const now = Date.now();
+  const source: SourceDoc | null = args.source_id ? await ctx.db.get(args.source_id) : null;
+  let task = await taskByExternal(ctx, issue.provider, issue.id);
+  let created = false;
+  let diff: TaskDiff = {};
+
+  if (!task) {
+    // Nothing to attach a comment or a deletion to, and no home to create in.
+    if (args.comment_only || issue.deleted || !source) return { skipped: "no_task" };
+    task = await createTaskFromIssue(ctx, source, issue, now);
+    created = true;
+  } else if (!args.comment_only) {
+    diff = await updateTaskFromIssue(ctx, source, task, issue, now);
+    task = await ctx.db.get(task._id);
+  }
+  if (!task) return { skipped: "no_task" };
+
+  let parentPending = false;
+  if (!args.comment_only) {
+    const link = await linkParent(ctx, task, issue);
+    parentPending = link === "pending";
+    if (link === "moved") {
+      diff = { ...diff, parent_id: "moved" } as TaskDiff & { parent_id: string };
+      task = await ctx.db.get(task._id);
+    }
+  }
+
+  let landed = 0;
+  for (const comment of args.comments ?? []) {
+    if (await upsertComment(ctx, task._id, comment)) landed++;
+  }
+
+  // A webhook names its kind. A pull (import, reconcile) does not, so the
+  // kind is what the diff says — and a pull that changed nothing is not an
+  // event: no feed row, no trigger, or every reconcile would re-fire
+  // "issues edited" for every issue inside its window.
+  const kind = args.event_kind
+    ?? kindFromDiff(diff, created, task.status)
+    ?? (landed > 0 ? "issue_commented" : undefined);
+
+  await maybeDelegate(ctx, source, task, issue);
+  if (kind) {
+    await recordFeedEvent(ctx, source, task, issue, kind, now);
+    await fireTriggers(ctx, source, issue, kind, args.github_action, kind === "issue_commented");
+  }
+
+  return { task_id: task._id, created, changed: Object.keys(diff), comments: landed, parent_pending: parentPending };
+}
+
+/**
+ * Put the task under the task that mirrors the issue's parent (S2: Linear
+ * sub-issues are subtasks here). The link goes through `resolveParentTask`,
+ * the same gate `cast task create --parent` uses, so a provider edit can no
+ * more make a cycle or exceed the depth cap than a person can; a refused link
+ * is logged and skipped, never thrown out of the inbound path. A parent the
+ * provider named that we do not hold yet is "pending": the pull that brought
+ * the child finishes its pages and retries (pullSource), and a webhook that
+ * arrives before its parent's is caught by the next reconcile.
+ */
+async function linkParent(
+  ctx: any,
+  task: any,
+  issue: NormalizedIssue,
+): Promise<"same" | "moved" | "pending" | "refused"> {
+  const current = task.parent_id ? String(task.parent_id) : "";
+  let want: any = null;
+  if (issue.parent_issue_id) {
+    want = await taskByExternal(ctx, issue.provider, issue.parent_issue_id);
+    if (!want) return "pending";
+  }
+  const next = want ? String(want._id) : "";
+  if (next === current) return "same";
+  // A local reparent pushed after this event was emitted wins (S3).
+  if (issue.remote_updated_at < (task.external?.field_ts?.parent_id ?? 0)) return "same";
+
+  if (want) {
+    try {
+      await resolveParentTask(ctx, task.user_id, String(want._id), {
+        workspace: workspaceForResource(task),
+        child: { _id: task._id, short_id: task.short_id },
+      });
+    } catch (error) {
+      console.warn(`issueSync.linkParent ${task.short_id} under ${want.short_id}: ${error instanceof Error ? error.message : String(error)}`);
+      return "refused";
+    }
+  }
+  const now = Date.now();
+  await ctx.db.patch(task._id, { parent_id: want ? want._id : undefined, updated_at: now });
+  await recordTaskChange(ctx, task._id, SYNC, [["parent", task.parent_id, want?._id]], now);
+  await reconcilePlanMembership(ctx, task._id, task.plan_id, !!want);
+  return "moved";
+}
+
+async function createTaskFromIssue(ctx: any, source: SourceDoc, issue: NormalizedIssue, now: number) {
+  const db = await createDataContext(ctx, {
+    userId: source.user_id,
+    ...(source.team_id
+      ? { workspace: "team" as const, team_id: source.team_id }
+      : { workspace: "personal" as const }),
+  });
+  const assigneeId = await resolveProviderUser(ctx, issue, source.team_id);
+  const short_id = await nextShortId(ctx.db, "ct");
+  const closed = issue.status === "done" || issue.status === "dropped";
+
+  const id = await db.insert("tasks", {
+    project_id: source.project_id,
+    short_id,
+    title: issue.title || issue.identifier,
+    description: issue.description || undefined,
+    task_type: "task",
+    status: issue.status,
+    priority: issue.priority || "medium",
+    assignee: assigneeId ? String(assigneeId) : undefined,
+    labels: issue.labels.length > 0 ? issue.labels : undefined,
+    source: "import",
+    triage_status: "active",
+    attempt_count: 0,
+    retry_count: 0,
+    max_retries: 3,
+    closed_at: closed ? now : undefined,
+    external: externalFor(issue, source, now),
+  } as any);
+
+  await history(ctx, id, "synced_from_provider", undefined, undefined, issue.identifier);
+  return await ctx.db.get(id);
+}
+
+/**
+ * The fields of `external` that say WHAT the provider holds, as opposed to
+ * WHEN we last looked (`synced_at`, `remote_updated_at`). A pull that finds
+ * the same issue again moves only the clocks, and a clock alone is not worth a
+ * write: S3 says an inbound that changes nothing is a no-op, and a no-op that
+ * still patched the row would bump `updated_at` on every reconcile and push
+ * the task through the sync log for nothing.
+ */
+function externalFacts(ext: any): string {
+  if (!ext) return "";
+  const { synced_at: _s, remote_updated_at: _r, field_ts: _f, ...facts } = ext;
+  return JSON.stringify(facts, Object.keys(facts).sort());
+}
+
+async function updateTaskFromIssue(
+  ctx: any,
+  source: SourceDoc | null,
+  task: any,
+  issue: NormalizedIssue,
+  now: number,
+): Promise<TaskDiff> {
+  const teamId = task.team_id ?? source?.team_id;
+  const assigneeId = await resolveProviderUser(ctx, issue, teamId);
+
+  // A deletion is not a field edit: the row stays (it carries our comments,
+  // sessions and history) and only its status moves (S6). A task already
+  // closed keeps its verdict: trashing a finished issue does not un-finish
+  // the work, it only takes the twin away.
+  const diff: TaskDiff = issue.deleted
+    ? (task.status === "dropped" || task.status === "done" ? {} : { status: "dropped" })
+    : diffAgainstTask(task, issue, { assignee: assigneeId ? String(assigneeId) : undefined });
+
+  const external = externalFor(issue, source, now, task.external);
+  if (Object.keys(diff).length === 0 && externalFacts(external) === externalFacts(task.external)) {
+    return diff;
+  }
+
+  const patch: Record<string, any> = { ...diff, external, updated_at: now };
+  // The provider unassigned the issue: ours clears (S2). A cleared field is
+  // an undefined write, never a null one.
+  if (diff.assignee === null) patch.assignee = undefined;
+  if (diff.status === "done" || diff.status === "dropped") patch.closed_at = now;
+  // A category change orphans a custom-status refinement (its id belongs to
+  // the old category); the same rule every status write in tasks.ts applies.
+  if (diff.status !== undefined && diff.status !== task.status) patch.status_id = undefined;
+
+  const fields = (["status", "title", "assignee", "priority"] as const).filter((f) => diff[f] !== undefined);
+  await recordTaskChange(ctx, task._id, SYNC, fields.map((f): TaskFieldChange => [f, task[f], diff[f]]), now);
+  await ctx.db.patch(task._id, patch);
+
+  if (diff.status && task.plan_id) {
+    await recalcPlanProgress(ctx, task.plan_id, task._id, diff.status);
+  }
+  // A close on the provider releases the tasks it blocked (task-graph.md TG2),
+  // a dropped duplicate hands them to its canonical and a reopen takes back
+  // what a supersede moved (TG5).
+  await afterStatusEdges(ctx, task, diff.status);
+  return diff;
+}
+
+/**
+ * Land one provider comment on the task (S4.4).
+ *
+ * Three cases in order: we already have it by provider id (update the text and
+ * stop); we wrote the identical text moments ago and the webhook beat our own
+ * id patch (link that row instead of duplicating it); otherwise it is new.
+ */
+async function upsertComment(ctx: any, taskId: Id<"tasks">, comment: NormalizedComment): Promise<boolean> {
+  if (!comment.id) return false;
+  const existing = await ctx.db
+    .query("task_comments")
+    .withIndex("by_external", (q: any) =>
+      q.eq("external.provider", comment.provider).eq("external.id", comment.id))
+    .first();
+
+  if (existing) {
+    if (comment.deleted) return false;
+    if (existing.text !== comment.body) await ctx.db.patch(existing._id, { text: comment.body });
+    return false;
+  }
+  if (comment.deleted) return false;
+
+  const recent = await ctx.db
+    .query("task_comments")
+    .withIndex("by_task_created", (q: any) =>
+      q.eq("task_id", taskId).gte("created_at", Date.now() - COMMENT_LINK_WINDOW_MS))
+    .collect();
+  const twin = recent.find((c: any) => !c.external && c.text === comment.body);
+  const external = {
+    provider: comment.provider,
+    id: comment.id,
+    url: comment.url,
+    author: comment.author,
+  };
+  if (twin) {
+    await ctx.db.patch(twin._id, { external });
+    return false;
+  }
+
+  const id = await insertTaskComment(ctx, taskId, {
+    author: comment.author || comment.author_login || comment.provider,
+    text: comment.body,
+    comment_type: "note",
+  });
+  await ctx.db.patch(id, { external });
+  return true;
+}
+
+/* ---------------- Delegation, feed, triggers (S7, S8) ---------------- */
+
+/**
+ * The source's delegation convention (S7.3): a label or an assignee on the
+ * provider side that means "an agent takes this". Guarded by the task having
+ * no session yet, so the signal spawns once and re-firing events are inert.
+ */
+async function maybeDelegate(ctx: any, source: SourceDoc | null, task: any, issue: NormalizedIssue) {
+  if (!source?.auto_spawn) return;
+  if ((task.conversation_ids ?? []).length > 0) return;
+
+  const label = (source.delegate_label || "agent").toLowerCase();
+  const byLabel = issue.labels.some((l) => l.toLowerCase() === label);
+  const target = source.delegate_assignee?.toLowerCase();
+  const byAssignee = !!target
+    && [issue.assignee_login, issue.assignee_email, issue.assignee_label]
+      .some((v) => typeof v === "string" && v.toLowerCase() === target);
+  if (!byLabel && !byAssignee) return;
+
+  await ctx.scheduler.runAfter(0, internal.tasks.spawnSessionForTaskInternal, {
+    task_id: task._id,
+    user_id: source.user_id,
+    // Why: this is the one spawn with no human in the loop — a labelled issue
+    // launches an agent by itself — and identifier/url come from the provider,
+    // so they are escaped before they lead the prompt (ct-49559).
+    initial_message: `Picked up from ${inlineForeignText(issue.identifier)}: ${inlineForeignText(issue.url)}`,
+  });
+}
+
+/** S8: one feed row per inbound event, deduped so retries do not stack. */
+async function recordFeedEvent(
+  ctx: any,
+  source: SourceDoc | null,
+  task: any,
+  issue: NormalizedIssue,
+  kind: string | undefined,
+  now: number,
+) {
+  const teamId = task.team_id ?? source?.team_id;
+  if (!kind || !teamId) return;
+  await ctx.scheduler.runAfter(0, internal.externalEvents.record, {
+    team_id: teamId,
+    source: issue.provider,
+    repository: issue.repo,
+    kind,
+    actor_login: issue.actor,
+    title: issue.title || issue.identifier,
+    url: issue.url,
+    issue: {
+      provider: issue.provider,
+      key: issue.identifier,
+      url: issue.url,
+      title: issue.title,
+    },
+    task_ids: [task._id],
+    project_ids: task.project_id ? [task.project_id] : undefined,
+    dedupe_key: `${issue.provider}:${issue.id}:${kind}:${issue.remote_updated_at || now}`,
+  });
+}
+
+/**
+ * Hand the event to armed triggers (S7). Two shapes, both scheduled: the
+ * provider-native pair (`issues` + `opened`) that GitHub users already arm on,
+ * and the CLI shorthand (`issue_opened`) that reads the same for Linear. The
+ * repository is the repo name, or the Linear team key when there is none.
+ */
+async function fireTriggers(
+  ctx: any,
+  source: SourceDoc | null,
+  issue: NormalizedIssue,
+  kind: string | undefined,
+  githubAction: string | undefined,
+  hasComment: boolean,
+) {
+  const repository = issue.repo ?? issue.team_key ?? source?.external_id;
+  const eventType = hasComment ? "issue_comment" : "issues";
+  const action = githubAction ?? linearActionFor(kind);
+  // team_id keeps the fan out inside the source's team: event filters are
+  // user chosen strings, and "issues" is one every team writes. The CLI
+  // shorthands (issue_opened ...) are expanded to this provider pair before
+  // they are stored, so this one call covers both spellings.
+  await scheduleTriggerMatch(ctx, {
+    event_type: eventType,
+    action,
+    repository,
+    team_id: source?.team_id,
+  });
+}
+
+function linearActionFor(kind: string | undefined): string | undefined {
+  switch (kind) {
+    case "issue_opened": return "opened";
+    case "issue_assigned": return "assigned";
+    case "issue_labeled": return "labeled";
+    case "issue_closed": return "closed";
+    case "issue_reopened": return "reopened";
+    case "issue_commented": return "created";
+    default: return "edited";
+  }
+}
+
+/* ---------------- Outbound (S5) ---------------- */
+
+/** Everything an outbound push needs, read once so the action holds no db. */
+export const taskPushContext = internalQuery({
+  args: { task_id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    if (!task?.external) return null;
+    const source = task.external.source_id ? await ctx.db.get(task.external.source_id) : null;
+    const teamId = task.team_id ?? source?.team_id;
+
+    // The team's own name for this status, which beats position when picking
+    // the Linear workflow state (S2).
+    let statusName: string | undefined;
+    if (task.status_id && teamId) {
+      const team = await ctx.db.get(teamId);
+      statusName = teamTaskStatuses(team?.task_statuses).find((s: any) => s.id === task.status_id)?.name;
+    }
+
+    const { assignee_emails, assignee_login } = await providerAssignee(ctx, task.assignee);
+    return {
+      external: task.external,
+      parent_issue_id: await parentIssueId(ctx, task),
+      title: task.title,
+      description: task.description ?? "",
+      status: task.status,
+      status_name: statusName,
+      priority: task.priority,
+      labels: task.labels ?? [],
+      // Cleared here means cleared there: the push unassigns the issue. An
+      // agent seat is not a provider user, so it is neither pushed nor a clear.
+      assignee_cleared: !task.assignee,
+      assignee_emails,
+      assignee_login,
+      user_id: task.user_id,
+      team_id: teamId,
+    };
+  },
+});
+
+/**
+ * The provider id of the parent task's issue, when the parent has one on the
+ * same provider; null when the task has no parent, and undefined when the
+ * parent has no twin there (nothing to say to the provider).
+ */
+async function parentIssueId(ctx: any, task: any): Promise<string | null | undefined> {
+  if (!task.parent_id) return null;
+  const parent = await ctx.db.get(task.parent_id);
+  const ext = parent?.external;
+  return ext && ext.provider === task.external?.provider ? ext.id : undefined;
+}
+
+/**
+ * The provider-side identity of our assignee: every email the user is known
+ * by (Linear matches on any of them — the address someone signs into Linear
+ * with is often not their codecast login) and their GitHub login.
+ */
+async function providerAssignee(
+  ctx: any,
+  assignee: string | undefined,
+): Promise<{ assignee_emails: string[]; assignee_login?: string }> {
+  if (!assignee || assignee.startsWith("agent:")) return { assignee_emails: [] };
+  const id = ctx.db.normalizeId("users", assignee);
+  const user = id ? await ctx.db.get(id) : null;
+  if (!user) return { assignee_emails: [] };
+  const emails = [user.email, ...(user.alternate_emails ?? [])].filter((e: unknown): e is string => typeof e === "string" && !!e);
+  return { assignee_emails: [...new Set(emails)], assignee_login: user.github_username };
+}
+
+/** Does `userId` hold a personal connection that can reach this container? */
+async function hasPersonalConnection(
+  ctx: any,
+  provider: string,
+  userId: Id<"users">,
+  externalId: string,
+): Promise<boolean> {
+  if (provider === "linear") return !!(await connectionForWork(ctx, "linear", { user_id: userId }));
+  const installs = await ctx.db
+    .query("github_app_installations")
+    .withIndex("by_scope_user", (q: any) => q.eq("scope_user_id", userId))
+    .collect();
+  return installs.some((row: any) => installationCoversRepo(row, externalId));
+}
+
+/**
+ * The token for a provider call, or null when no connection serves it.
+ *
+ * The work's team is tried first, then the acting user's personal connection
+ * (appDescriptors.ts SCOPE) — so a person who connected Linear or GitHub for
+ * themself can import into, and push from, any workspace they work in, while
+ * a team that connected its own never borrows a member's grant.
+ */
+async function tokenFor(
+  ctx: any,
+  provider: string,
+  teamId: Id<"teams"> | undefined,
+  userId: Id<"users">,
+  repo?: string,
+): Promise<string | null> {
+  if (provider === "linear") {
+    // Refreshes an expiring or unknown-age token first (Linear rotates 24h
+    // tokens). A missing connection is null like GitHub's; a refresh refusal
+    // is thrown so the source's last_error says "reconnect", not "401".
+    const res = await ctx.runAction(internal.oauthConnectors.getFreshAccessToken, {
+      provider: "linear",
+      team_id: teamId,
+      user_id: userId,
+    });
+    if (res.ok && res.token) return res.token;
+    if (res.error?.startsWith("no_connection")) return null;
+    throw new Error(res.error ?? "Linear token refresh failed");
+  }
+  if (!repo) return null;
+  const installation = teamId
+    ? (await ctx.runQuery(internal.githubApp.getInstallationForRepoInTeam, { repository: repo, team_id: teamId })) ??
+      (await ctx.runQuery(internal.githubApp.getPersonalInstallationForRepo, { repository: repo, user_id: userId }))
+    : await ctx.runQuery(internal.githubApp.getInstallationForRepo, { repository: repo, user_id: userId });
+  if (!installation) return null;
+  const token = await ctx.runAction(internal.githubApp.getInstallationToken, {
+    installation_id: installation.installation_id,
+  });
+  return token?.token ?? null;
+}
+
+export const pushTask = internalAction({
+  args: { task_id: v.id("tasks"), fields: v.array(v.string()) },
+  handler: async (ctx, args): Promise<{ pushed?: string[]; skipped?: string; error?: string }> => {
+    const info: any = await ctx.runQuery(internal.issueSync.taskPushContext, { task_id: args.task_id });
+    if (!info) return { skipped: "no_external" };
+    const ext = info.external;
+    const want = new Set(args.fields);
+
+    try {
+      const token = await tokenFor(ctx, ext.provider, info.team_id, info.user_id, ext.repo);
+      if (!token) return { skipped: "no_connection" };
+
+      if (ext.provider === "linear") {
+        const input: linearApi.LinearIssueInput = {};
+        if (want.has("title")) input.title = info.title;
+        if (want.has("description")) input.description = info.description;
+        if (want.has("priority")) input.priority = linearPriorityFor(info.priority);
+        if (want.has("status") && ext.team_id) {
+          const states = await linearApi.fetchWorkflowStates(token, ext.team_id);
+          const state = linearStateFor(info.status, states, info.status_name);
+          if (state) input.stateId = state.id;
+        }
+        let refused: string[] = [];
+        if (want.has("labels") && ext.team_id) {
+          const labels = await resolveLinearLabelIds(token, ext.team_id, info.labels);
+          input.labelIds = labels.ids;
+          refused = labels.refused;
+        }
+        if (want.has("assignee")) {
+          if (info.assignee_cleared) input.assigneeId = null;
+          else if (info.assignee_emails.length > 0) {
+            const user = await linearApi.findUserByEmail(token, info.assignee_emails);
+            if (user) input.assigneeId = user.id;
+          }
+        }
+        // A parent with no Linear twin is undefined: the issue keeps whatever
+        // parent it has, because we cannot name the new one to Linear.
+        if (want.has("parent_id") && info.parent_issue_id !== undefined) input.parentId = info.parent_issue_id;
+        if (Object.keys(input).length === 0) return { skipped: "nothing_to_push" };
+        await linearApi.updateIssue(token, ext.id, input);
+        if (refused.length > 0) {
+          // The rest of the push landed; the task says which labels did not
+          // and why, instead of the whole write dying on one label. The
+          // provider's set wins on the next inbound (S3), so the history row
+          // is what remains of the label a person put on and Linear refused.
+          await ctx.runMutation(internal.issueSync.stampPushed, {
+            task_id: args.task_id,
+            fields: args.fields,
+            error: `Linear kept these labels off ${ext.identifier}: ${refused.join(", ")}`.slice(0, 500),
+            refused_labels: refused,
+          });
+          return { pushed: args.fields, error: refused.join(", ") };
+        }
+      } else {
+        const patch: githubIssuesApi.GithubIssuePatch = {};
+        if (want.has("title")) patch.title = info.title;
+        if (want.has("description")) patch.body = info.description;
+        if (want.has("status")) Object.assign(patch, githubStateFor(info.status));
+        if (want.has("labels")) patch.labels = info.labels;
+        if (want.has("assignee")) {
+          if (info.assignee_cleared) patch.assignees = [];
+          else if (info.assignee_login) patch.assignees = [info.assignee_login];
+        }
+        if (Object.keys(patch).length === 0) return { skipped: "nothing_to_push" };
+        if (!ext.repo || ext.number == null) return { skipped: "no_repo" };
+        await githubIssuesApi.updateIssue(token, ext.repo, ext.number, patch);
+      }
+
+      await ctx.runMutation(internal.issueSync.stampPushed, { task_id: args.task_id, fields: args.fields });
+      return { pushed: args.fields };
+    } catch (error) {
+      // Never throw out of an outbound push: the write already landed on our
+      // side, and the 15 minute reconcile is the retry (S5).
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`issueSync.pushTask ${args.task_id}: ${message}`);
+      await ctx.runMutation(internal.issueSync.stampPushed, {
+        task_id: args.task_id,
+        fields: [],
+        error: message.slice(0, 500),
+      });
+      return { error: message };
+    }
+  },
+});
+
+/**
+ * Label names -> Linear label ids, creating the ones neither the team nor the
+ * workspace has.
+ *
+ * Creation is the one write the app actor may lack: Linear lets a workspace
+ * forbid apps from minting team labels ("You are not allowed to create labels
+ * in this team"). Such a label is reported in `refused`, not thrown — the
+ * push still carries every label that exists, and the title, state and the
+ * rest of the write, so one unknown label cannot park the whole task.
+ */
+async function resolveLinearLabelIds(
+  token: string,
+  teamId: string,
+  names: string[],
+): Promise<{ ids: string[]; refused: string[] }> {
+  if (names.length === 0) return { ids: [], refused: [] };
+  const existing = await linearApi.fetchLabels(token, teamId);
+  const byName = new Map(existing.map((l) => [l.name.toLowerCase(), l.id]));
+  const ids: string[] = [];
+  const refused: string[] = [];
+  for (const name of names) {
+    const hit = byName.get(name.toLowerCase());
+    if (hit) {
+      ids.push(hit);
+      continue;
+    }
+    try {
+      const created = await linearApi.createLabel(token, teamId, name);
+      byName.set(name.toLowerCase(), created.id);
+      ids.push(created.id);
+    } catch (error) {
+      if (!(error instanceof linearApi.LinearGraphqlError) || !error.forbidden) throw error;
+      refused.push(name);
+    }
+  }
+  return { ids, refused };
+}
+
+/**
+ * Record a completed push (S3): `field_ts[field]` is what makes a webhook
+ * already in flight lose to the write it crossed.
+ */
+export const stampPushed = internalMutation({
+  args: {
+    task_id: v.id("tasks"),
+    fields: v.array(v.string()),
+    error: v.optional(v.string()),
+    /** Labels the provider would not take; recorded in the task's history. */
+    refused_labels: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    if (!task?.external) return;
+    const now = Date.now();
+    const field_ts = { ...(task.external.field_ts ?? {}) };
+    for (const field of args.fields) field_ts[field] = now;
+    await ctx.db.patch(args.task_id, {
+      external: { ...task.external, field_ts, synced_at: now, last_error: args.error },
+    });
+    if (args.refused_labels?.length) {
+      await history(ctx, args.task_id, "sync_refused", "labels", undefined, args.refused_labels.join(", "));
+    }
+  },
+});
+
+export const commentPushContext = internalQuery({
+  args: { comment_id: v.id("task_comments") },
+  handler: async (ctx, args) => {
+    const comment = await ctx.db.get(args.comment_id);
+    if (!comment || comment.external) return null;
+    const task = await ctx.db.get(comment.task_id);
+    if (!task?.external) return null;
+    const source = task.external.source_id ? await ctx.db.get(task.external.source_id) : null;
+    return {
+      text: comment.text,
+      author: comment.author,
+      external: task.external,
+      user_id: task.user_id,
+      team_id: task.team_id ?? source?.team_id,
+    };
+  },
+});
+
+export const stampComment = internalMutation({
+  args: {
+    comment_id: v.id("task_comments"),
+    provider: issueProviderValidator,
+    id: v.string(),
+    url: v.optional(v.string()),
+    author: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.comment_id, {
+      external: { provider: args.provider, id: args.id, url: args.url, author: args.author },
+    });
+  },
+});
+
+export const pushComment = internalAction({
+  args: { comment_id: v.id("task_comments") },
+  handler: async (ctx, args): Promise<{ pushed?: boolean; skipped?: string; error?: string }> => {
+    const info: any = await ctx.runQuery(internal.issueSync.commentPushContext, { comment_id: args.comment_id });
+    if (!info) return { skipped: "no_external" };
+    const ext = info.external;
+    try {
+      const token = await tokenFor(ctx, ext.provider, info.team_id, info.user_id, ext.repo);
+      if (!token) return { skipped: "no_connection" };
+      const posted = ext.provider === "linear"
+        ? await linearApi.createComment(token, ext.id, info.text)
+        : ext.repo && ext.number != null
+          ? await githubIssuesApi.createIssueComment(token, ext.repo, ext.number, info.text)
+          : null;
+      if (!posted) return { skipped: "no_repo" };
+      // The id write is what stops the echo: the webhook this post triggers
+      // arrives with an id we now recognise and is skipped (S4.4).
+      await ctx.runMutation(internal.issueSync.stampComment, {
+        comment_id: args.comment_id,
+        provider: ext.provider,
+        id: posted.id,
+        url: posted.url,
+        author: info.author,
+      });
+      return { pushed: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`issueSync.pushComment ${args.comment_id}: ${message}`);
+      return { error: message };
+    }
+  },
+});
+
+export const newTaskPushContext = internalQuery({
+  args: { task_id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    // Ephemeral bookkeeping (task-graph.md TG9) never becomes a provider
+    // issue: outsiders would see it, and codecast cannot take it back.
+    if (!task || task.external || task.ephemeral || !task.project_id) return null;
+    const source = await ctx.db
+      .query("issue_sync_sources")
+      .withIndex("by_project", (q: any) => q.eq("project_id", task.project_id))
+      .first();
+    if (!source || source.status !== "active" || !source.push_new_tasks) return null;
+    const { assignee_emails, assignee_login } = await providerAssignee(ctx, task.assignee);
+    const parent = task.parent_id ? await ctx.db.get(task.parent_id) : null;
+    return {
+      source,
+      parent_issue_id: parent?.external?.provider === source.provider ? parent.external.id : undefined,
+      title: task.title,
+      description: task.description ?? "",
+      status: task.status,
+      priority: task.priority,
+      labels: task.labels ?? [],
+      assignee_emails,
+      assignee_login,
+      user_id: task.user_id,
+      team_id: task.team_id ?? source.team_id,
+    };
+  },
+});
+
+export const setTaskExternal = internalMutation({
+  args: { task_id: v.id("tasks"), issue: normalizedIssueValidator, source_id: v.id("issue_sync_sources") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.external) return;
+    const source = await ctx.db.get(args.source_id);
+    const now = Date.now();
+    await ctx.db.patch(args.task_id, {
+      external: externalFor(args.issue as NormalizedIssue, source as SourceDoc | null, now),
+      updated_at: now,
+    });
+    await history(ctx, args.task_id, "synced_to_provider", undefined, undefined, args.issue.identifier);
+  },
+});
+
+/** Create the provider issue for a task born on our side (S1.3 push_new_tasks). */
+export const pushNewTask = internalAction({
+  args: { task_id: v.id("tasks") },
+  handler: async (ctx, args): Promise<{ created?: string; skipped?: string; error?: string }> => {
+    const info: any = await ctx.runQuery(internal.issueSync.newTaskPushContext, { task_id: args.task_id });
+    if (!info) return { skipped: "not_pushable" };
+    const source = info.source;
+    try {
+      const repo = source.provider === "github" ? source.external_id : undefined;
+      const token = await tokenFor(ctx, source.provider, info.team_id, info.user_id, repo);
+      if (!token) return { skipped: "no_connection" };
+
+      let issue: NormalizedIssue;
+      if (source.provider === "linear") {
+        const teamId = source.kind === "linear_team" ? source.external_id : source.external_key;
+        if (!teamId) return { skipped: "no_linear_team" };
+        const input: linearApi.LinearIssueInput = {
+          teamId,
+          title: info.title,
+          description: info.description || undefined,
+          priority: linearPriorityFor(info.priority),
+        };
+        if (source.kind === "linear_project") input.projectId = source.external_id;
+        if (info.parent_issue_id) input.parentId = info.parent_issue_id;
+        const states = await linearApi.fetchWorkflowStates(token, teamId);
+        const state = linearStateFor(info.status, states);
+        if (state) input.stateId = state.id;
+        if (info.labels.length > 0) input.labelIds = (await resolveLinearLabelIds(token, teamId, info.labels)).ids;
+        if (info.assignee_emails.length > 0) {
+          const user = await linearApi.findUserByEmail(token, info.assignee_emails);
+          if (user) input.assigneeId = user.id;
+        }
+        issue = normalizeLinearIssue(await linearApi.createIssue(token, input));
+      } else {
+        const created = await githubIssuesApi.createIssue(token, source.external_id, {
+          title: info.title,
+          body: info.description || undefined,
+          labels: info.labels.length > 0 ? info.labels : undefined,
+          assignees: info.assignee_login ? [info.assignee_login] : undefined,
+        });
+        issue = normalizeGithubIssue(created, source.external_id);
+      }
+
+      await ctx.runMutation(internal.issueSync.setTaskExternal, {
+        task_id: args.task_id,
+        issue,
+        source_id: source._id,
+      });
+      return { created: issue.identifier };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`issueSync.pushNewTask ${args.task_id}: ${message}`);
+      return { error: message };
+    }
+  },
+});
+
+/* ---------------- Sources: import + reconcile (S6) ---------------- */
+
+export const getSource = internalQuery({
+  args: { source_id: v.id("issue_sync_sources") },
+  handler: async (ctx, args) => await ctx.db.get(args.source_id),
+});
+
+export const listActiveSources = internalQuery({
+  args: {},
+  handler: async (ctx) =>
+    [
+      ...(await ctx.db.query("issue_sync_sources").withIndex("by_status", (q: any) => q.eq("status", "active")).collect()),
+      // Parked on an auth failure: still worth one call per tick, because the
+      // token refresh or a reconnect heals it without anyone pressing Resume.
+      ...(await ctx.db.query("issue_sync_sources").withIndex("by_status", (q: any) => q.eq("status", "error")).collect()),
+    ],
+});
+
+export const markSourceSynced = internalMutation({
+  args: {
+    source_id: v.id("issue_sync_sources"),
+    error: v.optional(v.string()),
+    auth_failed: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const source = await ctx.db.get(args.source_id);
+    if (!source) return;
+    const patch: Record<string, any> = { updated_at: now, last_error: args.error };
+    if (!args.error) {
+      patch.last_synced_at = now;
+      // A parked source that syncs again is healthy again (a refreshed token,
+      // a reconnect): flip it back without a manual resume.
+      if (source.status === "error") patch.status = "active";
+    }
+    // Only an auth failure parks the source: a transient 500 must not stop the
+    // next reconcile from trying again. A pause is the user's word and wins
+    // over a failure that lands late from a sync already running: the error
+    // is recorded, the status stays paused.
+    if (args.auth_failed && source.status !== "paused") patch.status = "error";
+    await ctx.db.patch(args.source_id, patch);
+  },
+});
+
+function isAuthFailure(message: string): boolean {
+  return /\b(401|403)\b|no_connection|unauthorized|authentication|invalid_grant|reconnect/i.test(message);
+}
+
+/**
+ * Pull a source and apply every issue through applyRemote (S6).
+ *
+ * `since` unset is the full import; set is the reconcile window. Both take the
+ * same path, so a reconcile is exactly as safe as a webhook — the diff rule
+ * (S3) decides what actually changes in either case.
+ */
+async function pullSource(ctx: any, source: any, since?: number): Promise<number> {
+  let applied = 0;
+  // Children whose parent had not been applied when they were: a page is
+  // ordered by updatedAt, not by tree, so the parent may follow its child.
+  const pendingParents: Array<{ issue: NormalizedIssue }> = [];
+  const applyIssue = async (issue: NormalizedIssue, comments: NormalizedComment[]) => {
+    const res: any = await ctx.runMutation(internal.issueSync.applyRemote, { source_id: source._id, issue, comments });
+    if (res?.parent_pending) pendingParents.push({ issue });
+    applied++;
+  };
+  const linkPending = async () => {
+    for (const { issue } of pendingParents) {
+      await ctx.runMutation(internal.issueSync.applyRemote, { source_id: source._id, issue });
+    }
+  };
+  if (source.provider === "linear") {
+    const token = await tokenFor(ctx, "linear", source.team_id, source.user_id);
+    if (!token) throw new Error("no_connection");
+    let after: string | undefined;
+    for (let page = 0; page < IMPORT_MAX_PAGES; page++) {
+      const result = await linearApi.fetchIssuesPage(token, {
+        projectId: source.kind === "linear_project" ? source.external_id : undefined,
+        teamId: source.kind === "linear_team" ? source.external_id : undefined,
+        updatedAfter: since,
+        after,
+        withComments: true,
+      });
+      for (const node of result.nodes) {
+        const issue = normalizeLinearIssue(node);
+        const comments = (node?.comments?.nodes ?? []).map((c: any) =>
+          normalizeLinearComment(c, { issue_id: issue.id }));
+        await applyIssue(issue, comments);
+      }
+      if (!result.hasNextPage || !result.endCursor) break;
+      after = result.endCursor;
+    }
+    await linkPending();
+    return applied;
+  }
+
+  const repo: string = source.external_id;
+  const token = await tokenFor(ctx, "github", source.team_id, source.user_id, repo);
+  if (!token) throw new Error("no_connection");
+  for (let page = 1; page <= IMPORT_MAX_PAGES; page++) {
+    const rows = await githubIssuesApi.listIssues(token, repo, { since, page });
+    for (const row of rows) {
+      const issue = normalizeGithubIssue(row, repo);
+      // The comment count is free in the list payload, so an issue nobody has
+      // commented on costs no extra request.
+      const comments = (row?.comments ?? 0) > 0
+        ? (await githubIssuesApi.listIssueComments(token, repo, row.number))
+          .map((c: any) => normalizeGithubComment(c, issue.id))
+        : [];
+      await applyIssue(issue, comments);
+    }
+    if (rows.length < 100) break;
+  }
+  await linkPending();
+  return applied;
+}
+
+export const importSource = internalAction({
+  args: { source_id: v.id("issue_sync_sources") },
+  handler: async (ctx, args): Promise<{ applied?: number; error?: string }> => {
+    const source: any = await ctx.runQuery(internal.issueSync.getSource, { source_id: args.source_id });
+    if (!source) return { error: "no_source" };
+    try {
+      const applied = await pullSource(ctx, source);
+      await ctx.runMutation(internal.issueSync.markSourceSynced, { source_id: args.source_id });
+      return { applied };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`issueSync.importSource ${args.source_id}: ${message}`);
+      await ctx.runMutation(internal.issueSync.markSourceSynced, {
+        source_id: args.source_id,
+        error: message.slice(0, 500),
+        auth_failed: isAuthFailure(message),
+      });
+      return { error: message };
+    }
+  },
+});
+
+export const reconcileSources = internalAction({
+  args: {},
+  handler: async (ctx): Promise<{ sources: number }> => {
+    const sources: any[] = await ctx.runQuery(internal.issueSync.listActiveSources, {});
+    for (const source of sources) {
+      try {
+        const since = source.last_synced_at ? source.last_synced_at - RECONCILE_OVERLAP_MS : undefined;
+        await pullSource(ctx, source, since);
+        await ctx.runMutation(internal.issueSync.markSourceSynced, { source_id: source._id });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`issueSync.reconcileSources ${source._id}: ${message}`);
+        await ctx.runMutation(internal.issueSync.markSourceSynced, {
+          source_id: source._id,
+          error: message.slice(0, 500),
+          auth_failed: isAuthFailure(message),
+        });
+      }
+    }
+    return { sources: sources.length };
+  },
+});
+
+/* ---------------- Sources: shared handlers behind web + CLI (S9, S10) ---------------- */
+
+/** Sources in any workspace the viewer holds a key for. One equality per row. */
+async function listSourcesFor(ctx: any, userId: Id<"users">) {
+  const keys = await heldKeysFor(ctx, userId);
+  const rows: any[] = [];
+  for (const key of keys) {
+    rows.push(...await ctx.db
+      .query("issue_sync_sources")
+      .withIndex("by_workspace", (q: any) => q.eq("workspace", key))
+      .collect());
+  }
+  const out = [];
+  for (const row of rows) {
+    const project = await ctx.db.get(row.project_id);
+    out.push({ ...row, project_short_id: project?.short_id, project_title: project?.title });
+  }
+  return out.sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0));
+}
+
+async function requireSource(ctx: any, userId: Id<"users">, id: Id<"issue_sync_sources">) {
+  const source = await ctx.db.get(id);
+  if (!source) notFound("Source not found");
+  if (String(source.user_id) === String(userId)) return source;
+  const keys = await heldKeysFor(ctx, userId);
+  if (!keys.has(source.workspace)) forbidden("Forbidden: source is in another workspace");
+  return source;
+}
+
+async function addSourceFor(
+  ctx: any,
+  userId: Id<"users">,
+  args: {
+    provider: "linear" | "github";
+    kind: string;
+    external_id: string;
+    external_key?: string;
+    name: string;
+    url?: string;
+    project_id?: Id<"projects">;
+    team_id?: Id<"teams">;
+    delegate_label?: string;
+    delegate_assignee?: string;
+    auto_spawn?: boolean;
+    push_new_tasks?: boolean;
+  },
+) {
+  const existing = await sourceFor(ctx, args.provider, args.external_id);
+  if (existing) return { id: existing._id, project_id: existing.project_id, existing: true };
+
+  const now = Date.now();
+  let project = args.project_id ? await ctx.db.get(args.project_id) : null;
+  if (args.project_id && !project) notFound("Project not found");
+
+  let teamId = args.team_id ?? (project?.team_id as Id<"teams"> | undefined);
+  if (!teamId) {
+    // Default to the actor's active team the same way the connect flow does.
+    // With no team at all the source lives in the personal workspace, which
+    // works only through the actor's own connection — refuse a row that could
+    // never find a token rather than leave a dead source behind.
+    const actor = await ctx.db.get(userId);
+    teamId = ((actor as any)?.active_team_id ?? (actor as any)?.team_id) as Id<"teams"> | undefined;
+    if (!teamId && !(await hasPersonalConnection(ctx, args.provider, userId, args.external_id))) {
+      throw new Error(`Connect ${args.provider} for yourself, or join a team that has: nothing here can reach it`);
+    }
+  }
+  if (teamId) await requireTeamMembership(ctx, userId, teamId);
+
+  const db = await createDataContext(ctx, {
+    userId,
+    ...(teamId ? { workspace: "team" as const, team_id: teamId } : { workspace: "personal" as const }),
+  });
+
+  if (!project) {
+    // No project named: the imported container gets one of its own, so the
+    // tasks land somewhere a person can find them (S1.3).
+    const projectId = await db.insert("projects", {
+      short_id: await mintProjectShortId(ctx, now),
+      title: args.name,
+      description: `Imported from ${args.provider}`,
+      status: "active",
+    } as any);
+    project = await ctx.db.get(projectId);
+  } else {
+    const key = await resolveWorkspaceKey(ctx, project);
+    if (key !== db.workspaceKey) forbidden("Forbidden: project is in another workspace");
+  }
+
+  const id = await ctx.db.insert("issue_sync_sources", {
+    provider: args.provider,
+    kind: args.kind,
+    external_id: args.external_id,
+    external_key: args.external_key,
+    name: args.name,
+    url: args.url,
+    project_id: project!._id,
+    user_id: userId,
+    team_id: teamId,
+    workspace: db.workspaceKey,
+    status: "active",
+    delegate_label: args.delegate_label ?? "agent",
+    delegate_assignee: args.delegate_assignee,
+    auto_spawn: args.auto_spawn ?? false,
+    push_new_tasks: args.push_new_tasks ?? false,
+    created_at: now,
+    updated_at: now,
+  } as any);
+
+  await ctx.scheduler.runAfter(0, internal.issueSync.importSource, { source_id: id });
+  return { id, project_id: project!._id, existing: false };
+}
+
+const updateSourceArgs = {
+  status: v.optional(v.union(v.literal("active"), v.literal("paused"))),
+  delegate_label: v.optional(v.string()),
+  delegate_assignee: v.optional(v.string()),
+  auto_spawn: v.optional(v.boolean()),
+  push_new_tasks: v.optional(v.boolean()),
+};
+
+async function updateSourceFor(ctx: any, userId: Id<"users">, id: Id<"issue_sync_sources">, args: any) {
+  await requireSource(ctx, userId, id);
+  const patch: Record<string, any> = { updated_at: Date.now() };
+  for (const key of ["status", "delegate_label", "delegate_assignee", "auto_spawn", "push_new_tasks"]) {
+    if (args[key] !== undefined) patch[key] = args[key];
+  }
+  // Resuming a paused or errored source clears the error that parked it.
+  if (args.status === "active") patch.last_error = undefined;
+  await ctx.db.patch(id, patch);
+  return { success: true };
+}
+
+/**
+ * Drop the source. Imported tasks stay: they carry our comments, sessions and
+ * history. They keep `external` (so the identifier and link still render) and
+ * lose only `source_id`, which is what stops the reconcile from touching them.
+ */
+async function removeSourceFor(ctx: any, userId: Id<"users">, id: Id<"issue_sync_sources">) {
+  const source = await requireSource(ctx, userId, id);
+  const tasks = await ctx.db
+    .query("tasks")
+    .withIndex("by_project_id", (q: any) => q.eq("project_id", source.project_id))
+    .collect();
+  for (const task of tasks) {
+    if (task.external?.source_id && String(task.external.source_id) === String(id)) {
+      await ctx.db.patch(task._id, { external: { ...task.external, source_id: undefined } });
+    }
+  }
+  await ctx.db.delete(id);
+  // A project the import minted for itself and never filled is clutter once
+  // the source goes; a project with anything in it stays.
+  const project = await ctx.db.get(source.project_id);
+  if (project && await isEmptyImportedProject(ctx, project)) await ctx.db.delete(project._id);
+  return { success: true };
+}
+
+/**
+ * A project the import minted (`addSourceFor` stamps its description) that
+ * nothing ever landed in: no tasks, plans, docs or updates. Only such a
+ * project is ever deleted on the import's behalf.
+ */
+async function isEmptyImportedProject(ctx: any, project: any): Promise<boolean> {
+  if (!/^Imported from (linear|github)$/.test(project.description ?? "")) return false;
+  for (const [table, index] of [
+    ["tasks", "by_project_id"],
+    ["plans", "by_project_id"],
+    ["docs", "by_project_id"],
+    ["project_updates", "by_project_created"],
+  ] as const) {
+    const row = await ctx.db.query(table).withIndex(index, (q: any) => q.eq("project_id", project._id)).first();
+    if (row) return false;
+  }
+  return true;
+}
+
+/**
+ * Delete the projects an import minted and later orphaned: no source points
+ * at them and nothing was ever filed in them. A source removed before this
+ * rule existed left one behind, and a second project with the source's name
+ * makes `--project "<name>"` ambiguous for everyone.
+ */
+export const pruneOrphanImportedProjects = internalMutation({
+  args: { dry_run: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    const removed: string[] = [];
+    for (const project of await ctx.db.query("projects").collect()) {
+      if (!(project as any).description?.startsWith("Imported from ")) continue;
+      const source = await ctx.db
+        .query("issue_sync_sources")
+        .withIndex("by_project", (q: any) => q.eq("project_id", project._id))
+        .first();
+      if (source || !(await isEmptyImportedProject(ctx, project))) continue;
+      removed.push(`${project.short_id ?? project._id} ${project.title}`);
+      if (!args.dry_run) await ctx.db.delete(project._id);
+    }
+    return { removed };
+  },
+});
+
+/** Linear teams and projects, or the GitHub repos the team's and the caller's own installations cover. */
+async function remoteCandidatesFor(
+  ctx: any,
+  provider: string,
+  teamId: Id<"teams"> | undefined,
+  userId: Id<"users">,
+): Promise<Array<{ kind: string; external_id: string; external_key?: string; name: string; url?: string }>> {
+  if (provider === "linear") {
+    const token = await tokenFor(ctx, "linear", teamId, userId);
+    if (!token) return [];
+    const [teams, projects] = await Promise.all([linearApi.fetchTeams(token), linearApi.fetchProjects(token)]);
+    return [
+      ...teams.map((t) => ({ kind: "linear_team", external_id: t.id, external_key: t.key, name: `${t.key} · ${t.name}` })),
+      ...projects.map((p) => ({
+        kind: "linear_project",
+        external_id: p.id,
+        // The project's team key is what a push needs to create an issue.
+        external_key: p.teams?.nodes?.[0]?.id,
+        name: p.name,
+        url: p.url,
+      })),
+    ];
+  }
+
+  const installations: any[] = await ctx.runQuery(internal.githubApp.installationsForWork, {
+    team_id: teamId,
+    user_id: userId,
+  });
+  const out: Array<{ kind: string; external_id: string; name: string; url?: string }> = [];
+  const seen = new Set<string>();
+  for (const installation of installations) {
+    let repos: Array<{ full_name: string; html_url?: string }> = installation.repositories ?? [];
+    if (installation.repository_selection === "all") {
+      const token = await ctx.runAction(internal.githubApp.getInstallationToken, {
+        installation_id: installation.installation_id,
+      });
+      repos = await githubIssuesApi.listInstallationRepos(token.token);
+    }
+    for (const repo of repos) {
+      if (seen.has(repo.full_name)) continue;
+      seen.add(repo.full_name);
+      out.push({
+        kind: "github_repo",
+        external_id: repo.full_name,
+        name: repo.full_name,
+        url: repo.html_url ?? `https://github.com/${repo.full_name}`,
+      });
+    }
+  }
+  return out;
+}
+
+/** The workspace an action should read a connection from, when none was named. */
+export const resolveActor = internalQuery({
+  args: { user_id: v.id("users"), team_id: v.optional(v.id("teams")) },
+  handler: async (ctx, args) => {
+    if (args.team_id) {
+      await requireTeamMembership(ctx, args.user_id, args.team_id);
+      return { user_id: args.user_id, team_id: args.team_id };
+    }
+    const user = await ctx.db.get(args.user_id);
+    return { user_id: args.user_id, team_id: (user?.active_team_id ?? user?.team_id) as Id<"teams"> | undefined };
+  },
+});
+
+/** CLI actions carry a token, not an identity; this is where it becomes one. */
+export const userForToken = internalQuery({
+  args: { api_token: v.string() },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    return auth ? { user_id: auth.userId } : null;
+  },
+});
+
+/* ---------------- Sources: web API (S9) ---------------- */
+
+export const listSources = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return await listSourcesFor(ctx, userId);
+  },
+});
+
+/** Linear teams + projects, or GitHub repos, the connection can import. */
+export const listRemoteCandidates = action({
+  args: { provider: issueProviderValidator, team_id: v.optional(v.id("teams")) },
+  handler: async (ctx, args): Promise<Array<Record<string, any>>> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const actor: any = await ctx.runQuery(internal.issueSync.resolveActor, {
+      user_id: userId,
+      team_id: args.team_id,
+    });
+    return await remoteCandidatesFor(ctx, args.provider, actor.team_id, userId);
+  },
+});
+
+export const addSource = mutation({
+  args: {
+    provider: issueProviderValidator,
+    kind: issueSyncSourceKindValidator,
+    external_id: v.string(),
+    external_key: v.optional(v.string()),
+    name: v.string(),
+    url: v.optional(v.string()),
+    project_id: v.optional(v.id("projects")),   // absent = create a project named after the source
+    team_id: v.optional(v.id("teams")),
+    delegate_label: v.optional(v.string()),
+    delegate_assignee: v.optional(v.string()),
+    auto_spawn: v.optional(v.boolean()),
+    push_new_tasks: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    return await addSourceFor(ctx, userId, args);
+  },
+});
+
+export const updateSource = mutation({
+  args: { id: v.id("issue_sync_sources"), ...updateSourceArgs },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    return await updateSourceFor(ctx, userId, args.id, args);
+  },
+});
+
+export const removeSource = mutation({
+  args: { id: v.id("issue_sync_sources") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    return await removeSourceFor(ctx, userId, args.id);
+  },
+});
+
+export const syncNow = action({
+  args: { id: v.id("issue_sync_sources") },
+  handler: async (ctx, args): Promise<{ applied?: number; error?: string }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    await ctx.runQuery(internal.issueSync.assertSourceAccess, { user_id: userId, id: args.id });
+    return await ctx.runAction(internal.issueSync.importSource, { source_id: args.id });
+  },
+});
+
+export const assertSourceAccess = internalQuery({
+  args: { user_id: v.id("users"), id: v.id("issue_sync_sources") },
+  handler: async (ctx, args) => {
+    await requireSource(ctx, args.user_id, args.id);
+    return { ok: true };
+  },
+});
+
+/* ---------------- Sources: CLI API (S10) ---------------- */
+
+export const cliListSources = query({
+  args: { api_token: v.string() },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    return await listSourcesFor(ctx, auth.userId);
+  },
+});
+
+export const cliAddSource = mutation({
+  args: {
+    api_token: v.string(),
+    provider: issueProviderValidator,
+    kind: issueSyncSourceKindValidator,
+    external_id: v.string(),
+    external_key: v.optional(v.string()),
+    name: v.string(),
+    url: v.optional(v.string()),
+    project_id: v.optional(v.id("projects")),
+    team_id: v.optional(v.id("teams")),
+    delegate_label: v.optional(v.string()),
+    delegate_assignee: v.optional(v.string()),
+    auto_spawn: v.optional(v.boolean()),
+    push_new_tasks: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    return await addSourceFor(ctx, auth.userId, args);
+  },
+});
+
+export const cliUpdateSource = mutation({
+  args: { api_token: v.string(), id: v.id("issue_sync_sources"), ...updateSourceArgs },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    return await updateSourceFor(ctx, auth.userId, args.id, args);
+  },
+});
+
+export const cliRemoveSource = mutation({
+  args: { api_token: v.string(), id: v.id("issue_sync_sources") },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    return await removeSourceFor(ctx, auth.userId, args.id);
+  },
+});
+
+export const cliSyncNow = action({
+  args: { api_token: v.string(), id: v.id("issue_sync_sources") },
+  handler: async (ctx, args): Promise<{ applied?: number; error?: string }> => {
+    const actor: any = await ctx.runQuery(internal.issueSync.userForToken, { api_token: args.api_token });
+    if (!actor) throw new Error("Unauthorized");
+    await ctx.runQuery(internal.issueSync.assertSourceAccess, { user_id: actor.user_id, id: args.id });
+    return await ctx.runAction(internal.issueSync.importSource, { source_id: args.id });
+  },
+});
+
+export const cliListRemoteCandidates = action({
+  args: { api_token: v.string(), provider: issueProviderValidator, team_id: v.optional(v.id("teams")) },
+  handler: async (ctx, args): Promise<Array<Record<string, any>>> => {
+    const actor: any = await ctx.runQuery(internal.issueSync.userForToken, { api_token: args.api_token });
+    if (!actor) throw new Error("Unauthorized");
+    const resolved: any = await ctx.runQuery(internal.issueSync.resolveActor, {
+      user_id: actor.user_id,
+      team_id: args.team_id,
+    });
+    return await remoteCandidatesFor(ctx, args.provider, resolved.team_id, actor.user_id);
+  },
+});
+
+/* ---------------- Internal lookups shared with tasks.ts / http.ts ---------------- */
+
+export const getSourceByExternal = internalQuery({
+  args: { provider: issueProviderValidator, external_id: v.string() },
+  handler: async (ctx, args) => await sourceFor(ctx, args.provider, args.external_id),
+});

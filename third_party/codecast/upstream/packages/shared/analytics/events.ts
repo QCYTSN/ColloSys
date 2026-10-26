@@ -1,0 +1,159 @@
+// Every product event codecast sends, declared once.
+//
+// Why a catalog (ct-49565): `track(event: string, props: Record<string, unknown>)`
+// accepted anything, so a typo minted a PostHog event nobody queries, a renamed
+// property split a funnel in half without a word, and any object at a call site
+// could carry user text — a prompt, a path, an email — into the analytics store.
+// The declaration below is both the compile time signature every call site gets
+// and the runtime rules the track boundary enforces. Anything that fails is
+// dropped whole, never sent with the bad part stripped.
+//
+// Adding an event: add it here, with the narrowest spec that is true (an enum
+// over a free string, a cap on every string). Web, mobile, Convex and the web
+// server all validate against this one file, so a funnel that spans surfaces
+// cannot disagree with itself about property names.
+
+import { defineCatalog, type EventName, type EventProps } from "@platform/analytics/catalog";
+
+/** Where the events with a `platform` super property say they came from. */
+const SURFACE = { type: "string", values: ["web", "desktop", "mobile"] } as const;
+const COUNT = { type: "number" } as const;
+/** A UI location label: a hand-written constant at the call site, never user text. */
+const LOCATION = { type: "string", max: 64 } as const;
+
+/** Keyboard shortcuts that change data or move work. Clicks reach PostHog by
+ *  autocapture, keys never do, so without this a session killed by a chord left
+ *  no trace of who killed it (jx7970z, 2026-10-06). Navigation keys stay out:
+ *  they are most of the volume and none of the forensics. */
+export const TRACKED_SHORTCUTS = [
+  "session.kill", "session.stash", "session.stashHide", "session.deferAdvance", "session.dormantAdvance",
+  "session.snooze", "session.pin", "session.markUnread", "session.moveToBucket", "session.rename",
+  "ui.undo", "ui.redo", "msg.fork", "conv.favorite",
+] as const;
+
+export const CODECAST_EVENTS = defineCatalog({
+  // Install and activation funnel (client).
+  install_command_copied: {
+    location: LOCATION,
+    platform: { type: "string", values: ["unix", "windows"] },
+    with_token: { type: "boolean" },
+  },
+  install_script_viewed: {
+    location: LOCATION,
+    platform: { type: "string", values: ["unix", "windows"] },
+  },
+  desktop_download_clicked: { location: LOCATION },
+  ios_app_clicked: { location: LOCATION },
+  // The desktop app setting up the CLI and daemon itself, behind one click.
+  desktop_setup_started: { location: LOCATION },
+  desktop_setup_finished: {
+    ok: { type: "boolean" },
+    error: { type: "string", values: ["invalid_token", "unsupported_platform", "installer_failed", "threw"], optional: true },
+  },
+  // The way in for people who do not write code (the hosted assistant's
+  // /welcome), from the marketing page or signup.
+  assistant_path_clicked: { location: LOCATION },
+  // The empty inbox's first run: which start a person with no machine chose.
+  first_run_start_chosen: { start: { type: "string", values: ["assistant", "machine"] } },
+  // The landing page tour film: a start, and each jump to a chapter.
+  landing_tour_started: { chapter: COUNT },
+  landing_tour_chapter: { chapter: COUNT, from: { type: "string", values: ["chapter_list", "section_link"] } },
+  // A click on a "Request early access" mail link, by what was asked for.
+  early_access_requested: { what: { type: "string", values: ["team", "org"] }, location: LOCATION },
+
+  // Install and activation funnel (web server, personless).
+  install_script_downloaded: { script: { type: "string", values: ["sh", "ps1"] } },
+  desktop_dmg_downloaded: { version: { type: "string", max: 32 } },
+
+  // Install and activation funnel (Convex, identified by users._id).
+  setup_token_generated: {},
+  cli_authed: { method: { type: "string", values: ["browser", "setup_token"] } },
+  cli_daemon_connected: {
+    cli_version: { type: "string", max: 32 },
+    cli_platform: { type: "string", max: 32 },
+  },
+  first_session_synced: {
+    agent_type: {
+      type: "string",
+      values: ["claude_code", "codex", "cursor", "gemini", "opencode", "pi", "grok", "muse"],
+    },
+  },
+
+  // Triage onboarding tour.
+  nux_tour_opened: {},
+  nux_tour_step: { step: COUNT },
+  nux_tour_finished: { step: COUNT },
+  nux_tour_skipped: { step: COUNT },
+
+  // Tours (web/tours): `tour` is a registry id, never user text.
+  tour_started: { tour: { type: "string", max: 32 }, replay: { type: "boolean" } },
+  tour_finished: { tour: { type: "string", max: 32 }, step: COUNT },
+  tour_skipped: { tour: { type: "string", max: 32 }, step: COUNT },
+
+  // A tracked keyboard shortcut ran its action (TRACKED_SHORTCUTS).
+  shortcut_used: { action: { type: "string", values: TRACKED_SHORTCUTS } },
+
+  // Tips.
+  tip_seen: { tip_id: { type: "string", max: 64 }, type: { type: "string", max: 16, optional: true } },
+  tip_dismissed: { tip_id: { type: "string", max: 64 }, type: { type: "string", max: 16, optional: true } },
+  tip_completed: { tip_id: { type: "string", max: 64 }, type: { type: "string", max: 16, optional: true } },
+  inline_tip_dismissed: { tip_id: { type: "string", max: 64 } },
+  tips_level_changed: { level: { type: "string", values: ["all", "subtle", "none"] } },
+
+  // Sync log health.
+  synclog_apply: { direct: COUNT, refetch: COUNT, ratio: COUNT },
+  synclog_crawl_healed: { namespace: { type: "string", values: ["tasks", "docs"] }, count: COUNT },
+
+  // Inbox digest compare: does the client's own projection agree with the
+  // server's? Counters only — no ids, no titles.
+  inbox_digest_heartbeat: {
+    scope: { type: "string", max: 32 },
+    platform: SURFACE,
+    checks: COUNT,
+    mismatches: COUNT,
+    heals: COUNT,
+    heals_missing: COUNT,
+    max_payload_age_ms: COUNT,
+    disabled: COUNT,
+    probes: COUNT,
+    skips: { type: "counters", maxKeys: 24 },
+  },
+  inbox_drift: {
+    scope: { type: "string", max: 32 },
+    platform: SURFACE,
+    missing: COUNT,
+    extra: COUNT,
+    bucket_deltas: COUNT,
+    fold_deltas: COUNT,
+    payload_age_ms: COUNT,
+    epoch: COUNT,
+  },
+  inbox_drift_persistent: {
+    scope: { type: "string", max: 32 },
+    platform: SURFACE,
+    heals_in_window: COUNT,
+    window_ms: COUNT,
+  },
+  inbox_digest_version_skew: {
+    scope: { type: "string", max: 32 },
+    platform: SURFACE,
+    payload_v: COUNT,
+    client_v: COUNT,
+  },
+
+  // A huddle's media dropping under a person who never pressed End, and what
+  // became of it. `reason` is LiveKit's DisconnectReason name; `ms` is how
+  // long the person sat without the room.
+  call_media_lost: { reason: { type: "string", max: 32 }, rejoin: { type: "boolean" } },
+  call_rejoined: { attempts: COUNT, ms: COUNT },
+  call_rejoin_failed: { attempts: COUNT, ms: COUNT },
+});
+
+export type CodecastEventName = EventName<typeof CODECAST_EVENTS>;
+export type CodecastEventProps<N extends CodecastEventName> = EventProps<(typeof CODECAST_EVENTS)[N]>;
+
+/**
+ * The env var that turns codecast telemetry off on a node surface, alongside
+ * the standard DO_NOT_TRACK and the CI variables.
+ */
+export const TELEMETRY_DISABLED_VAR = "CODECAST_TELEMETRY_DISABLED";

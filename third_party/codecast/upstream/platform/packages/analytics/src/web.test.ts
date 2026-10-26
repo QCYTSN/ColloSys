@@ -1,0 +1,552 @@
+import { describe, it, expect, beforeEach, afterEach, mock } from "bun:test";
+
+// web.ts imports posthog-js and @sentry/react at module scope, so both are
+// mocked before the module under test is loaded.
+type Calls = Record<string, unknown[][]>;
+const phCalls: Calls = {};
+const sentryCalls: Calls = {};
+// One log across both backends, so a test can assert the order calls landed in
+// and not just that each one landed.
+const order: string[] = [];
+const record =
+  (calls: Calls, name: string) =>
+  (...args: unknown[]) => {
+    (calls[name] ??= []).push(args);
+    order.push(`${calls === phCalls ? "posthog" : "sentry"}.${name}`);
+  };
+const last = (calls: Calls, name: string) => (calls[name] ?? []).at(-1);
+const count = (calls: Calls, name: string) => (calls[name] ?? []).length;
+
+mock.module("posthog-js/dist/module.slim.js", () => ({
+  default: {
+    init: record(phCalls, "init"),
+    register: record(phCalls, "register"),
+    identify: record(phCalls, "identify"),
+    reset: record(phCalls, "reset"),
+    capture: record(phCalls, "capture"),
+  },
+}));
+const analyticsExtensions = {
+  autocapture: class Autocapture {},
+  historyAutocapture: class HistoryAutocapture {},
+};
+mock.module("posthog-js/dist/extension-bundles.js", () => ({ AnalyticsExtensions: analyticsExtensions }));
+
+mock.module("@sentry/react", () => ({
+  init: record(sentryCalls, "init"),
+  setUser: record(sentryCalls, "setUser"),
+  captureException: record(sentryCalls, "captureException"),
+}));
+
+const web = await import("./web");
+const { PRE_INIT_BUFFER_LIMIT } = await import("./index");
+
+const base = {
+  posthogKey: "phc_x",
+  sentryDsn: "https://dsn@example.ingest.sentry.io/1",
+  environment: "production" as const,
+  platform: "web",
+  appName: "codecast",
+};
+
+beforeEach(() => {
+  web._resetForTests();
+  for (const c of [phCalls, sentryCalls]) for (const k of Object.keys(c)) delete c[k];
+  order.length = 0;
+});
+
+describe("initAnalytics (web)", () => {
+  it("initializes PostHog with the donor options and registers super properties", () => {
+    web.initAnalytics(base);
+    const [key, options] = last(phCalls, "init") as [string, Record<string, unknown>];
+    expect(key).toBe("phc_x");
+    expect(options.api_host).toBe("https://us.i.posthog.com");
+    expect(options.autocapture).toBe(true);
+    expect(options.capture_pageview).toBe("history_change");
+    expect(options.capture_pageleave).toBe(true);
+    expect(options.persistence).toBe("localStorage");
+    expect(options.__extensionClasses).toBe(analyticsExtensions);
+    expect(options.disable_session_recording).toBe(true);
+    expect(options.capture_dead_clicks).toBe(false);
+    expect(last(phCalls, "register")).toEqual([
+      { platform: "web", environment: "production", app: "codecast" },
+    ]);
+  });
+
+  it("initializes Sentry error reporting in production", () => {
+    web.initAnalytics(base);
+    const [options] = last(sentryCalls, "init") as [Record<string, any>];
+    expect(options.dsn).toBe(base.sentryDsn);
+    expect(options.environment).toBe("production");
+    expect(options.enabled).toBe(true);
+    expect(options.tracesSampleRate).toBeUndefined();
+    expect(options.integrations).toBeUndefined();
+    expect(options.initialScope.tags).toEqual({ platform: "web", app: "codecast" });
+  });
+
+  it("gives Sentry an ignoreErrors list that drops unactionable noise and keeps real bugs", () => {
+    web.initAnalytics({ ...base, extraIgnoreErrors: [/Could not find data for Group with id/] });
+    const [options] = last(sentryCalls, "init") as [Record<string, any>];
+    const patterns = options.ignoreErrors as RegExp[];
+    // Sentry's own filter tests an event's message and its exception rendered
+    // as `Type: value`, so that is the string these patterns must match.
+    const dropped = (message: string) => patterns.some((p) => p.test(message));
+
+    // The three production issue classes this list exists for.
+    expect(dropped("Error: Unable to preload CSS for /assets/decisions-DAwruZUT.css")).toBe(true);
+    expect(
+      dropped(
+        "DatabaseClosedError: QuotaExceededError Encountered full disk while opening backing store for indexedDB.open.",
+      ),
+    ).toBe(true);
+    expect(dropped("AbortError: UnknownError Connection is closing.")).toBe(true);
+    // An app's own list is appended, never replaced.
+    expect(dropped("Error: Could not find data for Group with id abc")).toBe(true);
+
+    // Real defects still reach Sentry. Nothing here suppresses a whole error
+    // class, so the ordinary crash shapes stay reportable.
+    for (const real of [
+      "TypeError: Cannot read properties of undefined (reading 'map')",
+      "TypeError: x is not a function",
+      "Error: Failed to fetch dynamically imported module: https://x/assets/page-abc.js",
+      "QuotaExceededError: The quota has been exceeded.",
+      "AbortError: The operation was aborted.",
+      "ConvexError: Could not find public function",
+    ]) {
+      expect(dropped(real)).toBe(false);
+    }
+  });
+
+  it("drops a DOM reconciler crash only while the page is translated", () => {
+    web.initAnalytics(base);
+    const [options] = last(sentryCalls, "init") as [Record<string, any>];
+    const beforeSend = options.beforeSend as (e: any) => any;
+    const domCrash = {
+      exception: {
+        values: [
+          {
+            type: "NotFoundError",
+            value:
+              "Failed to execute 'insertBefore' on 'Node': The node before which the new node is to be inserted is not a child of this node.",
+          },
+        ],
+      },
+    };
+
+    const classes = new Set<string>();
+    let msFontWrapper: unknown = null;
+    (globalThis as any).document = {
+      documentElement: { classList: { contains: (c: string) => classes.has(c) } },
+      querySelector: (sel: string) => (sel === "font[_msttexthash]" ? msFontWrapper : null),
+    };
+
+    try {
+      // Untranslated: this is a REAL reconciler bug and must be reported. This
+      // is the assertion that proves the filter is not a blanket insertBefore
+      // suppression.
+      expect(beforeSend(domCrash)).toBe(domCrash);
+
+      // Translated by Google: the same message is damage done by the translator
+      // wrapping our text nodes, and no engineer can act on it.
+      classes.add("translated-ltr");
+      expect(beforeSend(domCrash)).toBeNull();
+
+      // An unrelated error is kept even on a translated page.
+      expect(
+        beforeSend({ exception: { values: [{ type: "TypeError", value: "x is not a function" }] } }),
+      ).not.toBeNull();
+
+      // Microsoft Translator leaves no root class, only its font wrappers.
+      classes.clear();
+      expect(beforeSend(domCrash)).toBe(domCrash);
+      msFontWrapper = {};
+      expect(beforeSend(domCrash)).toBeNull();
+    } finally {
+      delete (globalThis as any).document;
+    }
+  });
+
+  it("disables Sentry in development", () => {
+    web.initAnalytics({ ...base, environment: "development" });
+    const [options] = last(sentryCalls, "init") as [Record<string, any>];
+    expect(options.enabled).toBe(false);
+    expect(options.tracesSampleRate).toBeUndefined();
+  });
+
+  it("initializes once; a second call is ignored", () => {
+    web.initAnalytics(base);
+    web.initAnalytics(base);
+    expect(count(phCalls, "init")).toBe(1);
+    expect(count(sentryCalls, "init")).toBe(1);
+  });
+
+  it("skips a backend whose key is absent", () => {
+    web.initAnalytics({ environment: "production", platform: "web" });
+    expect(count(phCalls, "init")).toBe(0);
+    expect(count(sentryCalls, "init")).toBe(0);
+    web.track("e");
+    web.identifyUser("u1");
+    web.captureError(new Error("x"));
+    expect(count(phCalls, "capture")).toBe(0);
+    expect(count(phCalls, "identify")).toBe(0);
+    expect(count(sentryCalls, "captureException")).toBe(0);
+  });
+});
+
+describe("identity and events (web)", () => {
+  it("identifyUser reaches both backends with the app user id", () => {
+    web.initAnalytics(base);
+    web.identifyUser("users:abc123", { email: "a@b.c" });
+    expect(last(sentryCalls, "setUser")).toEqual([{ id: "users:abc123", email: "a@b.c" }]);
+    expect(last(phCalls, "identify")).toEqual(["users:abc123", { email: "a@b.c" }]);
+  });
+
+  it("resetUser clears both backends", () => {
+    web.initAnalytics(base);
+    web.resetUser();
+    expect(last(sentryCalls, "setUser")).toEqual([null]);
+    expect(count(phCalls, "reset")).toBe(1);
+  });
+
+  it("track forwards to posthog.capture", () => {
+    web.initAnalytics(base);
+    web.track("session_created", { kind: "fork" });
+    expect(last(phCalls, "capture")).toEqual(["session_created", { kind: "fork" }]);
+  });
+
+  it("sends only what the catalog describes, and never a bad payload", () => {
+    const catalog = { session_created: { kind: { type: "string", values: ["fork", "spawn"] } } } as const;
+    web.initAnalytics({ ...base, catalog });
+    web.track("session_created", { kind: "fork" });
+    expect(last(phCalls, "capture")).toEqual(["session_created", { kind: "fork" }]);
+
+    const before = count(phCalls, "capture");
+    web.track("session_creatd", { kind: "fork" }); // typo
+    web.track("session_created", { kind: "clone" }); // not in the enum
+    web.track("session_created", { kind: "fork", prompt: "secret" }); // undeclared key
+    expect(count(phCalls, "capture")).toBe(before);
+  });
+
+  it("stops sending at the session cap", () => {
+    web.initAnalytics({ ...base, sessionEventCap: 2 });
+    for (let i = 0; i < 5; i++) web.track("session_created", { i });
+    expect(count(phCalls, "capture")).toBe(2);
+  });
+
+  it("loads no PostHog at all when the browser sets Do Not Track", () => {
+    const previous = globalThis.navigator;
+    Object.defineProperty(globalThis, "navigator", { value: { doNotTrack: "1" }, configurable: true });
+    try {
+      web.initAnalytics(base);
+      web.identifyUser("users:abc123");
+      web.track("session_created", { kind: "fork" });
+      expect(count(phCalls, "init")).toBe(0);
+      expect(count(phCalls, "identify")).toBe(0);
+      expect(count(phCalls, "capture")).toBe(0);
+      // Sentry still reports crashes: a crash report is not the behavioural
+      // tracking Do Not Track asks us to stop.
+      expect(count(sentryCalls, "init")).toBe(1);
+    } finally {
+      Object.defineProperty(globalThis, "navigator", { value: previous, configurable: true });
+    }
+  });
+
+  it("captureError forwards to Sentry with context as extra", () => {
+    web.initAnalytics(base);
+    const err = new Error("boom");
+    web.captureError(err, { where: "test" });
+    expect(last(sentryCalls, "captureException")).toEqual([err, { extra: { where: "test" } }]);
+  });
+});
+
+// Boot defers initAnalytics to an idle callback while identify waits on a user
+// query, so init usually wins the race. When it does not, the old code dropped
+// the identify without a sound and the next crash reached Sentry with no user
+// attached. These calls are held and replayed instead.
+describe("calls made before init (web)", () => {
+  it("replays a held identify into both backends once init runs", () => {
+    web.identifyUser("users:abc123", { email: "a@b.c" });
+    expect(count(sentryCalls, "setUser")).toBe(0);
+    expect(count(phCalls, "identify")).toBe(0);
+
+    web.initAnalytics(base);
+
+    expect(last(sentryCalls, "setUser")).toEqual([{ id: "users:abc123", email: "a@b.c" }]);
+    expect(last(phCalls, "identify")).toEqual(["users:abc123", { email: "a@b.c" }]);
+  });
+
+  it("replays held calls in the order they were made", () => {
+    web.track("boot_started");
+    web.identifyUser("users:abc123");
+    web.track("workspace_opened", { id: "w1" });
+
+    web.initAnalytics(base);
+
+    expect(order.slice(order.indexOf("posthog.register") + 1)).toEqual([
+      "posthog.capture",
+      "sentry.setUser",
+      "posthog.identify",
+      "posthog.capture",
+    ]);
+    expect((phCalls.capture ?? []).map((args) => args[0])).toEqual([
+      "boot_started",
+      "workspace_opened",
+    ]);
+  });
+
+  it("holds a reset in the same queue, so a sign out is not reordered behind the identify it cancels", () => {
+    web.identifyUser("users:abc123");
+    web.resetUser();
+
+    web.initAnalytics(base);
+
+    expect(last(sentryCalls, "setUser")).toEqual([null]);
+    expect(count(phCalls, "reset")).toBe(1);
+  });
+
+  it("replays a held track after the super properties are registered", () => {
+    // The held capture must carry platform, environment and app just like a
+    // call made after boot, so replaying it before register would mislabel it.
+    web.track("boot_started");
+    web.initAnalytics(base);
+    expect(order.indexOf("posthog.register")).toBeLessThan(order.indexOf("posthog.capture"));
+  });
+
+  it("passes calls made after init straight through, with nothing held", () => {
+    web.initAnalytics(base);
+    web.track("session_created", { kind: "fork" });
+    web.identifyUser("users:abc123");
+    expect(count(phCalls, "capture")).toBe(1);
+    expect(count(phCalls, "identify")).toBe(1);
+
+    // A second init is ignored, so it must not replay anything a second time.
+    web.initAnalytics(base);
+    expect(count(phCalls, "capture")).toBe(1);
+    expect(count(phCalls, "identify")).toBe(1);
+  });
+
+  it("drops the oldest held call at the cap, and throws nothing", () => {
+    const total = PRE_INIT_BUFFER_LIMIT + 10;
+    for (let i = 0; i < total; i++) web.track(`e${i}`);
+    web.identifyUser("users:latest");
+
+    web.initAnalytics(base);
+
+    // The identify is the newest call, so it is the one that must survive.
+    expect(last(phCalls, "identify")).toEqual(["users:latest", undefined]);
+    // One slot went to the identify, so the last cap-minus-one events remain.
+    const events = (phCalls.capture ?? []).map((args) => args[0]);
+    expect(events.length).toBe(PRE_INIT_BUFFER_LIMIT - 1);
+    expect(events[0]).toBe(`e${total - (PRE_INIT_BUFFER_LIMIT - 1)}`);
+    expect(events.at(-1)).toBe(`e${total - 1}`);
+  });
+
+  it("keeps replaying the rest when one held call throws", () => {
+    // A backend refusing one held call must not break the boot that replays it,
+    // nor swallow the calls queued behind it.
+    const ph = web.posthog as unknown as Record<string, unknown>;
+    const realIdentify = ph.identify;
+    ph.identify = () => {
+      throw new Error("posthog refused");
+    };
+    try {
+      web.identifyUser("users:abc123");
+      web.track("survives");
+      expect(() => web.initAnalytics(base)).not.toThrow();
+      expect(last(phCalls, "capture")).toEqual(["survives", undefined]);
+    } finally {
+      ph.identify = realIdentify;
+    }
+  });
+});
+
+describe("setupErrorToasts", () => {
+  type Handler = (e: any) => void;
+  let handlers: Record<string, Handler>;
+  let toasts: Array<[string, string]>;
+
+  const install = (ignoredErrorPatterns?: RegExp[]) => {
+    handlers = {};
+    toasts = [];
+    (globalThis as any).window = {
+      addEventListener: (type: string, fn: Handler) => {
+        handlers[type] = fn;
+      },
+    };
+    web.setupErrorToasts({ showErrorToast: (title, trace) => toasts.push([title, trace]), ignoredErrorPatterns });
+  };
+
+  beforeEach(() => {
+    web.initAnalytics(base);
+  });
+
+  afterEach(() => {
+    delete (globalThis as any).window;
+  });
+
+  it("toasts and reports an uncaught error once", () => {
+    install();
+    const err = new Error("boom");
+    const event = { error: err, message: "boom", preventDefault: record({}, "x") };
+    handlers.error(event);
+    handlers.error(event); // deduped for 30s
+    expect(toasts.length).toBe(1);
+    expect(toasts[0][0]).toBe("Uncaught: boom");
+    expect(count(sentryCalls, "captureException")).toBe(1);
+    expect(last(sentryCalls, "captureException")).toEqual([err, { extra: { source: "window.onerror" } }]);
+  });
+
+  it("toasts and reports an unhandled rejection, wrapping non-Error reasons", () => {
+    install();
+    handlers.unhandledrejection({ reason: "nope", preventDefault: () => {} });
+    expect(toasts.length).toBe(1);
+    expect(toasts[0][0]).toBe("Unhandled rejection: nope");
+    expect(count(sentryCalls, "captureException")).toBe(1);
+  });
+
+  it("reads the failure through summarize, describe and toError", () => {
+    // The shape React hands onRecoverableError, and the shape app code makes
+    // with `new Error(msg, { cause })`: the wrapper says nothing, the cause is
+    // the failure. An app that walks the chain gets the failure in the title,
+    // in the trace and in the Sentry event.
+    const cause = new TypeError("cannot read properties of undefined");
+    const wrapper = new Error("Minified React error #520", { cause });
+    handlers = {};
+    toasts = [];
+    (globalThis as any).window = { addEventListener: (type: string, fn: Handler) => { handlers[type] = fn; } };
+    const root = (e: unknown) => ((e as { cause?: unknown })?.cause as Error) ?? (e as Error);
+    web.setupErrorToasts({
+      showErrorToast: (title, trace) => toasts.push([title, trace]),
+      summarize: (e) => root(e).message,
+      describe: (e) => `${(e as Error).message}\ncaused by: ${root(e).message}`,
+      toError: root,
+    });
+
+    handlers.error({ error: wrapper, message: "Minified React error #520", preventDefault: () => {} });
+    expect(toasts[0][0]).toBe("Uncaught: cannot read properties of undefined");
+    expect(toasts[0][1]).toContain("caused by: cannot read properties of undefined");
+    expect(last(sentryCalls, "captureException")).toEqual([cause, { extra: { source: "window.onerror" } }]);
+  });
+
+  it("claimErrorKey shares one 30s window with the listeners", () => {
+    // An app reporting from a path this module does not own (React's
+    // onRecoverableError) claims the key first; the listener then declines the
+    // same failure instead of toasting it a second time.
+    install();
+    expect(web.claimErrorKey("boom")).toBe(true);
+    expect(web.claimErrorKey("boom")).toBe(false);
+    handlers.error({ error: new Error("boom"), message: "boom", preventDefault: () => {} });
+    expect(toasts.length).toBe(0);
+    expect(count(sentryCalls, "captureException")).toBe(0);
+  });
+
+  it("ignored patterns suppress the toast, the report and the default logging", () => {
+    install([/Could not find data for Group/]);
+    let prevented = 0;
+    handlers.error({
+      error: new Error("Could not find data for Group with id 7"),
+      message: "Could not find data for Group with id 7",
+      preventDefault: () => prevented++,
+    });
+    handlers.unhandledrejection({
+      reason: new Error("Could not find data for Group with id 9"),
+      preventDefault: () => prevented++,
+    });
+    expect(prevented).toBe(2);
+    expect(toasts.length).toBe(0);
+    expect(count(sentryCalls, "captureException")).toBe(0);
+  });
+});
+
+describe("codecast reporting (initAnalytics codecastIngestKey)", () => {
+  type Handler = (e: any) => void;
+  let handlers: Record<string, Handler>;
+  const withKey = { ...base, codecastIngestKey: "cc_ing_test", codecastEndpoint: "https://ingest.test/cli/ingest", release: "9.9.9" };
+
+  beforeEach(() => {
+    handlers = {};
+    (globalThis as any).window = {
+      addEventListener: (type: string, fn: Handler) => {
+        handlers[type] = fn;
+      },
+      removeEventListener: () => {},
+    };
+  });
+
+  afterEach(() => {
+    web._resetForTests();
+    delete (globalThis as any).window;
+  });
+
+  const heard = () => {
+    const items: any[] = [];
+    web.getCodecastSink()!.onError((item: any) => items.push(item));
+    return items;
+  };
+
+  it("creates no sink without a key or in development", () => {
+    web.initAnalytics(base);
+    expect(web.getCodecastSink()).toBeNull();
+    web._resetForTests();
+    web.initAnalytics({ ...withKey, environment: "development" });
+    expect(web.getCodecastSink()).toBeNull();
+    expect(handlers.error).toBeUndefined();
+  });
+
+  it("captureError reaches Sentry and codecast together", () => {
+    web.initAnalytics(withKey);
+    const items = heard();
+    web.captureError(new Error("boom"), { where: "test" });
+    expect(count(sentryCalls, "captureException")).toBe(1);
+    expect(items.length).toBe(1);
+    expect(items[0].message).toBe("boom");
+    expect(items[0].context).toEqual({ where: "test" });
+  });
+
+  it("reports uncaught errors to codecast alone when the app wires no toasts", () => {
+    web.initAnalytics(withKey);
+    const items = heard();
+    handlers.error({ error: new Error("uncaught"), message: "uncaught", preventDefault: () => {} });
+    handlers.unhandledrejection({ reason: new Error("rejected"), preventDefault: () => {} });
+    expect(items.map((i) => i.message)).toEqual(["uncaught", "rejected"]);
+    // Sentry has its own global handler; this listener must not add a second report.
+    expect(count(sentryCalls, "captureException")).toBe(0);
+  });
+
+  it("one listener pair: with toasts wired, an error reports once to each backend", () => {
+    const added: string[] = [];
+    (globalThis as any).window.addEventListener = (type: string, fn: Handler) => {
+      added.push(type);
+      handlers[type] = fn;
+    };
+    web.initAnalytics(withKey);
+    const toasts: string[] = [];
+    web.setupErrorToasts({ showErrorToast: (title) => toasts.push(title) });
+    const items = heard();
+    handlers.error({ error: new Error("once"), message: "once", preventDefault: () => {} });
+    expect(added.sort()).toEqual(["error", "pagehide", "unhandledrejection", "visibilitychange"]);
+    expect(toasts).toEqual(["Uncaught: once"]);
+    expect(items.length).toBe(1);
+    expect(count(sentryCalls, "captureException")).toBe(1);
+  });
+
+  it("drops the errors Sentry drops", () => {
+    web.initAnalytics({ ...withKey, extraIgnoreErrors: [/benign thing/] });
+    const items = heard();
+    web.captureError(new Error("Unable to preload CSS for /assets/x.css"));
+    web.captureError(new Error("a benign thing happened"));
+    web.captureError(new Error("real"));
+    expect(items.map((i) => i.message)).toEqual(["real"]);
+  });
+
+  it("identify and reset reach the sink's user", () => {
+    web.initAnalytics(withKey);
+    const items = heard();
+    web.identifyUser("u1", { email: "a@b.c", plan: "pro" });
+    web.captureError(new Error("one"));
+    web.resetUser();
+    web.captureError(new Error("two"));
+    expect(items[0].user).toEqual({ id: "u1", email: "a@b.c" });
+    expect(items[1].user).toBeUndefined();
+  });
+});

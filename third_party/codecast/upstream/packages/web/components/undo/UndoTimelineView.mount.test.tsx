@@ -1,0 +1,450 @@
+import assert from "node:assert/strict";
+import { afterAll, describe, it } from "bun:test";
+import { replaceGlobals } from "../../test-helpers/globals";
+
+const { JSDOM } = await import("jsdom");
+const dom = new JSDOM("<!doctype html><html><body><div id='root'></div></body></html>", { url: "https://local.codecast.sh", pretendToBeVisual: true });
+// The rows the card scrolled into view, newest last.
+const scrolled: string[] = [];
+dom.window.HTMLElement.prototype.scrollIntoView = function (this: HTMLElement) {
+  const row = this.getAttribute("data-undo-row") ?? this.querySelector("[data-undo-row]")?.getAttribute("data-undo-row");
+  if (row) scrolled.push(row);
+};
+const restoreGlobals = replaceGlobals({
+  window: dom.window,
+  document: dom.window.document,
+  navigator: dom.window.navigator,
+  HTMLElement: dom.window.HTMLElement,
+  HTMLButtonElement: dom.window.HTMLButtonElement,
+  Element: dom.window.Element,
+  Node: dom.window.Node,
+  Event: dom.window.Event,
+  KeyboardEvent: dom.window.KeyboardEvent,
+  MouseEvent: dom.window.MouseEvent,
+  MutationObserver: dom.window.MutationObserver,
+  getComputedStyle: dom.window.getComputedStyle.bind(dom.window),
+  ResizeObserver: class { observe() {} unobserve() {} disconnect() {} },
+  requestAnimationFrame: dom.window.requestAnimationFrame.bind(dom.window),
+  cancelAnimationFrame: dom.window.cancelAnimationFrame.bind(dom.window),
+  IS_REACT_ACT_ENVIRONMENT: true,
+});
+
+const React = await import("react");
+const { act } = React;
+const { createRoot } = await import("react-dom/client");
+const { UndoTimelineView } = await import("./UndoTimelineView");
+const { undoHistoryFixture, undoTimelineRows } = await import("../../lib/undoHistory");
+const { createKeydownHandler, ShortcutDispatcher } = await import("@platform/keys");
+const { shortcutCatalog } = await import("../../shortcuts/registry");
+const { KEY_OWNERSHIP } = await import("../../shortcuts/keyOwnership");
+
+const NOW = new Date(2026, 9, 3, 12).getTime();
+const fx = undoHistoryFixture(NOW);
+// One dropped entry whose cause has left the history, so every state paints.
+const orphan = { id: "fx-orphan", label: "Pinned “Old idea”", ts: NOW - 30_000, status: "dropped" as const, droppedBy: "gone", mode: "generic" as const };
+const model = undoTimelineRows({ ...fx.snapshot, items: [orphan, ...fx.snapshot.items] }, fx.state, NOW);
+
+type Call = [string, ...unknown[]];
+const calls: Call[] = [];
+const handlers = {
+  onUndoTo: (id: string) => calls.push(["undoTo", id]),
+  onRedoTo: (id: string) => calls.push(["redoTo", id]),
+  onOpen: (visit: { title: string }) => calls.push(["open", visit.title]),
+  onOpenOrg: () => calls.push(["org"]),
+  onClose: () => calls.push(["close"]),
+};
+
+let root = createRoot(document.getElementById("root")!);
+const q = <T extends Element = HTMLElement>(selector: string) => document.querySelector<T>(selector);
+const all = (selector: string) => [...document.querySelectorAll<HTMLElement>(selector)];
+const mount = async (node: React.ReactNode) => {
+  await act(async () => root.unmount());
+  root = createRoot(document.getElementById("root")!);
+  calls.length = 0;
+  await act(async () => root.render(node as never));
+};
+const press = async (key: string, init: KeyboardEventInit = {}) => {
+  await act(async () => {
+    q("[cmdk-root]")!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+  });
+};
+const selected = () => q('[cmdk-item][data-selected="true"]')?.getAttribute("data-undo-row");
+
+afterAll(async () => {
+  await act(async () => root.unmount());
+  dom.window.close();
+  restoreGlobals();
+});
+
+describe("UndoTimelineView", () => {
+  it("is a labelled, non-modal dialog with the KeyCap header", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    const dialog = q('[role="dialog"]')!;
+    assert.equal(dialog.getAttribute("aria-label"), "Undo history");
+    // Non-modal, said explicitly so the native overlay guard leaves panes up.
+    assert.notEqual(dialog.getAttribute("aria-modal"), "true");
+    const subline = q("[data-undo-subline]")!;
+    assert.match(subline.textContent!, /This window · .* reaches the last 5 minutes/);
+    assert.ok(subline.querySelector("kbd"), "the key renders as a KeyCap");
+    // The reach comes from the model's window, not a literal.
+    await mount(<UndoTimelineView model={{ ...model, windowMs: 2 * 60_000 }} mode="interactive" {...handlers} />);
+    assert.match(q("[data-undo-subline]")!.textContent!, /reaches the last 2 minutes/);
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    assert.ok(q("[data-undo-legend]")!.querySelectorAll("kbd").length >= 5);
+  });
+
+  it("paints every row state, with the set-aside branch under its cause and the start row last", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    const states = new Set(all("[data-undo-row]").map((e) => e.getAttribute("data-state")));
+    assert.deepEqual([...states].sort(), ["conflict", "done", "dropped", "external", "partial", "refused", "undone"]);
+    assert.match(q('[data-undo-row="fx-defer"] [data-undo-set-aside]')!.textContent!, /2 undone steps set aside when you deferred/);
+    assert.ok(q('[data-undo-row="fx-defer"] [data-undo-set-aside]')!.className.includes("line-through"));
+    assert.equal(q('[data-undo-row="fx-defer"] [data-undo-detail]')!.textContent, "can undo for 40s more");
+    assert.equal(q('[data-undo-row="fx-file"] [data-undo-detail]')!.textContent, "2 rows changed since, left as they are");
+    assert.equal(q('[data-undo-row="fx-conflict"] [data-undo-act]'), null);
+    assert.ok(q("[data-undo-now]"));
+    assert.ok(q("[data-undo-start]"));
+    assert.equal(all('[data-undo-row][data-above-head]').map((e) => e.getAttribute("data-undo-row")).join(","), "fx-orphan,fx-pin,fx-file");
+  });
+
+  it("Enter walks back to the selected row, and forward from above the head", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    assert.equal(selected(), "fx-status");
+    await press("Enter");
+    assert.deepEqual(calls, [["undoTo", "fx-status"]]);
+    await press("ArrowDown");
+    await press("ArrowDown");
+    assert.equal(selected(), "fx-defer");
+    await press("Enter");
+    assert.deepEqual(calls.at(-1), ["undoTo", "fx-defer"]);
+    await press("Home");
+    await press("ArrowDown");
+    await press("ArrowDown");
+    assert.equal(selected(), "fx-file");
+    await press("Enter");
+    assert.deepEqual(calls.at(-1), ["redoTo", "fx-file"]);
+    // An inert row does nothing.
+    await press("End");
+    assert.equal(selected(), "fx-manual");
+    const before = calls.length;
+    await press("Enter");
+    assert.equal(calls.length, before);
+  });
+
+  it("Home and End bring the row they select into view", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    await press("End");
+    assert.equal(selected(), "fx-manual");
+    assert.equal(scrolled.at(-1), "fx-manual");
+    await press("Home");
+    assert.equal(selected(), model.rows[0]!.id);
+    assert.equal(scrolled.at(-1), model.rows[0]!.id);
+  });
+
+  it("names Esc in the header legend, the empty state included", async () => {
+    await mount(<UndoTimelineView model={{ ...model, rows: [], headIndex: 0, headId: null }} mode="interactive" {...handlers} />);
+    assert.ok(q("[data-undo-empty]"));
+    assert.match(q("[data-undo-header-keys]")!.textContent!, /Esc\s*close/);
+  });
+
+  it("a ⌘Z that stops at a confirm row marks and selects that row, once per stop", async () => {
+    const confirmModel = { ...model, rows: model.rows.map((r) => (r.id === "fx-old" ? { ...r, item: { ...r.item, confirm: true } } : r)) };
+    // A stop from before the card mounted is not replayed.
+    await mount(<UndoTimelineView model={confirmModel} mode="interactive" {...handlers} flash={{ id: "fx-old", n: 1 }} />);
+    assert.equal(q("[data-undo-flash]"), null);
+    await act(async () => root.render(<UndoTimelineView model={confirmModel} mode="interactive" {...handlers} flash={{ id: "fx-old", n: 2 }} />));
+    assert.equal(q("[data-undo-flash]")?.getAttribute("data-undo-row"), "fx-old");
+    assert.equal(selected(), "fx-old");
+  });
+
+  it("the row's button carries the walk and its count", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    const back = q<HTMLButtonElement>('[data-undo-row="fx-old"] [data-undo-act="back"]')!;
+    assert.match(back.textContent!, /Back 3/);
+    await act(async () => back.click());
+    assert.deepEqual(calls, [["undoTo", "fx-old"]]);
+    assert.match(q('[data-undo-row="fx-pin"] [data-undo-act="forward"]')!.textContent!, /Forward to here/);
+  });
+
+  it("line two's button stays out of flow until hover or selection; the live title truncates apart from the label", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    // Out of flow (display none), not merely transparent, so the detail gets the full width.
+    const idle = q('[data-undo-row="fx-defer"] [data-undo-act]')!;
+    assert.ok(idle.classList.contains("hidden"));
+    assert.ok(idle.classList.contains("group-hover:inline-flex") && idle.classList.contains("group-data-[selected=true]:inline-flex"));
+    assert.equal(idle.classList.contains("opacity-0"), false);
+    // The title link is not inside the label's truncating span.
+    const link = q('[data-undo-row="fx-status"] [data-undo-open]')!;
+    assert.equal(link.textContent, "Undo history timeline");
+    assert.equal(link.closest("[data-undo-label]"), null);
+    // A group names several objects: no single title speaks for it.
+    assert.equal(q('[data-undo-row="fx-file"] [data-undo-open]'), null);
+  });
+
+  it("the org row offers the org record, by button and by O", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    const org = q<HTMLButtonElement>('[data-undo-row="fx-org"] [data-undo-act="org"]')!;
+    assert.match(org.textContent!, /Open in org record/);
+    await act(async () => org.click());
+    assert.deepEqual(calls, [["org"]]);
+    await press("ArrowDown");
+    assert.equal(selected(), "fx-org");
+    await press("o");
+    assert.deepEqual(calls.at(-1), ["org"]);
+  });
+
+  // A frame outside the dashboard can have no page for most
+  // objects and no org record: those rows show no link, and O and the org
+  // button do nothing rather than navigate into a frame the person is not in.
+  it("a frame with no place for an object or the org record leaves those rows inert", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} canOpen={() => false} onOpenOrg={null} />);
+    assert.equal(all("[data-undo-open]").length, 0);
+    assert.equal(q('[data-undo-row="fx-org"] [data-undo-act="org"]'), null);
+    for (const id of ["fx-org", "fx-status", "fx-pin"]) {
+      await act(async () => (q(`[data-undo-row="${id}"]`) as any)?.click?.());
+    }
+    await press("ArrowDown");
+    await press("o");
+    await press("ArrowDown");
+    await press("o");
+    assert.deepEqual(calls.filter((c) => c[0] === "open" || c[0] === "org"), []);
+  });
+
+  it("→ folds a group open, O opens the row's object, Esc closes", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    await press("ArrowUp");
+    assert.equal(selected(), "fx-file");
+    await press("ArrowRight");
+    assert.equal(all('[data-undo-row="fx-file"] [data-undo-child]').length, 3);
+    assert.equal(all('[data-undo-row="fx-file"] [data-undo-child]').filter((e) => /left as it is/.test(e.textContent!)).length, 2);
+    await press(" ");
+    assert.equal(q("[data-undo-fold-rows]"), null);
+    await press("ArrowDown");
+    await press("o");
+    assert.deepEqual(calls.at(-1), ["open", "Undo history timeline"]);
+    await press("Escape");
+    assert.deepEqual(calls.at(-1), ["close"]);
+  });
+
+  it("Esc closes the focused card even when a page behind binds Escape past the input guard", async () => {
+    // The app's real dispatcher: a capture-phase window listener with the real
+    // catalog and ownership rules, a conversation with a selected message and
+    // /changes with a story open, each ready to claim Escape.
+    const dispatcher = new ShortcutDispatcher<import("../../shortcuts/registry").ShortcutAction>();
+    const behind: string[] = [];
+    dispatcher.setContext("conversation", true);
+    dispatcher.setContext("changes", true);
+    dispatcher.register("msg.clearSelection", () => { behind.push("clearSelection"); });
+    dispatcher.register("changes.escape", () => { behind.push("changes.escape"); return true; });
+    const listener = createKeydownHandler(shortcutCatalog, dispatcher, KEY_OWNERSHIP);
+    window.addEventListener("keydown", listener, true);
+    try {
+      await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+      assert.ok(q('[data-undo-timeline="interactive"]')!.contains(document.activeElement), "the card holds focus");
+      await press("Escape");
+      assert.deepEqual(behind, []);
+      assert.deepEqual(calls.at(-1), ["close"]);
+      // Outside the card the page's Escape still works.
+      document.body.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      assert.deepEqual(behind, ["clearSelection"]);
+    } finally {
+      window.removeEventListener("keydown", listener, true);
+    }
+  });
+
+  // The card's Esc lives on the card, so it may only stay open while it holds
+  // focus: a press or a focus anywhere else closes it.
+  it("an interactive card closes on a press or a focus outside it, never inside", async () => {
+    const outside = document.body.appendChild(document.createElement("textarea"));
+    try {
+      await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+      const card = q('[data-undo-timeline="interactive"]')!;
+      await act(async () => {
+        card.querySelector("[data-undo-row]")!.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      });
+      assert.deepEqual(calls, []);
+      await act(async () => {
+        outside.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      });
+      assert.deepEqual(calls, [["close"]]);
+      calls.length = 0;
+      // Tab is the person leaving: the focus it moves out closes the card.
+      await press("Tab");
+      await act(async () => outside.focus());
+      assert.deepEqual(calls, [["close"]]);
+      // A peek never holds focus, and the held modifier closes it.
+      await mount(<UndoTimelineView model={model} mode="peek" {...handlers} />);
+      await act(async () => {
+        outside.dispatchEvent(new dom.window.Event("pointerdown", { bubbles: true }));
+      });
+      assert.deepEqual(calls, []);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  // A step the card takes can move the page (an undo that brings an earlier
+  // session back, whose composer focuses itself on mount). That focus is the
+  // page's, so it returns to the card, and the walk goes on.
+  it("a focus the page moves after the card's own key returns to the card", async () => {
+    const outside = document.body.appendChild(document.createElement("textarea"));
+    try {
+      await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+      const card = q('[data-undo-timeline="interactive"]')!;
+      await press("ArrowUp");
+      await act(async () => outside.focus());
+      assert.deepEqual(calls, []);
+      assert.ok(card.contains(document.activeElement), "the card has focus back");
+      await press("ArrowUp");
+      assert.notEqual(selected(), null);
+      // A chord the card passes on is the person going elsewhere.
+      await press("k", { metaKey: true });
+      await act(async () => outside.focus());
+      assert.deepEqual(calls, [["close"]]);
+    } finally {
+      outside.remove();
+    }
+  });
+
+  // The card's keys act on its selection, so DOM focus stays on the card: a
+  // row's button never keeps it after a press (Chromium focuses a button on a
+  // mouse click), or Enter and Space would act on the row clicked earlier and
+  // a control that unmounts would drop focus to the body.
+  it("the row's own buttons are out of the tab order and never keep focus", async () => {
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+    const buttons = all('[data-undo-timeline="interactive"] button');
+    assert.ok(buttons.length > 0);
+    assert.deepEqual(buttons.filter((b) => b.tabIndex !== -1).map((b) => b.outerHTML.slice(0, 60)), []);
+    const root = q("[cmdk-root]")!;
+    const back = q('[data-undo-row="fx-defer"] [data-undo-act]')!;
+    await act(async () => {
+      const down = new dom.window.MouseEvent("mousedown", { bubbles: true, cancelable: true });
+      back.dispatchEvent(down);
+      assert.ok(down.defaultPrevented, "a press on a row's button does not move focus to it");
+      back.focus();
+      back.click();
+    });
+    assert.deepEqual(calls, [["undoTo", "fx-defer"]]);
+    assert.equal(document.activeElement, root);
+    calls.length = 0;
+    // Enter acts on the row the arrows selected, not on the button clicked.
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }));
+    });
+    const end = selected();
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    assert.ok(!calls.some((c) => c[1] === "fx-defer"), `Enter on ${end} acted on the clicked row: ${JSON.stringify(calls)}`);
+  });
+
+  it("a fold that moves when its row changes leaves the card holding its keys", async () => {
+    const foldRow = model.rows.find((r) => r.fold)!;
+    const inline = { ...model, rows: model.rows.map((r) => (r.id === foldRow.id ? { ...r, detail: "" } : r)) };
+    await mount(<UndoTimelineView model={inline} mode="interactive" {...handlers} />);
+    const fold = q<HTMLButtonElement>(`[data-undo-row="${foldRow.id}"] [data-undo-fold]`)!;
+    await act(async () => fold.focus());
+    const moved = { ...model, rows: model.rows.map((r) => (r.id === foldRow.id ? { ...r, detail: "undone just now" } : r)) };
+    await act(async () => root.render(<UndoTimelineView model={moved} mode="interactive" {...handlers} />));
+    assert.ok(q('[data-undo-timeline="interactive"]')!.contains(document.activeElement), "the card still holds focus");
+    await act(async () => {
+      document.activeElement!.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+    });
+    assert.deepEqual(calls, [["close"]]);
+  });
+
+  // A press on a peek pins it: the same card turns interactive under the
+  // pointer, so the press's click still reaches the row button it was aimed
+  // at, and the card takes focus. A remount would swallow that first click.
+  it("a peek turned interactive keeps its rows, so the pinning press's click lands", async () => {
+    await mount(<UndoTimelineView model={model} mode="peek" {...handlers} />);
+    const back = q('[data-undo-row="fx-defer"] [data-undo-act]')!;
+    await act(async () => root.render(<UndoTimelineView model={model} mode="interactive" {...handlers} />));
+    assert.ok(back.isConnected, "the row's button survived the pin");
+    assert.equal(document.activeElement, q("[cmdk-root]"));
+    await act(async () => back.click());
+    assert.deepEqual(calls, [["undoTo", "fx-defer"]]);
+  });
+
+  it("the host does not remount the card when a peek is pinned", async () => {
+    const { readFileSync } = await import("node:fs");
+    const host = readFileSync(new URL("./UndoTimeline.tsx", import.meta.url), "utf8");
+    assert.doesNotMatch(host, /key=\{state\.mode\}/);
+  });
+
+  it("hands chords to onKey first", async () => {
+    const seen: string[] = [];
+    await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} onKey={(e) => { if (e.key === "z" && e.metaKey) { seen.push("undo"); e.preventDefault(); return true; } return false; }} />);
+    await press("z", { metaKey: true });
+    assert.deepEqual(seen, ["undo"]);
+    assert.deepEqual(calls, []);
+  });
+
+  // The class every earlier round patched one page at a time: a page's key
+  // listener (window or document, capture or bubble, addEventListener or
+  // useEventListener, a React handler on an ancestor) saw the card's keys and
+  // acted underneath it. The card claims its keys ahead of every listener, so
+  // a listener added by any page, now or later, never sees one.
+  it("no page key listener, in any phase, sees a key the focused card handles", async () => {
+    const seen: string[] = [];
+    const note = (where: string) => (e: KeyboardEvent) => seen.push(`${where}:${e.metaKey ? "⌘" : ""}${e.key}`);
+    const page: [EventTarget, boolean, (e: KeyboardEvent) => void][] = [
+      [window, true, note("window-capture")],
+      [document, true, note("document-capture")],
+      [document, false, note("document")],
+      [window, false, note("window")],
+    ];
+    for (const [t, capture, fn] of page) t.addEventListener("keydown", fn as EventListener, capture);
+    const chords: string[] = [];
+    try {
+      await mount(
+        <div onKeyDown={(e) => seen.push(`react-ancestor:${e.key}`)}>
+          <UndoTimelineView model={model} mode="interactive" {...handlers} onKey={(e) => { if (e.key === "z" && e.metaKey) { chords.push("undo"); e.preventDefault(); return true; } return false; }} />
+        </div>,
+      );
+      const keys: [string, KeyboardEventInit?][] = [
+        ["ArrowDown"], ["ArrowUp"], ["Home"], ["End"], ["ArrowRight"], [" "], ["o"], ["O", { shiftKey: true }], ["Enter"], ["z", { metaKey: true }], ["Escape"],
+      ];
+      for (const [key, init] of keys) {
+        await act(async () => {
+          (document.activeElement ?? document.body).dispatchEvent(new dom.window.KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+        });
+      }
+      assert.deepEqual(seen, []);
+      assert.deepEqual(chords, ["undo"]);
+      assert.deepEqual(calls.at(-1), ["close"]);
+      // Arrows still move the selection: the card owns them, nothing else does.
+      calls.length = 0;
+      await mount(<UndoTimelineView model={model} mode="interactive" {...handlers} />);
+      await press("ArrowDown");
+      assert.equal(selected(), "fx-org");
+      await press("ArrowUp");
+      await press("ArrowUp");
+      assert.equal(selected(), "fx-file");
+      // A peek holds no focus and claims nothing: the page keeps its keys.
+      seen.length = 0;
+      await mount(<UndoTimelineView model={model} mode="peek" {...handlers} />);
+      document.body.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+      assert.deepEqual(seen, ["window-capture:Escape", "document-capture:Escape", "document:Escape", "window:Escape"]);
+    } finally {
+      for (const [t, capture, fn] of page) t.removeEventListener("keydown", fn as EventListener, capture);
+    }
+  });
+
+  it("a peek shows the head with a few rows either side and no key legend", async () => {
+    await mount(<UndoTimelineView model={model} mode="peek" {...handlers} />);
+    const rows = all("[data-undo-row]").map((e) => e.getAttribute("data-undo-row"));
+    const at = rows.indexOf("fx-status");
+    assert.ok(at !== -1 && at <= 3);
+    // The head plus four below it.
+    assert.deepEqual(rows.slice(at + 1), ["fx-org", "fx-defer", "fx-conflict", "fx-refused"]);
+    assert.equal(q("[data-undo-legend]"), null);
+    assert.equal(q('[data-undo-timeline="peek"]')!.contains(document.activeElement), false);
+  });
+
+  it("says what collects here when nothing has", async () => {
+    await mount(<UndoTimelineView model={{ rows: [], headIndex: 0, headId: null, windowMs: 300_000 }} mode="interactive" {...handlers} />);
+    assert.equal(q("[data-undo-empty]")!.textContent, "Nothing to take back yet. Changes you make in this window collect here, newest first, each with a way back.");
+    assert.equal(q("[data-undo-row]"), null);
+  });
+});

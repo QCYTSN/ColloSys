@@ -1,0 +1,865 @@
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { toast } from "sonner";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { useCurrentUser } from "../hooks/useCurrentUser";
+import { useInboxStore, isConvexId, resolveComposeProjectPath, bucketProjectPath } from "../store/inboxStore";
+import { NewSessionFoot, NewSessionView } from "./conversation/sessionControls";
+import { MessageInput } from "./MessageInput";
+import type { ConversationData } from "./conversation/types";
+import { KeyCap } from "./KeyboardShortcutsHelp";
+import { formatShortcutParts } from "../shortcuts";
+import { isElectron, bridge } from "../lib/desktop";
+import { resolveSessionSkills } from "../lib/sessionSkills";
+import { broadcastComposeOptimistic } from "../lib/composeBridge";
+import { agentDisplayName, isHostedAgentType } from "@codecast/shared/contracts";
+import { newConversationAgentType } from "../lib/defaultAgent";
+import { composeDraftContent, findKeptComposeDraft, type ComposeContext, type ComposeInstance } from "../store/composeSlice";
+import { flushDraftWrite } from "../lib/pendingDraftWrites";
+import { settleHostedStart } from "../lib/startHostedConversation";
+import { useOnlyHostedAgent } from "../hooks/usePinnedAgents";
+import { ComposeRolePicker, useRoleRecipient } from "./ComposeRolePicker";
+import { Minus, Maximize2, ChevronUp, X } from "lucide-react";
+
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { ReviewComposerContext, type ReviewComposer } from "./reviewContext";
+import { quoteToComposer, submitReview } from "../lib/reviewActions";
+import { MODE_WORDS, useSurface } from "../lib/surfaces";
+import { Button } from "./ui/button";
+// Every keep/confirm/prune decision reads through here, so it flushes the
+// composer's debounced write first: the last keystrokes count.
+const draftContentFor = (id: string | null) => {
+  flushDraftWrite(id);
+  return composeDraftContent(useInboxStore.getState(), id);
+};
+
+/**
+ * The floating new-session popup, shown in the palette window when summoned by
+ * the global "New Session" shortcut. It reuses NewSessionView — the exact same
+ * null-state surface (project picker + agent picker + message input) the in-app
+ * empty conversation shows — so there is one component, not a parallel form.
+ * Sending routes through onSubmitWithIntent:
+ *   - Enter      → fire-and-forget: start the session, hide the popup, never
+ *                  bring Codecast to the front.
+ *   - Cmd+Enter  → send & open: start the session and switch into Codecast on
+ *                  the new conversation.
+ *
+ * Lifecycle (one contract, two hosts): opening seeds a DEFERRED local stub — no
+ * server session yet. The first send COMMITS it (materialize); every other
+ * dismissal ABANDONS it (abandonStub prunes the un-sent stub). The two hosts —
+ * the in-app overlay (onClose set) and the standalone palette window (Electron) —
+ * differ only in how they dismiss, never in this commit/abandon contract.
+ *
+ * In the app, ComposeHost passes the `instance` (store/composeSlice.ts), and
+ * the same mounted view is either the center modal or a docked composer: small,
+ * non-modal, one of several along the bottom edge, collapsible to its title
+ * bar. A docked composer owns the keyboard only while focus is inside it.
+ */
+export function ComposeView({ initialQuery, context, onClose, closeGuardRef, instance }: { initialQuery?: string; context?: ComposeContext; onClose?: () => void; closeGuardRef?: React.MutableRefObject<(() => void) | null>; instance?: ComposeInstance }) {
+  const router = useRouter();
+  const docked = instance?.mode === "dock";
+  const collapsed = docked && !!instance?.collapsed;
+  const instanceRef = useRef(instance);
+  useWatchEffect(() => { instanceRef.current = instance; }, [instance]);
+  const { user: currentUser } = useCurrentUser();
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  // Project + agent captured when the blank session is created, so the popup's
+  // slash menu resolves the SAME skills the in-app input would for this project.
+  const [skillCtx, setSkillCtx] = useState<{ projectPath?: string; agentType?: string }>({});
+  // The last submit's intent. For "send & open" (true) we broadcast the send so
+  // the MAIN window paints the first message optimistically; fire-and-forget
+  // (false) needs no cross-window bubble (the app isn't showing the conversation).
+  const navIntentRef = useRef(false);
+  // The session create is DEFERRED: opening the popup seeds only a local stub
+  // (beginOptimisticSession deferCreate) so the popup can render and hold a draft
+  // with no server conversation yet. materializeRef fires the real create on the
+  // first send; sentRef records that it happened; stubIdRef is the stub itself.
+  const materializeRef = useRef<(() => Promise<string>) | null>(null);
+  const stubIdRef = useRef<string | null>(null);
+  const sentRef = useRef(false);
+  // The hosted assistant's first message: its create carries it, so the
+  // server queues it in the same transaction (createSessionFromStub).
+  const hostedFirstRef = useRef<{ content: string; clientId: string } | null>(null);
+
+  // A ComposeView instance owns ONE deferred stub and ends one of three ways:
+  //   • committed — the first send fires materialize() and sets sentRef.
+  //   • kept — the user chose "Keep draft" (or a dismissal we couldn't intercept
+  //     happened over typed content): the stub stays, flagged _hasDraft, and
+  //     renders as a draft new-session card in the inbox. The desktop palette
+  //     window keeps on every dismissal and reopens onto the kept draft
+  //     (findKeptComposeDraft).
+  //   • abandoned — abandonStub() prunes the un-sent, server-less stub (and plants
+  //     an IDB exclude so it can't resurrect as a ghost "New session").
+  // abandonStub is the SINGLE un-commit path, run from the only two moments the
+  // popup disappears: unmount, and the palette window hiding while staying
+  // mounted. Idempotent — pruneGhostSessions no-ops once the stub has been sent.
+  const abandonStub = useCallback(() => {
+    if (sentRef.current || handedOffRef.current || !stubIdRef.current) return;
+    // Typed content must survive dismissals that never passed through the
+    // confirm dialog (host unmounted us, the palette window hid on blur):
+    // auto-keep the draft instead of destroying it.
+    if (draftContentFor(stubIdRef.current)) {
+      useInboxStore.getState().setSessionHasDraft(stubIdRef.current, true);
+      return;
+    }
+    useInboxStore.getState().pruneGhostSessions([stubIdRef.current]);
+  }, []);
+
+  // The standalone desktop palette window (no onClose host). It closes
+  // without asking: an empty open reopens onto the last kept draft, and the
+  // footer's Clear is how a draft is dropped. The in-app popup asks instead.
+  const standalone = !onClose;
+  const [restored, setRestored] = useState(false);
+  // Who the request goes to (ComposeRolePicker): null starts a fresh session;
+  // a role sends it into that role's standing session instead. On the role
+  // path the stub is never materialized: the gate clears its draft, so the
+  // unmount abandon prunes it like any un-sent blank.
+  const { recipient, setRecipient, recipientRef, wakeRole } = useRoleRecipient();
+  // A role is an org seat, a developer idea: where only the assistant can
+  // answer, the "To a role" chip goes with the agent row (NewSessionView).
+  const onlyHosted = useOnlyHostedAgent();
+
+  // One session per popup instance (PaletteRoot remounts via key): in the
+  // palette window an empty open resumes the last kept draft, else a fresh
+  // blank session.
+  useMountEffect(() => {
+    const store = useInboxStore.getState();
+    const resumeStubId = standalone && !initialQuery && !context ? findKeptComposeDraft(store) : null;
+    const resumed = resumeStubId ? store.sessions[resumeStubId] : undefined;
+    const ctx = store.currentConversation;
+    // Caller context > current conversation (unless a project-filter chip is
+    // active and the conversation lives elsewhere) > filter chip > recent — see
+    // resolveComposeProjectPath for the full rationale.
+    const path = resolveComposeProjectPath({
+      context,
+      conversation: ctx,
+      activeProjectFilter: store.activeProjectFilter,
+      // A label chip nulls activeProjectPath; derive its directory instead.
+      activeProjectPath: store.activeProjectPath ?? bucketProjectPath(store),
+      chipFilterExclude: store.chipFilterExclude,
+      recentProjects: store.recentProjects,
+      machineRoster: store.machineRoster,
+    });
+    // A resumed draft keeps its agent; otherwise the caller's agent, then the
+    // conversation on screen's, carries over, and the default
+    // (lib/defaultAgent: the hosted assistant in hosted mode or with no
+    // machine) fills in.
+    const agentType = resumed?.agent_type || newConversationAgentType(store, context?.agentType ?? ctx.agentType);
+
+    // Shared optimistic-create path — see store.beginOptimisticSession.
+    // deferCreate: opening the popup seeds ONLY a local stub (so the null-state
+    // and message box can render + hold a draft); the server conversation isn't
+    // created until materialize() fires on the first send. Escaping out therefore
+    // strands nothing — no empty "New session" row, no pre-warmed agent, no sound.
+    const { stubId: sid, materialize } = store.beginOptimisticSession({
+      agentType,
+      projectPath: path,
+      gitRoot: path || undefined,
+      deferCreate: true,
+      resumeStubId: resumeStubId ?? undefined,
+      // Source project + agent from the LIVE stub at create time, NOT this
+      // closure's mount-time `path`/`agentType`: the user may have switched
+      // either in the null-state pickers before sending, and that switch (written
+      // to the stub row) must be what we create with.
+      // A hosted stub's first message rides the create (hostedFirstRef, set
+      // by the hosted gate below a tick before materialize fires).
+      create: (stubId) => store.createSessionFromStub(stubId, { agentType, projectPath: path, gitRoot: path || undefined, firstMessage: hostedFirstRef.current ?? undefined }),
+    });
+    materializeRef.current = materialize;
+    stubIdRef.current = sid;
+    if (instance) store.bindComposeStub(instance.id, sid);
+
+    if (initialQuery) store.setDraft(sid, { draft_message: initialQuery });
+    setSessionId(sid);
+    setRestored(sid === resumeStubId);
+    setSkillCtx({ projectPath: (sid === resumeStubId ? resumed?.project_path : path) || undefined, agentType });
+
+    // Unmount (overlay close, or the palette window switching face / navigating
+    // away) abandons the stub when it was never sent.
+    return abandonStub;
+  });
+
+  // Same resolver the in-conversation input uses. available_skills rides on
+  // currentUser, which the palette window now hydrates from IDB (see META_KEYS),
+  // so project skills like mac-remote surface here too — not just built-ins.
+  const skills = useMemo(() => resolveSessionSkills({
+    availableSkills: (currentUser as any)?.available_skills,
+    projectPath: skillCtx.projectPath,
+    agentType: skillCtx.agentType,
+  }), [currentUser, skillCtx.projectPath, skillCtx.agentType]);
+
+  // Robust autofocus for the popup. The message box's own mount-focus can lose
+  // the race against the window becoming the OS "key window" when the popup is
+  // summoned over another app (e.g. Chrome) — focus then lands on nothing and
+  // keystrokes go nowhere. Re-grab it the instant the window actually gains
+  // focus, plus a short delayed retry; mirrors how the search palette re-focuses
+  // its input on show. Skips when the user already focused something inside the
+  // popup (e.g. the project picker), so it never fights a deliberate focus.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const focusedOnceRef = useRef(false);
+  useMountEffect(() => {
+    const focusInput = () => {
+      const root = rootRef.current;
+      // A docked composer never pulls focus back: the app behind it is live.
+      if (instanceRef.current?.mode === "dock" && focusedOnceRef.current) return;
+      focusedOnceRef.current = true;
+      if (!root || root.contains(document.activeElement)) return;
+      const ta = root.querySelector<HTMLTextAreaElement>("textarea");
+      if (!ta) return;
+      ta.focus();
+      // Caret at the end: a seeded draft (doc-review feedback, selected-task
+      // refs) expects typing to append, but focus() alone leaves the caret at 0.
+      ta.setSelectionRange(ta.value.length, ta.value.length);
+    };
+    const t = setTimeout(focusInput, 60);
+    window.addEventListener("focus", focusInput);
+    return () => {
+      clearTimeout(t);
+      window.removeEventListener("focus", focusInput);
+    };
+  });
+
+  // Dropped-image support, mirroring ConversationView's <main> drop zone. The
+  // old "New Session" surface was a full-page blank conversation which had that
+  // zone; without this the browser's default drop handling navigates to the
+  // image file — nuking the popup and the draft. onDropFiles hands the files to
+  // MessageInput's uploadImage, same as the in-conversation path.
+  const dropFilesRef = useRef<((files: File[]) => void) | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragCounterRef = useRef(0);
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current++;
+    if (e.dataTransfer.types.includes("Files")) setIsDragging(true);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragCounterRef.current = 0;
+    setIsDragging(false);
+    const files = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith("image/"));
+    if (files.length > 0 && dropFilesRef.current) {
+      dropFilesRef.current(files);
+    } else if (files.length === 0 && e.dataTransfer.files.length > 0) {
+      toast.error("Only image files are supported");
+    }
+  }, []);
+
+  // --- guarded dismissal ----------------------------------------------------
+  // Raw dismissal. In-app overlay: the host owns it. Standalone palette window:
+  // hide the window (Electron) or step back in history (browser).
+  const dismiss = useCallback(() => {
+    if (onClose) { onClose(); return; }
+    const hide = bridge("paletteHide");
+    if (hide) hide();
+    else router.back();
+  }, [onClose, router]);
+
+  // Draft guard: an explicit dismissal (Escape, backdrop click) over typed
+  // content routes through a confirm dialog instead of silently dropping it.
+  const [confirmClose, setConfirmClose] = useState(false);
+  const confirmCloseRef = useRef(false);
+  useWatchEffect(() => { confirmCloseRef.current = confirmClose; }, [confirmClose]);
+  // MessageInput reports when Escape belongs to UI inside it (lightbox, image /
+  // queued-message selection, slash menu) — see escapeOwnedRef prop.
+  const escapeOwnedRef = useRef(false);
+
+  const refocusComposer = useCallback(() => {
+    rootRef.current?.querySelector<HTMLTextAreaElement>("textarea")?.focus();
+  }, []);
+
+
+  // The agent the stub holds now (the agent row may switch it before the
+  // first send). A hosted agent's send goes through the gate below rather
+  // than MessageInput's create-then-send.
+  const liveAgentType = useInboxStore((s) => (sessionId ? (s.sessions[s.resolveLiveSessionId(sessionId)]?.agent_type as string | undefined) : undefined)) ?? skillCtx.agentType;
+  const hosted = isHostedAgentType(liveAgentType);
+  const canDock = useSurface("actions.fleet");
+  const hostedRef = useRef(hosted);
+  hostedRef.current = hosted;
+
+  // The hosted path of a send. MessageInput's gate hands over the text once it
+  // has emptied the composer; the optimistic bubble goes on the stub and its
+  // client id rides the create, which handleSubmit's materialize fires next.
+  // A send carrying an image never reaches it: MessageInput, told the agent
+  // is hosted, refuses it and keeps the composer whole.
+  const startHosted = useCallback((text: string) => {
+    const sid = stubIdRef.current;
+    if (!sid) return;
+    const clientId = useInboxStore.getState().addOptimisticMessage(sid, text);
+    hostedFirstRef.current = { content: text, clientId };
+  }, []);
+
+  // The composer bridge NewSessionView reads (ConversationView builds the same
+  // one): the hosted intro's starters fill the message box through it.
+  const populateInputRef = useRef<((text: string, opts?: { append?: boolean }) => void) | null>(null);
+  const composerBridge = useMemo((): ReviewComposer => {
+    const populate = (t: string, o?: { append?: boolean }) => populateInputRef.current?.(t, o);
+    return {
+      quote: (text: string) => quoteToComposer(text, populate),
+      populate,
+      submit: () => submitReview(sessionId ?? "", populate),
+      conversationId: sessionId ?? undefined,
+    };
+  }, [sessionId]);
+
+  // Expanding a dock, restoring a collapsed one, or minimizing the modal all
+  // leave the composer as the thing being used: put the caret back in it.
+  useWatchEffect(() => { if (!collapsed) refocusComposer(); }, [docked, collapsed, refocusComposer]);
+
+  const requestClose = useCallback(() => {
+    if (!standalone && !sentRef.current && draftContentFor(stubIdRef.current)) {
+      // The confirm paints inside the body a collapsed dock hides.
+      const inst = instanceRef.current;
+      if (inst?.collapsed) useInboxStore.getState().setComposeCollapsed(inst.id, false);
+      setConfirmClose(true);
+      return;
+    }
+    dismiss();
+  }, [dismiss, standalone]);
+
+  // Keep: the stub graduates from pre-warm infrastructure to deliberate state —
+  // a draft new-session card in the inbox. sentRef blocks every abandon path.
+  const keepDraftAndClose = useCallback(() => {
+    const id = stubIdRef.current;
+    if (id) {
+      sentRef.current = true;
+      useInboxStore.getState().setSessionHasDraft(id, true);
+      toast.success("Draft saved to your inbox");
+    }
+    setConfirmClose(false);
+    dismiss();
+  }, [dismiss]);
+
+  // Discard: clear the draft FIRST so the unmount abandon sees no content and
+  // prunes the stub as usual.
+  const discardDraftAndClose = useCallback(() => {
+    const id = stubIdRef.current;
+    if (id) useInboxStore.getState().clearDraft(id);
+    setConfirmClose(false);
+    dismiss();
+  }, [dismiss]);
+
+  const clearInputRef = useRef<(() => void) | null>(null);
+  const clearDraft = useCallback(() => {
+    clearInputRef.current?.();
+    setRestored(false);
+  }, []);
+
+  // Hand the guarded close to the host so its backdrop click gets the same
+  // draft confirm as Escape (the backdrop lives outside this component).
+  useWatchEffect(() => {
+    if (!closeGuardRef) return;
+    closeGuardRef.current = requestClose;
+    return () => { closeGuardRef.current = null; };
+  }, [closeGuardRef, requestClose]);
+
+  // Escape DISMISSES the popup (via the draft guard) — abandoning the un-sent
+  // stub is NOT done here; it falls out of the dismissal (the overlay unmounts →
+  // cleanup abandons; the palette window hides → the visibilitychange effect
+  // below abandons). Listen in the CAPTURE phase because MessageInput
+  // preventDefaults + stops Escape (its 250ms double-tap-to-clear gesture), so a
+  // bubble-phase listener never sees it. Capture also means we fire BEFORE the
+  // inner UI's own Escape handling — so stand down whenever an inner layer owns
+  // the key: the confirm dialog, the image lightbox/selection, the slash menu,
+  // or a focused picker input (folder/label) that unwinds itself on Escape.
+  useMountEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      // Docked: Escape is ours only while focus is inside, and it minimizes to
+      // the title bar and hands the keyboard back to the app. Closing a dock is
+      // its X button (through the same draft guard).
+      const inst = instanceRef.current;
+      if (inst?.mode === "dock") {
+        if (!rootRef.current?.contains(document.activeElement)) return;
+        if (!confirmCloseRef.current && !escapeOwnedRef.current && (document.activeElement as HTMLElement | null)?.tagName !== "INPUT") {
+          e.preventDefault();
+          e.stopPropagation();
+          useInboxStore.getState().setComposeCollapsed(inst.id, true);
+          (document.activeElement as HTMLElement | null)?.blur();
+          return;
+        }
+      }
+      if (confirmCloseRef.current) {
+        e.preventDefault();
+        e.stopPropagation();
+        setConfirmClose(false);
+        refocusComposer();
+        return;
+      }
+      if (escapeOwnedRef.current) return;
+      const ae = document.activeElement as HTMLElement | null;
+      if (ae && ae.tagName === "INPUT" && rootRef.current?.contains(ae)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      requestClose();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  });
+
+  // The standalone palette WINDOW hides (Escape → paletteHide, or click-away →
+  // main's win.on("blur") → hidePalette) WITHOUT unmounting, so the unmount
+  // cleanup never runs. Abandon the un-sent stub the moment the window hides.
+  // Keyed off the Page Visibility API (Electron maps win.hide() → document
+  // hidden), not window blur: the reveal's app.focus({steal}) + window.focus() can
+  // churn focus but never HIDES the window, so this can't abandon a fresh stub
+  // mid-reveal. Electron + standalone only (no onClose): the overlay's host owns
+  // dismissal, and a browser tab switch hides the tab without dismissing the popup.
+  useMountEffect(() => {
+    if (!isElectron() || onClose) return;
+    const onHidden = () => { if (document.hidden) abandonStub(); };
+    document.addEventListener("visibilitychange", onHidden);
+    return () => document.removeEventListener("visibilitychange", onHidden);
+  });
+
+  // Dismiss the popup the instant the user submits — NEVER gate the hide on the
+  // session create or the first-message send (both finish durably in the
+  // background via the store's outbox). Resolving the real conversation id (the
+  // create may still be in flight) only matters for navigation, so it runs after
+  // the popup is already gone.
+  const handleSubmit = useCallback((navigate: boolean) => {
+    if (!sessionId) return;
+    const r = recipientRef.current;
+    if (r) {
+      // Sent to a role (wakeRole already queued it). The blank stub stays
+      // un-sent and is pruned on unmount. "Send & open" lands on the role's
+      // page, where its standing session answers with the session it started;
+      // plain Enter leaves the person where they were and names the role.
+      const href = `/org/${r.role.short_id}`;
+      const said = `Sent to ${r.name} · ${r.title}`;
+      if (onClose) {
+        onClose();
+        if (navigate) router.push(href);
+        else toast.success(said, { action: { label: "Open", onClick: () => router.push(href) } });
+        return;
+      }
+      if (isElectron()) {
+        const submit = bridge("composeSubmit");
+        if (!navigate) {
+          if (submit) submit({ navigate: false });
+          else bridge("paletteHide")?.();
+          return;
+        }
+        bridge("paletteHide")?.();
+        bridge("paletteNavigate")?.(href);
+        return;
+      }
+      if (navigate) router.push(href);
+      else toast.success(said);
+      return;
+    }
+    // First send → mark sent (so close-cleanup never prunes this row) and fire the
+    // deferred server create. This runs a tick before MessageInput's own send
+    // awaits awaitConvexId(sessionId), so the in-flight create is already tracked
+    // when the send resolves the stub→real id. Idempotent (once-guarded in store).
+    sentRef.current = true;
+    const ready = materializeRef.current?.();
+    // A hosted create carries the first message, so a refused one marks it.
+    const first = hostedFirstRef.current;
+    if (first && ready) settleHostedStart(ready, sessionId, first.clientId, (m) => toast.error(m));
+    navIntentRef.current = navigate;
+    const store = useInboxStore.getState();
+    const resolveConvexId = async () => {
+      if (isConvexId(sessionId)) return sessionId;
+      return store.getConvexId(sessionId) ?? (await store.awaitConvexId(sessionId).catch(() => undefined));
+    };
+    // A hosted first message rides the create, so MessageInput's onDidSend
+    // never fires for it: hand the main window the same bubble here, under
+    // the same gate, once the real id exists.
+    if (first && navigate) {
+      void resolveConvexId().then((id) => {
+        if (id) broadcastComposeOptimistic({ conversationId: id, content: first.content, clientId: first.clientId });
+      });
+    }
+    // In-app overlay: dismiss now (the session create + first send finish durably
+    // in the background). "Send & open" then routes onto the new conversation once
+    // its real id resolves; plain Enter leaves the user where they were.
+    if (onClose) {
+      onClose();
+      // In the app, a hosted ask opens its conversation on plain Enter: the
+      // person is waiting for the answer, not filing work for later. Cmd+Enter
+      // keeps them where they were.
+      const open = hostedRef.current ? !navigate : navigate;
+      if (open) void resolveConvexId().then((convexId) => { if (convexId) router.push(`/conversation/${convexId}`); });
+      return;
+    }
+    if (isElectron()) {
+      const submit = bridge("composeSubmit");
+      // Enter → fire-and-forget: hide the popup + step out of the app now.
+      if (!navigate) {
+        // composeSubmit (hide popup + app.hide) only exists in builds that
+        // shipped the compose bridge. On older desktop builds it's absent, so
+        // fall back to paletteHide — otherwise the popup would just linger.
+        if (submit) submit({ navigate: false });
+        else bridge("paletteHide")?.();
+        return;
+      }
+      // Cmd+Enter → send & open: hide the popup now, then switch Codecast onto
+      // the new conversation once its real id resolves.
+      bridge("paletteHide")?.();
+      void resolveConvexId().then((convexId) => {
+        if (submit) submit({ conversationId: convexId, navigate: true });
+        else if (convexId) bridge("paletteNavigate")?.(`/conversation/${convexId}`);
+      });
+      return;
+    }
+    void resolveConvexId().then((convexId) => {
+      if (convexId) router.push(`/conversation/${convexId}`);
+    });
+  }, [sessionId, router, onClose]);
+
+  // Both frames clip their overflow, and the composer inside cannot shrink,
+  // so the composer's field caps itself at --composer-max-h (MessageInput)
+  // and scrolls past it. The modal is a fixed box and sets the cap in its
+  // classes as a share of its height. The dock instead grows with the draft
+  // up to --frame-h, and CSS cannot say "the frame's max minus everything
+  // else in it" across the composer's own boxes, so the dock measures:
+  // everything in the frame but the field is chrome, and the field gets what
+  // the max leaves. The field mounts one render after the frame (sessionId),
+  // so the measure re-runs then; every row the frame stacks is observed too,
+  // because a picker row that wraps or a row of pasted images moves the cap
+  // without moving the frame once the frame sits at its max.
+  useLayoutEffect(() => {
+    if (!docked || collapsed) return;
+    const root = rootRef.current;
+    if (!root) return;
+    const measure = () => {
+      for (const el of root.querySelectorAll<HTMLElement>(":scope > *, :scope > .contents > *")) ro.observe(el);
+      const field = root.querySelector<HTMLElement>("[data-composer-field]");
+      if (!field) return;
+      ro.observe(field);
+      const max = parseFloat(getComputedStyle(root).maxHeight) - (root.offsetHeight - root.clientHeight);
+      if (!Number.isFinite(max)) return;
+      root.style.setProperty("--composer-max-h", `${Math.max(48, max - (root.scrollHeight - field.offsetHeight))}px`);
+    };
+    const ro = new ResizeObserver(measure);
+    ro.observe(root);
+    measure();
+    return () => {
+      ro.disconnect();
+      root.style.removeProperty("--composer-max-h");
+    };
+  }, [docked, collapsed, sessionId]);
+
+  const conversation = sessionId
+    ? ({ _id: sessionId, status: "active" } as unknown as ConversationData)
+    : null;
+  // The centred popup lays out like the new-session page: the question and
+  // project chips above the composer, the launch pickers in its foot, the
+  // strip and this project's sessions below. The dock and the assistant's
+  // sheet keep their compact form, and a role pick hands the work over.
+  const pageLayout = !docked && !hosted && !recipient;
+  const [footSlot, setFootSlot] = useState<HTMLElement | null>(null);
+  const [belowSlot, setBelowSlot] = useState<HTMLElement | null>(null);
+  // Open as the page: the same blank (and its draft) moves to the main view,
+  // so closing the popup must not abandon it.
+  const handedOffRef = useRef(false);
+  const openAsPage = useCallback(() => {
+    const id = stubIdRef.current;
+    if (!id || !onClose) return;
+    handedOffRef.current = true;
+    // The last keystrokes land in the draft before the page's composer reads it.
+    flushDraftWrite(id);
+    useInboxStore.getState().navigateToSession(id);
+    onClose();
+  }, [onClose]);
+
+  return (
+    <div
+      ref={rootRef}
+      // aria-modal is what makes the global shortcut dispatcher stand down
+      // (hasOpenModal) — without it, any keystroke after focus slips out of the
+      // composer acts on the app BEHIND this dialog.
+      // A docked composer is not modal: the app behind it keeps its shortcuts.
+      role="dialog"
+      aria-modal={docked ? undefined : "true"}
+      aria-label="New session"
+      data-cc-compose-sheet={hosted && !docked ? "" : undefined}
+      // Clicking dead space inside the dialog must not blur the composer (a
+      // blurred dialog leaks keyboard focus to the app). preventDefault on
+      // mousedown keeps focus where it is; interactive targets keep native
+      // focus behavior.
+      onMouseDownCapture={(e) => {
+        const t = e.target as HTMLElement;
+        if (t.closest("button, a, input, textarea, select, [contenteditable=true], [role=option]")) return;
+        e.preventDefault();
+        // The same click on a dock the user had left brings the caret back.
+        if (docked && !collapsed && !rootRef.current?.contains(document.activeElement)) refocusComposer();
+      }}
+      // The page layout's composer is its own card, so over ComposeHost's
+      // backdrop the popup draws no frame: the heading, chips and composer sit
+      // on the backdrop. The desktop palette window has no backdrop (it is
+      // transparent over other apps), so there the popup keeps its frame.
+      className={`relative ${pageLayout && instance ? "" : "border border-sol-border/80 bg-sol-bg shadow-2xl shadow-black/40"} overflow-hidden flex flex-col animate-in fade-in-0 duration-150 ${
+        // The assistant needs no project, agent or model pickers, so its
+        // sheet is sized to one ask rather than to the developer's form.
+        // The assistant's sheet is sized to its content (mark, heading,
+        // starters, composer) up to the frame, so no empty paper sits above.
+        !docked ? `w-[94vw] ${hosted ? "max-w-[640px] [--frame-h:min(80vh,460px)] max-h-[var(--frame-h)]" : `max-w-[960px] [--frame-h:min(88vh,680px)] ${pageLayout ? "max-h-[var(--frame-h)]" : "h-[var(--frame-h)]"}`} [--composer-max-h:calc(var(--frame-h)*0.45)] rounded-xl zoom-in-95 slide-in-from-top-2`
+          : collapsed ? "w-[280px] max-w-full rounded-t-lg border-b-0 slide-in-from-bottom-4"
+          : "w-[460px] max-w-full [--frame-h:calc(100vh-5rem)] max-h-[var(--frame-h)] rounded-t-xl border-b-0 slide-in-from-bottom-4"
+      }`}
+      onDragEnter={handleDragEnter} onDragOver={handleDragOver} onDragLeave={handleDragLeave} onDrop={handleDrop}>
+      {isDragging && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-sol-bg/80 backdrop-blur-sm" style={{ animation: "fadeIn 150ms ease-out" }}>
+          <div className="border-2 border-dashed border-sol-cyan rounded-xl p-12 text-center">
+            <svg className="w-10 h-10 mx-auto mb-3 text-sol-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+            <p className="text-sol-cyan text-sm font-medium">Drop images to attach</p>
+          </div>
+        </div>
+      )}
+      {instance && <ComposeChrome instance={instance} stubId={sessionId} recipientName={recipient?.name} onRequestClose={requestClose} canDock={canDock} onOpenPage={pageLayout && onClose ? openAsPage : undefined} />}
+      {/* Collapsed keeps everything mounted (draft, pickers, uploads) and only
+          stops painting it. */}
+      <div className={collapsed ? "hidden" : "contents"}>
+      <div className={`flex flex-col px-4 ${docked ? "shrink-0 pt-3" : hosted ? "min-h-0 pt-7" : pageLayout ? "min-h-0 justify-end pt-12 pb-5" : "flex-1 min-h-0 pt-6"}`}>
+        {conversation && !onlyHosted && (
+          <ComposeRolePicker picked={recipient} onPick={setRecipient} onDone={refocusComposer} className={`shrink-0 ${docked ? "mb-2" : "mb-3 pr-16"}`} />
+        )}
+        {conversation && !recipient && (
+          <ReviewComposerContext.Provider value={composerBridge}>
+            <NewSessionView conversation={conversation} slots={pageLayout ? { foot: footSlot, below: belowSlot } : undefined} />
+          </ReviewComposerContext.Provider>
+        )}
+        {conversation && recipient && (
+          <div className={`flex-1 min-h-0 flex items-center justify-center text-center text-sol-text-dim ${docked ? "text-[11px] pb-2" : "text-xs px-8"}`}>
+            <p className="max-w-md">
+              <span className="text-sol-text">{recipient.name}</span> takes it from here: the standing session picks the project and the agent, starts the work, and says which session it started.
+            </p>
+          </div>
+        )}
+      </div>
+      {conversation && (
+        <MessageInput
+          conversationId={conversation._id}
+          status="active"
+          embedded
+          autoFocusInput
+          hero={pageLayout}
+          composerFoot={pageLayout ? <NewSessionFoot slotRef={setFootSlot} dropRef={dropFilesRef} /> : undefined}
+          skills={skills}
+          agentType={recipient ? undefined : liveAgentType}
+          onDropFiles={dropFilesRef}
+          onPopulateInput={populateInputRef}
+          onGateSend={recipient ? async (text, images) => { await wakeRole(text, images); } : hosted ? startHosted : undefined}
+          composerPlaceholder={recipient ? `Ask ${recipient.name} for anything…` : hosted ? MODE_WORDS.hosted.composerPlaceholder : undefined}
+          onSubmitWithIntent={handleSubmit}
+          onDidSend={(info) => { if (navIntentRef.current) broadcastComposeOptimistic(info); }}
+          escapeOwnedRef={escapeOwnedRef}
+          clearInputRef={clearInputRef}
+          escapeCloses
+        />
+      )}
+      {conversation && pageLayout && <div ref={setBelowSlot} className="shrink-0 pb-6" />}
+      {confirmClose && (
+        <DiscardDraftConfirm
+          stubId={stubIdRef.current}
+          onKeep={keepDraftAndClose}
+          onDiscard={discardDraftAndClose}
+          onCancel={() => { setConfirmClose(false); refocusComposer(); }}
+        />
+      )}
+      {/* No key legend: Enter sends, Esc closes, as anyone expects. The
+          palette window keeps one control, dropping its kept draft. */}
+      {standalone && <ClearDraftButton stubId={sessionId} restored={restored} onClear={clearDraft} />}
+      </div>
+    </div>
+  );
+}
+
+const chromeButton = "p-1 rounded text-sol-text-dim/70 hover:text-sol-text hover:bg-sol-text-dim/15 transition-colors";
+
+// The window controls. On the modal: one floating minimize button. On a dock: a
+// title bar naming the target project and, once collapsed, the draft it holds;
+// clicking the bar collapses or restores it. Subscribes to the two strings it
+// shows, so typing re-renders this bar and not the composer around it.
+function ComposeChrome({ instance, stubId, recipientName, onRequestClose, canDock = true, onOpenPage }: { instance: ComposeInstance; stubId: string | null; recipientName?: string; onRequestClose: () => void; /** The docked composer is fleet machinery (actions.fleet); without it the modal offers a plain close. */ canDock?: boolean; /** The modal's move into the full new-session page. */ onOpenPage?: () => void }) {
+  const projectName = useInboxStore((s) => {
+    const row = stubId ? s.sessions[stubId] : undefined;
+    return (row?.project_path || row?.git_root)?.split("/").filter(Boolean).pop();
+  });
+  const snippet = useInboxStore((s) => (instance.collapsed ? composeDraftContent(s, stubId)?.text.slice(0, 80) : undefined));
+  const { dockCompose, expandCompose, setComposeCollapsed } = useInboxStore.getState();
+
+  if (instance.mode === "modal") {
+    return (
+      <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
+        {onOpenPage && (
+          <button onClick={onOpenPage} className={chromeButton} aria-label="Open as a page" title="Open as a page">
+            <Maximize2 className="w-3 h-3" />
+          </button>
+        )}
+        {canDock ? (
+          <button onClick={() => dockCompose(instance.id)} className={chromeButton} aria-label="Minimize to a docked composer" title="Minimize">
+            <Minus className="w-3.5 h-3.5" />
+          </button>
+        ) : (
+          <button onClick={onRequestClose} className={`flex items-center gap-1.5 ${chromeButton}`} aria-label="Close" title="Close (Esc)">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div
+      className="flex items-center gap-2 pl-3 pr-1.5 py-1.5 shrink-0 select-none cursor-pointer bg-sol-bg-alt/70 border-b border-sol-border/60"
+      onClick={() => setComposeCollapsed(instance.id, !instance.collapsed)}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-sol-cyan shrink-0" />
+      <span className="flex-1 min-w-0 truncate text-xs text-sol-text-muted">
+        <span className="font-medium text-sol-text">{recipientName ? `To ${recipientName}` : projectName || "New session"}</span>
+        {snippet && <span className="text-sol-text-dim"> · {snippet}</span>}
+      </span>
+      <div className="flex items-center gap-0.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+        <button onClick={() => setComposeCollapsed(instance.id, !instance.collapsed)} className={chromeButton} aria-label={instance.collapsed ? "Restore" : "Minimize"}>
+          {instance.collapsed ? <ChevronUp className="w-3.5 h-3.5" /> : <Minus className="w-3.5 h-3.5" />}
+        </button>
+        <button onClick={() => expandCompose(instance.id)} className={chromeButton} aria-label="Expand to the center">
+          <Maximize2 className="w-3 h-3" />
+        </button>
+        <button onClick={onRequestClose} className={`${chromeButton} hover:!text-sol-red hover:!bg-sol-red/10`} aria-label="Close">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The "keep or discard this draft?" confirm shown when a dismissal would drop
+// typed content. Renders the draft itself as context — text snippet, pasted
+// image thumbnails, target project + agent — so the decision is informed, not
+// blind. Each button wears its own key: Enter (autofocused button) keeps, D
+// discards; Escape and the backdrop cancel back into the draft.
+function DiscardDraftConfirm({ stubId, onKeep, onDiscard, onCancel }: {
+  stubId: string | null;
+  onKeep: () => void;
+  onDiscard: () => void;
+  onCancel: () => void;
+}) {
+  // Snapshot once on open — the composer is inert behind this dialog, so the
+  // draft can't change while it shows.
+  const { text, images, projectName, agentLabel } = useMemo(() => {
+    const store = useInboxStore.getState();
+    const content = draftContentFor(stubId);
+    const row = stubId ? store.sessions[stubId] : undefined;
+    return {
+      text: content?.text ?? "",
+      images: content?.images ?? [],
+      projectName: (row?.project_path || row?.git_root)?.split("/").filter(Boolean).pop(),
+      agentLabel: row?.agent_type ? agentDisplayName(row.agent_type) : undefined,
+    };
+  }, [stubId]);
+
+  // Capture phase, like the composer's Escape listener: MessageInput swallows
+  // keys in the bubble phase, and the dialog owns the keyboard while it shows.
+  useWatchEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (e.key !== "d" && e.key !== "D") return;
+      e.preventDefault();
+      e.stopPropagation();
+      onDiscard();
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [onDiscard]);
+
+  return (
+    <div
+      className="absolute inset-0 z-[60] flex items-center justify-center bg-black/40 backdrop-blur-[2px]"
+      onMouseDown={(e) => { if (e.target === e.currentTarget) { e.preventDefault(); onCancel(); } }}
+    >
+      <div role="alertdialog" aria-modal="true" className="w-[26rem] max-w-[85%] rounded-xl border border-sol-border bg-sol-bg shadow-2xl p-4 animate-in fade-in-0 zoom-in-95 duration-150">
+        <div className="text-sm font-medium text-sol-text mb-1">Keep this draft?</div>
+        <div className="text-xs text-sol-text-dim mb-3">A kept draft stays in your inbox as a new session, ready to send later.</div>
+        <div className="rounded-lg border border-sol-border/60 bg-sol-bg-alt/50 p-2.5 mb-3">
+          {(projectName || agentLabel) && (
+            <div className="text-[10px] text-sol-text-dim mb-1.5">
+              {[projectName, agentLabel].filter(Boolean).join(" · ")}
+            </div>
+          )}
+          {text && <div className="text-xs text-sol-text whitespace-pre-wrap break-words line-clamp-4">{text}</div>}
+          {images.length > 0 && (
+            <div className="flex items-center gap-1.5 mt-2">
+              {images.slice(0, 5).map((img, i) => (
+                img.previewUrl
+                  ? <img key={i} src={img.previewUrl} alt="" className="h-10 w-10 rounded object-cover border border-sol-border/60" />
+                  : <span key={i} className="h-10 w-10 rounded border border-sol-border/60 bg-sol-bg-alt" />
+              ))}
+              {images.length > 5 && <span className="text-[10px] text-sol-text-dim">+{images.length - 5}</span>}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2">
+          <button
+            onClick={onDiscard}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md border border-sol-red/40 text-sol-red hover:bg-sol-red/10 transition-colors"
+          >
+            <KeyCap size="xs">d</KeyCap>
+            Discard
+          </button>
+          <Button autoFocus variant="cyan" size="sm" onClick={onKeep}>
+            <FooterKeys combo="enter" />
+            Keep draft
+          </Button>
+        </div>
+        <div className="mt-2.5 flex items-center justify-end gap-3 text-[10px] text-sol-text-dim">
+          <span className="flex items-center gap-1.5"><FooterKeys combo="escape" /> back to draft</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// The palette window's way to drop a draft, shown once the composer holds one
+// (or reopened onto a kept one): empties the text and images and deletes the
+// draft. Subscribes to one boolean, so typing re-renders this button and not
+// the composer.
+function ClearDraftButton({ stubId, restored, onClear }: { stubId: string | null; restored: boolean; onClear: () => void }) {
+  const hasDraft = useInboxStore((s) => !!composeDraftContent(s, stubId));
+  if (!hasDraft) return null;
+  return (
+    <div className="px-3 py-1.5 border-t border-sol-border/60 flex items-center justify-end gap-1.5 text-[10px] text-sol-text-dim bg-sol-bg-alt/40 shrink-0">
+      {restored && <span className="text-sol-yellow">draft restored</span>}
+      <button
+        type="button"
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onClear}
+        className="px-1.5 py-0.5 rounded text-sol-text-dim hover:text-sol-red hover:bg-sol-red/10 transition-colors"
+      >
+        clear
+      </button>
+    </div>
+  );
+}
+
+// Render a key combo using the SAME boxed keycaps as the global keyboard
+// shortcuts panel (KeyCap + formatShortcutParts), never ad-hoc font glyphs, so
+// the footer hints match the rest of the app and pick up the keycap font.
+function FooterKeys({ combo }: { combo: string }) {
+  const parts = formatShortcutParts({ key: combo, action: "" as never, description: "" });
+  return (
+    <span className="inline-flex items-center gap-[3px]">
+      {parts.map((part, i) => (
+        <KeyCap key={i} size="xs">{part}</KeyCap>
+      ))}
+    </span>
+  );
+}

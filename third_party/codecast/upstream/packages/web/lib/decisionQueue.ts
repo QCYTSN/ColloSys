@@ -1,0 +1,483 @@
+// The decision queue's model: what counts as a question, and what order the
+// human answers them in.
+//
+// Two sources feed ONE queue:
+//   1. `cast decide` rows (session_decisions) — an agent wrote a real payload:
+//      question, options, context, sometimes a published HTML report.
+//   2. Claude Code's own AskUserQuestion / permission prompts — no authored
+//      payload, so the card renders what we have (the last assistant message
+//      and the session's pinned thread state) instead.
+//
+// RANKING — the failure mode that kills this feature is mis-ordering, because
+// the queue's order silently becomes the founder's priorities. The rule:
+//
+//   Tier 1  BLOCKED, and the session is still reachable — parked on you and
+//           able to receive the answer. Nothing else is being produced by that
+//           session until you answer, so your answer buys back idle machine
+//           time immediately. Worth the most.
+//   Tier 2  BLOCKED, but the session is unresponsive or stopped. Still real
+//           work, but answering does not restart anything by itself — someone
+//           has to revive the session first.
+//   Tier 3  ADVISORY (`cast decide --advisory`). The agent declared a default
+//           and kept working. Your answer can still redirect it, so it is
+//           worth reading, but it is never urgent.
+//
+// WITHIN a tier: OLDEST FIRST. Deliberately not newest-first, and not any
+// cleverness about "importance". Two reasons. First, an agent parked on a
+// question is idle, so the cost of a pending decision grows with its age —
+// oldest-first minimizes total fleet idle time, and it is the same argument
+// that makes FIFO right for a work queue. Second, a queue that reorders
+// itself while you are in it is unusable: newest-first means a decision you
+// are about to answer gets pushed down by an unrelated agent, and no
+// prioritization heuristic survives the founder disagreeing with it once.
+// Age is the one signal that is monotone, legible, and never surprises you.
+//
+// What is deliberately NOT in the ranking: any per-session or per-project
+// weighting, any model-guessed urgency score, and any "this looks important"
+// text heuristic. Those all fail the same way — the moment the ranking is
+// wrong once, the founder stops trusting the order, and an untrusted queue is
+// worse than a list, because a list at least admits it is unsorted.
+import { BLOCKED_BANNER_KINDS, isHostedAgentType, isStackedAsk } from "@codecast/shared/contracts";
+import { APPROVAL_ANSWERS } from "@codecast/shared/contracts/assistant";
+import { nestParentIdOf } from "@codecast/convex/convex/ccAccountsShared";
+import type { DecisionKind, DecisionOption, InboxSession, SessionDecisionItem } from "../store/inboxStore";
+import { agentStatusAt } from "./liveness";
+
+export type QueueItemSource = "decide" | "ask" | "permission";
+
+export type QueueItem = {
+  key: string;
+  source: QueueItemSource;
+  conversationId: string;
+  session?: InboxSession;
+  question: string;
+  // Authored payload (source "decide") — otherwise recovered context.
+  contextMd?: string;
+  // The full option (the-line.md L10): body, cost, risk, evidence and a page
+  // slug ride into the transcript card, which renders the right controls or
+  // links to the document page.
+  options: DecisionOption[];
+  reportSlug?: string;
+  // The kind decides the controls: single answers on a digit; multi, rank
+  // and form go through DecisionAnswerControls.
+  kind?: DecisionKind;
+  form?: SessionDecisionItem["form"];
+  category?: string;
+  shortId?: string;
+  // A decision document exists (a doc body) or an option carries a page:
+  // the card links to the document page for those.
+  docId?: string;
+  blocking: boolean;
+  defaultOption?: number;
+  createdAt: number;
+  // conversation.message_count at ask time (source "decide") — with the live
+  // session row's count, "messages since the ask".
+  askedMessageCount?: number;
+  decisionId?: string;
+  // A role holds this row under a grant (docs/architecture/decisions-as-
+  // documents.md D2): the lead's to clear, so the badge and "waiting on you"
+  // leave it out while the queue still lists it under "With a lead".
+  heldByRole?: boolean;
+  // Asked by a trial run: answering records what the person would do and ships nothing.
+  trial?: boolean;
+  // AskUserQuestion answers ride poll keys; a confirmation dialog maps its
+  // two options to Enter/Escape rather than 1/2.
+  toolUseId?: string;
+  isConfirmation?: boolean;
+};
+
+// "Reachable" is deliberately NOT isAgentActive. An agent parked on a question
+// is by definition not producing tokens — its status is permission_blocked or
+// idle — so the busy-set would rank every genuinely blocked agent as dead,
+// which is exactly backwards. What matters here is whether an answer would
+// LAND: the session is still alive and someone is listening.
+function isReachable(s: InboxSession | undefined): boolean {
+  if (!s) return false;
+  // Torn down: whatever live-looking fields the row still carries are no longer
+  // believable, so an answer has nothing to land in. A `cast decide` row on a
+  // killed session reaches here — sessionHasOpenQuestion already drops the
+  // AskUserQuestion side.
+  if (s.inbox_killed_at) return false;
+  if (s.is_unresponsive) return false;
+  if (agentStatusAt(s, Date.now()) === "stopped") return false;
+  return true;
+}
+
+// Tier 1 = blocked and the session can still receive the answer, 2 = blocked
+// but the session is dead or unresponsive, 3 = advisory. Lower sorts first.
+export function queueTier(item: QueueItem): 1 | 2 | 3 {
+  if (!item.blocking) return 3;
+  return isReachable(item.session) ? 1 : 2;
+}
+
+// Keyboard routing for the decision card. Pure so the claim/stand-down rules
+// are testable: the card's listener runs on window in CAPTURE phase (it must
+// beat the global shortcut layer), which means every key in the app passes
+// through it first — the rules about which keys it may claim are the actual
+// safety surface. A non-null action means the card claims the key
+// (preventDefault + stopPropagation); null means the key was never ours.
+export type QueueKeyAction =
+  | { kind: "commit-free-text" }
+  | { kind: "close-free-text" }
+  | { kind: "answer"; option: number }
+  | { kind: "open-session" }
+  | { kind: "skip" }
+  | { kind: "dismiss" }
+  | { kind: "pass" }
+  | { kind: "open-free-text" }
+  | { kind: "peek" }
+  | { kind: "full" }
+  | { kind: "restore-question" }
+  | { kind: "exit-queue" };
+
+export function routeQueueKey(
+  e: { key: string; shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; altKey: boolean },
+  ctx: {
+    /** An aria-modal layer (new-session compose, settings) sits above the queue. */
+    modalOpen: boolean;
+    /** Focus is in another region that owns its keys (keysOwnedElsewhere). */
+    ownedElsewhere: boolean;
+    /** Focus is in an input/textarea/contenteditable. */
+    editing: boolean;
+    /** …specifically the card's own free-text "Other" box. */
+    inOwnFreeTextBox: boolean;
+    isPermissionCard: boolean;
+    optionCount: number;
+    sheet: "full" | "peek";
+  }
+): QueueKeyAction | null {
+  if (e.metaKey || e.ctrlKey || e.altKey) return null;
+  // A modal owns the keyboard entirely; the queue behind it must not answer,
+  // skip, or swallow anything (a capture listener eating the compose dialog's
+  // Enter is exactly how "enter stopped working" presents).
+  if (ctx.modalOpen) return null;
+  // A focused region that owns its keys (the branch map, an active review)
+  // takes them before the queue, as it does before the dispatcher.
+  if (ctx.ownedElsewhere) return null;
+  if (ctx.editing) {
+    // Only the card's own box is the queue's to claim. Typing in any other
+    // input — search, a composer in the thread behind — belongs to that surface.
+    if (!ctx.inOwnFreeTextBox) return null;
+    if (e.key === "Escape") return { kind: "close-free-text" };
+    if (e.key === "Enter" && !e.shiftKey) return { kind: "commit-free-text" };
+    return null;
+  }
+  // Digits answer a QUESTION. A permission card is never answerable this way:
+  // it carries no options, and the whole hazard of putting approvals in a
+  // queue that advances on a keystroke is that the digit meant for the
+  // previous card lands on "approve this command". y/n (PermissionStack's own
+  // binding) is the only way in, and it requires reading the card.
+  if (!ctx.isPermissionCard && e.key >= "1" && e.key <= "9") {
+    const n = Number(e.key) - 1;
+    return n < ctx.optionCount ? { kind: "answer", option: n } : null;
+  }
+  if (e.key === "o" || e.key === "O") return { kind: "open-session" };
+  if (e.key === "s" || e.key === "S") return { kind: "skip" };
+  // Dismiss = "I am not going to answer this": the card leaves the queue for
+  // good (a `cast decide` row resolves as dismissed), the session is not told.
+  if (e.key === "x" || e.key === "X") return { kind: "dismiss" };
+  if (e.key === "t" || e.key === "T") return { kind: "open-free-text" };
+  // Pass = "someone else should answer this": a teammate or a role.
+  if (e.key === "p" || e.key === "P") return { kind: "pass" };
+  // Up moves into the thread, down brings the question back. Escape leaves the
+  // queue from full, but from peek it first restores the question — otherwise
+  // the key that means "back" would skip a step.
+  if (e.key === "ArrowUp" || e.key === "k") return { kind: "peek" };
+  if (e.key === "ArrowDown" || e.key === "j") return { kind: "full" };
+  if (e.key === "Escape") return ctx.sheet === "peek" ? { kind: "restore-question" } : { kind: "exit-queue" };
+  return null;
+}
+
+export type TranscriptMessageLite = {
+  _id: string;
+  content?: string;
+  timestamp?: number;
+  tool_calls?: Array<{ id?: string; name: string; input: string }>;
+  tool_results?: Array<{ tool_use_id?: string; content: string }>;
+};
+
+/**
+ * The transcript message where the ask happened. The `cast decide` run prints
+ * the decision id (`id: …`) into its tool result, so the FIRST message
+ * carrying the id — in a tool result, a tool call's argv, or plain content —
+ * locates the ask; later `cast decide edit <id>` runs repeat it, hence first
+ * match wins. A hit inside a tool RESULT resolves to the message carrying the
+ * matching tool CALL: the result rides a content-less carrier row that renders
+ * folded into the call's row, so only the call's message is scrollable. A
+ * message whose result hasn't synced yet still matches on the Bash command
+ * plus the question; Bash-only, because an Edit call's file content can quote
+ * both strings without being the ask (it happened).
+ */
+export function findDecisionAnchorMessage(
+  messages: readonly TranscriptMessageLite[] | undefined,
+  decisionId: string | undefined,
+  question: string,
+): TranscriptMessageLite | null {
+  if (!messages) return null;
+  const callMessageFor = (toolUseId: string | undefined) =>
+    toolUseId ? messages.find((m) => m.tool_calls?.some((tc) => tc.id === toolUseId)) : undefined;
+  if (decisionId) {
+    for (const m of messages) {
+      if (m.content?.includes(decisionId)) return m;
+      if (m.tool_calls?.some((tc) => tc.input?.includes(decisionId))) return m;
+      const hit = m.tool_results?.find((r) => r.content?.includes(decisionId));
+      if (hit) return callMessageFor(hit.tool_use_id) ?? m;
+    }
+  }
+  if (question) {
+    for (const m of messages) {
+      if (m.tool_calls?.some((tc) => tc.name === "Bash" && tc.input?.includes("cast decide") && tc.input?.includes(question))) return m;
+    }
+  }
+  return null;
+}
+
+/**
+ * How far the session has run past the ask, in messages. The server snapshot
+ * delta (asked_message_count vs the live session row) is right even when the
+ * client never loaded that far back; the loaded-window scan covers rows from
+ * before the snapshot existed.
+ */
+export function messagesSinceAsk(
+  item: Pick<QueueItem, "createdAt" | "askedMessageCount">,
+  session: Pick<InboxSession, "message_count"> | undefined,
+  messages: readonly TranscriptMessageLite[] | undefined,
+): number {
+  if (item.askedMessageCount !== undefined && session?.message_count !== undefined) {
+    return Math.max(0, session.message_count - item.askedMessageCount);
+  }
+  let n = 0;
+  for (const m of messages ?? []) if ((m.timestamp ?? 0) > item.createdAt) n++;
+  return n;
+}
+
+/** Slugs of the pages the options carry, in option order (L6). */
+export function optionPageSlugs(options: ReadonlyArray<Pick<DecisionOption, "page_slug">>): string[] {
+  return options.map((o) => o.page_slug).filter((slug): slug is string => !!slug);
+}
+
+/** Whether a decision row is this viewer's: no people set (a legacy row), or
+ *  they are among its people. A row passed to a teammate leaves the passer's
+ *  queue on the draft, before the server drops it from their feed. */
+export function askedOfViewer(d: { asked_user_ids?: string[]; in_queue?: boolean }, meId: string | undefined): boolean {
+  return inViewerQueue(d) && (!d.asked_user_ids || !meId || d.asked_user_ids.includes(meId));
+}
+
+/** Whether a decision row is in the viewer's own queue. The store also holds the team's open line decisions (For you
+ *  lists them), each saying whether it is the viewer's; a row from before that flag came from the queue. */
+export const inViewerQueue = (d: { in_queue?: boolean }): boolean => d.in_queue !== false;
+
+/** What a PERSON must answer: the queue minus the rows a lead holds. */
+export function waitingOnPerson(items: readonly QueueItem[]): QueueItem[] {
+  return items.filter((i) => !i.heldByRole);
+}
+
+export function sortQueue(items: QueueItem[]): QueueItem[] {
+  return [...items].sort((a, b) => {
+    const t = queueTier(a) - queueTier(b);
+    if (t !== 0) return t;
+    return a.createdAt - b.createdAt;
+  });
+}
+
+/**
+ * Whether a `cast decide` row belongs in the stack: the queue, its badge, the
+ * rail's QUESTIONS section and /questions. The rule is shared with the server's
+ * pending-decide set (inboxProjection.ts), so an advisory ask lifts its session
+ * on neither side.
+ */
+export { isStackedAsk };
+
+/** `cast decide` rows still awaiting an answer, newest-authored payload wins. */
+export function decisionQueueItems(
+  decisions: Record<string, SessionDecisionItem>,
+  sessions: Record<string, InboxSession>,
+  include: (d: SessionDecisionItem) => boolean = (d) => d.status === "pending",
+): QueueItem[] {
+  const out: QueueItem[] = [];
+  for (const d of Object.values(decisions)) {
+    if (!include(d)) continue;
+    out.push({
+      key: `decide:${d._id}`,
+      source: "decide",
+      conversationId: d.conversation_id,
+      session: sessions[d.conversation_id],
+      question: d.question,
+      contextMd: d.context_md,
+      options: d.options,
+      reportSlug: d.report_slug,
+      kind: d.kind,
+      form: d.form,
+      category: d.category,
+      shortId: d.short_id,
+      docId: d.doc_id,
+      blocking: d.blocking,
+      defaultOption: d.default_option,
+      createdAt: d.created_at,
+      askedMessageCount: d.asked_message_count,
+      decisionId: d._id,
+      heldByRole: d.holder?.kind === "role",
+      ...(d.trial ? { trial: true } : {}),
+    });
+  }
+  return out;
+}
+
+/**
+ * Local marks that a session's open question was handled HERE — answered,
+ * dismissed, or evicted (an infra dialog, a permission resolved elsewhere).
+ * The server's `awaiting_input` / permission_blocked truth takes a round-trip
+ * to flip, and every question surface (the queue, the rail's QUESTIONS
+ * section, the nav order, the badge) must drop the card in the same render
+ * the user acted in — so they all consult this map through the ONE predicate
+ * below, and none can disagree with another.
+ *
+ * `message_count` is the expiry: the entry covers the ask as it stood when
+ * the user acted. Answering sends one message (the answer itself must not
+ * expire its own mark — hence the +sends slack recorded by the store action);
+ * anything the AGENT says after that means the world moved — either the ask
+ * resolved server-side too, or there is a genuinely new ask that deserves to
+ * surface. Either way the mark expires and server truth takes over.
+ */
+export type QuestionResolutions = Record<string, { at: number; message_count: number }>;
+
+/**
+ * The store `drafts` key holding a decision's answer in progress (ticks, an
+ * order, form values, a typed answer). Every surface that answers the
+ * decision reads it, so folding the card, leaving the page or reloading
+ * never loses a choice; answerDecision clears it.
+ */
+export function decisionDraftKey(decisionId: string): string {
+  return `decision:${decisionId}`;
+}
+
+export function questionResolvedLocally(
+  s: Pick<InboxSession, "_id" | "message_count">,
+  resolutions: QuestionResolutions | undefined,
+): boolean {
+  const r = resolutions?.[s._id];
+  if (!r) return false;
+  return (s.message_count ?? 0) <= r.message_count;
+}
+
+/**
+ * Sessions carrying an unanswered AskUserQuestion or permission prompt, with
+ * no authored payload. The caller supplies the parsed question; this only
+ * decides WHICH sessions qualify, so the same predicate drives the inbox
+ * Questions section and the queue.
+ *
+ * `awaiting_input` is the server's "newest message is an open AUQ tool_use"
+ * flag, and it is only set when the row was not already idle — so a poll left
+ * open long enough to settle reports false. Union it with the
+ * permission_blocked status, which is what the AUQ-as-permission-row path
+ * sets and which survives the idle transition.
+ */
+export function sessionHasOpenQuestion(
+  s: InboxSession,
+  resolutions?: QuestionResolutions,
+): boolean {
+  if (s.inbox_killed_at) return false;
+  // A hosted conversation never parks in a terminal. Its approval is always a
+  // decision row (awaitingOkIds is the one home for "waits on your OK"), and
+  // its permission_blocked status flips before that row lands and lags after
+  // it is answered, so reading the status here listed an answered approval
+  // as a "permission prompt" still waiting.
+  if (isHostedAgentType(s.agent_type)) return false;
+  // An infrastructure park is not a decision. A session sitting on a usage
+  // limit, an expired login, a dropped connection or a dead API request is
+  // blocked on plumbing, not on a judgment call — the inbox already badges
+  // those and offers continue-all/switch-account, and routing them here would
+  // bury the real questions under noise the queue cannot resolve anyway.
+  // BLOCKED_BANNER_KINDS is the same set that drives those badges, so the two
+  // surfaces can never disagree about what counts as parked.
+  if (s.pending_api_error_kind && BLOCKED_BANNER_KINDS.has(s.pending_api_error_kind)) return false;
+  if (questionResolvedLocally(s, resolutions)) return false;
+  return !!s.awaiting_input || s.agent_status === "permission_blocked";
+}
+
+/** Conversation ids with a pending `cast decide` the viewer must answer. */
+export function pendingDecisionConvIds(
+  decisions: Record<string, SessionDecisionItem>,
+  meId?: string | null,
+): Set<string> {
+  const ids = new Set<string>();
+  for (const d of Object.values(decisions)) {
+    if (!isStackedAsk(d) || !inViewerQueue(d)) continue;
+    if (meId && d.asked_user_ids && !d.asked_user_ids.some((id) => String(id) === String(meId))) continue;
+    ids.add(d.conversation_id);
+  }
+  return ids;
+}
+
+const awaitingOkMemo = new WeakMap<object, Set<string>>();
+
+/** Conversations waiting on an answer to a pending decision row. Hosted mode
+ *  reads "waits on your OK" from this one home (the inbox fold, the row's
+ *  word, the composer, the bell), never from agent_status, which flips before
+ *  the row arrives and after it is answered. Memoized on the collection, so
+ *  every card can ask in a render without a scan each. */
+/** The label a decision row was answered with (APPROVAL_ANSWERS for a
+ *  hosted approval), or undefined while it is open. */
+export function answeredLabel(d: Pick<SessionDecisionItem, "status" | "answer_index" | "options"> | null | undefined): string | undefined {
+  if (d?.status !== "answered" || typeof d.answer_index !== "number") return undefined;
+  const label = d.options?.[d.answer_index]?.label;
+  return typeof label === "string" ? label : undefined;
+}
+
+/** What the person answered, said back to them: "You said yes" for an
+ *  approval's stored labels, else the option they picked. */
+export function answerSaid(label: string): string {
+  if (label === APPROVAL_ANSWERS.approve) return "You said yes";
+  if (label === APPROVAL_ANSWERS.decline) return "You said no";
+  if (label === APPROVAL_ANSWERS.always) return "You said always allow";
+  return `You chose \u201c${label}\u201d`;
+}
+
+/** A question read back as the thing it asked about, for a line that leads
+ *  with the answer: 'Set up the routine "X"?' reads 'set up the routine “X”'.
+ *  The first letter drops its capital only when it begins an ordinary word. */
+export function questionAsStatement(question: string): string {
+  // Curly quotes, as the rest of hosted mode's words set a name.
+  const q = question.trim().replace(/\?+$/, "").replace(/"([^"]*)"/g, "\u201c$1\u201d");
+  return /^[A-Z][a-z]/.test(q) ? q[0].toLowerCase() + q.slice(1) : q;
+}
+
+/** An answered yes or no said back as one phrase, with no colon in it: the
+ *  question's verb gives way to what it was about ("Set up the routine "X"?"
+ *  answered no reads 'You said no to the routine “X”'). A question that names
+ *  no thing by a quoted name, or any other answer, keeps "answer: question". */
+export function answeredLine(label: string, question: string): string {
+  const said = answerSaid(label);
+  const statement = questionAsStatement(question);
+  const yesOrNo = label === APPROVAL_ANSWERS.approve || label === APPROVAL_ANSWERS.decline;
+  // Only a thing named by its quoted name ("the routine “X”"): "a page on
+  // example.com" read after "You said yes to" says less than the question.
+  const thing = statement.match(/^[a-z]+(?: (?:up|out|off|on|in|back|over|away|down))?\s+((?:the|a|an|this|that|your|my)\s[^\u201c]*\u201c[^\u201d]+\u201d)$/);
+  return yesOrNo && thing ? `${said} to ${thing[1]}` : `${said}: ${statement}`;
+}
+
+/** Whether the person said no to one of this conversation's approvals after
+ *  `since` (their last message): the composer then invites a change rather
+ *  than a new chore. Given `now`, only a no from the last DECLINE_HINT_MS. */
+export function hostedDeclinedSince(decisions: Record<string, SessionDecisionItem> | undefined, conversationId: string, since: number, now?: number): boolean {
+  for (const d of Object.values(decisions ?? {})) {
+    const at = d.resolved_at ?? 0;
+    if (d.conversation_id === conversationId && at >= since && (now === undefined || now - at < DECLINE_HINT_MS) && answeredLabel(d) === APPROVAL_ANSWERS.decline) return true;
+  }
+  return false;
+}
+
+/** How long after a no the composer invites a change ("Tell me what to
+ *  change"). Past it a revisit reads as an ordinary answered conversation,
+ *  not as an ask still pending. */
+export const DECLINE_HINT_MS = 10 * 60_000;
+
+export function awaitingOkIds(decisions: Record<string, SessionDecisionItem> | undefined): Set<string> {
+  if (!decisions) return new Set();
+  let ids = awaitingOkMemo.get(decisions);
+  if (!ids) {
+    ids = pendingDecisionConvIds(decisions);
+    awaitingOkMemo.set(decisions, ids);
+  }
+  return ids;
+}

@@ -1,0 +1,70 @@
+# .codecast/workspace.toml — shared workspace manifest (tracked in git).
+#
+# Drives BOTH `cast workspace acquire` (CLI) and the web "isolated worktree"
+# toggle (daemon → acquireWorkspace). When a worktree is created, the files in
+# `copy` are pulled in, `install` runs, and each [ports.*] entry is allocated a
+# free port exposed to the worktree as PORT_<NAME>.
+# Schema: https://codecast.sh/docs/workspace
+
+[setup]
+# Gitignored secrets/config a worktree needs to actually run web + convex + cli.
+# (git worktrees do not inherit these — they live outside version control.)
+copy = [
+  ".env",
+  ".env.local",
+  "packages/convex/.env.local",
+  "packages/web/.env.local",
+  "packages/cli/.env.local",
+]
+# A fresh worktree has its own (empty) node_modules — bun doesn't share them
+# across worktrees, so install once on creation. If this fails, the daemon
+# falls back to a bare worktree rather than blocking the session.
+install = ["bun install"]
+
+# Per-worktree web dev server port. `acquire` picks the first free port at/after
+# `base` and exposes it as PORT_WEB, so parallel worktrees never collide.
+# `cast dev` starts the web dev server on it (detected from packages/web's
+# `dev` script); `cast dev logs` / `cast dev stop` manage it.
+[ports.web]
+base = 3201
+range = 20
+
+# What a cloud host needs beyond the base provisioning (`cast hosts setup`).
+# A Mac host gets Xcode (copied from the laptop), the iOS simulator runtime and
+# axe, so sessions that drive the mobile app in a simulator can move there.
+[host]
+simulators = ["iOS"]
+# What a session here needs to typecheck, run the web dev server and drive a
+# browser beside a few agents. Measured on a laptop 2026-10-15: web tsc peaks
+# at 4.3 GB, cli tsc 1.8, the Vite dev server 1.2; plus a browser (~0.6), the
+# daemon (0.3), four agents (~1.2) and the OS (~0.5): about 10 GB. New hosts
+# are sized to it (a 16 GB t3.xlarge), and placements prefer hosts that have it.
+memory_gb = 12
+
+# How `cast ship checkout` lands everything uncommitted in this shared
+# checkout: commits by session, replayed onto origin/main in memory, checked
+# here, pushed straight to main. Convex deploys before the push when the
+# shipped commits touch it (CLAUDE.md "Deploy convex BEFORE you push"); its own
+# typecheck is off because `cast check` just ran over the same tree, convex
+# included. Web ships itself: Railway builds every push to main. Tests run in
+# CI, not here: a day's ship touches a hundred test files across packages with
+# their own runners, and the fix-forward trigger answers a red run.
+[ship]
+mode = "direct"
+check = "cast check --changed-since $CAST_SHIP_BASE"   # only the projects this ship touches
+tests = false
+level = true
+
+# The composer typing budget (packages/web/scripts/typing-guard.sh): a change
+# that makes typing slow again stops the ship here, before anything deploys.
+[[ship.deploy]]
+name = "typing-guard"
+when = ["packages/web/**", "packages/shared/**", "platform/**"]
+run = "packages/web/scripts/typing-guard.sh"
+stage = "before_push"
+
+[[ship.deploy]]
+name = "convex"
+when = ["packages/convex/**", "packages/shared/**", "platform/**"]
+run = "packages/convex/deploy.sh --typecheck=disable"
+stage = "before_push"

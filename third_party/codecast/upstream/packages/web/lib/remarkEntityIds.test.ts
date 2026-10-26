@@ -1,0 +1,236 @@
+import { test, expect, describe } from "bun:test";
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ReactMarkdown from "react-markdown";
+import { entityRemarkPlugins } from "./remarkEntityIds";
+
+const render = (md: string) =>
+  renderToStaticMarkup(
+    React.createElement(ReactMarkdown, { remarkPlugins: entityRemarkPlugins }, md),
+  );
+
+describe("entityRemarkPlugins strikethrough handling", () => {
+  // Regression: agents use "~" as an "approximately" sign. Two of them on one
+  // line (e.g. "~$1,084/mo ... ~$5/mo") must NOT be paired into a <del> span.
+  test("lone tildes used as approximately-signs render literally, not struck", () => {
+    const html = render(
+      "release those Mac hosts (~$1,084/mo) and snapshot (~$5/mo) now",
+    );
+    expect(html).not.toContain("<del>");
+    expect(html).toContain("~$1,084/mo");
+    expect(html).toContain("~$5/mo");
+  });
+
+  test("a single approximately-sign elsewhere stays literal", () => {
+    const html = render("down from ~$360/mo, saving ~$290/mo");
+    expect(html).not.toContain("<del>");
+    expect(html).toContain("~$360/mo");
+  });
+
+  // Intentional strikethrough still works with the GitHub-standard double tilde.
+  test("double tilde still renders real strikethrough", () => {
+    const html = render("this is ~~deleted~~ text");
+    expect(html).toContain("<del>deleted</del>");
+  });
+});
+
+describe("entityRemarkPlugins doc references", () => {
+  // Docs have no short id, so the convex id must survive in the link *text*
+  // (react-markdown strips the entity:// href). EntityAwareLink reads that
+  // carrier and renders a doc pill — the previous code dropped the id and
+  // rendered a dead "@title" mention.
+  const DOC_ID = "jh7d8k2m9n4p6q1r3s5t7v9w0";
+
+  test("@[Title doc:<id>] keeps the doc id as the link carrier", () => {
+    const html = render(`see @[My Design doc:${DOC_ID}] for details`);
+    expect(html).toContain(`>doc:${DOC_ID}</a>`);
+    // The id must not be lost in favor of a plain, link-less mention.
+    expect(html).not.toContain("@My Design");
+  });
+
+  test("a bare doc:<id> in prose is linkified, like ct-/jx ids", () => {
+    const html = render(`the spec is in doc:${DOC_ID} now`);
+    expect(html).toContain(`>doc:${DOC_ID}</a>`);
+  });
+
+  test("a too-short doc:<word> is left as plain text (not a convex id)", () => {
+    const html = render("see doc:short now");
+    expect(html).not.toContain("<a");
+    expect(html).toContain("doc:short");
+  });
+
+  test("existing ct-/jx carriers are unaffected", () => {
+    expect(render("see ct-abc123 now")).toContain(">ct-abc123</a>");
+    expect(render("see @[Sess jx7abc12] now")).toContain(">jx7abc12</a>");
+  });
+});
+
+describe("entityRemarkPlugins bare convex ids", () => {
+  // Docs have no short id, so agents reference them by the raw 32-char Convex
+  // id. That must linkify like ct-/jx short ids do; EntityIdPill resolves the
+  // table server-side and falls back to plain text for non-entity ids.
+  const CONVEX_ID = "s97f0jvy02p54v6as7gnfkegrs8aps7a";
+
+  test("a bare 32-char convex id in prose is linkified", () => {
+    const html = render(`market analysis doc ${CONVEX_ID}, plan pl-170`);
+    expect(html).toContain(`>${CONVEX_ID}</a>`);
+    expect(html).toContain(">pl-170</a>");
+  });
+
+  test("@[Title <convexId>] mentions carry the id as the link", () => {
+    const html = render(`see @[Market Analysis ${CONVEX_ID}] for details`);
+    expect(html).toContain(`>${CONVEX_ID}</a>`);
+    expect(html).not.toContain("@Market Analysis");
+  });
+
+  test("an uppercase 32-char hash lookalike stays plain text", () => {
+    const upper = "D41D8CD98F00B204E9800998ECF8427E";
+    const html = render(`md5 is ${upper} here`);
+    expect(html).not.toContain("<a");
+    expect(html).toContain(upper);
+  });
+
+  test("31- and 33-char tokens are not treated as convex ids", () => {
+    expect(render(`x ${CONVEX_ID.slice(0, 31)} y`)).not.toContain("<a");
+    expect(render(`x ${CONVEX_ID}0 y`)).not.toContain("<a");
+  });
+});
+
+describe("entityRemarkPlugins trigger references", () => {
+  // Regression for the screenshot: an agent wrote
+  //   Trigger `rx72qtvpbmmrmwcjqmhzawejsx8bq9gm` marked complete
+  // and it rendered as that raw blob in monospace. Two things were wrong: the
+  // trigger table was unregistered, and the id itself was a 32-char Convex id
+  // rather than a quotable handle. Both are fixed — a trigger's short id now
+  // becomes an entity link, exactly like a task or a session.
+  test("a bare tr- short id becomes an entity link", () => {
+    // react-markdown's url sanitizer drops the entity:// href, so the link TEXT
+    // is the carrier EntityAwareLink reads — same contract as doc references.
+    const html = render("Trigger tr-42 marked complete.");
+    expect(html).toContain(">tr-42</a>");
+  });
+
+  test("a trigger short id inside an @[Title id] mention keeps its id", () => {
+    const html = render("see @[Growth audit tr-42] for the cadence");
+    expect(html).toContain(">tr-42</a>");
+    expect(html).not.toContain("@Growth audit");
+  });
+
+  test("prose words starting with a registered prefix are left alone", () => {
+    const html = render("the transaction triggered a plan and a task");
+    expect(html).not.toContain("<a");
+  });
+
+  test("task, plan and session references still resolve alongside triggers", () => {
+    const html = render("ct-4102 under pl-88, fired by tr-42, discussed in jx7c6zk");
+    for (const id of ["ct-4102", "pl-88", "tr-42", "jx7c6zk"]) {
+      expect(html).toContain(`>${id}</a>`);
+    }
+  });
+});
+
+describe("entityRemarkPlugins repository objects", () => {
+  // `owner/repo#482` and `owner/repo@sha` are the text forms of a pull request
+  // and a commit; they hoist into references the same way ct-/jx ids do, and
+  // EntityIdPill resolves them (or hands the text back when nothing matches).
+  test("a bare pull request reference is linkified", () => {
+    const html = render("merged codecast-sh/codecast#482 this morning");
+    expect(html).toContain(">codecast-sh/codecast#482</a>");
+  });
+
+  test("a bare commit reference is linkified, lowercased", () => {
+    const html = render("see codecast-sh/codecast@AA57B85EE for the change");
+    expect(html).toContain(">codecast-sh/codecast@aa57b85ee</a>");
+  });
+
+  test("a file path with a line suffix and a version pin stay text", () => {
+    const html = render("edit src/foo.ts:12 and install @scope/pkg@1.2.3");
+    expect(html).not.toContain("#12</a>");
+    expect(html).toContain("@scope/pkg@1.2.3");
+  });
+
+  test("a GitHub pull request link keeps its own text (the renderer decides the pill)", () => {
+    const html = render("https://github.com/codecast-sh/codecast/pull/482");
+    expect(html).toContain('href="https://github.com/codecast-sh/codecast/pull/482"');
+  });
+});
+
+describe("entityRemarkPlugins contextual pull request references", () => {
+  // The number becomes the link and carries `pr:#N|<as written>` (`pr:?#N|…`
+  // for a lone `#N`); the words in front of it stay prose, so "PR 3263" is
+  // still read as "PR " then the link.
+  test("#N and PR N become pr: payload links, words kept as text", () => {
+    const html = render("merged #3263 and PR 3247 today");
+    expect(html).toContain(">pr:?#3263|#3263</a>");
+    expect(html).toContain("PR <a");
+    expect(html).toContain(">pr:#3247|3247</a>");
+  });
+
+  test("a full owner/repo#N reference is not doubled by the contextual scan", () => {
+    const html = render("merged codecast-sh/codecast#482");
+    expect(html).toContain(">codecast-sh/codecast#482</a>");
+    expect(html).not.toContain("#482|");
+  });
+
+  test("a hash in a URL fragment or inline code stays text", () => {
+    const html = render("see https://example.com/page#12 and `#12` and page.html#12");
+    expect(html).not.toContain("#12|");
+  });
+
+  test("a heading is not a reference", () => {
+    const html = render("# 2026 plan");
+    expect(html).toContain("<h1>2026 plan</h1>");
+  });
+
+  test("PR 3263 and #3263 in one message count as one mention", () => {
+    const html = render("PR 3263 landed; #3263 is merged");
+    expect(html).toContain('data-ref-nth="1"');
+    expect(html).toContain('data-ref-nth="2"');
+  });
+
+  // `op-55#3` is one change of a proposal. Scanned as `op-55` alone, its tail
+  // was left as text and the pull request scan took `#3` for a pull request.
+  test("a proposal's change (op-N#seq) is one reference, never a proposal and a pull request", () => {
+    const html = render("Start with op-55#3 and say the word.");
+    expect(html).toContain(">op-55#3</a>");
+    expect(html.match(/<a/g)?.length).toBe(1);
+    expect(html).not.toContain("pr:");
+    expect(html).not.toContain("#3|");
+  });
+
+  test("a proposal followed by a real pull request number keeps both", () => {
+    const html = render("op-55 shipped in #3263");
+    expect(html).toContain(">op-55</a>");
+    expect(html).toContain(">pr:?#3263|#3263</a>");
+  });
+});
+
+describe("an object id inside a file path", () => {
+  // Regression: a line run's worktree is named after its task
+  // (.git/worktrees/line-ct-57458/cast-line). The id matched first and split
+  // the path into two links around a task pill.
+  test("stays part of one path link, with no entity pill", () => {
+    const html = render("logs: /Users/ashot/src/union-mobile/.git/worktrees/line-ct-57458/cast-line and ct-57458 alone");
+    expect(html).toContain(">/Users/ashot/src/union-mobile/.git/worktrees/line-ct-57458/cast-line</a>");
+    expect(html.match(/>ct-57458<\/a>/g)?.length).toBe(1);
+  });
+});
+
+describe("entityRemarkPlugins the company's objects", () => {
+  // A role (`or-N`) and a project (`pj-…`) are ids in prose like a goal
+  // (`in-N`), so each reaches EntityAwareLink and renders as its pill.
+  test("bare or-, pj- and in- ids become entity links", () => {
+    const html = render("Ask or-3 about pj-mf3k2a, which carries in-2.");
+    for (const id of ["or-3", "pj-mf3k2a", "in-2"]) expect(html).toContain(`>${id}</a>`);
+  });
+
+  test("words that start like a role or a goal stay prose", () => {
+    const html = render("do it now or-else, in an in-app flow, or-ange");
+    expect(html).not.toContain("<a");
+  });
+
+  test("a role inside an @[Title id] mention keeps its id", () => {
+    const html = render("see @[Calling lead or-7] for the list");
+    expect(html).toContain(">or-7</a>");
+  });
+});

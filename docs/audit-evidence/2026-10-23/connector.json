@@ -1,0 +1,83 @@
+[
+  {
+    "name": "global Git exclude creates checkpoint claiming missing file bytes",
+    "evidence": {
+      "checkpointId": "f8c59a0e-01ff-4641-ad8e-f74bef099f2b",
+      "manifestFiles": [
+        "allowed.log",
+        "ordinary.txt"
+      ],
+      "tree": "ordinary.txt"
+    }
+  },
+  {
+    "name": "oversized gitignore read by Git but ignored by scanner corrupts checkpoint manifest",
+    "evidence": {
+      "checkpointId": "4aa4f040-b8f9-48e8-83ce-bf10490f29a1",
+      "manifestFiles": [
+        ".gitignore",
+        "valuable.txt"
+      ],
+      "tree": ".gitignore"
+    }
+  },
+  {
+    "name": "oversized sharing exclusion silently captures private file instead of failing closed",
+    "evidence": {
+      "checkpointId": "101d702f-bbec-40cd-968c-1e151897d198",
+      "uploadedPrivateContentInOutbox": true,
+      "skipped": [
+        ".collosysignore"
+      ]
+    }
+  },
+  {
+    "name": "inherited GIT_DIR and GIT_WORK_TREE mutate original unborn HEAD during managed init",
+    "evidence": {
+      "originalHeadNow": "ColloSys snapshot base",
+      "originalIndexChanged": true,
+      "originalTree": "staged.txt"
+    }
+  },
+  {
+    "name": "Windows case-only rename corrupts checkpoint path lookup",
+    "evidence": {
+      "checkpointId": "20e6c578-e751-4016-b587-22f5e14d19d0",
+      "tree": "UPPER.txt"
+    }
+  },
+  {
+    "name": "retention interruption surviving metadata/ref divergence is recoverable",
+    "evidence": {
+      "victimId": "ca47f806-0a97-49fe-8c61-b7ddc5b22c35",
+      "oldSha": "5727d3e5d16261a049826b7e4c911db3b553745c",
+      "pinnedSha": "feb22deb9b617d02a0945155be2d539a86c993ae",
+      "retainedSha": "5727d3e5d16261a049826b7e4c911db3b553745c",
+      "retainedExists": true,
+      "finding": false
+    }
+  },
+  {
+    "name": "deletion-heavy quota probe",
+    "evidence": {
+      "limit": 67108864,
+      "before": 67028864,
+      "after": 67040425,
+      "overshoot": -68439,
+      "cp": "b02c3468-b9b3-4729-b768-d732e64dc84a",
+      "finding": false
+    }
+  },
+  {
+    "name": "Codex selected log traverses a directory junction",
+    "evidence": {
+      "readThroughJunction": true
+    }
+  },
+  {
+    "name": "JSON credential syntax is not redacted",
+    "evidence": {
+      "leakedJson": "{\"api_key\":\"AUDIT_FAKE_SECRET_123456\",\"password\":\"AUDIT_FAKE_PASSWORD_123456\"}"
+    }
+  }
+]

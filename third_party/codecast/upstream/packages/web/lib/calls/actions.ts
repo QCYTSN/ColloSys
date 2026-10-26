@@ -1,0 +1,13 @@
+type CallManager = typeof import("./callManager");
+
+export const joinCall = async (...args: Parameters<CallManager["joinCall"]>) =>
+  (await import("./callManager")).joinCall(...args);
+
+export const knockRoom = async (...args: Parameters<CallManager["knockRoom"]>) =>
+  (await import("./callManager")).knockRoom(...args);
+
+export const ringInto = async (...args: Parameters<CallManager["ringInto"]>) =>
+  (await import("./callManager")).ringInto(...args);
+
+export const startHuddle = async (...args: Parameters<CallManager["startHuddle"]>) =>
+  (await import("./callManager")).startHuddle(...args);

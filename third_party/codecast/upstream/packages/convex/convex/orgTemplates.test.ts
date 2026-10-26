@@ -1,0 +1,461 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { makeFakeDb } from "./testDb";
+import { performAcceptUpgrade, performCatalog, performFileLesson, performRetire, performYank, performInstanceForRole, performInstanceStatus, performListInstances, performListLessons, performMarkSetup, performPublish, performRecordEvidence, performRecordScores, performRelease, performRequestBind, performSetLessonStatus, performUpsertInstance } from "./orgTemplates";
+import { applyOrgChange } from "./orgInit";
+
+// Roles hired from a template (org-hire.md W8): the server side of publish,
+// catalog, the instance row, its record and lessons, driven through the same
+// perform functions the mutations wrap.
+
+const ME = ("u".repeat(31) + "m") as any; // admin of Acme and of the Codecast team
+const MATE = ("u".repeat(31) + "t") as any; // Acme member
+const OUT = ("u".repeat(31) + "o") as any; // member of another team only
+const ACME = "teams_acme" as any, OTHER = "teams_other" as any, CODECAST = "teams_codecast" as any;
+const WS = `team:${ACME}`;
+const P = "projects_p";
+
+function fixtures(over: Record<string, any[]> = {}) {
+  return makeFakeDb({
+    users: [{ _id: ME, name: "Me" }, { _id: MATE, name: "Mate" }, { _id: OUT, name: "Out" }],
+    team_memberships: [
+      { _id: "m1", user_id: ME, team_id: ACME, role: "admin", joined_at: 1 },
+      { _id: "m2", user_id: MATE, team_id: ACME, role: "member", joined_at: 1 },
+      { _id: "m3", user_id: OUT, team_id: OTHER, role: "admin", joined_at: 1 },
+      { _id: "m4", user_id: ME, team_id: CODECAST, role: "admin", joined_at: 1 },
+    ],
+    teams: [{ _id: ACME, name: "Acme" }, { _id: OTHER, name: "Other" }, { _id: CODECAST, name: "Codecast" }],
+    projects: [{ _id: P, user_id: ME, team_id: ACME, workspace: WS, short_id: "pr-1", title: "Growth", status: "active", created_at: 1, updated_at: 1 }],
+    org_roles: [{ _id: "role-1", short_id: "or-1", handle: "acme-growth-cmo", name: "CMO", status: "active", trust: "understand", scope_type: "team", team_id: ACME, host_user_id: ME, reports_to: { kind: "user", user_id: ME }, scope: { project_ids: [P], plan_ids: [] }, created_at: 1, updated_at: 1 }],
+    org_templates: [], org_template_instances: [], org_template_lessons: [],
+    counters: [], org_changes: [], org_role_history: [], anchors: [], conversations: [], session_owners: [], managed_sessions: [], tasks: [], plans: [], docs: [],
+    ...over,
+  });
+}
+const manifest = (version = "2.0.0"): any => ({
+  schemaVersion: 2, id: "growth", version, name: "CMO", description: "One project CMO",
+  role: { name: "CMO", handle: "{{instance}}-cmo", charter: "org/charter.md", caps: { hands_per_day: 4, wakes_per_day: 12, tokens_per_day: 200000 }, avatar: "fox" },
+  inputs: [{ key: "product.domain", label: "Domain", kind: "string", required: true }, { key: "accounts.ads", label: "Ads credentials", kind: "secret" }],
+  authority: [{ id: "ads-spend", kind: "spend", label: "Paid search" }],
+  setup: [{ id: "search-console", title: "Verify the domain", who: "human", unlocks: ["seo"] }, { id: "measurement", title: "See one event", who: "role" }],
+  evidence: [{ id: "technical", title: "Crawler HTML", max_age: "7d", required_for: ["seo"] }],
+  scoreboard: [{ key: "primary_events_7d", label: "Primary events" }],
+  routines: [{ id: "seo", title: "SEO weekly", every: "7d", prompt: "org/seo.md", mode: "apply", requires: { evidence: ["technical"] } }, { id: "ads", title: "Ads", every: "1d", prompt: "org/ads.md", mode: "apply", requires: { authority: ["ads-spend"] } }],
+});
+const D1 = "a".repeat(64), D2 = "b".repeat(64), D3 = "c".repeat(64);
+const ctx = (db: any) => ({ db } as any);
+
+describe("publish and catalog", () => {
+  beforeEach(() => { process.env.CODECAST_TEMPLATES_TEAM_ID = CODECAST; });
+  afterEach(() => { delete process.env.CODECAST_TEMPLATES_TEAM_ID; });
+  test("a workspace publishes, advances and cannot rewrite a version; Codecast publishing is its admins' act", async () => {
+    const db = fixtures();
+    const first = await performPublish(ctx(db), ME, { team_id: ACME, manifest: manifest(), digest: D1, status: "canary", changelog: "first" });
+    expect(first).toMatchObject({ action: "created", workspace: WS, template_id: "growth", latest: { version: "2.0.0", digest: D1 }, avatar: "fox" });
+    expect(first.releases[0]).toMatchObject({ version: "2.0.0", digest: D1, status: "canary", changelog: "first" });
+    expect(first.releases[0].manifest.version).toBe("2.0.0");
+    await expect(performPublish(ctx(db), ME, { team_id: ACME, manifest: manifest(), digest: D2 })).rejects.toThrow(/already published with different content/);
+    const promoted = await performPublish(ctx(db), ME, { team_id: ACME, manifest: manifest(), digest: D1, status: "stable" });
+    expect(promoted.action).toBe("updated"); expect(promoted.releases).toHaveLength(1); expect(promoted.releases[0].status).toBe("stable");
+    const next = await performPublish(ctx(db), MATE, { team_id: ACME, manifest: manifest("2.1.0"), digest: D2 });
+    expect(next).toMatchObject({ action: "released", latest: { version: "2.1.0", digest: D2 } }); expect(next.releases).toHaveLength(2);
+    await expect(performPublish(ctx(db), ME, { team_id: ACME, manifest: { ...manifest(), id: "Bad Id" }, digest: D3 })).rejects.toThrow(/Invalid template id/);
+    await expect(performPublish(ctx(db), OUT, { team_id: ACME, manifest: manifest(), digest: D1 })).rejects.toThrow();
+    await expect(performPublish(ctx(db), MATE, { as_codecast: true, manifest: manifest(), digest: D1 })).rejects.toThrow();
+    const shared = await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable" });
+    expect(shared.workspace).toBe("codecast");
+    delete process.env.CODECAST_TEMPLATES_TEAM_ID;
+    await expect(performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest("2.2.0"), digest: D3 })).rejects.toThrow(/not enabled/);
+  });
+  test("the catalog is one equality against the viewer's key plus Codecast's", async () => {
+    const db = fixtures();
+    await performPublish(ctx(db), ME, { team_id: ACME, manifest: { ...manifest(), id: "acme-only" }, digest: D1 });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D2 });
+    await performPublish(ctx(db), OUT, { team_id: OTHER, manifest: { ...manifest(), id: "other-only" }, digest: D3 });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME })).map((t) => t.template_id).sort()).toEqual(["acme-only", "growth"]);
+    expect((await performCatalog(ctx(db), OUT, { team_id: OTHER })).map((t) => t.template_id).sort()).toEqual(["growth", "other-only"]);
+    expect((await performCatalog(ctx(db), MATE, {})).map((t) => t.template_id)).toEqual(["growth"]);
+    await expect(performCatalog(ctx(db), OUT, { team_id: ACME })).rejects.toThrow();
+    const entry = (await performCatalog(ctx(db), MATE, { team_id: ACME })).find((t) => t.template_id === "growth")!;
+    expect(entry.asks).toEqual({ inputs: 2, secrets: 1, authority: 1, setup: 2, routines: 2 });
+  });
+});
+
+describe("the instance row, its record and lessons", () => {
+  beforeEach(() => { process.env.CODECAST_TEMPLATES_TEAM_ID = CODECAST; });
+  afterEach(() => { delete process.env.CODECAST_TEMPLATES_TEAM_ID; });
+  const hire = { instance_key: "key-1", instance: "acme-growth", template_id: "growth", version: "2.0.0", digest: D1, project_id: P as any };
+  test("upsert by key under the project's workspace; secrets and unpublished releases refused", async () => {
+    const db = fixtures();
+    await expect(performUpsertInstance(ctx(db), ME, hire)).rejects.toThrow(/not available to this workspace/);
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable" });
+    await expect(performUpsertInstance(ctx(db), ME, { ...hire, digest: D2 })).rejects.toThrow(/not published/);
+    await expect(performUpsertInstance(ctx(db), ME, { ...hire, config: { "accounts.ads": "/x" } })).rejects.toThrow(/bound on the host/);
+    await expect(performUpsertInstance(ctx(db), OUT, hire)).rejects.toThrow(/Project not found/);
+    // The host step pins its team (the CLI sends it for every team hire); the project's own team passes, another is refused.
+    await expect(performUpsertInstance(ctx(db), MATE, { ...hire, team_id: OTHER as any })).rejects.toThrow(/not in that team/);
+    await performUpsertInstance(ctx(db), MATE, { ...hire, team_id: ACME as any });
+    const row = await performUpsertInstance(ctx(db), MATE, { ...hire, phase: "awaiting_host", config: { "product.domain": "acme.io" } });
+    expect(row).toMatchObject({ workspace: WS, phase: "awaiting_host", update_policy: "manual", config: { "product.domain": "acme.io" } });
+    const bound = await performUpsertInstance(ctx(db), MATE, { ...hire, role_id: "role-1" as any, host: { machine: "mbp", dir: "/src/acme" }, phase: "ready", bindings: { "accounts.ads": { host: "mbp", path_hash: D3, bound_at: 5 } }, ledgers: { cmo: { taskId: "t1", shortId: "ct-1" } } });
+    expect(bound._id).toBe(row._id); expect(bound).toMatchObject({ phase: "ready", role_id: "role-1", host: { machine: "mbp", dir: "/src/acme" }, config: { "product.domain": "acme.io" } });
+    expect(await db.query("org_template_instances").collect()).toHaveLength(1);
+  });
+  test("evidence, scoreboard and setup through the shared rules; status derives readiness and the ask; lessons reach the publisher only", async () => {
+    const db = fixtures();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable" });
+    await performUpsertInstance(ctx(db), ME, { ...hire, role_id: "role-1" as any });
+    const key = { instance_key: "key-1" };
+    await expect(performRecordEvidence(ctx(db), OUT, { ...key, check: "technical", status: "pass", source: "ct-1" })).rejects.toThrow(/Instance not found/);
+    await expect(performRecordEvidence(ctx(db), MATE, { ...key, check: "technical", status: "pass" })).rejects.toThrow(/a person can open/);
+    let status = await performInstanceStatus(ctx(db), MATE, key);
+    expect(status.ask).toMatchObject({ id: "search-console", who: "human" });
+    expect(status.readiness.seo).toEqual({ ready: false, mode: "propose", missing: ["evidence technical has no pass"] });
+    expect(status.readiness.ads.missing).toEqual(["authority ads-spend not granted", "only recommends: Starts work on its own is off"]);
+    await performRecordEvidence(ctx(db), MATE, { ...key, check: "technical", status: "pass", source: "https://codecast.sh/t/ct-1", detail: ["routes=38"] });
+    await performRecordScores(ctx(db), MATE, { ...key, entries: ["primary_events_7d=7"], source: "ct-2" });
+    // A person's step is marked by whoever sees it done, the role included.
+    await performMarkSetup(ctx(db), MATE, { ...key, id: "search-console", status: "done" });
+    await performMarkSetup(ctx(db), MATE, { ...key, id: "measurement", status: "done", evidence: "ct-3" });
+    status = await performInstanceStatus(ctx(db), MATE, key);
+    expect(status.readiness.seo).toEqual({ ready: true, mode: "apply", missing: [] });
+    expect(status.scoreboard.primary_events_7d).toMatchObject({ value: "7", source: "ct-2" });
+    expect(status.ask).toBeUndefined();
+    expect(status.setup.map((r: any) => [r.id, r.status])).toEqual([["search-console", "done"], ["measurement", "done"]]);
+    // Lessons: written by the instance, filed under the publisher's key.
+    await expect(performFileLesson(ctx(db), MATE, { ...key, body: "too short" })).rejects.toThrow(/at least a sentence/);
+    const lesson = await performFileLesson(ctx(db), MATE, { ...key, body: "Pair the parity test with a module resolution guard; a registered route without its page passes parity and disables the prerender.", evidence: [{ label: "SEO ledger", href: "ct-48700" }] });
+    expect(lesson.status).toBe("open");
+    const mine = await performListLessons(ctx(db), MATE, key);
+    expect(mine).toHaveLength(1); expect(Object.keys(mine[0]!).sort()).toEqual(["about", "body", "created_at", "id", "kind", "released_in", "source", "status"]); expect(mine[0]).toMatchObject({ source: "role" });
+    await expect(performListLessons(ctx(db), MATE, { template_id: "growth", team_id: ACME })).resolves.toEqual([]);
+    await expect(performListLessons(ctx(db), MATE, { template_id: "growth", as_codecast: true })).rejects.toThrow();
+    const forPublisher = await performListLessons(ctx(db), ME, { template_id: "growth", as_codecast: true });
+    expect(forPublisher).toHaveLength(1); expect(forPublisher[0]).toMatchObject({ workspace: "codecast", from_workspace: WS, release: { version: "2.0.0", digest: D1 } });
+    await expect(performSetLessonStatus(ctx(db), MATE, { lesson_id: lesson.id, status: "accepted" })).rejects.toThrow();
+    await expect(performSetLessonStatus(ctx(db), ME, { lesson_id: lesson.id, status: "released" })).rejects.toThrow(/Name the version/);
+    expect((await performSetLessonStatus(ctx(db), ME, { lesson_id: lesson.id, status: "released", released_in: "2.1.0" })).status).toBe("released");
+    expect((await performListLessons(ctx(db), MATE, key))[0]).toMatchObject({ status: "released", released_in: "2.1.0" });
+  });
+});
+
+describe("the hire and upgrade changes through the org apply core (org-hire.md H3, H9)", () => {
+  beforeEach(() => { process.env.CODECAST_TEMPLATES_TEAM_ID = CODECAST; });
+  afterEach(() => { delete process.env.CODECAST_TEMPLATES_TEAM_ID; });
+  const boundary = { team_id: ACME } as any;
+  const human = { provision: false, human_decision: "sd-1" } as any;
+  const humanCtx = (db: any) => ({ db, auth: { getUserIdentity: async () => ({ subject: ME }) } }) as any;
+  test("a hire writes the placeholder row awaiting its host, makes the role the project's lead, and the host's bind takes the row over by name", async () => {
+    const db = fixtures();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable" });
+    const hire = { kind: "hire", handle: "acme-growth-cmo", template: "growth", version: "2.0.0", digest: D1, instance: "acme-growth", project: "pr-1", config: { "product.domain": "acme.io" }, update_policy: "stable" } as const;
+    await expect(applyOrgChange(humanCtx(db), ME, boundary, { ...hire, digest: D2 }, human)).rejects.toThrow(/not published/);
+    const applied = await applyOrgChange(humanCtx(db), ME, boundary, hire, human);
+    expect(applied.status).toBe("applied");
+    expect((applied as any).note).toContain("it leads Growth");
+    const rows = await db.query("org_template_instances").collect();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ instance: "acme-growth", phase: "awaiting_host", role_id: "role-1", workspace: WS, update_policy: "stable", config: { "product.domain": "acme.io" } });
+    expect(rows[0].instance_key).toMatch(/^pending:/);
+    expect((await db.get(P as any)).owner_role_id).toBe("role-1");
+    // The host step arrives with the receipt's key and takes the same row.
+    const bound = await performUpsertInstance(ctx(db), ME, { instance_key: "receipt-uuid", instance: "acme-growth", template_id: "growth", version: "2.0.0", digest: D1, project_id: P as any, role_id: "role-1" as any, host: { machine: "mbp", dir: "/src/acme" }, phase: "ready" });
+    expect(bound._id).toBe(rows[0]._id);
+    expect(bound).toMatchObject({ instance_key: "receipt-uuid", phase: "ready", config: { "product.domain": "acme.io" } });
+    expect(await db.query("org_template_instances").collect()).toHaveLength(1);
+    // A second host with another key cannot take a bound row by name.
+    await expect(performUpsertInstance(ctx(db), ME, { instance_key: "other-host", instance: "acme-growth", template_id: "growth", version: "2.0.0", digest: D1, project_id: P as any })).rejects.toThrow(/under another host/);
+    // Authority through the same core lands on the role.
+    const granted = await applyOrgChange(humanCtx(db), ME, boundary, { kind: "authority", handle: "acme-growth-cmo", authority: [{ id: "ads-spend", kind: "spend", label: "Paid search", limit: { usd_per_month: 300 } }] }, human);
+    expect((granted as any).note).toBe("@acme-growth-cmo may spend (Paid search, up to $300 a month)");
+    expect((await performInstanceStatus(ctx(db), MATE, { instance_key: "receipt-uuid" })).readiness.ads.missing).toEqual(["only recommends: Starts work on its own is off"]);
+    // An accepted upgrade waits on the row for the host.
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest("2.1.0"), digest: D2, status: "stable" });
+    await expect(applyOrgChange(humanCtx(db), ME, boundary, { kind: "upgrade", instance: "acme-growth", template: "growth", to: "2.1.0", digest: D3 }, human)).rejects.toThrow(/not published/);
+    const up = await applyOrgChange(humanCtx(db), ME, boundary, { kind: "upgrade", instance: "acme-growth", template: "growth", to: "2.1.0", digest: D2 }, human);
+    expect((up as any).note).toContain("bind acme-growth --to 2.1.0");
+    expect((await db.get(rows[0]._id)).pending_upgrade).toMatchObject({ to: "2.1.0", digest: D2, accepted_by: ME });
+  });
+});
+
+describe("the host step from the web (org-hire.md H3, H4)", () => {
+  beforeEach(() => { process.env.CODECAST_TEMPLATES_TEAM_ID = CODECAST; });
+  afterEach(() => { delete process.env.CODECAST_TEMPLATES_TEAM_ID; });
+  const storage = { getUrl: async (id: string) => `https://blob.test/${id}` };
+  test("a release answers with its snapshot url once publish uploaded one; the catalog says which releases can be hired", async () => {
+    const db = fixtures();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable" });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME }))[0]).toMatchObject({ installable: false, latest_status: "stable" });
+    expect(await performRelease({ db, storage } as any, MATE, { team_id: ACME, template_id: "growth", version: "2.0.0", digest: D1 })).toMatchObject({ storage_url: null, status: "stable", manifest: { id: "growth", version: "2.0.0" } });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable", storage_id: "st-1" as any });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME }))[0].installable).toBe(true);
+    expect((await performRelease({ db, storage } as any, MATE, { team_id: ACME, template_id: "growth", version: "2.0.0", digest: D1 })).storage_url).toBe("https://blob.test/st-1");
+    await expect(performRelease({ db, storage } as any, MATE, { team_id: ACME, template_id: "growth", version: "2.0.0", digest: D2 })).rejects.toThrow(/not published/);
+  });
+  test("request bind targets the machine with the checkout, carries secrets sealed only, and the role page reads the step's progress", async () => {
+    const db = fixtures();
+    const now = Date.now();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: manifest(), digest: D1, status: "stable", storage_id: "st-1" as any });
+    const row = await performUpsertInstance(ctx(db), ME, { instance_key: "pending:p:acme-growth", instance: "acme-growth", template_id: "growth", version: "2.0.0", digest: D1, project_id: P as any, role_id: "role-1" as any, phase: "awaiting_host", config: { "product.domain": "acme.io" } });
+    // No machine yet: the page says so and the request refuses with the same words.
+    const before = await performInstanceForRole(ctx(db), ME, { role_id: "role-1" as any });
+    expect(before.host_step).toEqual({ state: "idle" });
+    expect(before.bind_host.device).toBeNull();
+    expect(before.bind_host.reason).toMatch(/Start the codecast app/);
+    await expect(performRequestBind(ctx(db), ME, { instance_key: row.instance_key })).rejects.toThrow(/Start the codecast app/);
+    // The role's standing session runs on a laptop that went quiet; another of the host's machines holds the checkout and is online.
+    const old = await db.insert("devices", { user_id: ME, device_id: "dev-old", label: "Old laptop", last_seen: now - 10 * 60_000, local_project_roots: ["/src/acme"], platform: "darwin", provider_key_pubkey: "OLD" });
+    const mbp = await db.insert("devices", { user_id: ME, device_id: "dev-mbp", label: "MacBook", last_seen: now, local_project_roots: ["/src/acme"], platform: "darwin", provider_key_pubkey: "PUB" });
+    await db.insert("conversations", { _id: "conv-1", user_id: ME, project_path: "/src/acme", owner_device_id: "dev-old" } as any);
+    await db.insert("anchors", { _id: "anchor-1", host_user_id: ME, bot_user_id: ME, conversation_id: "conv-1", org_role_id: "role-1" } as any);
+    await db.patch("role-1" as any, { anchor_id: "anchor-1" });
+    const sealed = { provider: "accounts.ads", epk: "e", iv: "i", ct: "c" };
+    await expect(performRequestBind(ctx(db), MATE, { instance_key: row.instance_key, secrets: [{ key: "product.domain", payload: { ...sealed, provider: "product.domain" } }] })).rejects.toThrow(/Not a secret input/);
+    await expect(performRequestBind(ctx(db), MATE, { instance_key: row.instance_key, secrets: [{ key: "accounts.ads", payload: { ...sealed, provider: "other" } }] })).rejects.toThrow(/sealed/);
+    // A teammate presses the button; the command belongs to the host's daemon.
+    const req = await performRequestBind(ctx(db), MATE, { instance_key: row.instance_key, secrets: [{ key: "accounts.ads", payload: sealed }] });
+    expect(req).toMatchObject({ device: { device_id: "dev-mbp", label: "MacBook" }, already_pending: false });
+    const cmd = await db.get(req.command_id);
+    expect(cmd).toMatchObject({ user_id: ME, command: "org_template_bind", target_device_id: "dev-mbp" });
+    expect(JSON.parse(cmd.args)).toEqual({ instance_key: row.instance_key, instance: "acme-growth", dir: "/src/acme", workspace: { kind: "team", id: ACME }, secrets: [{ key: "accounts.ads", payload: sealed }] });
+    const pending = await performInstanceForRole(ctx(db), ME, { role_id: "role-1" as any });
+    expect(pending.host_step).toMatchObject({ state: "pending", device_label: "MacBook" });
+    expect(pending.bind_host).toMatchObject({ dir: "/src/acme", device: { device_id: "dev-mbp", online: true, can_receive_secrets: true, pubkey: "PUB" } });
+    // Pressing again while it runs returns the same command, never a second.
+    expect(await performRequestBind(ctx(db), ME, { instance_key: row.instance_key })).toMatchObject({ command_id: req.command_id, already_pending: true });
+    expect(await db.query("daemon_commands").collect()).toHaveLength(1);
+    // The daemon's failure reaches the page; a retry is a new command.
+    await db.patch(req.command_id, { executed_at: now, error: "Instance is proposal; bind runs once the role and its routines exist" });
+    const failed = (await performInstanceForRole(ctx(db), ME, { role_id: "role-1" as any })).host_step;
+    expect(failed.state).toBe("failed"); expect(failed.error).toMatch(/Instance is proposal/);
+    const retry = await performRequestBind(ctx(db), ME, { instance_key: row.instance_key });
+    expect(retry.already_pending).toBe(false);
+    await db.patch(retry.command_id, { executed_at: now, result: JSON.stringify({ instance: "acme-growth", phase: "ready", bound: [] }) });
+    expect((await performInstanceForRole(ctx(db), ME, { role_id: "role-1" as any })).host_step).toMatchObject({ state: "done", result: { phase: "ready" } });
+    // An explicit machine of the host's is honoured; a stranger's is not.
+    const picked = await performRequestBind(ctx(db), ME, { instance_key: row.instance_key, device_id: "dev-old" });
+    expect(picked.device.device_id).toBe("dev-old");
+    await db.patch(picked.command_id, { executed_at: now, result: "{}" });
+    await expect(performRequestBind(ctx(db), ME, { instance_key: row.instance_key, device_id: "dev-nope" })).rejects.toThrow(/not one of the host's/);
+    // A daemon that predates the transport cannot take a secret; the reason names the machine.
+    await db.patch(mbp, { provider_key_pubkey: undefined });
+    await db.patch(old, { last_seen: now - 60 * 60_000 });
+    await db.patch(await (async () => (await db.query("org_template_instances").collect())[0]._id)(), { bind_request: undefined });
+    await expect(performRequestBind(ctx(db), ME, { instance_key: row.instance_key, secrets: [{ key: "accounts.ads", payload: sealed }] })).rejects.toThrow(/MacBook runs a codecast too old to receive a secret/);
+    // Outside the workspace: nothing.
+    expect(await performInstanceForRole(ctx(db), OUT, { role_id: "role-1" as any })).toBeNull();
+    await expect(performRequestBind(ctx(db), OUT, { instance_key: row.instance_key })).rejects.toThrow(/Instance not found/);
+  });
+});
+
+describe("setup guides on the record, and the role hearing about a bind (org-hire.md H3, H5; org-staffing.md S25)", () => {
+  beforeEach(() => { process.env.CODECAST_TEMPLATES_TEAM_ID = CODECAST; });
+  afterEach(() => { delete process.env.CODECAST_TEMPLATES_TEAM_ID; });
+  const STANDING = "conversations_standing";
+  // A role with a live standing session in a workspace that has the org feature, and its two routines' triggers.
+  function seated() {
+    const pending: any[] = [];
+    const db = fixtures({
+      teams: [{ _id: ACME, name: "Acme", features: { org: true } }, { _id: OTHER, name: "Other" }, { _id: CODECAST, name: "Codecast" }],
+      org_roles: [{ _id: "role-1", short_id: "or-1", handle: "acme-growth-cmo", name: "CMO", status: "active", trust: "understand", scope_type: "team", team_id: ACME, host_user_id: ME, anchor_id: "anchors_cmo", reports_to: { kind: "user", user_id: ME }, scope: { project_ids: [P], plan_ids: [] }, created_at: 1, updated_at: 1 }],
+      anchors: [{ _id: "anchors_cmo", org_role_id: "role-1", team_id: ACME, status: "active", conversation_id: STANDING }],
+      conversations: [{ _id: STANDING, session_id: "standing-uuid", user_id: ME, team_id: ACME, status: "active", standing_role_id: "role-1" }],
+      agent_tasks: [
+        { _id: "agent_tasks_seo", user_id: ME, short_id: "tr-7", title: "SEO weekly for acme.io", prompt: "p", schedule_type: "recurring", interval_ms: 7 * 86_400_000, status: "paused", run_count: 0, retry_count: 0 },
+        { _id: "agent_tasks_ads", user_id: ME, short_id: "tr-8", title: "Ads", prompt: "p", schedule_type: "recurring", interval_ms: 86_400_000, status: "scheduled", run_at: 9, run_count: 0, retry_count: 0 },
+      ],
+      pending_messages: pending,
+    });
+    return { db, pending };
+  }
+  const hired = (): any => ({
+    ...manifest(),
+    inputs: [{ key: "product.domain", label: "Domain", kind: "string", required: true }, { key: "accounts.ads", label: "Ads credentials", kind: "secret", unlocks: ["ads"] }, { key: "accounts.publora", label: "Publora key", kind: "secret" }],
+    setup: [{ id: "search-console", title: "Verify {{input.product.domain}}", who: "human", unlocks: ["seo"], how: "org/setup/search-console.md" }, { id: "publora", title: "Connect Publora", who: "human" }, { id: "measurement", title: "See one event", who: "role" }],
+  });
+  const hire = { instance_key: "key-1", instance: "acme-growth", template_id: "growth", version: "2.0.0", digest: D1, project_id: P as any };
+  const bound = (bindings: Record<string, number>, extra: Record<string, unknown> = {}) => ({
+    ...hire, role_id: "role-1" as any, host: { machine: "mbp", dir: "/src/acme" }, phase: "ready" as const,
+    routines: { seo: { triggerId: "agent_tasks_seo" }, ads: { triggerId: "agent_tasks_ads" } },
+    bindings: Object.fromEntries(Object.entries(bindings).map(([key, at]) => [key, { host: "mbp", path_hash: D3, bound_at: at }])),
+    setup_text: { "search-console": { title: "Verify acme.io", guide: "Add the TXT record, then run /src/acme/verify.sh." }, publora: { title: "Connect Publora" }, measurement: { title: "See one event" } },
+    ...extra,
+  });
+  const said = (row: any) => row.content.replace(/^<session-message from="unknown" name="codecast">\n|\n<\/session-message>$/g, "").split("\n");
+  const ROUTINES = ["Routines:", "- SEO weekly for acme.io (tr-7): paused, not ready; evidence technical has no pass", "- Ads (tr-8): active; authority ads-spend not granted; only recommends: Starts work on its own is off"];
+
+  test("the standing session is told once what a bind changed: the host step, each new secret, what is missing and where each routine stands", async () => {
+    const { db, pending } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: hired(), digest: D1, status: "stable" });
+    // The hire accepted on the web: nothing is bound, nobody is told.
+    await performUpsertInstance(ctx(db), MATE, { ...hire, role_id: "role-1" as any, phase: "awaiting_host", config: { "product.domain": "acme.io" } });
+    expect(pending).toEqual([]);
+    // The host step, with one secret typed on the page.
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }));
+    expect(pending).toHaveLength(1);
+    expect(pending[0]).toMatchObject({ conversation_id: STANDING, from_user_id: ME });
+    expect(pending[0].content.startsWith('<session-message from="unknown" name="codecast">\n')).toBe(true);
+    expect(said(pending[0])).toEqual([
+      "The host step for acme-growth finished on mbp: the template is installed, the instance file is written and your routines exist; each turns on as soon as it is ready.",
+      "Ads credentials is now bound for acme-growth on mbp: the value is in a file there and its path is in the instance file. ads needed it.",
+      "Still missing: Publora key.",
+      ...ROUTINES,
+    ]);
+    // A rerun that binds nothing new says nothing.
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }));
+    expect(pending).toHaveLength(1);
+    // The missing secret, saved later from the role page: one line about it, no second host step.
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5, "accounts.publora": 9 }));
+    expect(pending).toHaveLength(2);
+    expect(said(pending[1])).toEqual([
+      "Publora key is now bound for acme-growth on mbp: the value is in a file there and its path is in the instance file.",
+      "Every secret this template asks for is bound.",
+      ...ROUTINES,
+    ]);
+    // The role binding from its own standing session is not told what it just did; a hand of the role is.
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 12, "accounts.publora": 9 }, { from_session: "standing-uuid" }));
+    expect(pending).toHaveLength(2);
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 14, "accounts.publora": 9 }, { from_session: "a-hand" }));
+    expect(pending).toHaveLength(3);
+    expect(said(pending[2])[0]).toMatch(/^Ads credentials is now bound/);
+    // Neither the session nor the note is stored on the row.
+    const row = (await db.query("org_template_instances").collect())[0];
+    expect(row.from_session).toBeUndefined();
+  });
+
+  test("a role nobody can reach is not told, and the bind still lands", async () => {
+    const db = fixtures({ pending_messages: [] });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: hired(), digest: D1, status: "stable" });
+    const row = await performUpsertInstance(ctx(db), ME, { ...bound({ "accounts.ads": 5 }), routines: {} });
+    expect(row).toMatchObject({ phase: "ready", bindings: { "accounts.ads": { bound_at: 5 } } });
+    expect(await db.query("pending_messages").collect()).toEqual([]);
+  });
+
+  test("the role page reads each setup step's filled words and guide, each routine's trigger, and an ask that moves past a skipped step", async () => {
+    const { db } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: hired(), digest: D1, status: "stable" });
+    // Before the host step the row has no rendered text: the manifest's own words stand in.
+    await performUpsertInstance(ctx(db), MATE, { ...hire, role_id: "role-1" as any, phase: "awaiting_host" });
+    let page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page.setup[0]).toMatchObject({ id: "search-console", title: "Verify {{input.product.domain}}", how: "org/setup/search-console.md" });
+    expect(page.setup[0].guide).toBeUndefined();
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }));
+    page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page.setup.map((r: any) => [r.id, r.title, r.guide])).toEqual([["search-console", "Verify acme.io", "Add the TXT record, then run /src/acme/verify.sh."], ["publora", "Connect Publora", undefined], ["measurement", "See one event", undefined]]);
+    expect(page.setup_text).toBeUndefined();
+    expect(page.ask).toMatchObject({ id: "search-console", title: "Verify acme.io" });
+    // Each routine carries its trigger's short id and the title filled for this instance.
+    expect(page.routines.map((r: any) => [r.id, r.title, r.trigger.short_id])).toEqual([["seo", "SEO weekly for acme.io", "tr-7"], ["ads", "Ads", "tr-8"]]);
+    // Skip, from the page or `cast org template setup <instance> <id> --skip`: the ask moves to the next open step.
+    const key = { instance_key: "key-1" };
+    await performMarkSetup(ctx(db), MATE, { ...key, id: "search-console", status: "skipped" });
+    page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page.ask).toMatchObject({ id: "publora" });
+    expect(page.setup[0]).toMatchObject({ id: "search-console", status: "skipped" });
+    // The host reads the raw marks back into its receipt.
+    expect((await performInstanceStatus(ctx(db), MATE, key)).setup_marks).toEqual({ "search-console": { status: "skipped" } });
+    await performMarkSetup(ctx(db), MATE, { ...key, id: "publora", status: "skipped", from_agent: false });
+    expect((await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any })).ask).toBeUndefined();
+    await performMarkSetup(ctx(db), MATE, { ...key, id: "search-console", status: "open", from_agent: false });
+    expect((await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any })).ask).toMatchObject({ id: "search-console" });
+    // A list of every instance leaves the guides out.
+    expect((await performListInstances(ctx(db), MATE, { team_id: ACME }))[0].setup_text).toBeUndefined();
+  });
+  // Release classes, the release note, yank and retire (As built 2026-10-06).
+  const v = (version: string, fn: (m: any) => void = () => {}) => { const m = hired(); m.version = version; fn(m); return m; };
+  const D = (n: number) => n.toString(16).padStart(64, "0");
+  test("publish classifies each release against the one before it and refuses a bump smaller than its class", async () => {
+    const { db } = seated();
+    const first = await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.0"), digest: D(1), status: "stable" });
+    expect(first).toMatchObject({ action: "created", class: "structure" });
+    expect(first.releases[0]).toMatchObject({ class: "structure", changes: { routines_added: ["seo", "ads"] } });
+    const social = (m: any) => { m.routines.push({ id: "social", title: "Social post", every: "1d", prompt: "org/social.md" }); };
+    await expect(performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1", social), digest: D(2) })).rejects.toThrow("growth@2.0.1 is a structure release (routine social added), so it needs a minor version bump over 2.0.0; 2.0.1 is a patch bump. Publish it as 2.1.0 or later.");
+    await expect(performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.1.0", (m) => { m.role.line = "growth"; }), digest: D(2) })).rejects.toThrow(/an authority release \(Line it runs: none to growth\)/);
+    // A dry run answers the same and writes nothing.
+    const dry = await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.1.0", social), digest: D(2), dry_run: true });
+    expect(dry).toMatchObject({ dry_run: true, action: "released", class: "structure", previous: "2.0.0", changes: { routines_added: ["social"] } });
+    expect((await db.query("org_templates").collect())[0].releases).toHaveLength(1);
+    expect(await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1"), digest: D(3), status: "stable" })).toMatchObject({ action: "released", class: "content" });
+    // A release stored before classification gets its class on read.
+    const row = (await db.query("org_templates").collect())[0];
+    await db.patch(row._id, { releases: row.releases.map(({ class: _c, changes: _ch, ...r }: any) => r) });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME }))[0].releases.map((r: any) => [r.version, r.class])).toEqual([["2.0.0", "structure"], ["2.0.1", "content"]]);
+  });
+  test("a bind that moves the instance tells its role the versions, the class, the changelog and what a person must do, once", async () => {
+    const { db, pending } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.0"), digest: D1, status: "stable", changelog: "## 2.0.0\n- first" });
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }));
+    expect(pending).toHaveLength(1);
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.1.0", (m) => { m.routines.push({ id: "social", title: "Social post", every: "1d", prompt: "org/social.md" }); }), digest: D2, status: "stable", changelog: "## 2.1.0\n- Adds the social post.\n\n## 2.0.0\n- first" });
+    // The role running the bind itself still hears it: its memory is of 2.0.0.
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }, { version: "2.1.0", digest: D2, from_session: "standing-uuid" }));
+    expect(pending).toHaveLength(2);
+    const lines = said(pending[1]);
+    expect(lines.slice(0, 6)).toEqual([
+      "acme-growth now runs CMO 2.1.0, up from 2.0.0. This is a structure change. Read your charter and routine instructions again before acting on what you remember of 2.0.0.",
+      "What moved: new routines Social post (1d).",
+      "Changelog:",
+      "### 2.1.0",
+      "- Adds the social post.",
+      "Nobody needs to do anything for this change.",
+    ]);
+    expect(lines).toContain("Routines:");
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 5 }, { version: "2.1.0", digest: D2 }));
+    expect(pending).toHaveLength(2);
+  });
+  test("the role page's update: class, merged changes, changelogs newest first, names, releases behind", async () => {
+    const { db } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.0"), digest: D(1), status: "stable" });
+    await performUpsertInstance(ctx(db), ME, bound({}, { digest: D(1), update_policy: "stable" }));
+    let page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page).toMatchObject({ update_available: null, update_class: null, update_changes: null, update_changelogs: [], update_rollback: null, update_names: null, releases_behind: 0, release: { version: "2.0.0", class: "structure" } });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1"), digest: D(2), status: "stable", changelog: "## 2.0.1\n- wording" });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.1.0", (m) => { m.routines[0].every = "3d"; m.setup.push({ id: "x", title: "Check X", who: "human" }); }), digest: D(3), status: "stable", changelog: "## 2.1.0\n- cadence\n\n## 2.0.1\n- wording, better" });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.2.0", (m) => { m.routines[0].every = "1d"; m.setup.push({ id: "x", title: "Check X", who: "human" }); }), digest: D(4), status: "canary" });
+    page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page).toMatchObject({
+      update_available: "2.1.0", update_digest: D(3), update_class: "structure", update_rollback: null, releases_behind: 3,
+      update_changes: { routines_recadenced: [{ id: "seo", from: "7d", to: "3d" }], setup_added: ["x"], authority_changed: [] },
+      update_changelogs: [{ version: "2.1.0", text: "- cadence" }, { version: "2.0.1", text: "- wording, better" }],
+    });
+    expect(page.update_names.setup.x).toBe("Check X");
+    expect(page.update_names.routines.seo).toEqual({ title: "SEO weekly", every: "3d" });
+  });
+  test("yank: publisher only, never offered, latest falls back, an instance on it is offered the fallback as a rollback under any policy", async () => {
+    const { db } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.0"), digest: D(1), status: "stable" });
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1"), digest: D(2), status: "stable", changelog: "## 2.0.1\n- posts twice" });
+    await performUpsertInstance(ctx(db), ME, bound({}, { version: "2.0.1", digest: D(2), update_policy: "canary" }));
+    await expect(performYank(ctx(db), MATE, { as_codecast: true, template_id: "growth", version: "2.0.1", reason: "posts every message twice" })).rejects.toThrow();
+    await expect(performYank(ctx(db), ME, { as_codecast: true, template_id: "growth", version: "2.0.1", reason: "bad" })).rejects.toThrow(/Say why/);
+    const yanked = await performYank(ctx(db), ME, { as_codecast: true, template_id: "growth", version: "2.0.1", reason: "posts every message twice" });
+    expect(yanked).toMatchObject({ latest: { version: "2.0.0", digest: D(1) }, fallback: "2.0.0", instances_on_it: 1 });
+    const entry = (await performCatalog(ctx(db), MATE, { team_id: ACME }))[0];
+    expect(entry.latest.version).toBe("2.0.0"); expect(entry.releases.map((r: any) => r.version)).toEqual(["2.0.0"]);
+    const page = await performInstanceForRole(ctx(db), MATE, { role_id: "role-1" as any });
+    expect(page).toMatchObject({ update_available: "2.0.0", update_digest: D(1), update_rollback: { reason: "posts every message twice" }, update_changelogs: [{ version: "2.0.1", text: "- posts twice" }], release: { version: "2.0.1", yanked: "posts every message twice" } });
+    // No hire, upgrade or republish lands on it; the instance on it still binds where it is.
+    await expect(performAcceptUpgrade(ctx(db), ME, { access: WS, instance: "acme-growth", template_id: "growth", to: "2.0.1", digest: D(2) })).rejects.toThrow(/yanked/);
+    await expect(performUpsertInstance(ctx(db), ME, { ...hire, instance_key: "key-2", instance: "other", version: "2.0.1", digest: D(2) })).rejects.toThrow(/yanked/);
+    await expect(performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1"), digest: D(2), status: "stable" })).rejects.toThrow(/yanked/);
+    await performUpsertInstance(ctx(db), ME, bound({ "accounts.ads": 9 }, { version: "2.0.1", digest: D(2) }));
+  });
+  test("retire hides a template from every catalog and keeps its instances; a workspace that retires its own copy hires Codecast's again", async () => {
+    const { db } = seated();
+    await performPublish(ctx(db), ME, { as_codecast: true, manifest: v("2.0.1"), digest: D(1), status: "stable" });
+    await performPublish(ctx(db), ME, { team_id: ACME, manifest: v("2.0.0"), digest: D(2), status: "draft" });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME })).map((t) => [t.workspace, t.latest.version])).toEqual([[WS, "2.0.0"], ["codecast", "2.0.1"]]);
+    await performUpsertInstance(ctx(db), ME, bound({}, { version: "2.0.0", digest: D(2) }));
+    await expect(performRetire(ctx(db), OUT, { team_id: ACME, template_id: "growth" })).rejects.toThrow();
+    await performRetire(ctx(db), MATE, { team_id: ACME, template_id: "growth", reason: "stale draft" });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME })).map((t) => [t.workspace, t.latest.version])).toEqual([["codecast", "2.0.1"]]);
+    // The instance hired from the retired copy still reads its pinned release.
+    expect((await performInstanceStatus(ctx(db), MATE, { instance_key: "key-1" })).release).toMatchObject({ version: "2.0.0" });
+    // A new hire of growth resolves to Codecast's.
+    await expect(performUpsertInstance(ctx(db), ME, { ...hire, instance_key: "key-2", instance: "second", version: "2.0.0", digest: D(2) })).rejects.toThrow(/retired/);
+    expect(await performUpsertInstance(ctx(db), ME, { ...hire, instance_key: "key-3", instance: "third", version: "2.0.1", digest: D(1) })).toMatchObject({ version: "2.0.1" });
+    await expect(performPublish(ctx(db), ME, { team_id: ACME, manifest: v("2.1.0"), digest: D(3) })).rejects.toThrow(/retired/);
+    await performRetire(ctx(db), MATE, { team_id: ACME, template_id: "growth", undo: true });
+    expect((await performCatalog(ctx(db), MATE, { team_id: ACME }))).toHaveLength(2);
+  });
+});

@@ -1,0 +1,888 @@
+import { action, internalAction, internalMutation, internalQuery, query } from "./functions";
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { api, internal } from "./_generated/api";
+import { Id } from "./_generated/dataModel";
+import { isConversationTeamVisible, teamVisibleConvTeam } from "./privacy";
+import { canAccessConversation } from "./lib/access";
+import { markInsightDirty } from "./lib/changesDirty";
+import { pullRequestsLinkedToConversation } from "./lib/prSessions";
+import { CHEAP_MODEL, postMessages, replyText, type SurfaceRequest } from "./lib/anthropic";
+import { REDIRECT_PATTERN } from "@codecast/shared/contracts/redirectWords";
+
+type OutcomeType = "shipped" | "progress" | "blocked" | "unknown";
+type InsightGenStatus = {
+  status: "ok" | "error" | "skipped" | "unknown";
+  reason?: string;
+  insight_id?: Id<"session_insights">;
+};
+type ConversationInsightContext = {
+  conversation: {
+    _id: Id<"conversations">;
+    team_id?: Id<"teams">;
+    // Privacy fields carried so the visible-team stamp on the insight row (and
+    // its downstream mining call) is honest — team_id alone is routing.
+    is_private?: boolean;
+    auto_shared?: boolean;
+    team_visibility?: string;
+    actor_user_id: Id<"users">;
+    title?: string;
+    subtitle?: string;
+    idle_summary?: string;
+    project_path?: string;
+    git_branch?: string;
+    status: "active" | "completed";
+    started_at: number;
+    updated_at: number;
+  };
+  messages: Array<{ role: string; content: string; timestamp: number }>;
+  tool_names: string[];
+  commits: Array<{
+    sha: string;
+    message: string;
+    files_changed: number;
+    insertions: number;
+    deletions: number;
+    timestamp: number;
+  }>;
+  prs: Array<{
+    number: number;
+    title: string;
+    state: "open" | "closed" | "merged";
+    repository: string;
+    updated_at: number;
+  }>;
+};
+
+const internalApi = internal as any;
+
+function uniqCompact(values: string[] | undefined, maxItems = 8, maxLen = 64): string[] {
+  if (!values) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of values) {
+    const val = (raw || "").trim();
+    if (!val) continue;
+    const normalized = val.toLowerCase();
+    if (seen.has(normalized)) continue;
+    seen.add(normalized);
+    out.push(val.slice(0, maxLen));
+    if (out.length >= maxItems) break;
+  }
+  return out;
+}
+
+function clampConfidence(value: unknown): number | undefined {
+  if (typeof value !== "number" || Number.isNaN(value)) return undefined;
+  return Math.max(0, Math.min(1, value));
+}
+
+function safeOutcomeType(value: unknown): OutcomeType {
+  if (value === "shipped" || value === "progress" || value === "blocked") return value;
+  return "unknown";
+}
+
+function normalizeWord(token: string): string {
+  return token
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function summarySignature(summary: string): string {
+  const stop = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "into",
+    "from",
+    "that",
+    "this",
+    "was",
+    "were",
+    "is",
+    "are",
+    "to",
+    "of",
+    "in",
+    "on",
+    "by",
+    "a",
+    "an",
+  ]);
+  const tokens = summary
+    .split(/\s+/)
+    .map(normalizeWord)
+    .filter((t) => t && !stop.has(t))
+    .slice(0, 4);
+  return tokens.join("-");
+}
+
+/** A message row as the insight context reads it. */
+export type InsightMessageRow = {
+  role: string;
+  content?: string;
+  timestamp: number;
+  tool_calls?: Array<{ name: string }>;
+};
+
+/**
+ * What the insight prompt reads from a session's newest messages, given in
+ * chronological order: the user and assistant turns, each cut to 500
+ * characters, sampled to the first 8 and the last 10, plus the tool names seen.
+ * A user turn in the cut middle that reads as a redirect (REDIRECT_PATTERN,
+ * the words cast-lessons searches for) is kept in place, so the corrections
+ * the insight extracts are not lost to the sampling.
+ */
+export function selectInsightContext(rows: InsightMessageRow[]): Pick<ConversationInsightContext, "messages" | "tool_names"> {
+  const turns = rows
+    .filter((m) => (m.role === "user" || m.role === "assistant") && !!m.content)
+    .map((m) => ({
+      role: m.role,
+      content: (m.content || "").slice(0, 500),
+      timestamp: m.timestamp,
+    }));
+  const sampled = turns.length > 18
+    ? turns.filter((t, i) => i < 8 || i >= turns.length - 10 || (t.role === "user" && REDIRECT_PATTERN.test(t.content)))
+    : turns;
+  return {
+    messages: sampled,
+    tool_names: uniqCompact(
+      rows.flatMap((m) => (m.tool_calls || []).map((tc) => tc.name)).filter(Boolean),
+      16,
+      80
+    ),
+  };
+}
+
+/** The facts the insight prompt names; the ids and privacy fields stay out. */
+export type InsightRequestContext = Pick<ConversationInsightContext, "messages" | "tool_names" | "commits" | "prs"> & {
+  conversation: Pick<
+    ConversationInsightContext["conversation"],
+    "title" | "subtitle" | "idle_summary" | "project_path" | "git_branch" | "status" | "started_at" | "updated_at"
+  >;
+};
+
+/**
+ * The insight request. Message times print in UTC, which is the Convex
+ * runtime's zone, so a replay on any machine renders the same prompt. No
+ * temperature: the API default applies.
+ */
+export function insightRequest(context: InsightRequestContext, source: string): SurfaceRequest {
+  const formatMsgTime = (ts: number | undefined) => {
+    if (!ts) return "";
+    const d = new Date(ts);
+    return `[${d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" })}]`;
+  };
+  const sampledMessages = context.messages
+    .map((m) => `${formatMsgTime(m.timestamp)} ${m.role === "assistant" ? "Assistant" : "User"}: ${m.content}`)
+    .join("\n\n");
+
+  const commitsText = context.commits.length
+    ? context.commits
+        .slice(0, 8)
+        .map((c) => `- ${c.sha.slice(0, 7)} ${c.message.split("\n")[0]} (+${c.insertions}/-${c.deletions}, ${c.files_changed} files)`)
+        .join("\n")
+    : "- none";
+
+  const prsText = context.prs.length
+    ? context.prs
+        .slice(0, 6)
+        .map((pr) => `- #${pr.number} [${pr.state}] ${pr.title} (${pr.repository})`)
+        .join("\n")
+    : "- none";
+
+  const prompt = `You are writing a session narrative for a developer activity feed.
+
+A teammate reads it to learn where the work stands and what to do next, so it is a record of what the excerpt shows happened, and the excerpt's last message is the session's present. A step is done only when the excerpt shows its result, and only done steps go in did. A notice that a command completed shows that it ended, not what it found: a check passed only when the excerpt shows its output saying so. A step the agent is doing or waiting on when the excerpt ends (a click it is making now, a test, typecheck or deploy still running, a check whose result has not appeared) has not finished, and a step it says it will do next has not started: neither is done, passed or verified, so the summary names each as underway or next, and did leaves it out.
+
+Return ONLY valid JSON with this exact shape:
+{
+  "headline": "string (one sentence, max 80 chars, what the excerpt shows done or where the work stands)",
+  "turns": [
+    { "ask": "what the user asked/directed (their actual words, paraphrased concisely)", "did": ["what the excerpt shows finished in response (2-4 bullet points, specific, each one result the excerpt shows)"] }
+  ],
+  "summary": "string (2-3 sentences, narrative context)",
+  "outcome_type": "shipped|progress|blocked|unknown",
+  "themes": ["string"],
+  "confidence": number (0..1),
+  "corrections": [ { "said": "string", "instead": "string" } ],
+  "decisions": [ { "title": "string", "why": "string" } ]
+}
+
+Rules:
+- turns: THE MOST IMPORTANT FIELD. This captures the back-and-forth of the session. Each turn is one user request and what the agent did about it. The "ask" field should quote or closely paraphrase what the user actually said -- their intent, their words. The "did" array lists specific concrete things the excerpt shows finished in response (files changed, bugs found, features built). Each bullet claims one result: when a step's first part shows a result and the rest is still running or only announced (the button renders, the click on it is being made now), the bullet claims the first part alone. 3-8 turns per session.
+  Good: { "ask": "Fix the OOM crash in renderMedia", "did": ["Found root cause: renderMedia() spawning unlimited Chromium processes", "Capped concurrency to os.cpus().length * 0.5 in index.ts", "Ran the render benchmark: peak memory fell from 9 GB to 2 GB"] }
+  Good: { "ask": "Map the React Native architecture across the monorepo", "did": ["Documented Router file-base routing in app/, layout.tsx", "Identified Tamagui config and component library structure", "Wrote comprehensive report covering all three backend layers"] }
+  Bad: { "ask": "Worked on stuff", "did": ["Made changes"] }
+- headline: Lead with the verb, and claim only what the excerpt shows finished. Max 80 characters.
+- summary: Brief narrative context, 2-3 sentences, ending on what is in progress or next.
+- outcome_type: shipped = the excerpt shows the work deployed, merged or complete. progress = still working, including when its last step has not been shown finishing. blocked = stuck.
+- themes: 2-4 short tags, lowercase.
+- corrections: each place the user redirected the agent (stopped it, said no, asked for a different approach or undid its work). "said" is what they said, in their words; "instead" is what the agent should do in this project from now on, as one general line. Empty when the excerpt shows no redirect.
+- decisions: each choice the excerpt shows being made for this project (an approach, a tool, a rule, a scope cut) with the reason given. "title" is the choice in one line; "why" is the reason. Leave out a choice the excerpt gives no reason for. Empty when the excerpt shows none.
+- No markdown, no commentary, just JSON.
+
+Session metadata:
+- title: ${context.conversation.title || ""}
+- subtitle: ${context.conversation.subtitle || ""}
+- idle_summary: ${context.conversation.idle_summary || ""}
+- project_path: ${context.conversation.project_path || ""}
+- git_branch: ${context.conversation.git_branch || ""}
+- status: ${context.conversation.status}
+- started_at: ${context.conversation.started_at ? new Date(context.conversation.started_at).toISOString() : "unknown"}
+- updated_at: ${context.conversation.updated_at ? new Date(context.conversation.updated_at).toISOString() : "unknown"}
+- source: ${source}
+
+Tool names seen:
+${context.tool_names.join(", ") || "none"}
+
+Commits:
+${commitsText}
+
+Linked PRs:
+${prsText}
+
+Conversation excerpt:
+${sampledMessages}`;
+
+  return { model: CHEAP_MODEL, max_tokens: 1200, prompt };
+}
+
+/**
+ * The insight reply as the insight row stores it. `summary` is the model's
+ * value as given (the caller falls back to the session's own lines when it is
+ * empty); every other field is normalized and capped. A missing or non-JSON
+ * reply is an error with the status reason prod records.
+ */
+export function parseInsightReply(text: string | undefined) {
+  const raw = text?.trim();
+  if (!raw) return { ok: false as const, reason: "empty_response" };
+  const cleaned = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    return { ok: false as const, reason: "invalid_json" };
+  }
+  const timeline: Array<{ t: string; event: string; type: string }> | undefined = Array.isArray(parsed.timeline)
+    ? parsed.timeline
+        .filter((e: any) => e && typeof e.event === "string" && typeof e.t === "string")
+        .slice(0, 12)
+        .map((e: any) => ({
+          t: String(e.t).slice(0, 10),
+          event: String(e.event).trim().slice(0, 200),
+          type: String(e.type || "change").slice(0, 20),
+        }))
+    : undefined;
+  const turns: Array<{ ask: string; did: string[] }> | undefined = Array.isArray(parsed.turns)
+    ? parsed.turns
+        .filter((t: any) => t && typeof t.ask === "string" && Array.isArray(t.did))
+        .slice(0, 10)
+        .map((t: any) => ({
+          ask: String(t.ask).trim().slice(0, 200),
+          did: t.did.filter((d: any) => typeof d === "string").slice(0, 6).map((d: any) => String(d).trim().slice(0, 200)),
+        }))
+    : undefined;
+  const pairs = (list: unknown, a: string, b: string): Array<Record<string, string>> | undefined =>
+    Array.isArray(list)
+      ? list
+          .filter((x: any) => x && typeof x[a] === "string" && typeof x[b] === "string" && x[a].trim() && x[b].trim())
+          .slice(0, 8)
+          .map((x: any) => ({ [a]: String(x[a]).trim().slice(0, 300), [b]: String(x[b]).trim().slice(0, 300) }))
+      : undefined;
+  return {
+    ok: true as const,
+    summary: parsed.summary,
+    headline: parsed.headline ? String(parsed.headline).trim().slice(0, 120) : undefined,
+    corrections: pairs(parsed.corrections, "said", "instead") as Array<{ said: string; instead: string }> | undefined,
+    decisions: pairs(parsed.decisions, "title", "why") as Array<{ title: string; why: string }> | undefined,
+    keyChanges: uniqCompact(Array.isArray(parsed.key_changes) ? parsed.key_changes.map((c: any) => String(c)) : [], 6, 120),
+    timeline,
+    turns,
+    goal: parsed.goal ? String(parsed.goal).trim().slice(0, 220) : undefined,
+    whatChanged: parsed.what_changed ? String(parsed.what_changed).trim().slice(0, 320) : undefined,
+    outcomeType: safeOutcomeType(parsed.outcome_type),
+    blockers: uniqCompact(Array.isArray(parsed.blockers) ? parsed.blockers.map((b: any) => String(b)) : [], 5, 200),
+    nextAction: parsed.next_action ? String(parsed.next_action).trim().slice(0, 220) : undefined,
+    themes: uniqCompact(Array.isArray(parsed.themes) ? parsed.themes.map((t: any) => String(t)) : [], 6, 48),
+    confidence: clampConfidence(parsed.confidence),
+  };
+}
+
+export const getConversationContextForInsight = internalQuery({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation) return null;
+
+    const messages = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_timestamp", (q) =>
+        q.eq("conversation_id", args.conversation_id)
+      )
+      .order("desc")
+      .take(80);
+
+    const sampled = selectInsightContext(messages.reverse());
+
+    const commits = await ctx.db
+      .query("commits")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversation_id))
+      .order("desc")
+      .take(20);
+
+    let linkedPrs: Array<{ number: number; title: string; state: "open" | "closed" | "merged"; repository: string; updated_at: number }> = [];
+    if (conversation.team_id) {
+      linkedPrs = (await pullRequestsLinkedToConversation(ctx, args.conversation_id))
+        .filter((pr) => String(pr.team_id) === String(conversation.team_id))
+        .sort((a, b) => b.updated_at - a.updated_at)
+        .slice(0, 10)
+        .map((pr) => ({
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          repository: pr.repository,
+          updated_at: pr.updated_at,
+        }));
+    }
+
+    return {
+      conversation: {
+        _id: conversation._id,
+        team_id: conversation.team_id,
+        is_private: conversation.is_private,
+        auto_shared: conversation.auto_shared,
+        team_visibility: conversation.team_visibility,
+        actor_user_id: conversation.user_id,
+        title: conversation.title,
+        subtitle: conversation.subtitle,
+        idle_summary: conversation.idle_summary,
+        project_path: conversation.project_path,
+        git_branch: conversation.git_branch,
+        status: conversation.status,
+        started_at: conversation.started_at,
+        updated_at: conversation.updated_at,
+      },
+      messages: sampled.messages,
+      tool_names: sampled.tool_names,
+      commits: commits.map((c) => ({
+        sha: c.sha,
+        message: c.message,
+        files_changed: c.files_changed,
+        insertions: c.insertions,
+        deletions: c.deletions,
+        timestamp: c.timestamp,
+      })),
+      prs: linkedPrs,
+    };
+  },
+});
+
+export const getExistingInsight = internalQuery({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("session_insights")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversation_id))
+      .first();
+  },
+});
+
+// Lazy per-card enrichment for the unified activity feed. The feed lists every
+// team-visible session straight from listConversations; a card calls this only
+// when it is expanded, to pull its AI summary if one already exists. Read-only:
+// returns null when the session was never summarized, in which case the card
+// stays plain (or the client triggers regenerateSessionInsight on demand).
+export const getSessionInsight = query({
+  args: { conversation_id: v.id("conversations") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    // An insight condenses the whole transcript (summary, turns, blockers), so
+    // it is exactly as sensitive as the conversation. Gate on real access —
+    // team_id on the conversation is routing, not a read grant.
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation || !(await canAccessConversation(ctx, userId, conversation))) return null;
+    const insight = await ctx.db
+      .query("session_insights")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversation_id))
+      .first();
+    if (!insight) return null;
+    return {
+      conversation_id: insight.conversation_id,
+      summary: insight.summary,
+      headline: insight.headline,
+      key_changes: insight.key_changes,
+      timeline: insight.timeline,
+      turns: insight.turns,
+      outcome_type: insight.outcome_type,
+      blockers: insight.blockers,
+      next_action: insight.next_action,
+      themes: insight.themes,
+      generated_at: insight.generated_at,
+      metadata: insight.metadata,
+    };
+  },
+});
+
+export const getBackfillCandidates = internalQuery({
+  args: {
+    team_id: v.id("teams"),
+    since: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const memberships = await ctx.db
+      .query("team_memberships")
+      .withIndex("by_team_id", (q) => q.eq("team_id", args.team_id))
+      .collect();
+
+    if (memberships.length === 0) return [];
+
+    const perMemberFetch = Math.max(
+      8,
+      Math.ceil((args.limit * 4) / Math.max(memberships.length, 1))
+    );
+    const recentByMember = await Promise.all(
+      memberships.map((m) =>
+        ctx.db
+          .query("conversations")
+          .withIndex("by_team_user_updated", (q) =>
+            q.eq("team_id", args.team_id).eq("user_id", m.user_id)
+          )
+          .order("desc")
+          .take(perMemberFetch)
+      )
+    );
+
+    const seenConversationIds = new Set<string>();
+    const conversations = recentByMember
+      .flat()
+      .filter((c) => {
+        const key = c._id.toString();
+        if (seenConversationIds.has(key)) return false;
+        seenConversationIds.add(key);
+        return true;
+      });
+
+    const visible = conversations
+      .filter((c) => c.updated_at >= args.since && c.message_count > 0)
+      .sort((a, b) => b.updated_at - a.updated_at);
+
+    const candidates: Array<{
+      conversation_id: Id<"conversations">;
+      updated_at: number;
+      title?: string;
+      reason: "missing" | "stale";
+    }> = [];
+
+    for (const conversation of visible) {
+      if (!(await isConversationTeamVisible(ctx, conversation))) continue;
+      const existing = await ctx.db
+        .query("session_insights")
+        .withIndex("by_conversation_id", (q) => q.eq("conversation_id", conversation._id))
+        .first();
+      if (!existing) {
+        candidates.push({
+          conversation_id: conversation._id,
+          updated_at: conversation.updated_at,
+          title: conversation.title || conversation.subtitle || undefined,
+          reason: "missing",
+        });
+      } else if (existing.generated_at + 60 * 1000 < conversation.updated_at) {
+        candidates.push({
+          conversation_id: conversation._id,
+          updated_at: conversation.updated_at,
+          title: conversation.title || conversation.subtitle || undefined,
+          reason: "stale",
+        });
+      }
+
+      if (candidates.length >= args.limit) break;
+    }
+
+    return candidates;
+  },
+});
+
+export const upsertSessionInsight = internalMutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    team_id: v.optional(v.id("teams")),
+    actor_user_id: v.id("users"),
+    source: v.union(
+      v.literal("idle"),
+      v.literal("commit"),
+      v.literal("manual"),
+      v.literal("periodic")
+    ),
+    generated_at: v.number(),
+    summary: v.string(),
+    headline: v.optional(v.string()),
+    key_changes: v.optional(v.array(v.string())),
+    timeline: v.optional(v.array(v.object({
+      t: v.string(),
+      event: v.string(),
+      type: v.string(),
+      session_title: v.optional(v.string()),
+    }))),
+    turns: v.optional(v.array(v.object({
+      ask: v.string(),
+      did: v.array(v.string()),
+    }))),
+    goal: v.optional(v.string()),
+    what_changed: v.optional(v.string()),
+    outcome_type: v.union(
+      v.literal("shipped"),
+      v.literal("progress"),
+      v.literal("blocked"),
+      v.literal("unknown")
+    ),
+    blockers: v.optional(v.array(v.string())),
+    next_action: v.optional(v.string()),
+    themes: v.array(v.string()),
+    confidence: v.optional(v.number()),
+    corrections: v.optional(v.array(v.object({ said: v.string(), instead: v.string() }))),
+    decisions: v.optional(v.array(v.object({ title: v.string(), why: v.string() }))),
+    metadata: v.optional(v.object({
+      commit_shas: v.optional(v.array(v.string())),
+      pr_numbers: v.optional(v.array(v.number())),
+      files_touched: v.optional(v.array(v.string())),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("session_insights")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversation_id))
+      .first();
+
+    let insightId;
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        team_id: args.team_id,
+        actor_user_id: args.actor_user_id,
+        source: args.source,
+        generated_at: args.generated_at,
+        summary: args.summary,
+        headline: args.headline,
+        key_changes: args.key_changes,
+        timeline: args.timeline,
+        turns: args.turns,
+        goal: args.goal,
+        what_changed: args.what_changed,
+        outcome_type: args.outcome_type,
+        blockers: args.blockers,
+        next_action: args.next_action,
+        themes: args.themes,
+        confidence: args.confidence,
+        corrections: args.corrections,
+        decisions: args.decisions,
+        metadata: args.metadata,
+      });
+      insightId = existing._id;
+    } else {
+      insightId = await ctx.db.insert("session_insights", {
+        conversation_id: args.conversation_id,
+        team_id: args.team_id,
+        actor_user_id: args.actor_user_id,
+        source: args.source,
+        generated_at: args.generated_at,
+        summary: args.summary,
+        headline: args.headline,
+        key_changes: args.key_changes,
+        timeline: args.timeline,
+        turns: args.turns,
+        goal: args.goal,
+        what_changed: args.what_changed,
+        outcome_type: args.outcome_type,
+        blockers: args.blockers,
+        next_action: args.next_action,
+        themes: args.themes,
+        confidence: args.confidence,
+        corrections: args.corrections,
+        decisions: args.decisions,
+        metadata: args.metadata,
+      });
+    }
+    await markInsightDirty(ctx, args.conversation_id, args.team_id);
+
+    return insightId;
+  },
+});
+
+export const generateSessionInsight = internalAction({
+  args: {
+    conversation_id: v.id("conversations"),
+    reason: v.optional(v.union(
+      v.literal("idle"),
+      v.literal("commit"),
+      v.literal("manual"),
+      v.literal("periodic")
+    )),
+  },
+  handler: async (ctx, args): Promise<InsightGenStatus> => {
+    if (!process.env.ANTHROPIC_API_KEY) return { status: "skipped", reason: "missing_api_key" };
+
+    const context = (await ctx.runQuery(internal.sessionInsights.getConversationContextForInsight, {
+      conversation_id: args.conversation_id,
+    })) as ConversationInsightContext | null;
+    if (!context) return { status: "skipped", reason: "missing_context" };
+
+    const now = Date.now();
+    const source = args.reason || "periodic";
+    const existing = await ctx.runQuery(internal.sessionInsights.getExistingInsight, {
+      conversation_id: args.conversation_id,
+    });
+
+    if (existing && source !== "manual" && now - existing.generated_at < 5 * 60 * 1000) {
+      return { status: "skipped", reason: "rate_limited" };
+    }
+
+
+    try {
+      const response = await postMessages(insightRequest(context, source));
+      if (!response) return { status: "skipped", reason: "missing_api_key" };
+      if (!response.ok) {
+        return { status: "error", reason: `provider_${response.status}` };
+      }
+
+      const data = await response.json();
+      const reply = parseInsightReply(replyText(data));
+      if (!reply.ok) return { status: "error", reason: reply.reason };
+
+      const summary = (reply.summary || context.conversation.idle_summary || context.conversation.subtitle || "Updated session activity")
+        .toString()
+        .trim()
+        .slice(0, 600);
+
+      const { headline, keyChanges, timeline, turns, goal, whatChanged, outcomeType, blockers, nextAction, themes, confidence } = reply;
+
+      const filesTouched = uniqCompact(
+        context.commits
+          .slice(0, 6)
+          .map((c) => c.message.split("\n")[0]),
+        6,
+        120
+      );
+
+      // The insight and any mined task/doc inherit only the conversation's
+      // VISIBLE team. A private session's routing team_id is not a read grant,
+      // so it must not ride onto these downstream rows.
+      const visibleTeam = teamVisibleConvTeam(context.conversation);
+
+      const insightId = (await ctx.runMutation(internal.sessionInsights.upsertSessionInsight, {
+        conversation_id: context.conversation._id,
+        team_id: visibleTeam,
+        actor_user_id: context.conversation.actor_user_id,
+        source,
+        generated_at: now,
+        summary,
+        headline,
+        key_changes: keyChanges.length ? keyChanges : undefined,
+        timeline: timeline?.length ? timeline : undefined,
+        turns: turns?.length ? turns : undefined,
+        goal,
+        what_changed: whatChanged,
+        outcome_type: outcomeType,
+        blockers: blockers.length ? blockers : undefined,
+        next_action: nextAction,
+        themes: themes.length ? themes : ["general"],
+        confidence,
+        corrections: reply.corrections?.length ? reply.corrections : undefined,
+        decisions: reply.decisions?.length ? reply.decisions : undefined,
+        metadata: {
+          commit_shas: context.commits.slice(0, 8).map((c) => c.sha),
+          pr_numbers: context.prs.slice(0, 8).map((pr) => pr.number),
+          files_touched: filesTouched.length ? filesTouched : undefined,
+        },
+      })) as Id<"session_insights">;
+
+      // Keep the inbox's short summary fresh by reusing the insight headline.
+      // Runs every turn (5-min throttled), so any active session has a one-liner --
+      // unlike the idle-notification path, which fires at most once per idle transition.
+      if (headline) {
+        await ctx.runMutation(internal.idleSummary.setIdleSummary, {
+          conversation_id: context.conversation._id,
+          idle_summary: headline,
+        });
+      }
+
+      return { status: "ok", insight_id: insightId };
+    } catch (error) {
+      console.error("generateSessionInsight failed", error);
+      return { status: "error", reason: "exception" };
+    }
+  },
+});
+
+export const regenerateSessionInsight = action({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args): Promise<InsightGenStatus> => {
+    const currentUser = await ctx.runQuery(api.users.getCurrentUser, {} as any);
+    if (!currentUser) throw new Error("Not authenticated");
+
+    const conversation = await ctx.runQuery(api.conversations.getConversation, {
+      conversation_id: args.conversation_id,
+    });
+
+    if (!conversation) throw new Error("Conversation not found");
+
+    return await ctx.runAction(internal.sessionInsights.generateSessionInsight, {
+      conversation_id: args.conversation_id,
+      reason: "manual",
+    });
+  },
+});
+
+export const backfillTeamInsights = action({
+  args: {
+    team_id: v.id("teams"),
+    window_hours: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const user = await ctx.runQuery(api.users.getCurrentUser, {} as any);
+    if (!user) throw new Error("Not authenticated");
+
+    const userTeams = await ctx.runQuery(api.teams.getUserTeams, {});
+    const isMember = (userTeams || []).some((t: any) => t?._id?.toString() === args.team_id.toString());
+    if (!isMember) {
+      throw new Error("Not a member of this team");
+    }
+
+    const windowHours = Math.max(1, Math.min(args.window_hours ?? 24 * 14, 24 * 30));
+    const limit = Math.max(1, Math.min(args.limit ?? 25, 100));
+    const since = Date.now() - windowHours * 60 * 60 * 1000;
+
+    const candidates = await ctx.runQuery(internal.sessionInsights.getBackfillCandidates, {
+      team_id: args.team_id,
+      since,
+      limit,
+    });
+
+    const results: Array<{
+      conversation_id: Id<"conversations">;
+      reason: "missing" | "stale";
+      status: string;
+      detail?: string;
+    }> = [];
+
+    let success = 0;
+    for (const candidate of candidates) {
+      const res = await ctx.runAction(internal.sessionInsights.generateSessionInsight, {
+        conversation_id: candidate.conversation_id,
+        reason: "periodic",
+      });
+      const status = (res as any)?.status || "unknown";
+      const detail = (res as any)?.reason ? String((res as any).reason) : undefined;
+      if (status === "ok") success += 1;
+      results.push({
+        conversation_id: candidate.conversation_id,
+        reason: candidate.reason,
+        status,
+        detail,
+      });
+    }
+
+    return {
+      window_hours: windowHours,
+      requested: limit,
+      candidates: candidates.length,
+      generated: success,
+      skipped_or_failed: candidates.length - success,
+      results,
+    };
+  },
+});
+
+export const backfillTeamInsightsInternal = internalAction({
+  args: {
+    team_id: v.id("teams"),
+    window_hours: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const windowHours = Math.max(1, Math.min(args.window_hours ?? 24 * 14, 24 * 30));
+    const limit = Math.max(1, Math.min(args.limit ?? 25, 100));
+    const since = Date.now() - windowHours * 60 * 60 * 1000;
+
+    const candidates = await ctx.runQuery(internal.sessionInsights.getBackfillCandidates, {
+      team_id: args.team_id,
+      since,
+      limit,
+    });
+
+    let success = 0;
+    for (const candidate of candidates) {
+      const res = await ctx.runAction(internal.sessionInsights.generateSessionInsight, {
+        conversation_id: candidate.conversation_id,
+        reason: "periodic",
+      });
+      if ((res as any)?.status === "ok") success += 1;
+    }
+
+    return { candidates: candidates.length, generated: success };
+  },
+});
+
+export const getInsightsNeedingTimeline = internalQuery({
+  args: {
+    user_id: v.id("users"),
+    since: v.number(),
+    limit: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const insights = await ctx.db
+      .query("session_insights")
+      .withIndex("by_actor_generated_at", (q) =>
+        q.eq("actor_user_id", args.user_id).gte("generated_at", args.since)
+      )
+      .order("desc")
+      .take(args.limit * 2);
+
+    return insights
+      .filter((i) => !i.timeline || i.timeline.length === 0 || !i.turns || i.turns.length === 0)
+      .slice(0, args.limit)
+      .map((i) => i.conversation_id);
+  },
+});
+
+export const backfillTimelines = action({
+  args: {
+    window_hours: v.optional(v.number()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    const user = await ctx.runQuery(api.users.getCurrentUser, {} as any);
+    if (!user) throw new Error("Not authenticated");
+
+    const windowHours = Math.max(1, Math.min(args.window_hours ?? 168, 24 * 30));
+    const limit = Math.max(1, Math.min(args.limit ?? 25, 100));
+    const since = Date.now() - windowHours * 60 * 60 * 1000;
+
+    const conversationIds = await ctx.runQuery(
+      internal.sessionInsights.getInsightsNeedingTimeline,
+      { user_id: user._id, since, limit }
+    );
+
+    let success = 0;
+    for (const cid of conversationIds) {
+      const res = await ctx.runAction(internal.sessionInsights.generateSessionInsight, {
+        conversation_id: cid,
+        reason: "manual",
+      });
+      if ((res as any)?.status === "ok") success += 1;
+    }
+
+    return { candidates: conversationIds.length, generated: success };
+  },
+});
+

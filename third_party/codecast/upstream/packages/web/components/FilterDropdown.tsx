@@ -1,0 +1,233 @@
+import { useState, useRef, useMemo, Fragment, type ReactNode } from "react";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { ChevronDown, Check, X } from "lucide-react";
+
+export type FilterOption = {
+  key: string;
+  label: string;
+  icon?: any;
+  color?: string;
+  /** A drawn face in the icon slot (a person's photo, a role's avatar). */
+  face?: ReactNode;
+  /** A heading drawn above the first option of each run that names it, so a
+   *  long list reads in parts ("Roles", then "People"). */
+  section?: string;
+  /** How many rows this option would keep. Drawn right-aligned, like the count
+   *  on a status pill, so a list of statuses reads the same in either place. */
+  count?: number;
+};
+
+/** The options as the menu draws them in multi mode: the empty "clear" row,
+ *  then every picked value, then the rest. A pick the option source no longer
+ *  lists (a label on no loaded task, a value from a shared URL) still gets a
+ *  row, named by its key, so the menu and the chip can always say what is
+ *  filtered and the pick can be undone. */
+function pickedFirst(options: FilterOption[], picked: Set<string>): FilterOption[] {
+  if (picked.size === 0) return options;
+  const byKey = new Map(options.map((o) => [o.key, o]));
+  const top = [...picked].map((k) => ({ ...(byKey.get(k) ?? { key: k, label: k }), section: undefined }));
+  return [
+    ...options.filter((o) => o.key === ""),
+    ...top,
+    ...options.filter((o) => o.key !== "" && !picked.has(o.key)),
+  ];
+}
+
+/** The option-button list, shared by the inline FilterDropdown popover and the
+ *  "+ Filter" add-menu in GenericListView. Single-select picks-and-closes via
+ *  onPicked; multi toggles in place and keeps the menu open. */
+export function FilterOptionList({
+  options,
+  value,
+  multi,
+  onChange,
+  onPicked,
+  searchable,
+}: {
+  options: FilterOption[];
+  value: string;
+  multi?: boolean;
+  onChange: (v: string) => void;
+  onPicked?: () => void;
+  /** Force the search box on or off. Left unset, it appears once the list is
+   *  long enough to scroll — task labels are a vocabulary of phrases, not a
+   *  handful of statuses, so scanning them by eye stops working. */
+  searchable?: boolean;
+}) {
+  const [query, setQuery] = useState("");
+  const showSearch = searchable ?? options.length > 10;
+  const selected = multi ? new Set(value ? value.split(",") : []) : null;
+  // Ordered from the value the menu OPENED with, not the live one: rows that
+  // jump to the top while you are clicking down the list would move the next
+  // target out from under the pointer.
+  const [openedWith] = useState(value);
+  const ordered = useMemo(() => {
+    if (!multi) return options;
+    const picked = new Set(openedWith ? openedWith.split(",") : []);
+    // Keys picked since opening that the source does not list still need a row.
+    for (const k of selected!) if (!options.some((o) => o.key === k)) picked.add(k);
+    return pickedFirst(options, picked);
+  }, [options, multi, openedWith, value]);
+  const shown = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!showSearch || !q) return ordered;
+    // The empty option is the "clear" action, so it always stays reachable.
+    return ordered.filter((o) => o.key === "" || o.label.toLowerCase().includes(q));
+  }, [ordered, query, showSearch]);
+  const hasValue = multi ? selected!.size > 0 : !!value;
+  const isSelected = (key: string) =>
+    key === "" ? !hasValue : multi ? selected!.has(key) : key === value;
+
+  const handleClick = (key: string) => {
+    if (!multi) { onChange(key); onPicked?.(); return; }
+    if (key === "") { onChange(""); return; }
+    const next = new Set(selected);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    onChange([...next].join(","));
+  };
+
+  return (
+    <>
+      {showSearch && (
+        <div className="px-2 pt-1 pb-1.5 sticky top-0 bg-sol-bg z-10">
+          <input
+            autoFocus
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              // Enter picks the only remaining match — the fast path when you
+              // know the label and just typed enough of it.
+              if (e.key === "Enter") {
+                const hits = shown.filter((o) => o.key !== "");
+                if (hits.length === 1) handleClick(hits[0].key);
+              }
+              e.stopPropagation();
+            }}
+            placeholder="Search"
+            className="w-full h-6 px-1.5 text-xs bg-sol-bg-alt border border-sol-border/40 rounded text-sol-text placeholder:text-sol-text-dim outline-none focus:border-sol-cyan/50"
+          />
+        </div>
+      )}
+      {shown.map((opt, i) => {
+        const OptIcon = opt.icon;
+        const sel = isSelected(opt.key);
+        const heading = opt.section && opt.section !== shown[i - 1]?.section ? opt.section : null;
+        return (
+          <Fragment key={opt.key}>
+          {heading && (
+            <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-sol-text-dim/70">{heading}</div>
+          )}
+          <button
+            onClick={() => handleClick(opt.key)}
+            title={opt.label}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs transition-colors ${
+              sel ? "bg-sol-bg-highlight text-sol-text" : "text-sol-text-muted hover:bg-sol-bg-alt"
+            }`}
+          >
+            {opt.face ?? (OptIcon && <OptIcon className={`w-3.5 h-3.5 flex-shrink-0 ${opt.color || ""}`} />)}
+            <span className="flex-1 text-left truncate">{opt.label}</span>
+            {opt.count != null && opt.count > 0 && (
+              <span className="text-[10px] tabular-nums text-sol-text-dim flex-shrink-0">{opt.count}</span>
+            )}
+            {sel && <Check className="w-3 h-3 text-sol-cyan flex-shrink-0" />}
+          </button>
+          </Fragment>
+        );
+      })}
+      {shown.length === 0 && (
+        <div className="px-3 py-2 text-xs text-sol-text-dim">No match</div>
+      )}
+    </>
+  );
+}
+
+export function FilterDropdown({
+  label,
+  icon,
+  value,
+  options,
+  onChange,
+  multi,
+  chip,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  value: string;
+  options: FilterOption[];
+  onChange: (v: string) => void;
+  multi?: boolean;
+  /** Chip mode: render as a removable "icon value ✕" chip when active, and
+   *  nothing when empty (empty filters are added via the "+ Filter" menu). */
+  chip?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = multi ? new Set(value ? value.split(",") : []) : null;
+  const active = multi ? null : options.find((o) => o.key === value);
+  const hasValue = multi ? selected!.size > 0 : !!value;
+
+  useWatchEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  // Chip mode shows only once a value is set; empty filters live in the add-menu.
+  if (chip && !hasValue) return null;
+
+  // A chip says WHAT is filtered, not how many: "In Progress, In Review" reads
+  // at a glance where "Status (2)" makes you open the popover to find out. Past
+  // two picks the names stop fitting, so the rest becomes a count.
+  const pickedLabels = multi
+    ? [...selected!].map((k) => options.find((o) => o.key === k)?.label ?? k)
+    : [];
+  const buttonLabel = multi && selected!.size > 0
+    ? pickedLabels.length <= 2
+      ? pickedLabels.join(", ")
+      : `${pickedLabels.slice(0, 2).join(", ")} +${pickedLabels.length - 2}`
+    : active && value ? active.label : label;
+
+  const optionsPopover = open && (
+    <div className="absolute top-full left-0 mt-1 w-max min-w-[11rem] max-w-[20rem] bg-sol-bg border border-sol-border rounded-lg shadow-xl z-[250] py-1 max-h-64 overflow-y-auto">
+      <FilterOptionList options={options} value={value} multi={multi} onChange={onChange} onPicked={() => setOpen(false)} />
+    </div>
+  );
+
+  if (chip) {
+    return (
+      <div ref={ref} className="relative">
+        <div className="flex items-center h-7 rounded-md border border-sol-cyan/30 bg-sol-cyan/5 text-sol-cyan text-xs">
+          <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-1 pl-1.5 pr-1 h-full" title={`Edit ${label}`}>
+            {icon}
+            <span className="whitespace-nowrap">{buttonLabel}</span>
+          </button>
+          <button onClick={() => onChange("")} className="flex items-center pr-1.5 pl-0.5 h-full hover:text-sol-text transition-colors" title={`Remove ${label} filter`}>
+            <X className="w-3 h-3 opacity-70" />
+          </button>
+        </div>
+        {optionsPopover}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`flex items-center gap-1 text-xs h-7 px-1.5 rounded-md border transition-colors ${
+          hasValue
+            ? "border-sol-cyan/30 text-sol-cyan bg-sol-cyan/5"
+            : "border-sol-border/30 text-sol-text-dim hover:text-sol-text hover:border-sol-border/60"
+        }`}
+      >
+        {icon}
+        <span className="whitespace-nowrap">{buttonLabel}</span>
+        <ChevronDown className="w-3 h-3 opacity-60 -ml-0.5 flex-shrink-0" />
+      </button>
+      {optionsPopover}
+    </div>
+  );
+}

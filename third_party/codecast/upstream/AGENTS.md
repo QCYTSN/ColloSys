@@ -1,0 +1,230 @@
+# Codecast
+
+## Working directory
+
+Work directly in the main checkout. Other sessions may have uncommitted work in the tree — scan `git status`/`git diff` before editing shared files and never revert changes you didn't make.
+
+## Vendored platform packages
+
+`platform/packages/` is a GENERATED mirror of the shared `@platform/*` packages whose canonical home is `~/src/platform`. Never edit it by hand: change the canonical copy, then run `scripts/vendor-platform.sh` to refresh the mirror (`--check` reports drift). The script also purges bun's `node_modules/.bun/@platform+*` copies and `packages/web/node_modules/.vite` and reinstalls, because bun keeps serving the stale copy and vite the stale module graph otherwise. A running dev server restarts itself when that cache disappears (`plugins/depsCacheGuard.ts`); never delete the cache under a live server without that plugin, or every dep it has not served yet answers 504 "Outdated Optimize Dep". The mirror exists because Railway, the CLI release workflow and the desktop build all run from a fresh clone, so every `@platform` dep must point inside the checkout (`file:../../platform/packages/<name>`), never at `~/src/platform`. The package set is derived from the workspace `package.json` files, so adopting a new platform package is one dep line plus a rerun. A real vendor run also rewrites `platform/package.json`, the mirror's own workspace root generated from the canonical repo's root, `platform/tsconfig.base.json`, the base every mirrored tsconfig extends, and `platform/vendor-manifest.txt`, a content hash per mirrored package and of those root files; commit them with the mirror. CI cannot run `--check`, because a runner has no `~/src/platform`, so the `test-platform` job runs `--check-manifest` instead: it re-hashes the mirror against that manifest and re-reads the dep lines the mirror was generated from, which catches a hand-edited mirror, a package adopted without a rerun, and a dep pointing outside the checkout. The same job runs `scripts/vendor-platform.sh --test`: it installs the mirror once as that workspace, the way the canonical repo installs, so a package's `@platform` peer resolves to its mirrored sibling rather than npm and the shared test tooling sits at the root; then it runs every mirrored package's own `bun test` and names each red one. The repo's own lockfile never sees the mirror's workspace.
+
+## Typechecking
+
+Typecheck with `cast check`; never run `tsc --noEmit` yourself. This tree's programs are listed in `.codecast/check.toml`: `cli`, `web`, `convex`, `mobile`, `sim`, `evals` and `playground`. `cast check` runs all seven, and `cast check web` runs one. A fresh `tsc` for each session builds the same program again every time: thirty of them across two repos on 2026-09-17 put this machine into swap and stalled everything on it, Chrome's extension included. Run test files directly (`bun test <file>`), and keep whole suite runs rare, because they are the other load the machine cannot absorb in parallel. `cast install check` adds the full command reference to your global instructions.
+
+## Git history
+
+Keep history flat — rebase, never merge. Pull with `git pull --rebase` (never plain `git pull` when it would create a merge commit), and bring branches up to date with `git rebase origin/main` instead of merging main in. Merge commits from routine syncing don't belong in the log.
+
+## Convex deploys
+
+Convex deploys push whole-tree snapshots: a tree behind origin/main doesn't just lack new code — it DELETES newer functions and routes from prod on push (three separate prod outages on 2026-07-15).
+
+- Deploy ONLY via `packages/convex/deploy.sh`. It fetches origin, hard-fails if the tree is behind origin/main (naming the missing commits), moves the repo-root `.env.local` aside for the deploy (its `CONVEX_DEPLOYMENT=anonymous` pointer hijacks the CLI away from prod) and restores it after, and holds a lock (`.git/convex-deploy.lock`) so overlapping runs wait instead of pushing out of order. **Raw `npx convex deploy` is banned.**
+- The dev watcher pushes to prod the same way. It is `packages/convex/scripts/gated-push.ts` (behind `bun run dev`), never a raw `convex dev`: a push waits for 3s of quiet in `convex/`, refuses a tree behind origin/main, runs the whole-program typecheck, pushes once, and pushes again if files moved under it. A raw `convex dev` bundles the tree and typechecks the disk afterwards, so two saves seconds apart shipped a `ReferenceError` to prod on 2026-09-21. `dev.sh` refuses to start the pusher from a stale tree and prints the pull instruction (web keeps running; it starts automatically after the pull). Don't start it by hand from `packages/convex`.
+- A clean `git status` is NOT a freshness check — deploy only from a tree that is a superset of origin/main. If you're testing unpushed functions, push them early: any other superset deploy reverts whatever isn't on origin/main.
+
+### Deploy convex BEFORE you push
+
+The two halves ship on different clocks. Railway rebuilds web on every push to main. Convex ships only when a person runs `deploy.sh`. A push therefore delivers the new client immediately and the new backend not at all.
+
+Any commit that adds a convex function AND the web code calling it opens a gap. Inside it the live site asks for a function prod does not have, and convex answers "Could not find public function". Convex treats that as terminal, so `useQuery` re-throws during render and the component that subscribed drops into its ErrorBoundary. On 2026-08-11 that took out the entire conversation header, because a header pill asked for `devices.getConversationMachine`.
+
+So run `packages/convex/deploy.sh` **before** pushing such a commit, then push. Deploying a tree that is AHEAD of origin/main is safe and expected — `deploy.sh` refuses only trees that are behind. Ordering it this way costs nothing and closes the gap entirely.
+
+Web carries a second layer of defence. A query that merely ENRICHES a surface goes through `useQueryNoThrow` (`packages/web/hooks/useQueryNoThrow.ts`), never plain `useQuery` — pills, badges, chips and name lookups all qualify. The test is what the component should show if the answer never arrives: if it can still render something honest, use the hook; if the surface is meaningless without the data, plain `useQuery` is right and the ErrorBoundary is the intended outcome.
+
+## Prompt dry runs
+
+Run any headless `claude -p` that grades a prompt through `packages/cli/scripts/prompt-dry-run.ts`, never a bare `claude -p`: the daemon syncs every transcript under `~/.claude/projects`, so a bare run lands in the founder's inbox, and only the harness isolates it and refuses its writes. `--model` is required. The script's header documents its flags, isolation and output files. Don't edit the harness or its guard while a run is alive (bash reads a script as it runs). To grade a prod prompt against real moments, use `./evals`, which drives this harness.
+
+## CLI releases
+
+Cut CLI releases from CI. No laptop needs the signing certificate.
+
+```bash
+gh workflow run cut-cli-release.yml -R codecast-sh/codecast
+```
+
+The workflow builds all five binaries on a macOS runner, signs the darwin ones with the Developer ID certificate, uploads staging objects to R2, and dispatches "Finalize pre-uploaded CLI release". Finalize verifies hashes, publishes `latest.json`, commits the version bump, tags, and creates the GitHub release. Pass `-f dry_run=true` to build, sign, and verify without publishing anything.
+
+The certificate and its passphrase live in the repo secrets `MACOS_SIGN_CERT_P12` and `MACOS_SIGN_CERT_PASSPHRASE`. To rotate: export a fresh `.p12` from Keychain Access on Ashot's machine (the escrow copy) and replace both secrets.
+
+`packages/cli/scripts/deploy.sh` is the laptop path. It is also the only path that publishes the npm package and the Homebrew tap; both are mirrors, and R2 plus `latest.json` are the real release. Details in `docs/GETTING-STARTED.md` under "Cut a release from CI".
+
+## Workspace access vs routing
+
+Two separate fields, and conflating them is the bug class this replaced.
+
+- **`workspace` is ACCESS.** One stored value per row: `team:<id>` or `user:<id>`. Written at create time by `computeWorkspaceKey` (`convex/lib/access.ts`), recomputed only when a linked conversation's visibility changes. Every read — server and client — is one equality against the viewer's key.
+- **`team_id` is ROUTING.** Which team's inbox, feed and notifications a row flows to. It grants nothing.
+
+**No access path may read `team_id`; no routing path may read `workspace`.** A source-level test enforces the first. The sync log is the one deliberate exception on the delivery side: `sync_actions.scope_key` (which readers a row fans to) derives from access facts, and `sync_actions.access_key` is a write-time copy of `workspace` read only by `syncLog.getRange`'s per-caller projection — the stamp is built by `accessStampFor` in `lib/access.ts`, and `canAccessTask/Doc/Plan/Project` are defined as evaluating that same stamp, so the log and the byIds queries cannot disagree (docs/architecture/sync-log-cargo.md E4). This is what makes "routed to team T, readable only by its owner" expressible (`team_id: T` + `workspace: user:<owner>`) — granular privacy inside a team is a product requirement, not an accident.
+
+**Reads may default, writes must be explicit.** Guessing on a read costs a re-run; guessing on a write puts a row in a workspace nobody was looking at. The CLI splits this (`resolveWorkspaceForRead` / `resolveWorkspaceForWrite`), as does chat (`resolveTeamForRead` / `requireTeamForWrite`).
+
+**Personal is a positive value.** `user:<viewerId>`, never "absence of team_id". An unresolved viewer matches NOTHING — never everything. Unknown key variants (a future `restricted:`) grant no access. Never read `activeTeamId || currentUser.team_id` as a workspace pointer: an unset pointer IS the personal workspace, and that fallback makes personal unreachable.
+
+**Go through the chokepoints.** Server reads: `createDataContext` / `scopedFetch` (`convex/data.ts`). Conversation visibility writes: `patchConversationVisibility` — a raw `ctx.db.patch` of `is_private`/`team_visibility`/`team_id`/`auto_shared` leaves linked work items with a stale key. Client enumeration: `useWorkspaceCollection`. Web team switch: `useSwitchWorkspace` (writes the canonical `users.active_team_id` AND the `clientState.ui` mirror — mirror-only desyncs the CLI). Guard tests fail on raw enumeration and on mirror-only writes.
+
+**Do NOT "finish the migration" by deleting `teamVisibleConvTeam`.** It survives in exactly two correct roles: the writer inside `computeWorkspaceKey`, and the visibility rule for CONVERSATIONS, which keep their own graduated axis (`is_private`, `team_visibility`, membership visibility, redaction) and have no workspace key by design. Two axes on purpose: membership (binary) vs activity visibility (graduated). A table earns `workspace` only if a row can meaningfully be private to its owner inside a team — work items yes, session insights and pull requests no.
+
+`teamScopeSweep` is the reconciler: it recomputes every key and reports disagreement, so staleness is provable rather than assumed.
+
+## Writing for users (docs, blog posts, marketing pages)
+
+Most people use codecast through the app (web, desktop, phone), not the CLI. User-facing writing describes a feature the way they meet it: the screen, the menu, the button, what it shows and what happens next, with screenshots of the real UI. A CLI command can appear as a small aside for people who script or for agents, never as the spine of a piece, its section headings, or its main illustrations. When a feature has a UI, show the UI; when it is CLI-only today, say so plainly rather than presenting terminal output as the experience.
+
+## UI conventions
+
+**Design from the person's job, then cut everything else. A screen is not a book or a doc.** Every screen, panel and dialog exists for something a person came to do. Before building one, name that job and its one primary action, then judge the result by whether a person who knows nothing of the code can finish the job there, fast, without reading. A screen that only looks organized has failed.
+
+- **A screen is an app, not a document.** State lives in structure, numbers, color, grouping and a control's own state; each element's words fit a glance: a name, a value, a state. A sentence on a screen means the structure that should carry it is missing. Find that structure, or cut the sentence; reading belongs in a doc, a report or a message, never in a panel, a row, a cell or a dialog.
+- **Show the real thing, whole.** When a screen is about something (a conversation, a finding, a fix, a decision), the person can open that thing itself, complete, in one step. Summaries, truncated quotes and labels that name it without opening it are not a view of it.
+- **Every place that says something waits on the person lets them act on it right there.** A label, badge, count or step that says "you decide", "waiting", "for you" or "failing" with no way to act or open is a dead end, and a dead end is a bug.
+- **Nothing on a screen without a job.** Pills, chips, tiles, captions, legends, hint lines and explanatory copy each answer to the person's job or go. Explanatory copy is a last resort for something genuinely complex, never the fix for a control that misleads: change the control. Text written for another reader (an agent-facing manifest or tool description, a prompt, a full error, a route, an id, a CLI command) is data, kept behind the element that names it and opened on demand, never the label.
+- **A consequential press is never one bare click.** Anything that spends money, starts agents or runs, grants a capability, shares or publishes, ships or merges, or is hard to undo goes through the shared confirm flow (`components/consequential`), which shows in structure what starts, how much, at what cost, what stays with the person and how to stop it, and asks for a deliberate confirm. Turning such a thing off stays one press.
+- **Verify by doing the job.** Open the screen on real data and complete each job a person comes for, as that person, before calling it done; a typecheck or a screenshot that looks tidy proves neither.
+
+**Keyboard keys always render as `<KeyCap>`** (`components/KeyboardShortcutsHelp.tsx`) — never as plain text or unicode glyphs in the surrounding font (no `⌥K`, `↵ select`, `esc back` as bare strings in hints, footers, or tooltips). Use `isMac` from `shortcuts/` for the modifier name and `formatShortcutParts` when rendering a registered shortcut.
+
+**Mobile: `Text`/`TextInput` come from `packages/mobile/components/Themed`, never from `react-native`.** The Themed wrappers are what apply JetBrains Mono app-wide (web parity) and map `fontWeight` to the correct bundled face (`constants/fonts.ts`) — a raw RN `Text` renders San Francisco, and a custom `fontFamily` + `fontWeight` pair silently falls back to the system font on iOS. Nav-level styles (`headerTitleStyle`, `tabBarLabelStyle`) can't use the wrapper: give them an explicit face from `Mono` (e.g. `Mono.semiBold`) and no `fontWeight`.
+
+## Mobile bundle and native modules
+
+**A JS bundle outlives the binary it was written for.** An OTA update runs new JS on binaries built before a native library was added, and a static import of such a library throws during the first JS evaluation, before expo-updates can mark the update launched: the update rolls back in silence or the app dies at boot. So a native package that is not in the frozen baseline of `packages/mobile/lib/nativeDeps.guard.test.ts` is never imported statically. Load it through `optionalNative` (`packages/mobile/lib/optionalNative.ts`) inside the function that needs it, and give every caller a path for `null`. A new native package needs a new binary build; an OTA update can ship the JS that uses it, and that JS must work without it.
+
+**The native bundle holds one copy of every package the app names.** bun keeps a separate install of a package for each set of peers, and a second copy of a native library registers its views twice and crashes ("Tried to register two views with the same name"). `packages/mobile/metro.config.js` resolves every dependency in mobile's `package.json` from the app root, and `metro.config.test.cjs` tests each one. Add a package the bundle needs to mobile's `package.json` rather than relying on a transitive copy.
+
+**Metro applies mobile's `@/` alias to every file it reads, shared web files included.** Inside `packages/web`, a file that mobile can reach must import by relative path: `@/lib/x` there means `packages/mobile/lib/x` on the phone, which either fails the export or binds to a different module. `packages/mobile/lib/bundleGraph.guard.test.ts` walks the native import graph the way Metro does, in seconds, and fails on an unresolvable alias, on an `@/` import in a reachable web file, and on any web route or desktop stage file that reaches the bundle.
+
+**Build simulator binaries with signing allowed.** A simulator build carries its entitlements in a `__TEXT,__entitlements` section of the binary. A build made with `CODE_SIGNING_ALLOWED=NO` has none, every keychain call fails ("A required entitlement isn't present"), and nobody can sign in on it. Check with `otool -s __TEXT __entitlements <App>.app/<App>`.
+
+## Render gallery (every transcript rendering in one conversation)
+
+`packages/web/lib/renderGallery.ts` is one conversation that holds a row of every kind a transcript draws: each user-row kind the classifier returns, markdown blocks and all four phone table layouts, every fence, references alone on a line, each tool family, every `cast` command card, failure banners, compaction progress, workflow events and system subtypes. Both apps draw it, so a renderer change is checked against everything at once, and web against mobile side by side.
+
+- **Look at it.** Open any conversation, then `bun packages/web/scripts/render-gallery.ts --web` (your cast browser tab) or `--mobile [metro port]` (the app on a simulator). The rows go into the local store only and never reach the server; `--clear` removes them. On a simulator, the store shots build (`packages/mobile/store-shots/relaunch.sh`) gives a fixture conversation to load it into.
+- **Keep it complete.** When a renderer learns something new (a row kind, fence, tool card, `cast` card, banner, system subtype), add its row to the gallery in the same change. `packages/web/lib/__tests__/renderGallery.test.ts` fails when the classifier, `renderFence`, the tool families, the `cast` card categories, the system subtypes either app checks, or the failure-banner kinds name something the gallery lacks; `packages/mobile/lib/markdown.test.ts` fails when its tables stop covering every phone layout. Fix the gallery, never the test.
+- **Build rows with the real producers.** Use a wire format's builder (`formatSessionMessage`, `formatDecisionAnswer`, the banner prefixes, …) when one exists, so the gallery follows the format when it changes.
+
+## Store (inboxStore)
+
+### Local-first is the law
+
+**Every piece of server data a surface renders lives in the store, and the surface reads the store.** A live Convex query is a *feeder*, never a render source: it subscribes in a hook, hands each push to `syncTable`, and the component paints from `useTrackedStore` / `useCollectionRows` / `useWorkspaceCollection` synchronously — a populated cache is the ordinary first paint, and a skeleton is only honest for a genuinely cold cache (`!ready && rows.length === 0`). Never gate paint on `result === undefined` when the store could already hold the answer.
+
+**Every fact has exactly one home in the store.** A field, a membership, a count: it is written in one place, and every other surface that needs it derives it from there at read time. Never keep a second writable copy (the same field on two collections, a list that repeats membership a row flag already holds, a derived twin stored beside its raw field, a component's local mirror of a row) and keep the copies in step by writing both. Copies drift the moment two feeders, two locks or two readers disagree about which one is current, and each drift costs a bespoke reconciler to paper over. When two queries return the same fact, feed both into the one home. When a surface needs a filtered or joined view, write a selector over the home, not a new key. If you find an existing duplicate, collapse it rather than add a sync between the copies.
+
+**Adding a synced collection is ONE registration** in `store/clientSyncRegistry.ts` — persistence, hydration phase, `sync` opts (`isDelta` for windowed/paged channels, snapshot for a query that returns the complete visible set), `indexes`, `workspaceScoped`, and `feeds` (the query names that feed it). From that entry the Dexie schema, the sync defaults, the `{}` at boot, the typed store slot, the workspace-enumeration guard and the feed-leakage guard all derive. Then bump `CACHE_SCHEMA_VERSION` (`store/idbCache.ts`) — the signature test tells you when. Feeder: `useSyncCollection(key, api.x.y, args)` (`hooks/useSyncCollection.ts`), or a bespoke `useSync*` hook when a payload fans out. Reader: `useCollectionRows(key, { where, sig, sort })` — subscribe to a signature of the fields you render, never the raw collection ref.
+
+**Registering a `feed` is a promise:** a source-level test (`lib/__tests__/registeredFeeds.guard.test.ts`) fails any file under `app/` or `components/` that subscribes to a registered feed query directly. If it fails on your code, the fix is to read the store and mount the feeder — not to widen the allowlist. Writes are `action()`s that patch the row on the draft and ride a named dispatch side effect (`convex/dispatch.ts`) to the real mutation; a `localFirst` collection then protects the field until the server echoes it.
+
+Every user-visible mutation renders from the local store synchronously — the UI must never wait on a server round-trip to show the result of a user action. The optimistic write happens in the `action()` draft; the server echo reconciles afterward through the sync/pending machinery. For **creates**, write a stub row keyed by a non-Convex id and let the collection's `altKey` config supersede it when the server row syncs back (`beginOptimisticSession`, `createBucket`, `assignSessionToBucket` are the canonical examples). If a feature seems to need an await-then-render flow, it is modeled wrong — restructure it as draft + side effect. `asyncAction` exists so a *caller* can await the server result (e.g. a real id for follow-up writes), never so the UI can.
+
+**The store already provides optimism.** Update the draft through `action()` / `asyncAction()` and render from the store. Do not add parallel optimistic state, timers, reconciliation effects, or handwritten pending locks. Check the existing action and sync paths first; fix a bypass there. Any exception needs a concrete limitation of the default path, not an assumption that optimism must be implemented again.
+
+All store mutations go through `mutativeMiddleware`. Default to `action()` for new functions. Only use raw `set()` for ephemeral UI gestures (modal open/close, palette toggle) that don't touch shared state.
+
+### One window syncs, the rest replicate (sync host)
+
+Exactly one window per origin is the elected sync host (Web Locks; `store/syncReplication.ts`). It mounts the global feeders and owns IDB write-through; every other window is a follower — global feeders skipped (gated on `syncRole`), shared slice applied from the host's BroadcastChannel stream, its own optimistic writes offered back as muts. Full design: `docs/architecture/sync-host.md`.
+
+- **Every registry key is classified** in `REPLICATION_CLASSIFICATION` (`store/clientSyncRegistry.ts`) — adding a registry key without classifying it is a compile error. `pending` never replicates; per-window paging/arrangement keys stay `local`.
+- **A global feeder must gate on the role**: mount it inside `HostFeeders` (DashboardLayout) or skip its query via `useIsSyncHost()`. Per-view queries (a conversation's messages, a doc body) never gate.
+- **Replicated data enters only through `syncTable`/the store's sync actions** (`applyUpdatesToStore`), so pending protection and merge policies behave as if the rows came from Convex. Never apply replication by raw assignment.
+- Followers keep their own dispatch + outbox (writes are unchanged) and never stamp sync-log acks (`syncMeta` replicates from the host).
+
+### Decorators
+
+- `action(fn)` — mutative draft + IDB persistence + server dispatch. The return value of fn flows back to the caller AND to the server as `result`. Default choice.
+- `sync(fn)` — mutative draft + IDB persistence, no server dispatch. Use for incoming data sync and local-only bookkeeping.
+- Raw `set()` — only for ephemeral state that doesn't need persistence or drafts (modal toggles, transient flags).
+
+Never use raw `set()` to modify `sessions`, `conversations`, `clientState`, `tasks`, `docs`, or `plans`.
+
+### Sync
+
+All incoming data goes through `syncTable(field, data, opts?)`. Don't create per-table sync functions: register the table in `CLIENT_SYNC_REGISTRY` (`store/clientSyncRegistry.ts`, above). inboxStore's `SYNC_REGISTRY` spreads those defaults and only adds store-internal opts (transforms, merge functions, normalize) per key.
+
+- `kind: "collection"` — keyed by `_id`, runs pending filter
+- `kind: "singleton"` — single object with merge strategies
+- `kind: "list"` — raw array, replaces wholesale
+- `kind: "scalar"` — primitive value
+
+Merge strategies for singletons: `"replace"`, `"local_wins"`, `"set_union"`, `"deep_merge"`, or nested `Record<string, MergeSpec>`.
+
+Use `syncRecord(field, id, record)` for single-record updates within a collection.
+
+### Reading state in components
+
+Use `useTrackedStore` — declare deps (what triggers re-renders), access the full state:
+
+```ts
+const s = useTrackedStore([
+  s => s.messages[id],
+  s => s.sessions[id],
+  s => s.conversations[id],
+]);
+// Full state access — read any field, call any getter
+const meta = s.conversations[id] ?? s.sessions[id];
+const messages = s.messages[id] ?? [];
+```
+
+- One subscription per component instead of N separate `useInboxStore(selector)` calls.
+- Deps control re-renders (compared via `Object.is` on return values). Non-dep fields may be stale between re-renders — add to deps if freshness matters.
+- For non-React code (event handlers, callbacks), use `useInboxStore.getState()` or the `store` proxy directly.
+
+**Never subscribe an always-mounted component to a whole high-churn collection (`s => s.sessions`) or whole row (`s => s.sessions[id]`).** The store is a mutative draft, so any field change on any row hands back a new collection/row ref — with ~1s liveness heartbeats across N live sessions that ref flips constantly and re-renders you on every tick, even though `updated_at`/`last_heartbeat`/a streamed `message_count` changed nothing you show. (This pegged the inbox sidebar at ~70% idle main-thread.) Instead subscribe to a **wake signature** of just the fields you branch on — `store/wakeSig.ts`: `makeCollectionSig(project)` for a collection (the sidebar uses `sessionsWakeSig`), `rowSigExcluding(row, deny)` for one row (`useConversationMessages`). The body still reads the raw field for data; the signature only gates re-renders. Pair it with `useCoarseNow` for anything **time-driven** (a relative clock, a TTL-based reclassification) — that's not a field change, so a signature alone would freeze it.
+
+### Derived/enriched fields are snapshots — derive them live (`lib/liveEntities`)
+
+Convex queries return records enriched with **derived/joined** fields: `task.assignee_info` (from `assignee`), `plan.progress` (from task statuses), `plan.tasks` (embedded snapshot), `doc.display_title` (from `content`). These are **snapshots** — an optimistic store write to the underlying *raw* field (e.g. `updateTask` sets `task.assignee`) does NOT update the derived twin until the server round-trips. Binding a derived field straight off a server query is the root of "the change isn't instant" bugs.
+
+**Default: never store-and-protect a derived object field; derive it at render** via `lib/liveEntities`:
+- `resolveAssigneeInfo(assignee, fallback, teamMembers, currentUser)` — avatar/name from the live roster.
+- `computePlanProgress(tasks)` — progress counts from a live task list.
+- `mergeLiveTasks(snapshotTasks, storeTasks, teamMembers, currentUser)` — overlay live store tasks onto a server snapshot (e.g. `plan.tasks`), preserving server-only fields and re-deriving `assignee_info`. Memo-stable (returns the same row ref when nothing diverged).
+
+Why not store the derived value optimistically: field-protection reconciles by `===`, so an optimistic **object** never matches the server's re-enriched object and freezes forever. Why not auto-derive in `syncTable`: a `config.transform` bypasses the no-change early-return and re-pushes the whole collection on every no-op sync (jank). String-valued derived fields (e.g. `display_title`) are the exception — they reconcile cleanly, so deriving them on an optimistic write is fine.
+
+### Dev console access
+
+Every build, dev and prod, exposes the store as `window.__inboxStore` (end of `store/inboxStore.ts`). Use it from the browser console (or `cast browser eval` when verifying) to inspect state or drive flows that have no URL of their own — e.g. fire an in-app deep-link to a message:
+
+```js
+__inboxStore.getState().sessions            // inspect
+__inboxStore.getState().requestNavigate("<session key>", { scrollToMessageId: "<message _id>" })
+__navLog()                                  // audit trail of every view change (and blocked attempts)
+```
+
+Raw `setState` writes to `currentSessionId`/`pendingNavigateId` are reverted by the view-motion guard (`store/viewNav.ts`): every change of the visible conversation must declare a source, and machine-initiated sources can't move the view mid-session. If a "random session jump" is ever reported, read `__navLog()` first — it names the writer.
+
+## Typing budget
+
+Typing in the composer stays as cheap as typing in a bare text field, with the
+cache a busy account holds (thousands of sessions). `packages/web/scripts/typing-guard.sh`
+holds the budget and runs before every ship that touches web, shared or platform
+code (`.codecast/workspace.toml`) and in CI: a keystroke into a box with text
+commits React once, writes nothing to the store and changes no DOM outside the
+textarea; no store subscription compares a long string (a wake signature is a
+digest: `makeCollectionSig`, never the rows spelled out); a write nothing reads
+re-renders nothing; list rows run no infinite animation (one pulsing dot per
+running agent re-layers the page every frame); transcript rows are not
+compositor layers; a typed key that matches no shortcut never queries the DOM.
+Background bulk work (a coalesced inbox apply, a coarse clock tick) waits for a
+pause in typing through `lib/inputQuiet.ts`. When the guard fails, fix the cost
+it names; never loosen the budget to get past it.
+
+## Prompt evals (`evals`)
+
+`./evals` replays the prod prompts in this tree against frozen codecast
+moments and grades the replies. The loop: freeze a moment, run `check` for a
+baseline, edit the prompt, `check` again. `./evals --help` and each
+command's `--help` carry the details; `./evals doctor` says what is missing.
+
+- Claim a prompt win only when `check` prints `separated: better`.
+- Real data (freezes, runs, labels) lives in `EVALS_HOME`, never in git: this
+  repo is public. Only synthetic fixtures are committed.
+
+<!-- /platform-evals -->

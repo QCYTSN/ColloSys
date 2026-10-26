@@ -1,0 +1,519 @@
+import { lazy, Suspense, ReactNode } from "react";
+import { BootFallback } from "@/components/BootFallback";
+import { ReloadOutsideApp } from "@/components/ReloadOutsideApp";
+import { RouteFallback } from "@/components/RouteFallback";
+import { Routes, Route } from "react-router";
+import { loadLinePage, loadLineProjectPage, loadLineSettingsPage } from "./earlyRoutes";
+import { Providers } from "./providers";
+import { TransparentWindowLayout } from "./layouts/TransparentWindowLayout";
+import { SettingsLayout } from "./layouts/SettingsLayout";
+import DashboardShell from "./layouts/DashboardShell";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { useMentionLinkNavigation } from "@/hooks/useMentionLinkNavigation";
+
+const MarketingLayout = lazy(() => import("./layouts/MarketingLayout").then((m) => ({ default: m.MarketingLayout })));
+const Landing = lazy(() => import("@/app/(marketing)/page"));
+const About = lazy(() => import("@/app/(marketing)/about/page"));
+const Features = lazy(() => import("@/app/(marketing)/features/page"));
+const FeatureDeepDive = lazy(() => import("@/app/(marketing)/features/FeatureDeepDivePage"));
+const Documentation = lazy(() => import("@/app/(marketing)/documentation/page"));
+const DocumentationGuide = lazy(() => import("@/app/(marketing)/documentation/guides/GuidePage"));
+const Privacy = lazy(() => import("@/app/(marketing)/privacy/page"));
+const Security = lazy(() => import("@/app/(marketing)/security/page"));
+const Support = lazy(() => import("@/app/(marketing)/support/page"));
+const Terms = lazy(() => import("@/app/(marketing)/terms/page"));
+const Changelog = lazy(() => import("@/app/(marketing)/changelog/page"));
+const Pricing = lazy(() => import("@/app/(marketing)/pricing/page"));
+const Download = lazy(() => import("@/app/(marketing)/download/page"));
+const BlogIndex = lazy(() => import("@/app/(marketing)/blog/page"));
+const BlogGitBlame = lazy(() => import("@/app/(marketing)/blog/git-blame-for-ai-agents/page"));
+const BlogAgentInbox = lazy(() => import("@/app/(marketing)/blog/an-inbox-for-your-agents/page"));
+const BlogTeamMemory = lazy(() => import("@/app/(marketing)/blog/your-agents-forget-your-team-does-not/page"));
+const BlogTriggers = lazy(() => import("@/app/(marketing)/blog/this-post-wrote-itself/page"));
+const BlogPublish = lazy(() => import("@/app/(marketing)/blog/a-url-for-everything-your-agent-makes/page"));
+const BlogAgentsTalk = lazy(() => import("@/app/(marketing)/blog/agents-that-talk-to-each-other/page"));
+const BlogPullRequests = lazy(() => import("@/app/(marketing)/blog/the-pull-request-that-knows-its-sessions/page"));
+const BlogTeamSees = lazy(() => import("@/app/(marketing)/blog/what-your-team-sees/page"));
+const BlogWorktrees = lazy(() => import("@/app/(marketing)/blog/one-repository-twenty-checkouts/page"));
+const BlogTurns = lazy(() => import("@/app/(marketing)/blog/the-tree-at-the-end-of-every-turn/page"));
+const BlogChartReply = lazy(() => import("@/app/(marketing)/blog/the-chart-in-the-reply/page"));
+const BlogQuestions = lazy(() => import("@/app/(marketing)/blog/the-questions-your-agents-save-for-you/page"));
+const BlogTaskPage = lazy(() => import("@/app/(marketing)/blog/the-task-your-agent-reports-to/page"));
+const BlogCloud = lazy(() => import("@/app/(marketing)/blog/codecast-in-the-cloud/page"));
+const BlogJumps = lazy(() => import("@/app/(marketing)/blog/fewer-bigger-jumps/page"));
+const BlogFieldManual = lazy(() => import("@/app/(marketing)/blog/field-manual/page"));
+const BlogFieldManualChapter = lazy(() => import("@/app/(marketing)/blog/field-manual/ChapterPage"));
+const CompareIndex = lazy(() => import("@/app/(marketing)/compare/page"));
+const Compare = lazy(() => import("@/app/(marketing)/compare/ComparePage"));
+
+const Login = lazy(() => import("@/app/login/page"));
+const Signup = lazy(() => import("@/app/signup/page"));
+const ForgotPassword = lazy(() => import("@/app/forgot-password/page"));
+const ResetPassword = lazy(() => import("@/app/reset-password/page"));
+const AuthCli = lazy(() => import("@/app/auth/cli/page"));
+const ArtifactAuth = lazy(() => import("@/app/artifacts/auth/page"));
+const JoinTeam = lazy(() => import("@/app/join/[code]/page"));
+
+const Inbox = lazy(() => import("@/app/inbox/page"));
+const Feed = lazy(() => import("@/app/feed/page"));
+const Changes = lazy(() => import("@/app/changes/page"));
+const Mods = lazy(() => import("@/app/mods/page"));
+const ModPane = lazy(() => import("@/app/m/page"));
+const ModObjects = lazy(() => import("@/app/objects/page"));
+const ModObject = lazy(() => import("@/app/o/page"));
+const Crosstalk = lazy(() => import("@/app/crosstalk/page"));
+const SessionMap = lazy(() => import("@/app/map/page"));
+const Browser = lazy(() => import("@/app/browser/page"));
+const OrgScope = lazy(() => import("@/app/org/[id]/page"));
+const Chat = lazy(() => import("@/app/chat/page"));
+const Community = lazy(() => import("@/app/community/page"));
+const Search = lazy(() => import("@/app/search/page"));
+const Explore = lazy(() => import("@/app/explore/page"));
+const Notifications = lazy(() => import("@/app/notifications/page"));
+const Questions = lazy(() => import("@/app/questions/page"));
+const Line = lazy(loadLinePage);
+const Expectations = lazy(() => import("@/app/expectations/page"));
+const Trial = lazy(() => import("@/app/trial/page"));
+const ProductViewPage = lazy(() => import("@/app/view/page"));
+const LineSettings = lazy(loadLineSettingsPage);
+const LineTrace = lazy(() => import("@/app/line/trace/[ref]/page"));
+const LineWorkspace = lazy(loadLineProjectPage);
+const DecisionDetail = lazy(() => import("@/app/decisions/[id]/page"));
+const DecisionStacks = lazy(() => import("@/app/decisions/stacks/page"));
+const DecisionStack = lazy(() => import("@/app/decisions/stacks/[id]/page"));
+const WorkflowRun = lazy(() => import("@/app/workflows/runs/[id]/page"));
+const Threads = lazy(() => import("@/app/threads/page"));
+
+const Conversation = lazy(() => import("@/app/conversation/[id]/page"));
+const ConversationDiff = lazy(() => import("@/app/conversation/[id]/diff/page"));
+const Share = lazy(() => import("@/app/share/[token]/page"));
+const ShareMessage = lazy(() => import("@/app/share/message/[token]/page"));
+const ShareDoc = lazy(() => import("@/app/share/doc/[token]/page"));
+const SharePlan = lazy(() => import("@/app/share/plan/[token]/page"));
+const ShareTask = lazy(() => import("@/app/share/task/[token]/page"));
+const ShareCall = lazy(() => import("@/app/share/call/[token]/page"));
+const ShareProject = lazy(() => import("@/app/share/project/[token]/page"));
+const ShareInitiative = lazy(() => import("@/app/share/initiative/[token]/page"));
+const ShareDecision = lazy(() => import("@/app/share/decision/[token]/page"));
+const ShareStack = lazy(() => import("@/app/share/stack/[token]/page"));
+const ShareTrigger = lazy(() => import("@/app/share/trigger/[token]/page"));
+const ShareRun = lazy(() => import("@/app/share/run/[token]/page"));
+const PublicProfile = lazy(() => import("@/app/u/[username]/page"));
+
+const CommitView = lazy(() => import("@/app/commit/[owner]/[repo]/[sha]/page"));
+const RepoIndex = lazy(() => import("@/app/repo/page"));
+const RepoHome = lazy(() => import("@/app/repo/[owner]/[name]/page"));
+const RepoTree = lazy(() => import("@/app/repo/[owner]/[name]/tree/[ref]/page"));
+const RepoBlob = lazy(() => import("@/app/repo/[owner]/[name]/blob/[ref]/page"));
+const RepoCommits = lazy(() => import("@/app/repo/[owner]/[name]/commits/[ref]/page"));
+const RepoCompare = lazy(() => import("@/app/repo/[owner]/[name]/compare/[range]/page"));
+const RepoBranches = lazy(() => import("@/app/repo/[owner]/[name]/branches/page"));
+const RepoWorktrees = lazy(() => import("@/app/repo/[owner]/[name]/worktrees/page"));
+const RepoTags = lazy(() => import("@/app/repo/[owner]/[name]/tags/page"));
+const RepoPulls = lazy(() => import("@/app/repo/[owner]/[name]/pulls/page"));
+const RepoSessions = lazy(() => import("@/app/repo/[owner]/[name]/sessions/page"));
+const RepoSearch = lazy(() => import("@/app/repo/[owner]/[name]/search/page"));
+const PrView = lazy(() => import("@/app/pr/[owner]/[repo]/[number]/page"));
+const ReviewView = lazy(() => import("@/app/review/[id]/page"));
+const ReviewBatch = lazy(() => import("@/app/review/batch/page"));
+
+const Docs = lazy(() => import("@/app/docs/page"));
+const Capabilities = lazy(() => import("@/app/capabilities/page"));
+const AgentFeatures = lazy(() => import("@/app/agent-features/page"));
+const Vault = lazy(() => import("@/app/vault/page"));
+const Artifacts = lazy(() => import("@/app/artifacts/page"));
+const DocDetail = lazy(() => import("@/app/docs/[id]/page"));
+const Plans = lazy(() => import("@/app/plans/page"));
+const Calls = lazy(() => import("@/app/calls/page"));
+const CallDetailEntry = lazy(() => import("@/app/calls/[id]/page"));
+const PlanDetail = lazy(() => import("@/app/plans/[id]/page"));
+const Tasks = lazy(() => import("@/app/tasks/page"));
+const TaskDetail = lazy(() => import("@/app/tasks/[id]/page"));
+const ProjectDetail = lazy(() => import("@/app/projects/[id]/page"));
+const Goals = lazy(() => import("@/app/goals/page"));
+const Goal = lazy(() => import("@/app/goals/[id]/page"));
+const Projects = lazy(() => import("@/app/projects/page"));
+// Routines = our DOT-graph orchestration (was "Workflows"); the graph page lives at /routines.
+// Workflows = Anthropic dynamic-workflow runs dashboard at /workflows.
+// The entry redirects to /triggers in hosted mode, where Routines names it.
+const Routines = lazy(() => import("@/app/workflows/entry"));
+const Workflows = lazy(() => import("@/app/workflows/dashboard"));
+// Triggers (renamed from "Schedules"; /schedules stays routable as an alias).
+const Triggers = lazy(() => import("@/app/triggers/page"));
+const TriggerDetail = lazy(() => import("@/app/triggers/[id]/page"));
+const Anchor = lazy(() => import("@/app/anchor/page"));
+const SlackConnect = lazy(() => import("@/app/slack/connect/page"));
+const WhiskReturn = lazy(() => import("@/app/connect/whisk/page"));
+
+const TeamActivity = lazy(() => import("@/app/team/activity/page"));
+const TeamCharts = lazy(() => import("@/app/team/charts/page"));
+const TeamMember = lazy(() => import("@/app/team/[username]/page"));
+
+const Orchestration = lazy(() => import("@/app/orchestration/page"));
+const Cli = lazy(() => import("@/app/cli/page"));
+const AdminDaemonLogs = lazy(() => import("@/app/admin/daemon-logs/page"));
+const ConfigPage = lazy(() => import("@/app/config/page"));
+const Memory = lazy(() => import("@/app/memory/page"));
+const Evals = lazy(() => import("@/app/evals/page"));
+const Ops = lazy(() => import("@/app/ops/page"));
+const Sessions = lazy(() => import("@/app/sessions/page"));
+const Resources = lazy(() => import("@/app/resources/page"));
+const Windows = lazy(() => import("@/app/windows/page"));
+
+const Palette = lazy(() => import("@/app/palette/page"));
+const People = lazy(() => import("@/app/people/page"));
+const CallPanel = lazy(() => import("@/app/call-panel/page"));
+const MeetingOffer = lazy(() => import("@/app/meeting-offer/page"));
+const CallRing = lazy(() => import("@/app/call-ring/page"));
+const AgentDock = lazy(() => import("@/app/agent-dock/page"));
+const ShareCursors = lazy(() => import("@/app/share-cursors/page"));
+
+// The hosted assistant's front door (plan pl-840), and the retired simple
+// lane's addresses, which lead into the main app.
+const Welcome = lazy(() => import("@/app/welcome/page"));
+const LaneRedirect = lazy(() => import("@/components/LaneRedirect"));
+
+const Settings = lazy(() => import("@/app/settings/page"));
+const SettingsCli = lazy(() => import("@/app/settings/cli/page"));
+const SettingsAgents = lazy(() => import("@/app/settings/agents/page"));
+const SettingsAgentLibrary = lazy(() => import("@/app/settings/agent-library/page"));
+const SettingsDevices = lazy(() => import("@/app/settings/devices/page"));
+const SettingsMigrate = lazy(() => import("@/app/settings/migrate/page"));
+const SettingsSync = lazy(() => import("@/app/settings/sync/page"));
+const SettingsProfile = lazy(() => import("@/app/settings/profile/page"));
+const SettingsAccounts = lazy(() => import("@/app/settings/accounts/page"));
+const SettingsAccountsLinkGithub = lazy(() => import("@/app/settings/accounts/link-github/page"));
+const SettingsClaudeAccounts = lazy(() => import("@/app/settings/claude-accounts/page"));
+const SettingsTeam = lazy(() => import("@/app/settings/team/page"));
+const SettingsTeamCreate = lazy(() => import("@/app/settings/team/create/page"));
+const SettingsTeamJoin = lazy(() => import("@/app/settings/team/join/page"));
+const SettingsNotifications = lazy(() => import("@/app/settings/notifications/page"));
+const SettingsIntegrations = lazy(() => import("@/app/settings/integrations/page"));
+const SettingsDesktop = lazy(() => import("@/app/settings/desktop/page"));
+const SettingsApps = lazy(() => import("@/app/settings/apps/page"));
+// Registers the issue feed kinds with ExternalEventRow before any feed paints.
+import "@/lib/issueEventStyles";
+// And a product's transitions (external-data.md X10).
+import "@/lib/opsEventStyles";
+
+function E({ name, children }: { name: string; children: ReactNode }) {
+  return <ErrorBoundary name={name} level="panel">{children}</ErrorBoundary>;
+}
+
+export function App() {
+  useMentionLinkNavigation();
+  return (
+    <Suspense fallback={<BootFallback />}>
+    <Providers>
+      <ErrorBoundary name="App" level="panel">
+        <Suspense fallback={<RouteFallback screen />}>
+          <Routes>
+            {/* Marketing - light mode layout */}
+            <Route element={<MarketingLayout />}>
+              <Route index element={<E name="Landing"><Landing /></E>} />
+              <Route path="about" element={<E name="About"><About /></E>} />
+              <Route path="features" element={<E name="Features"><Features /></E>} />
+              <Route path="features/:slug" element={<E name="FeatureDeepDive"><FeatureDeepDive /></E>} />
+              <Route path="documentation" element={<E name="Documentation"><Documentation /></E>} />
+              <Route path="documentation/:slug" element={<E name="DocumentationGuide"><DocumentationGuide /></E>} />
+              <Route path="privacy" element={<E name="Privacy"><Privacy /></E>} />
+              <Route path="security" element={<E name="Security"><Security /></E>} />
+              <Route path="support" element={<E name="Support"><Support /></E>} />
+              <Route path="terms" element={<E name="Terms"><Terms /></E>} />
+              <Route path="changelog" element={<E name="Changelog"><Changelog /></E>} />
+              <Route path="pricing" element={<E name="Pricing"><Pricing /></E>} />
+              <Route path="download" element={<E name="Download"><Download /></E>} />
+              <Route path="blog" element={<E name="BlogIndex"><BlogIndex /></E>} />
+              <Route path="blog/git-blame-for-ai-agents" element={<E name="BlogGitBlame"><BlogGitBlame /></E>} />
+              <Route path="blog/an-inbox-for-your-agents" element={<E name="BlogAgentInbox"><BlogAgentInbox /></E>} />
+              <Route path="blog/your-agents-forget-your-team-does-not" element={<E name="BlogTeamMemory"><BlogTeamMemory /></E>} />
+              <Route path="blog/this-post-wrote-itself" element={<E name="BlogTriggers"><BlogTriggers /></E>} />
+              <Route path="blog/a-url-for-everything-your-agent-makes" element={<E name="BlogPublish"><BlogPublish /></E>} />
+              <Route path="blog/agents-that-talk-to-each-other" element={<E name="BlogAgentsTalk"><BlogAgentsTalk /></E>} />
+              <Route path="blog/the-pull-request-that-knows-its-sessions" element={<E name="BlogPullRequests"><BlogPullRequests /></E>} />
+              <Route path="blog/what-your-team-sees" element={<E name="BlogTeamSees"><BlogTeamSees /></E>} />
+              <Route path="blog/one-repository-twenty-checkouts" element={<E name="BlogWorktrees"><BlogWorktrees /></E>} />
+              <Route path="blog/the-tree-at-the-end-of-every-turn" element={<E name="BlogTurns"><BlogTurns /></E>} />
+              <Route path="blog/the-chart-in-the-reply" element={<E name="BlogChartReply"><BlogChartReply /></E>} />
+              <Route path="blog/the-questions-your-agents-save-for-you" element={<E name="BlogQuestions"><BlogQuestions /></E>} />
+              <Route path="blog/the-task-your-agent-reports-to" element={<E name="BlogTaskPage"><BlogTaskPage /></E>} />
+              <Route path="blog/codecast-in-the-cloud" element={<E name="BlogCloud"><BlogCloud /></E>} />
+              <Route path="blog/fewer-bigger-jumps" element={<E name="BlogJumps"><BlogJumps /></E>} />
+              <Route path="blog/field-manual" element={<E name="BlogFieldManual"><BlogFieldManual /></E>} />
+              <Route path="blog/field-manual/:chapter" element={<E name="BlogFieldManualChapter"><BlogFieldManualChapter /></E>} />
+              <Route path="compare" element={<E name="CompareIndex"><CompareIndex /></E>} />
+              <Route path="compare/:slug" element={<E name="Compare"><Compare /></E>} />
+            </Route>
+
+            {/* Auth */}
+            <Route path="login" element={<E name="Login"><Login /></E>} />
+            <Route path="signup" element={<E name="Signup"><Signup /></E>} />
+            <Route path="forgot-password" element={<E name="ForgotPassword"><ForgotPassword /></E>} />
+            <Route path="reset-password" element={<E name="ResetPassword"><ResetPassword /></E>} />
+            <Route path="auth/cli" element={<E name="AuthCli"><AuthCli /></E>} />
+            <Route path="slack/connect" element={<E name="SlackConnect"><SlackConnect /></E>} />
+            {/* Whisk's return after connecting mail and calendar (convex/whisk.ts). */}
+            <Route path="connect/whisk" element={<E name="WhiskReturn"><WhiskReturn /></E>} />
+            {/* Identity relay for published-page comments (artifact bar → sign in). */}
+            <Route path="pages/auth" element={<E name="ArtifactAuth"><ArtifactAuth /></E>} />
+            <Route path="join/:code" element={<E name="JoinTeam"><JoinTeam /></E>} />
+
+            {/* Dashboard tab shell — one stable layout route keeps the sidebar,
+                tab bar and mounted TabContent panes alive across navigations so
+                browser back/forward never remounts the shell. Only tab-routable
+                pages (those TabContent can render) belong here. */}
+            <Route element={<DashboardShell />}>
+              <Route path="inbox" element={<E name="Inbox"><Inbox /></E>} />
+              <Route path="feed" element={<E name="Feed"><Feed /></E>} />
+              <Route path="changes" element={<E name="Changes"><Changes /></E>} />
+              <Route path="mods" element={<E name="Mods"><Mods /></E>} />
+              <Route path="m/:mod" element={<E name="ModPane"><ModPane /></E>} />
+              <Route path="m/:mod/:pane" element={<E name="ModPane"><ModPane /></E>} />
+              <Route path="objects/:prefix" element={<E name="ModObjects"><ModObjects /></E>} />
+              <Route path="o/:id" element={<E name="ModObject"><ModObject /></E>} />
+              <Route path="crosstalk" element={<E name="Crosstalk"><Crosstalk /></E>} />
+              <Route path="map" element={<E name="Session Map"><SessionMap /></E>} />
+              <Route path="browser" element={<E name="Browser"><Browser /></E>} />
+              <Route path="org" element={<E name="OrgScope"><OrgScope /></E>} />
+              <Route path="org/:id" element={<E name="OrgScope"><OrgScope /></E>} />
+              <Route path="org/:view/:id" element={<E name="OrgScope"><OrgScope /></E>} />
+              {/* Team chat. The bare route picks the busiest channel; the
+                  parameterized one is the permalink the server mints
+                  (convex/chatText.ts chatPermalink → /chat/<id>?m=<msg>). */}
+              <Route path="chat" element={<E name="Chat"><Chat /></E>} />
+              <Route path="chat/:channelId" element={<E name="Chat"><Chat /></E>} />
+              {/* The public rooms: the chat page in community scope, open to
+                  visitors (DashboardShell guestOk). */}
+              <Route path="community" element={<E name="Community"><Community /></E>} />
+              <Route path="community/:channelId" element={<E name="Community"><Community /></E>} />
+              <Route path="search" element={<E name="Search"><Search /></E>} />
+              <Route path="notifications" element={<E name="Notifications"><Notifications /></E>} />
+              <Route path="questions" element={<E name="Questions"><Questions /></E>} />
+              <Route path="line" element={<E name="Line"><Line /></E>} />
+              <Route path="expectations" element={<E name="Expectations"><Expectations /></E>} />
+              <Route path="trial" element={<E name="Trial"><Trial /></E>} />
+              <Route path="view" element={<E name="View"><ProductViewPage /></E>} />
+              <Route path="line/settings" element={<E name="Line settings"><LineSettings /></E>} />
+              <Route path="line/trace/:ref" element={<E name="Line trace"><LineTrace /></E>} />
+              <Route path="line/:project" element={<E name="Line workspace"><LineWorkspace /></E>} />
+              <Route path="decisions/stacks" element={<E name="DecisionStacks"><DecisionStacks /></E>} />
+              <Route path="decisions/stacks/:id" element={<E name="DecisionStack"><DecisionStack /></E>} />
+              <Route path="decisions/:id" element={<E name="DecisionDetail"><DecisionDetail /></E>} />
+              <Route path="threads" element={<E name="Threads"><Threads /></E>} />
+              <Route path="conversation/:id" element={<E name="Conversation"><Conversation /></E>} />
+              <Route path="conversation/:id/diff" element={<E name="ConversationDiff"><ConversationDiff /></E>} />
+              <Route path="docs" element={<E name="Docs"><Docs /></E>} />
+              <Route path="capabilities" element={<E name="Capabilities"><Capabilities /></E>} />
+              <Route path="agent-features" element={<E name="AgentFeatures"><AgentFeatures /></E>} />
+              <Route path="files" element={<E name="Files"><Vault /></E>} />
+              {/* /vault = pre-rename alias for /files. Permanent: `cast vault open`
+                  has printed /vault?f=… deep links into sessions, notes and users'
+                  markdown files since before the rename. Never remove it. */}
+              <Route path="vault" element={<E name="Files"><Vault /></E>} />
+              <Route path="pages" element={<E name="Pages"><Artifacts /></E>} />
+              {/* /artifacts = pre-rename alias for /pages */}
+              <Route path="artifacts" element={<E name="Pages"><Artifacts /></E>} />
+              <Route path="docs/:id" element={<E name="DocDetail"><DocDetail /></E>} />
+              <Route path="calls" element={<E name="Calls"><Calls /></E>} />
+              <Route path="calls/:id" element={<E name="CallDetailEntry"><CallDetailEntry /></E>} />
+              <Route path="plans" element={<E name="Plans"><Plans /></E>} />
+              <Route path="plans/:id" element={<E name="PlanDetail"><PlanDetail /></E>} />
+              <Route path="tasks" element={<E name="Tasks"><Tasks /></E>} />
+              <Route path="tasks/:id" element={<E name="TaskDetail"><TaskDetail /></E>} />
+              <Route path="goals" element={<E name="Goals"><Goals /></E>} />
+              <Route path="goals/:id" element={<E name="Goal"><Goal /></E>} />
+              <Route path="projects" element={<E name="Projects"><Projects /></E>} />
+              <Route path="projects/:id" element={<E name="ProjectDetail"><ProjectDetail /></E>} />
+              {/* A task opened inside a project — same component as the project
+                  itself, so the project never unmounts around it. */}
+              <Route path="projects/:id/:taskId" element={<E name="ProjectDetail"><ProjectDetail /></E>} />
+              <Route path="workflows" element={<E name="Workflows"><Workflows /></E>} />
+              <Route path="routines" element={<E name="Routines"><Routines /></E>} />
+              <Route path="workflows/runs/:id" element={<E name="WorkflowRun"><WorkflowRun /></E>} />
+              <Route path="triggers" element={<E name="Triggers"><Triggers /></E>} />
+              <Route path="triggers/:id" element={<E name="TriggerDetail"><TriggerDetail /></E>} />
+              <Route path="schedules" element={<E name="Triggers"><Triggers /></E>} />
+              <Route path="schedules/:id" element={<E name="TriggerDetail"><TriggerDetail /></E>} />
+              <Route path="sessions" element={<E name="Sessions"><Sessions /></E>} />
+              <Route path="resources" element={<E name="Resources"><Resources /></E>} />
+              <Route path="anchor" element={<E name="Anchor"><Anchor /></E>} />
+              <Route path="team/activity" element={<E name="TeamActivity"><TeamActivity /></E>} />
+              <Route path="team/charts" element={<E name="TeamCharts"><TeamCharts /></E>} />
+              <Route path="team/:username" element={<E name="TeamMember"><TeamMember /></E>} />
+              <Route path="admin/daemon-logs" element={<E name="AdminDaemonLogs"><AdminDaemonLogs /></E>} />
+              <Route path="config" element={<E name="ConfigPage"><ConfigPage /></E>} />
+              <Route path="memory" element={<E name="Memory"><Memory /></E>} />
+              {/* One area: app/evals/page.tsx reads its sub-paths (components/evals/evalsPaths.ts). */}
+              <Route path="evals" element={<E name="Evals"><Evals /></E>} />
+              <Route path="evals/*" element={<E name="Evals"><Evals /></E>} />
+              {/* One area: app/ops/page.tsx reads its sub-paths (components/ops/opsPaths.ts). */}
+              <Route path="ops" element={<E name="Ops"><Ops /></E>} />
+              <Route path="ops/*" element={<E name="Ops"><Ops /></E>} />
+            </Route>
+
+            {/* Standalone shell pages — kept outside the shared shell because they
+                pass page-specific props to DashboardLayout (windows' hideSidebar) or
+                aren't tab-routable. */}
+            <Route path="explore" element={<E name="Explore"><Explore /></E>} />
+            <Route path="windows" element={<E name="Windows"><Windows /></E>} />
+            <Route path="orchestration" element={<E name="Orchestration"><Orchestration /></E>} />
+            <Route path="cli" element={<E name="Cli"><Cli /></E>} />
+
+            {/* Sharing. (Published artifacts at /a/<slug> are NOT here: they're
+                a server-rendered page — Hono route in prod, vite middleware in
+                dev — so the share link never boots the SPA.) */}
+            <Route path="share/:token" element={<E name="Share"><Share /></E>} />
+            <Route path="share/message/:token" element={<E name="ShareMessage"><ShareMessage /></E>} />
+            <Route path="share/doc/:token" element={<E name="ShareDoc"><ShareDoc /></E>} />
+            <Route path="share/plan/:token" element={<E name="SharePlan"><SharePlan /></E>} />
+            <Route path="share/task/:token" element={<E name="ShareTask"><ShareTask /></E>} />
+            <Route path="share/call/:token" element={<E name="ShareCall"><ShareCall /></E>} />
+            <Route path="share/project/:token" element={<E name="ShareProject"><ShareProject /></E>} />
+            <Route path="share/initiative/:token" element={<E name="ShareInitiative"><ShareInitiative /></E>} />
+            <Route path="share/decision/:token" element={<E name="ShareDecision"><ShareDecision /></E>} />
+            <Route path="share/stack/:token" element={<E name="ShareStack"><ShareStack /></E>} />
+            <Route path="share/trigger/:token" element={<E name="ShareTrigger"><ShareTrigger /></E>} />
+            <Route path="share/run/:token" element={<E name="ShareRun"><ShareRun /></E>} />
+            {/* A guest's meeting page boots standalone (shareBoot), never inside
+                the app: a full load of /meet/<token> never reaches this router.
+                A navigation from INSIDE the app does (a member following their
+                own guest link from a message, the desktop window, which never
+                reboots), and would land on the catch-all's blank page, so it
+                is turned into the full load the page needs. */}
+            <Route path="meet/:token" element={<ReloadOutsideApp />} />
+
+            {/* Browsing a repository, inside the dashboard: its source, its
+                commits, the refs it has, its pull requests, its search. Every
+                page here has a twin under /r that renders the same component
+                outside every shell (see the standalone family below). */}
+            <Route path="repo" element={<E name="RepoIndex"><RepoIndex /></E>} />
+            <Route path="repo/:owner/:name" element={<E name="RepoHome"><RepoHome /></E>} />
+            <Route path="repo/:owner/:name/tree/:ref" element={<E name="RepoTree"><RepoTree /></E>} />
+            <Route path="repo/:owner/:name/blob/:ref" element={<E name="RepoBlob"><RepoBlob /></E>} />
+            <Route path="repo/:owner/:name/commits/:ref" element={<E name="RepoCommits"><RepoCommits /></E>} />
+            <Route path="repo/:owner/:name/compare/:range" element={<E name="RepoCompare"><RepoCompare /></E>} />
+            <Route path="repo/:owner/:name/branches" element={<E name="RepoBranches"><RepoBranches /></E>} />
+            <Route path="repo/:owner/:name/worktrees" element={<E name="RepoWorktrees"><RepoWorktrees /></E>} />
+            <Route path="repo/:owner/:name/tags" element={<E name="RepoTags"><RepoTags /></E>} />
+            <Route path="repo/:owner/:name/pulls" element={<E name="RepoPulls"><RepoPulls /></E>} />
+            <Route path="repo/:owner/:name/sessions" element={<E name="RepoSessions"><RepoSessions /></E>} />
+            <Route path="repo/:owner/:name/search" element={<E name="RepoSearch"><RepoSearch /></E>} />
+
+            {/* The standalone family: the same repository pages with no shell
+                around them, so one is a window of its own and a public
+                repository is readable by somebody who has never signed in.
+                Flat routes, next to the share pages and for the same reason —
+                no DashboardShell, no tab interception (lib/tabRoutes excludes
+                the whole /r prefix). A commit and a pull request sit UNDER the
+                repository here, because /r is the whole of what a signed-out
+                reader may see. */}
+            <Route path="r/:owner/:name" element={<E name="RepoHome"><RepoHome /></E>} />
+            <Route path="r/:owner/:name/tree/:ref" element={<E name="RepoTree"><RepoTree /></E>} />
+            <Route path="r/:owner/:name/blob/:ref" element={<E name="RepoBlob"><RepoBlob /></E>} />
+            <Route path="r/:owner/:name/commits/:ref" element={<E name="RepoCommits"><RepoCommits /></E>} />
+            <Route path="r/:owner/:name/compare/:range" element={<E name="RepoCompare"><RepoCompare /></E>} />
+            <Route path="r/:owner/:name/branches" element={<E name="RepoBranches"><RepoBranches /></E>} />
+            <Route path="r/:owner/:name/tags" element={<E name="RepoTags"><RepoTags /></E>} />
+            <Route path="r/:owner/:name/pulls" element={<E name="RepoPulls"><RepoPulls /></E>} />
+            <Route path="r/:owner/:name/sessions" element={<E name="RepoSessions"><RepoSessions /></E>} />
+            <Route path="r/:owner/:name/search" element={<E name="RepoSearch"><RepoSearch /></E>} />
+            <Route path="r/:owner/:repo/commit/:sha" element={<E name="CommitView"><CommitView /></E>} />
+            <Route path="r/:owner/:repo/pull/:number" element={<E name="PrView"><PrView /></E>} />
+            <Route path="r/:owner/:repo/pull/:number/:view" element={<E name="PrView"><PrView /></E>} />
+
+            {/* Code review */}
+            <Route path="commit/:owner/:repo/:sha" element={<E name="CommitView"><CommitView /></E>} />
+            <Route path="pr/:owner/:repo/:number" element={<E name="PrView"><PrView /></E>} />
+            <Route path="pr/:owner/:repo/:number/:view" element={<E name="PrView"><PrView /></E>} />
+            <Route path="review/:id" element={<E name="ReviewView"><ReviewView /></E>} />
+            <Route path="review/batch" element={<E name="ReviewBatch"><ReviewBatch /></E>} />
+
+            {/* The windows with no background: the palette card, and the voice
+                window, whose float is the row of people's faces over the work.
+                Both are frameless transparent Electron windows; the layout is
+                what keeps the app's own body background from filling their
+                glass.
+
+                The call window MUST stay above ":username" or the profile
+                catch-all eats it — same rule as /people. */}
+            <Route element={<TransparentWindowLayout />}>
+              <Route path="palette" element={<E name="Palette"><Palette /></E>} />
+              <Route path="call-panel" element={<E name="CallPanel"><CallPanel /></E>} />
+              <Route path="meeting-offer" element={<E name="MeetingOffer"><MeetingOffer /></E>} />
+              <Route path="call-ring" element={<E name="CallRing"><CallRing /></E>} />
+              <Route path="agent-dock" element={<E name="AgentDock"><AgentDock /></E>} />
+              <Route path="share-cursors" element={<E name="ShareCursors"><ShareCursors /></E>} />
+            </Route>
+
+            {/* The people window (AIM buddy list): the roster, calling and the
+                walkie in a window of their own. Own <Route>, no tab shell and no
+                DashboardLayout — it is a whole window, not a page inside one.
+                MUST stay above ":username" or the profile catch-all eats it. */}
+            <Route path="people" element={<E name="People"><People /></E>} />
+
+            {/* /welcome is where someone new to the hosted assistant starts,
+                signed in or not (docs/architecture/hosted-assistant.md),
+                outside the tab shell. The simple lane folded into the main
+                app as hosted mode: its old addresses (/simple and below)
+                replace themselves with their main-app pages. */}
+            <Route path="welcome" element={<E name="Welcome"><Welcome /></E>} />
+            <Route path="simple/*" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            {/* The hosted page names as addresses (lib/laneRedirect.ts
+                PAGE_ALIASES), above ":username" so none reads as a profile. */}
+            <Route path="approvals" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="plan" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="mail" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="integrations" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            {/* The non-developer funnel's address: the landing with For everyone first. */}
+            <Route path="everyone" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            {/* Renamed pages' old addresses (lib/renamedPages.ts): the company's
+                list pages are the Org screen's read views now (/goals is
+                /org/goals), and a goal opens in its panel there. */}
+            <Route path="initiatives" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="initiatives/:id" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="team" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="company" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+            <Route path="roadmap" element={<E name="LaneRedirect"><LaneRedirect /></E>} />
+
+            {/* Settings - shared sidebar layout */}
+            <Route path="settings" element={<SettingsLayout />}>
+              <Route index element={<E name="Settings"><Settings /></E>} />
+              <Route path="cli" element={<E name="SettingsCli"><SettingsCli /></E>} />
+              <Route path="agents" element={<E name="SettingsAgents"><SettingsAgents /></E>} />
+              <Route path="agent-library" element={<E name="SettingsAgentLibrary"><SettingsAgentLibrary /></E>} />
+              <Route path="devices" element={<E name="SettingsDevices"><SettingsDevices /></E>} />
+              <Route path="migrate" element={<E name="SettingsMigrate"><SettingsMigrate /></E>} />
+              <Route path="sync" element={<E name="SettingsSync"><SettingsSync /></E>} />
+              <Route path="profile" element={<E name="SettingsProfile"><SettingsProfile /></E>} />
+              <Route path="accounts" element={<E name="SettingsAccounts"><SettingsAccounts /></E>} />
+              <Route path="accounts/link-github" element={<E name="SettingsLinkGithub"><SettingsAccountsLinkGithub /></E>} />
+              <Route path="claude-accounts" element={<E name="SettingsClaudeAccounts"><SettingsClaudeAccounts /></E>} />
+              <Route path="team" element={<E name="SettingsTeam"><SettingsTeam /></E>} />
+              <Route path="team/create" element={<E name="SettingsTeamCreate"><SettingsTeamCreate /></E>} />
+              <Route path="team/join" element={<E name="SettingsTeamJoin"><SettingsTeamJoin /></E>} />
+              <Route path="notifications" element={<E name="SettingsNotifications"><SettingsNotifications /></E>} />
+              <Route path="integrations" element={<E name="SettingsIntegrations"><SettingsIntegrations /></E>} />
+              {/* Old deep link; the GitHub install flow still returns here. */}
+              <Route path="integrations/github-app" element={<E name="SettingsIntegrations"><SettingsIntegrations /></E>} />
+              <Route path="desktop" element={<E name="SettingsDesktop"><SettingsDesktop /></E>} />
+              <Route path="apps" element={<E name="SettingsApps"><SettingsApps /></E>} />
+              {/* Sections with no page of their own (provider-keys, daemon,
+                  sounds…): matching them lets SettingsLayout open the modal. */}
+              <Route path="*" element={null} />
+            </Route>
+
+            {/* Public profiles — anonymous, guest-viewable, at the ROOT (/<handle>).
+                MUST be last: React Router ranks static segments above this dynamic
+                one, so every real route still wins; only unmatched single-segment
+                paths fall through here. Claim collisions are blocked by
+                RESERVED_USERNAMES in convex/users.ts (keep it in sync with the
+                top-level routes above). NOT in the dashboard shell or TabContent;
+                the query layer enforces the opt-in 404. */}
+            <Route path=":username" element={<E name="PublicProfile"><PublicProfile /></E>} />
+          </Routes>
+        </Suspense>
+      </ErrorBoundary>
+    </Providers>
+    </Suspense>
+  );
+}

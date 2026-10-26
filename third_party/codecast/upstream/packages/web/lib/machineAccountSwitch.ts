@@ -1,0 +1,136 @@
+// Pure state for a machine-wide Claude account switch. The web queues a
+// daemon command and only learns the real outcome when that command executes
+// (or the heartbeat's active_email moves). Callers must not treat "command
+// inserted" as success — that is what made Switch look like a no-op.
+
+export const MACHINE_SWITCH_TIMEOUT_MS = 90_000;
+export const MACHINE_SWITCH_SLOW_MS = 12_000;
+
+export type SwitchBlock = "active" | "offline" | "remote" | "login_expired";
+
+export function machineSwitchBlock(opts: {
+  isActive: boolean;
+  online?: boolean;
+  isRemote?: boolean;
+  loginExpired?: boolean;
+  // A live minted setup-token lets a dead login switch anyway: sessions move
+  // onto the token and the machine's login stays (a token switch).
+  tokenLive?: boolean;
+  thisProfile: string;
+}): { block: SwitchBlock; label: string } | null {
+  if (opts.isActive) return { block: "active", label: "This machine is already on this account" };
+  if (opts.isRemote) {
+    return { block: "remote", label: "Remote machines mirror the primary — switch there" };
+  }
+  if (opts.online === false) return { block: "offline", label: "The daemon on this machine is offline" };
+  if (opts.loginExpired && !opts.tokenLive) {
+    return {
+      block: "login_expired",
+      label: "Sign in again first — this saved login no longer works",
+    };
+  }
+  return null;
+}
+
+/** True when this saved profile is the machine's current Claude login.
+ *  Email is the real identity; a snapshot that never stored one still
+ *  matches when its name is the current email's local part — that is how
+ *  the chip labels an unsaved login, and how a click on that row used
+ *  to queue a switch to the account already in use. */
+export function profileIsCurrentLogin(
+  profile: { name: string; email?: string },
+  activeEmail?: string | null,
+): boolean {
+  if (!activeEmail) return false;
+  if (profile.email && profile.email === activeEmail) return true;
+  if (!profile.email && profile.name === activeEmail.split("@")[0]) return true;
+  return false;
+}
+
+/** True when this profile is the account the machine's sessions run on: the
+ *  launch profile after a token switch, else the keychain login (the web twin
+ *  of the server's fleetAccount). */
+export function profileIsFleetAccount(
+  profile: { name: string; email?: string },
+  fleet: { activeEmail?: string | null; launchProfile?: string | null },
+): boolean {
+  if (fleet.launchProfile) return profile.name === fleet.launchProfile;
+  return profileIsCurrentLogin(profile, fleet.activeEmail);
+}
+
+export type MachineSwitchPhase = "idle" | "waiting" | "confirming" | "slow" | "succeeded" | "failed";
+
+export type MachineSwitchCommand = {
+  executed_at?: number | null;
+  error?: string | null;
+};
+
+export function resolveMachineSwitch(opts: {
+  pending: { profile: string; email?: string; startedAt: number } | null;
+  activeEmail?: string | null;
+  launchProfile?: string | null;
+  command?: MachineSwitchCommand | null;
+  now: number;
+  timeoutMs?: number;
+  slowMs?: number;
+}): { phase: MachineSwitchPhase; error?: string } {
+  if (!opts.pending) return { phase: "idle" };
+  const timeoutMs = opts.timeoutMs ?? MACHINE_SWITCH_TIMEOUT_MS;
+  const slowMs = opts.slowMs ?? MACHINE_SWITCH_SLOW_MS;
+  const age = opts.now - opts.pending.startedAt;
+  if (opts.command?.error) {
+    return { phase: "failed", error: humanizeSwitchError(opts.command.error) };
+  }
+  if (
+    profileIsFleetAccount(
+      { name: opts.pending.profile, email: opts.pending.email },
+      { activeEmail: opts.activeEmail, launchProfile: opts.launchProfile },
+    )
+  ) {
+    return { phase: "succeeded" };
+  }
+  if (age >= timeoutMs) {
+    return {
+      phase: "failed",
+      error: opts.command?.executed_at
+        ? `The daemon finished switching to "${opts.pending.profile}", but the updated login hasn't been confirmed. Refresh the account list to check this machine.`
+        : `The daemon didn't confirm the switch to "${opts.pending.profile}" in time. It may still complete — check this machine before trying again.`,
+    };
+  }
+  if (opts.command?.executed_at) return { phase: "confirming" };
+  if (age >= slowMs) return { phase: "slow" };
+  return { phase: "waiting" };
+}
+
+export function stripSwitchPrefix(msg: string): string {
+  return msg.replace(/^Account switch failed:\s*/i, "");
+}
+
+export function humanizeSwitchError(msg: string): string {
+  const stripped = stripSwitchPrefix(msg);
+  if (/unusable credential|logged-out|login expired/i.test(stripped)) {
+    return "This saved login no longer works. Sign in again on this account, then switch.";
+  }
+  return stripped;
+}
+
+export function machineSwitchPendingCopy(phase: MachineSwitchPhase, profile: string, deviceLabel?: string): string {
+  const where = deviceLabel ? ` on ${deviceLabel}` : "";
+  if (phase === "confirming") return `Confirming the active account${where} is "${profile}"…`;
+  if (phase === "slow") return `Still waiting${where} to switch to "${profile}"…`;
+  return `Switching this machine to "${profile}"…`;
+}
+
+export function machineSwitchSuccessCopy(profile: string, viaToken = false): { title: string; description: string } {
+  if (viaToken) {
+    return {
+      title: `Sessions now run on "${profile}"`,
+      description:
+        "On its minted token: new and resumed sessions use it, running ones keep the account they started on. The machine's login stays until you sign in again on this account.",
+    };
+  }
+  return {
+    title: `This machine is now "${profile}"`,
+    description: "New and resumed sessions will use it. Running sessions keep the account they started on.",
+  };
+}

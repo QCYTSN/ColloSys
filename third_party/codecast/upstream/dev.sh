@@ -1,0 +1,314 @@
+#!/bin/bash
+
+cd "$(dirname "$0")"
+ROOT_DIR="$(pwd)"
+
+INSTANCE="${1:-0}"
+BASE_PORT=3200
+PORT=$((BASE_PORT + INSTANCE))
+SHUTTING_DOWN=false
+PIDFILE="/tmp/codecast-dev-${PORT}.pid"
+
+if [ "$INSTANCE" = "0" ]; then
+    HOSTNAME="local.codecast.sh"
+else
+    HOSTNAME="local.${INSTANCE}.codecast.sh"
+fi
+
+CONVEX_PID=""
+CONVEX_RESTARTS=0
+CONVEX_LAST_START=0
+CONVEX_BLOCKED=0
+LAST_BLOCK_RETRY=0
+MAX_RAPID_RESTARTS=5
+RAPID_WINDOW=60
+WEB_FAIL_COUNT=0
+WEB_FAIL_THRESHOLD=3
+HTTP_FAIL_COUNT=0
+# Loosened from 4 -> 8 and interval extended 30s -> 60s.
+# Vite can stall briefly during heavy HMR (e.g. saving ConversationView.tsx);
+# we don't want the watchdog to yank the dev server mid-edit.
+HTTP_FAIL_THRESHOLD=8
+HTTP_CHECK_INTERVAL=60
+LAST_HTTP_CHECK=0
+WEB_STARTED_AT=0
+
+log() { printf "\033[90m[%s]\033[0m %s\n" "$(date +%H:%M:%S)" "$*"; }
+log_warn() { printf "\033[90m[%s]\033[0m \033[33m%s\033[0m\n" "$(date +%H:%M:%S)" "$*"; }
+log_err() { printf "\033[90m[%s]\033[0m \033[31m%s\033[0m\n" "$(date +%H:%M:%S)" "$*"; }
+
+kill_tree() {
+    local pid=$1 sig=${2:-TERM}
+    local children
+    children=$(pgrep -P $pid 2>/dev/null)
+    for child in $children; do
+        kill_tree $child $sig
+    done
+    kill -$sig $pid 2>/dev/null
+}
+
+kill_port() {
+    local port=$1
+    local pids attempts=0
+    pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null)
+    if [ -n "$pids" ]; then
+        log "Clearing port $port (pids: $pids)"
+        echo "$pids" | xargs kill 2>/dev/null || true
+        sleep 0.5
+        pids=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null)
+        [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
+    fi
+    while lsof -tiTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; do
+        attempts=$((attempts + 1))
+        if [ $attempts -ge 10 ]; then
+            log_err "Port $port still in use after ${attempts}s, force killing"
+            lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | xargs kill -9 2>/dev/null || true
+            sleep 1
+            break
+        fi
+        sleep 1
+    done
+}
+
+kill_web() {
+    pkill -f "vite.*--port $PORT" 2>/dev/null || true
+    kill_port $PORT
+}
+
+cleanup() {
+    SHUTTING_DOWN=true
+    echo ""
+    log "Shutting down..."
+    rm -f "$PIDFILE"
+    [ -n "$CONVEX_PID" ] && kill_tree $CONVEX_PID
+    kill_web
+    sleep 1
+    [ -n "$CONVEX_PID" ] && kill_tree $CONVEX_PID 9
+    kill_port $PORT
+    wait 2>/dev/null
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+kill_previous_instance() {
+    # Kill pidfile-tracked instance
+    if [ -f "$PIDFILE" ]; then
+        local old_pid
+        old_pid=$(cat "$PIDFILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            log "Killing previous dev.sh instance (pid $old_pid)..."
+            kill_tree "$old_pid"
+            local attempts=0
+            while kill -0 "$old_pid" 2>/dev/null && [ $attempts -lt 10 ]; do
+                sleep 0.5
+                attempts=$((attempts + 1))
+            done
+            if kill -0 "$old_pid" 2>/dev/null; then
+                log_warn "Previous instance didn't exit cleanly, force killing..."
+                kill_tree "$old_pid" 9
+                sleep 1
+            fi
+        fi
+        rm -f "$PIDFILE"
+    fi
+}
+
+write_pidfile() {
+    echo $$ > "$PIDFILE"
+}
+
+check_rapid_restarts() {
+    local name=$1 count=$2
+    if [ $count -ge $MAX_RAPID_RESTARTS ]; then
+        local backoff=$((count * 5))
+        [ $backoff -gt 60 ] && backoff=60
+        log_warn "$name crash-looping ($count restarts in ${RAPID_WINDOW}s window), backing off ${backoff}s..."
+        sleep $backoff
+    fi
+}
+
+# The convex pusher (packages/convex/scripts/gated-push.ts, behind `bun run
+# dev`) pushes whole-tree snapshots to PROD: a tree behind origin/main deletes
+# newer functions and routes from prod (the 2026-07-15 reparent-route outage).
+# Never start it from a stale tree; it re-checks freshness before every push
+# too, and only pushes a tree that has been quiet and typechecks whole (a raw
+# `convex dev` shipped a half-saved edit on 2026-09-21). Offline (fetch fails),
+# judge by the last-known origin/main rather than blocking local dev.
+convex_tree_is_fresh() {
+    git -C "$ROOT_DIR" fetch origin --quiet 2>/dev/null || true
+    git -C "$ROOT_DIR" merge-base --is-ancestor origin/main HEAD 2>/dev/null
+}
+
+start_convex() {
+    $SHUTTING_DOWN && return
+
+    if ! convex_tree_is_fresh; then
+        if [ "$CONVEX_BLOCKED" != "1" ]; then
+            log_err "REFUSING to start the convex watcher: this tree is BEHIND origin/main."
+            git -C "$ROOT_DIR" log --oneline HEAD..origin/main 2>/dev/null | head -5 | while read -r c; do
+                log_err "  missing: $c"
+            done
+            log_err "Run: git pull — web keeps running; the watcher starts automatically after the pull."
+        fi
+        CONVEX_BLOCKED=1
+        CONVEX_PID=""
+        return
+    fi
+    [ "$CONVEX_BLOCKED" = "1" ] && log "Tree is fresh again, starting convex watcher"
+    CONVEX_BLOCKED=0
+
+    local now=$(date +%s)
+    if [ $((now - CONVEX_LAST_START)) -gt $RAPID_WINDOW ]; then
+        CONVEX_RESTARTS=0
+    fi
+    CONVEX_LAST_START=$now
+    CONVEX_RESTARTS=$((CONVEX_RESTARTS + 1))
+
+    check_rapid_restarts "convex" $CONVEX_RESTARTS
+    $SHUTTING_DOWN && return
+
+    [ -n "$CONVEX_PID" ] && kill_tree $CONVEX_PID
+    cd "$ROOT_DIR/packages/convex"
+    # bun loads the workspace-root .env.local into `bun run` children, and its
+    # CONVEX_DEPLOYMENT=anonymous pointer makes the CLI refuse to start next to
+    # the self-hosted vars (same hijack deploy.sh guards against). Scrub it.
+    env -u CONVEX_DEPLOYMENT bun run dev &
+    CONVEX_PID=$!
+    cd "$ROOT_DIR"
+    log "Convex started (pid $CONVEX_PID)"
+}
+
+start_web() {
+    $SHUTTING_DOWN && return
+
+    kill_web
+    # Resolve vite from wherever bun hoisted it (workspace or root node_modules)
+    local VITE_BIN=""
+    if [ -x "$ROOT_DIR/packages/web/node_modules/.bin/vite" ]; then
+        VITE_BIN="$ROOT_DIR/packages/web/node_modules/.bin/vite"
+    elif [ -x "$ROOT_DIR/node_modules/.bin/vite" ]; then
+        VITE_BIN="$ROOT_DIR/node_modules/.bin/vite"
+    else
+        log_warn "vite binary not found; run 'bun install'"
+        return
+    fi
+    cd "$ROOT_DIR/packages/web"
+    "$VITE_BIN" --port $PORT --host 0.0.0.0 &
+    cd "$ROOT_DIR"
+
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        sleep 1
+        attempts=$((attempts + 1))
+        if lsof -ti :$PORT -sTCP:LISTEN >/dev/null 2>&1; then
+            log "Web ready on port $PORT"
+            WEB_FAIL_COUNT=0
+            HTTP_FAIL_COUNT=0
+            WEB_STARTED_AT=$(date +%s)
+            return
+        fi
+    done
+    log_warn "Web started but port $PORT not yet bound after ${attempts}s"
+}
+
+port_is_listening() {
+    lsof -ti :$PORT -sTCP:LISTEN >/dev/null 2>&1
+}
+
+http_is_healthy() {
+    local status
+    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 20 "http://localhost:$PORT/" 2>/dev/null)
+    [ "$status" = "200" ]
+}
+
+# --- startup ---
+
+kill_previous_instance
+write_pidfile
+
+log "Clearing old processes..."
+# Kill any orphaned convex/vite processes for this port (not just pidfile-tracked ones)
+pkill -f "vite.*--port $PORT" 2>/dev/null || true
+kill_port $PORT
+sleep 1
+
+# Vite manages its own .vite cache invalidation via lockfile hash + config hash.
+# Wiping it forced a 10-20s re-prebundle on every restart and caused mid-restart
+# HMR failures. If you ever need a clean slate, delete it manually.
+
+if ! grep -q "$HOSTNAME" /etc/hosts 2>/dev/null; then
+    log_warn "$HOSTNAME not in /etc/hosts - run: sudo ./setup-hosts.sh"
+fi
+
+log "Installing dependencies..."
+bun install
+
+log "Starting Convex backend..."
+start_convex
+sleep 3
+
+log "Starting web on port $PORT..."
+start_web
+
+echo ""
+echo "================================"
+echo "  Web:    http://${HOSTNAME}"
+echo "  Alt:    http://localhost:${PORT}"
+echo "  Convex: running in background"
+echo "================================"
+echo ""
+
+# --- watchdog ---
+
+while true; do
+    sleep 5
+    $SHUTTING_DOWN && break
+
+    # Another dev.sh took over or pidfile gone — exit gracefully
+    if [ ! -f "$PIDFILE" ] || [ "$(cat "$PIDFILE" 2>/dev/null)" != "$$" ]; then
+        log "Another dev.sh instance took over, exiting..."
+        SHUTTING_DOWN=true
+        [ -n "$CONVEX_PID" ] && kill_tree $CONVEX_PID
+        kill_web
+        exit 0
+    fi
+
+    if [ -n "$CONVEX_PID" ] && ! kill -0 $CONVEX_PID 2>/dev/null; then
+        log_err "Convex died (was pid $CONVEX_PID), restarting..."
+        start_convex
+    elif [ "$CONVEX_BLOCKED" = "1" ] && [ $(( $(date +%s) - LAST_BLOCK_RETRY )) -ge 60 ]; then
+        # Stale-tree block: re-check once a minute so a pull unblocks the
+        # watcher without restarting dev.sh. start_convex refuses quietly
+        # while the tree stays stale.
+        LAST_BLOCK_RETRY=$(date +%s)
+        start_convex
+    fi
+
+    if ! port_is_listening; then
+        WEB_FAIL_COUNT=$((WEB_FAIL_COUNT + 1))
+        if [ $WEB_FAIL_COUNT -ge $WEB_FAIL_THRESHOLD ]; then
+            log_err "Web not responding on port $PORT (${WEB_FAIL_COUNT} consecutive checks), restarting..."
+            start_web
+        fi
+    else
+        WEB_FAIL_COUNT=0
+    fi
+
+    now=$(date +%s)
+    uptime=$((now - WEB_STARTED_AT))
+    if port_is_listening && [ $uptime -gt 60 ] && [ $((now - LAST_HTTP_CHECK)) -ge $HTTP_CHECK_INTERVAL ]; then
+        LAST_HTTP_CHECK=$now
+        if ! http_is_healthy; then
+            HTTP_FAIL_COUNT=$((HTTP_FAIL_COUNT + 1))
+            log_warn "HTTP health check failed (${HTTP_FAIL_COUNT}/${HTTP_FAIL_THRESHOLD})"
+            if [ $HTTP_FAIL_COUNT -ge $HTTP_FAIL_THRESHOLD ]; then
+                log_err "Web server unhealthy (port open but not responding to HTTP), restarting..."
+                HTTP_FAIL_COUNT=0
+                start_web
+            fi
+        else
+            HTTP_FAIL_COUNT=0
+        fi
+    fi
+done

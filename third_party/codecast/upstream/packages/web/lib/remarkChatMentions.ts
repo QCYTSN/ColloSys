@@ -1,0 +1,216 @@
+import { findAndReplace } from "mdast-util-find-and-replace";
+import type { ChatRoleMention, ChatSlackMention } from "@codecast/shared/chat";
+import { SLACK_MARK_PATHS, SLACK_MARK_VIEWBOX } from "./slackLogo";
+import { objectHref } from "./entityLinks";
+
+// Highlight @mentions inside chat message bodies.
+//
+// This is a remark plugin rather than a string replace over the raw markdown for
+// one reason that matters here: findAndReplace only rewrites `text` nodes. A
+// mention-shaped string inside a fenced block, an inline code span, a link href
+// or an autolink is a different mdast node, so it is never touched. A regex over
+// the source cannot tell those apart and would corrupt pasted code — which, in
+// this product, is most of what people paste.
+//
+// The character class MUST equal the server's mention vocabulary
+// (@codecast/shared/chat/handles): no dots, 39 chars max. A wider class here
+// once made "@maya.x" notify maya on the server (its regex stops at the dot)
+// while the web showed no highlight at all — this capture included the dot,
+// failed the known-handle lookup, and the two halves of the feature disagreed
+// about the same three characters.
+//
+// Pairs with .ch-mention / .ch-mention-self in components/chat/chat.css.
+
+// Just the handle. The character before it is checked against the match's own
+// input rather than captured, because a leading capture group would have to
+// re-emit that character as a sibling text node, and splicing text back around
+// a replacement is exactly where findAndReplace's tree walk goes wrong.
+const MENTION_RE = /@([A-Za-z0-9][A-Za-z0-9_-]{0,38})/g;
+
+// "@" glued to the end of a word is an email address, and "/@" is a path
+// segment — the same boundary the server draws ([^\w/]).
+const BOUNDARY_RE = /[\s(<[{,:;"'*~]/;
+
+export type ChatMentionOptions = {
+  /** Handles that resolve to a real member. Anything else stays plain text, so
+   *  a stray "@" in prose never renders as a mention. Omit to accept any. */
+  known?: Set<string>;
+  /** The viewer's own handles, which get the louder treatment. */
+  self?: Set<string>;
+  /** handle → display name. When present, the chip renders "@Samvit
+   *  Ramadurgam" over the stored "@samvit" — the same face a person mention
+   *  wears in the doc editor, whose classes this plugin emits. */
+  names?: Map<string, string>;
+  /** Org roles this line names, by lowercase handle (from the row's resolved
+   *  `mentions`, never guessed from the text): the chip becomes a role pill
+   *  linking to the role's page. */
+  roles?: Map<string, ChatRoleMention>;
+  /** Session short ids this line names (same source). `@jx7abcd` becomes the
+   *  app's ordinary session pill — the entity:// link EntityAwareLink already
+   *  renders, title and open-on-click included — with the "@" folded in. */
+  sessions?: Set<string>;
+  /** People this line names who exist only in the team's Slack workspace
+   *  (same source), by lowercase Slack handle: a person chip wearing the
+   *  Slack mark, named from the snapshot. Nothing to open; they are paged in
+   *  the line's Slack copy. */
+  slack?: Map<string, ChatSlackMention>;
+  /** The team's channels by name → id (channelNameMap): `#name` becomes a link
+   *  into the room. A name that is no channel stays text. */
+  channels?: Map<string, string>;
+};
+
+// `#name` in prose, after the same boundary a mention needs. Headings never
+// reach here: markdown made them heading nodes before this walk.
+const CHANNEL_RE = /#([a-z0-9][a-z0-9_-]*)/gi;
+
+const channelMaps = new WeakMap<object, Map<string, Map<string, string>>>();
+
+/** name → id for one team's rooms (never DMs), memoized on the collection ref
+ *  so every message in a list shares one map until a channel row changes. */
+export function channelNameMap(
+  channels: Record<string, { _id: string; name: string; kind?: string; team_id?: string; archived_at?: number | null }> | undefined,
+  teamId: string | undefined,
+): Map<string, string> | undefined {
+  if (!channels || !teamId) return undefined;
+  let byTeam = channelMaps.get(channels);
+  if (!byTeam) channelMaps.set(channels, (byTeam = new Map()));
+  let map = byTeam.get(teamId);
+  if (!map) {
+    map = new Map();
+    for (const c of Object.values(channels)) {
+      if (c.team_id === teamId && c.kind !== "dm" && !c.archived_at && c.name) map.set(c.name.toLowerCase(), String(c._id));
+    }
+    byTeam.set(teamId, map);
+  }
+  return map;
+}
+
+// The Slack mark as hast, for the chip above. mdast hands `data.hChildren`
+// straight through to rehype, so the plugin can draw the glyph without React.
+function slackMarkHast() {
+  return {
+    type: "element" as const,
+    tagName: "svg",
+    properties: { className: ["ch-mention-slack-mark"], viewBox: SLACK_MARK_VIEWBOX, ariaHidden: "true" },
+    children: SLACK_MARK_PATHS.map(([d, fill]) => ({ type: "element" as const, tagName: "path", properties: { d, fill }, children: [] })),
+  };
+}
+
+export function remarkChatMentions(options: ChatMentionOptions = {}) {
+  const { known, self, names, roles, sessions, slack, channels } = options;
+  const has = (set: Set<string> | undefined, handle: string) =>
+    !!set && (set.has(handle) || set.has(handle.toLowerCase()));
+
+  return (tree: any) => {
+    findAndReplace(
+      tree,
+      [
+        [
+          MENTION_RE,
+          (match: string, handle: string, meta: { index: number; input: string }) => {
+            const before = meta && meta.index > 0 ? meta.input[meta.index - 1] : "";
+            // Returning false leaves the original text exactly as written, which
+            // is what an unknown handle or a mid-word "@" must do.
+            if (before && !BOUNDARY_RE.test(before)) return false;
+            const lower = handle.toLowerCase();
+            // Roles and sessions come from the server's resolution of THIS
+            // line, so they outrank the roster: a role's standing agent is a
+            // bot named after the role, and the role must win (agent-channels.md
+            // "Shapes"). This plugin runs BEFORE remarkEntityIds in chat, so
+            // the session case sees the whole "@jx7abcd" rather than a lone
+            // "@" beside a pill the id plugin already made.
+            const role = roles?.get(lower);
+            if (role) {
+              return {
+                type: "link",
+                url: objectHref("role", role.short_id),
+                data: {
+                  hProperties: {
+                    className: "editor-mention mention-role ch-mention-role",
+                    "data-mention": lower,
+                    "data-role-id": role.role_id,
+                    title: `${role.short_id} · open the role`,
+                  },
+                },
+                children: [{ type: "text", value: `@${role.handle}` }],
+              };
+            }
+            if (sessions?.has(lower)) {
+              return {
+                type: "link",
+                url: `entity://${lower}`,
+                // The text is the payload EntityAwareLink reads (react-markdown
+                // strips the entity:// href), exactly as remarkEntityIds emits it.
+                // data-mention marks it as an ADDRESS, so remarkEntityCards
+                // leaves it an inline pill rather than promoting it to a card:
+                // "@jx7abcd" asks the session something, a bare id shares it.
+                // Tree-level only: EntityAwareLink renders the pill from the
+                // text payload and forwards no props, so nothing here reaches
+                // the DOM — the pill wears the session pill's own dress.
+                data: { hProperties: { "data-mention": lower } },
+                children: [{ type: "text", value: lower }],
+              };
+            }
+            const slackPerson = slack?.get(lower);
+            if (slackPerson) {
+              return {
+                type: "emphasis",
+                data: {
+                  hName: "span",
+                  hProperties: {
+                    className: "editor-mention mention-person ch-mention-slack",
+                    "data-mention": lower,
+                    title: `@${slackPerson.handle} in Slack`,
+                  },
+                  hChildren: [slackMarkHast(), { type: "text" as const, value: `@${slackPerson.name}` }],
+                },
+                children: [{ type: "text", value: `@${slackPerson.name}` }],
+              };
+            }
+            if (known && !has(known, handle)) return false;
+            const display = names?.get(handle) ?? names?.get(lower);
+            return {
+              type: "emphasis",
+              // data.hName/hProperties is how mdast hands a node to rehype under
+              // a tag of our choosing — the same trick remarkEntityIds uses for
+              // entity pills. emphasis is used as the carrier because it is a
+              // real inline node type the tree walk already understands.
+              data: {
+                hName: "span",
+                hProperties: {
+                  // The doc editor's own chip classes (editor.css), so a person
+                  // renders identically here and in a doc — one stylesheet, not
+                  // a chat-flavored imitation. Self keeps its louder accent.
+                  className: has(self, handle)
+                    ? "editor-mention mention-person ch-mention-self"
+                    : "editor-mention mention-person",
+                  "data-mention": handle,
+                  title: display ? `@${handle}` : undefined,
+                },
+              },
+              children: [{ type: "text", value: display ? `@${display}` : match }],
+            };
+          },
+        ],
+        [
+          CHANNEL_RE,
+          (match: string, name: string, meta: { index: number; input: string }) => {
+            const before = meta && meta.index > 0 ? meta.input[meta.index - 1] : "";
+            if (before && !BOUNDARY_RE.test(before)) return false;
+            const id = channels?.get(name.toLowerCase());
+            if (!id) return false;
+            return {
+              type: "link",
+              url: `/chat/${encodeURIComponent(id)}`,
+              data: { hProperties: { className: "ch-channel-ref", "data-channel": name.toLowerCase(), title: `Open #${name}` } },
+              children: [{ type: "text", value: match }],
+            };
+          },
+        ],
+      ],
+      // Never rewrite the visible text of a link: the anchor already owns it,
+      // and a mention-styled span inside it would navigate somewhere unrelated.
+      { ignore: ["link", "linkReference"] },
+    );
+  };
+}

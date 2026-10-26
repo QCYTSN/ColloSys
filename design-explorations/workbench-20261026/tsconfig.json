@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "baseUrl": "../..",
+    "paths": {
+      "@radix-ui/react-dialog": ["third_party/codecast/upstream/packages/web/node_modules/@radix-ui/react-dialog"],
+      "@radix-ui/react-dropdown-menu": ["third_party/codecast/upstream/packages/web/node_modules/@radix-ui/react-dropdown-menu"],
+      "@radix-ui/react-tooltip": ["third_party/codecast/upstream/packages/web/node_modules/@radix-ui/react-tooltip"],
+      "@radix-ui/react-tabs": ["third_party/codecast/upstream/packages/web/node_modules/@radix-ui/react-tabs"]
+    }
+  },
+  "include": ["./*.ts", "./*.tsx"]
+}

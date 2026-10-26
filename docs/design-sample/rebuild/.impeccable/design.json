@@ -1,0 +1,424 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T09:13:00.196Z",
+  "title": "Design System: ColloSys replacement workbench sample",
+  "extensions": {
+    "colorMeta": {
+      "reading-white": {
+        "role": "neutral",
+        "displayName": "Reading White",
+        "tonalRamp": [
+          "oklch(15% 0 0)",
+          "oklch(26% 0 0)",
+          "oklch(38% 0 0)",
+          "oklch(49% 0 0)",
+          "oklch(61% 0 0)",
+          "oklch(72% 0 0)",
+          "oklch(84% 0 0)",
+          "oklch(95% 0 0)"
+        ]
+      },
+      "index-cool": {
+        "role": "neutral",
+        "displayName": "Index Cool",
+        "tonalRamp": [
+          "oklch(15% 0.006 255)",
+          "oklch(26% 0.006 255)",
+          "oklch(38% 0.006 255)",
+          "oklch(49% 0.006 255)",
+          "oklch(61% 0.006 255)",
+          "oklch(72% 0.006 255)",
+          "oklch(84% 0.006 255)",
+          "oklch(95% 0.006 255)"
+        ]
+      },
+      "evidence-subtle": {
+        "role": "neutral",
+        "displayName": "Evidence Subtle",
+        "tonalRamp": [
+          "oklch(15% 0.004 255)",
+          "oklch(26% 0.004 255)",
+          "oklch(38% 0.004 255)",
+          "oklch(49% 0.004 255)",
+          "oklch(61% 0.004 255)",
+          "oklch(72% 0.004 255)",
+          "oklch(84% 0.004 255)",
+          "oklch(95% 0.004 255)"
+        ]
+      },
+      "divider": {
+        "role": "neutral",
+        "displayName": "Divider",
+        "tonalRamp": [
+          "oklch(15% 0.009 255)",
+          "oklch(26% 0.009 255)",
+          "oklch(38% 0.009 255)",
+          "oklch(49% 0.009 255)",
+          "oklch(61% 0.009 255)",
+          "oklch(72% 0.009 255)",
+          "oklch(84% 0.009 255)",
+          "oklch(95% 0.009 255)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15% 0.015 260)",
+          "oklch(26% 0.015 260)",
+          "oklch(38% 0.015 260)",
+          "oklch(49% 0.015 260)",
+          "oklch(61% 0.015 260)",
+          "oklch(72% 0.015 260)",
+          "oklch(84% 0.015 260)",
+          "oklch(95% 0.015 260)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted",
+        "tonalRamp": [
+          "oklch(15% 0.02 255)",
+          "oklch(26% 0.02 255)",
+          "oklch(38% 0.02 255)",
+          "oklch(49% 0.02 255)",
+          "oklch(61% 0.02 255)",
+          "oklch(72% 0.02 255)",
+          "oklch(84% 0.02 255)",
+          "oklch(95% 0.02 255)"
+        ]
+      },
+      "hover": {
+        "role": "neutral",
+        "displayName": "Hover",
+        "tonalRamp": [
+          "oklch(15% 0.009 255)",
+          "oklch(26% 0.009 255)",
+          "oklch(38% 0.009 255)",
+          "oklch(49% 0.009 255)",
+          "oklch(61% 0.009 255)",
+          "oklch(72% 0.009 255)",
+          "oklch(84% 0.009 255)",
+          "oklch(95% 0.009 255)"
+        ]
+      },
+      "action-graphite": {
+        "role": "primary",
+        "displayName": "Action Graphite",
+        "tonalRamp": [
+          "oklch(15% 0.027 250)",
+          "oklch(26% 0.027 250)",
+          "oklch(38% 0.027 250)",
+          "oklch(49% 0.027 250)",
+          "oklch(61% 0.027 250)",
+          "oklch(72% 0.027 250)",
+          "oklch(84% 0.027 250)",
+          "oklch(95% 0.027 250)"
+        ]
+      },
+      "action-graphite-hover": {
+        "role": "primary",
+        "displayName": "Action Graphite Hover",
+        "tonalRamp": [
+          "oklch(15% 0.035 250)",
+          "oklch(26% 0.035 250)",
+          "oklch(38% 0.035 250)",
+          "oklch(49% 0.035 250)",
+          "oklch(61% 0.035 250)",
+          "oklch(72% 0.035 250)",
+          "oklch(84% 0.035 250)",
+          "oklch(95% 0.035 250)"
+        ]
+      },
+      "feedback-graphite": {
+        "role": "neutral",
+        "displayName": "Feedback Graphite",
+        "tonalRamp": [
+          "oklch(15% 0.027 250)",
+          "oklch(26% 0.027 250)",
+          "oklch(38% 0.027 250)",
+          "oklch(49% 0.027 250)",
+          "oklch(61% 0.027 250)",
+          "oklch(72% 0.027 250)",
+          "oklch(84% 0.027 250)",
+          "oklch(95% 0.027 250)"
+        ]
+      },
+      "saved-green": {
+        "role": "semantic",
+        "displayName": "Saved Green",
+        "tonalRamp": [
+          "oklch(15% 0.075 155)",
+          "oklch(26% 0.075 155)",
+          "oklch(38% 0.075 155)",
+          "oklch(49% 0.075 155)",
+          "oklch(61% 0.075 155)",
+          "oklch(72% 0.075 155)",
+          "oklch(84% 0.075 155)",
+          "oklch(95% 0.075 155)"
+        ]
+      },
+      "failure-red": {
+        "role": "semantic",
+        "displayName": "Failure Red",
+        "tonalRamp": [
+          "oklch(15% 0.13 25)",
+          "oklch(26% 0.13 25)",
+          "oklch(38% 0.13 25)",
+          "oklch(49% 0.13 25)",
+          "oklch(61% 0.13 25)",
+          "oklch(72% 0.13 25)",
+          "oklch(84% 0.13 25)",
+          "oklch(95% 0.13 25)"
+        ]
+      },
+      "focus-blue": {
+        "role": "semantic",
+        "displayName": "Focus Blue",
+        "tonalRamp": [
+          "oklch(15% 0.065 250)",
+          "oklch(26% 0.065 250)",
+          "oklch(38% 0.065 250)",
+          "oklch(49% 0.065 250)",
+          "oklch(61% 0.065 250)",
+          "oklch(72% 0.065 250)",
+          "oklch(84% 0.065 250)",
+          "oklch(95% 0.065 250)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "title": {
+        "displayName": "Selected-work title",
+        "purpose": "Compact selected-work and checkpoint headings; no promotional display tier."
+      },
+      "body": {
+        "displayName": "Assistant prose",
+        "purpose": "Long-form contextual reading on white."
+      },
+      "ui": {
+        "displayName": "Workbench UI",
+        "purpose": "Base interface size and compact activity hierarchy."
+      },
+      "user-message": {
+        "displayName": "User message",
+        "purpose": "User prose inside a pale inset."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Controls and supporting evidence facts."
+      },
+      "code": {
+        "displayName": "Code",
+        "purpose": "Code blocks and technical evidence."
+      }
+    },
+    "shadows": [
+      {
+        "name": "menu",
+        "value": "0 8px 28px #25314018",
+        "purpose": "Floating menus."
+      },
+      {
+        "name": "dialog",
+        "value": "0 16px 64px #19253b30",
+        "purpose": "Confirmation and display-settings dialog."
+      },
+      {
+        "name": "unread",
+        "value": "0 4px 12px #25314022",
+        "purpose": "Floating return-to-latest action."
+      },
+      {
+        "name": "toast",
+        "value": "0 4px 20px #25314022",
+        "purpose": "Temporary status feedback."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-standard",
+        "value": "cubic-bezier(0.2,0.8,0.2,1)",
+        "purpose": "Shared color, disclosure and menu easing."
+      },
+      {
+        "name": "control-feedback",
+        "value": "150ms",
+        "purpose": "Background and text-color transitions."
+      },
+      {
+        "name": "checkpoint-disclosure",
+        "value": "grid-template-rows 180ms cubic-bezier(0.2,0.8,0.2,1), opacity 140ms cubic-bezier(0.2,0.8,0.2,1)",
+        "purpose": "Inline teammate checkpoint scope, 0fr to 1fr."
+      },
+      {
+        "name": "checkpoint-chevron",
+        "value": "transform 180ms cubic-bezier(0.2,0.8,0.2,1)",
+        "purpose": "Caret rotates 180 degrees when scope is expanded."
+      },
+      {
+        "name": "menu-pop",
+        "value": "150ms",
+        "purpose": "Opacity .8 to 1 and translateY(-3px) to 0."
+      },
+      {
+        "name": "dialog-fade",
+        "value": "160ms ease-out",
+        "purpose": "Dialog and overlay opacity .65 to 1."
+      },
+      {
+        "name": "loading-pulse",
+        "value": "1.5s ease-in-out infinite",
+        "purpose": "Fixture loading skeleton reaches opacity .5 at midpoint."
+      },
+      {
+        "name": "loading-spin",
+        "value": "1.2s linear infinite",
+        "purpose": "Fixture reply replay spinner."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation:none!important;transition:none!important;scroll-behavior:auto!important",
+        "purpose": "OS preference and the manual sample setting cover surfaces and descendants, including portaled menus, overlay and dialog. Source rule inspection is not a runtime verification claim."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "reader-compact-evidence-container",
+        "value": "850px"
+      },
+      {
+        "name": "reader-stacked-evidence-container",
+        "value": "760px"
+      },
+      {
+        "name": "list-detail-viewport",
+        "value": "800px"
+      },
+      {
+        "name": "small-window-viewport",
+        "value": "520px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Confirmation button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Own-workspace rehearsal confirmation; real operation still requires the product recovery contract.",
+      "html": "<button type=\"button\" class=\"ds-button-primary\">确认演练</button>",
+      "css": ".ds-button-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#303c49;color:#fff;border:1px solid transparent;border-radius:5px;font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;min-height:32px;padding:6px 11px;cursor:pointer;transition:background-color 150ms cubic-bezier(0.2,0.8,0.2,1),color 150ms cubic-bezier(0.2,0.8,0.2,1);}.ds-button-primary:hover{background:#455466;}.ds-button-primary:focus-visible{outline:2px solid #567697;outline-offset:2px;}.ds-button-primary:disabled{opacity:.45;cursor:not-allowed;}@media(prefers-reduced-motion:reduce){.ds-button-primary{transition:none;}}"
+    },
+    {
+      "name": "Secondary button",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Compact neutral action for evidence and preview.",
+      "html": "<button type=\"button\" class=\"ds-button-secondary\">预览恢复范围</button>",
+      "css": ".ds-button-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#fff;color:var(--pn-ink,#242931);border:1px solid #d6dce3;border-radius:5px;font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;min-height:32px;padding:6px 11px;cursor:pointer;transition:background-color 150ms cubic-bezier(0.2,0.8,0.2,1),color 150ms cubic-bezier(0.2,0.8,0.2,1);}.ds-button-secondary:hover{background:#f1f3f6;}.ds-button-secondary:focus-visible{outline:2px solid #567697;outline-offset:2px;}.ds-button-secondary:disabled{opacity:.45;cursor:not-allowed;}@media(prefers-reduced-motion:reduce){.ds-button-secondary{transition:none;}}"
+    },
+    {
+      "name": "Search field",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "Activity search with focus-within treatment and an explicit accessible name.",
+      "html": "<label class=\"ds-search\"><!-- Phosphor Icons 2.1.10, MIT, Copyright (c) 2020 Phosphor Icons; see THIRD_PARTY_NOTICES.md. --><svg width=\"16\" height=\"16\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z\"/></svg><input aria-label=\"搜索活动、成员或文件\" placeholder=\"搜索活动、成员或文件\" /><kbd>⌘ K</kbd></label>",
+      "css": ".ds-search{display:flex;align-items:center;gap:7px;height:34px;border:1px solid #dce0e6;border-radius:6px;padding:0 9px;background:#fff;color:var(--pn-muted,#606975);font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;}.ds-search:focus-within{border-color:#567697;outline:1px solid #567697;}.ds-search input{min-width:0;width:100%;border:0;background:none;outline:none;color:var(--pn-ink,#242931);font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;}.ds-search input::placeholder{color:var(--pn-muted,#606975);}.ds-search kbd{white-space:nowrap;font:400 10px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;border:1px solid var(--pn-line,#e4e7ec);border-radius:3px;padding:0 3px;}.ds-search svg{flex-shrink:0;}"
+    },
+    {
+      "name": "Selected-work navigation",
+      "kind": "nav",
+      "refersTo": "detail-tabs",
+      "description": "Static preview of the actual three selected-work tab states; source Radix supplies behavior.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\" aria-label=\"工作详情\"><button role=\"tab\" aria-selected=\"true\">会话 <span>4</span></button><button role=\"tab\" aria-selected=\"false\">文件变化 <span>4</span></button><button role=\"tab\" aria-selected=\"false\">检查点 <span>2</span></button></div>",
+      "css": ".ds-tabs{display:flex;align-items:stretch;gap:23px;height:40px;padding:0 24px;border-bottom:1px solid var(--pn-line,#e4e7ec);}.ds-tabs button{display:flex;align-items:center;gap:6px;padding:0 0 1px;background:transparent;border:0;border-bottom:2px solid transparent;color:var(--pn-muted,#606975);font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;white-space:nowrap;cursor:pointer;transition:color 150ms cubic-bezier(0.2,0.8,0.2,1);}.ds-tabs button[aria-selected=true]{border-bottom-color:#38424d;color:var(--pn-ink,#242931);font-weight:600;}.ds-tabs button:hover{color:var(--pn-ink,#242931);}.ds-tabs button:focus-visible{outline:2px solid #567697;outline-offset:2px;}.ds-tabs span{font-size:11px;font-weight:400;color:var(--pn-muted,#606975);margin-left:2px;}@media(prefers-reduced-motion:reduce){.ds-tabs button{transition:none;}}"
+    },
+    {
+      "name": "Member filter chip",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "Removable selected-member filter; text supplies the meaning.",
+      "html": "<button type=\"button\" class=\"ds-filter\" aria-label=\"清除林舟成员筛选\">林舟 · 清除筛选</button>",
+      "css": ".ds-filter{display:inline-flex;align-items:center;gap:6px;border:0;border-radius:4px;background:#e7ebf0;color:#394b5e;padding:4px 7px;font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;cursor:pointer;}.ds-filter:focus-visible{outline:2px solid #567697;outline-offset:2px;}"
+    },
+    {
+      "name": "Selected activity",
+      "kind": "card",
+      "refersTo": "activity-row-selected",
+      "description": "White selected row on a cool index; work progress remains separate from delivery facts.",
+      "html": "<div class=\"ds-index-preview\"><button type=\"button\" class=\"ds-activity\" aria-current=\"true\"><span class=\"ds-person\">林舟 <span>Codex</span><time>14:32</time></span><strong class=\"ds-work-title\">让会话回到上次读到的地方</strong><span class=\"ds-work-foot\"><span>已完成</span><span>4 个文件</span></span></button></div>",
+      "css": ".ds-index-preview{background:var(--pn-shell,#f5f6f8);padding:8px;}.ds-activity{width:100%;display:block;text-align:left;background:#fff;border:1px solid #dce1e7;border-radius:7px;color:var(--pn-ink,#242931);padding:12px 12px 13px;margin:2px 0;font-family:'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;cursor:pointer;transition:background-color 150ms cubic-bezier(0.2,0.8,0.2,1);}.ds-activity:hover{background:#fff;}.ds-activity:focus-visible{outline:2px solid #567697;outline-offset:2px;}.ds-person{display:flex;gap:6px;align-items:center;font-size:12px;color:var(--pn-muted,#606975);}.ds-person time{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;}.ds-work-title{display:block;font-size:13px;line-height:1.7;font-weight:600;overflow-wrap:anywhere;margin:8px 0 7px;}.ds-work-foot{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--pn-muted,#606975);}.ds-work-foot>span:first-child{color:#486656;}@media(prefers-reduced-motion:reduce){.ds-activity{transition:none;}}"
+    },
+    {
+      "name": "User message inset",
+      "kind": "card",
+      "refersTo": "user-message",
+      "description": "A restrained content surface inside the dominant reader; not a dashboard tile.",
+      "html": "<article class=\"ds-user-message\">切回会话时，保留我上次阅读的位置。收到新的 Agent 回复时，也不要把我拉到最底部。</article>",
+      "css": ".ds-user-message{background:#f4f6f8;color:#333b46;padding:12px 16px;border-radius:6px;font:400 13px/1.85 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;overflow-wrap:anywhere;}"
+    },
+    {
+      "name": "Inline teammate checkpoint scope",
+      "kind": "custom",
+      "refersTo": "checkpoint-scope",
+      "description": "Expanded-state preview of the actual React-controlled disclosure. The standalone snippet intentionally does not execute restore or fabricate state handlers.",
+      "html": "<div class=\"ds-checkpoint\"><button class=\"ds-scope-toggle\" type=\"button\" aria-expanded=\"true\" aria-controls=\"ds-scope\">收起文件范围 <!-- Phosphor Icons 2.1.10, MIT, Copyright (c) 2020 Phosphor Icons; see THIRD_PARTY_NOTICES.md. --><svg width=\"14\" height=\"14\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z\"/></svg></button><div class=\"ds-inline-scope\" id=\"ds-scope\" data-open=\"true\"><div><section><div class=\"ds-scope-owner\"><strong>林舟的设备</strong><span>cp-7f2a91 · 2 个文件</span></div><p>源目录：林舟的设备 / collosys-workbench</p><ul><li>src/workspace/session/restoreReadingPosition.ts</li><li>src/components/conversation/UnreadIndicator.tsx</li></ul><p>仅来源成员可在自己的设备上恢复。此处只查看测试范围。</p></section></div></div></div>",
+      "css": ".ds-scope-toggle{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:#fff;color:var(--pn-ink,#242931);border:1px solid #d6dce3;border-radius:5px;font:400 12px/1.5 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;min-height:32px;padding:6px 11px;cursor:pointer;transition:background-color 150ms cubic-bezier(0.2,0.8,0.2,1),color 150ms cubic-bezier(0.2,0.8,0.2,1);}.ds-scope-toggle:hover{background:#f1f3f6;}.ds-scope-toggle:focus-visible{outline:2px solid #567697;outline-offset:2px;}.ds-scope-toggle:disabled{opacity:.45;cursor:not-allowed;}@media(prefers-reduced-motion:reduce){.ds-scope-toggle{transition:none;}}.ds-scope-toggle svg{transition:transform 180ms cubic-bezier(0.2,0.8,0.2,1);}.ds-scope-toggle[aria-expanded=true] svg{transform:rotate(180deg);}.ds-inline-scope{display:grid;grid-template-rows:0fr;opacity:0;transition:grid-template-rows 180ms cubic-bezier(0.2,0.8,0.2,1),opacity 140ms cubic-bezier(0.2,0.8,0.2,1);}.ds-inline-scope[data-open=true]{grid-template-rows:1fr;opacity:1;}.ds-inline-scope>div{overflow:hidden;min-height:0;}.ds-inline-scope section{margin-top:16px;padding:16px 18px;background:var(--pn-subtle,#f9fafb);border-radius:6px;color:var(--pn-muted,#606975);font:400 12px/1.8 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif;}.ds-scope-owner{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}.ds-scope-owner strong{font-size:12px;font-weight:500;color:var(--pn-ink,#242931);}.ds-scope-owner span{margin-left:auto;font-size:11px;}.ds-inline-scope p{margin:8px 0 0;}.ds-inline-scope ul{list-style:none;margin:12px 0;padding:12px 0;border-block:1px solid var(--pn-line,#e4e7ec);}.ds-inline-scope li{font-size:12px;padding:7px 0;color:#465565;overflow-wrap:anywhere;}@media(prefers-reduced-motion:reduce){.ds-inline-scope,.ds-scope-toggle svg{transition:none!important;}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Work and its evidence",
+    "overview": "This is the implemented replacement sample for a professional desktop collaboration workbench. It is isolated at /design-lab and awaits the user's visual evaluation. It is not an approved product-wide system, does not authorize migration of other surfaces, and does not refresh or validate the rejected design-sample/DESIGN.md.\n\nA cool activity index supports a white reading surface, with graphite typography and the supplied copper peanut mark. The composition follows work into its conversation, file evidence and saved states. The user's professional-workbench brief overrides direction seed 30c8b911; the seed is provenance, not an active design constraint.\n\nThis record describes owned source, not an independently observed rendered result. PRODUCT.md supplies product boundaries. Typecheck, build, browser and native-window verification belong to the parent implementation review; no pass is asserted here. Synthetic messages, replay, checkpoint scope and restore rehearsal do not establish production capture, authorization, backup or recovery.",
+    "keyCharacteristics": [
+      "One project bar, an activity-only index and a dominant reader.",
+      "The actual Codecast ConversationHeaderBar frame with owned title, metadata and actions.",
+      "Contextual file and storage evidence; checkpoint history belongs to the selected work.",
+      "Google Sans with Chinese system fallbacks, one Phosphor icon family and the supplied artwork.",
+      "Flat structural surfaces, short purposeful disclosure and explicit ownership boundaries."
+    ],
+    "rules": [
+      {
+        "name": "Context Follows Work",
+        "body": "Files, delivery facts and checkpoint history describe the selected activity. They do not become a second global navigation hierarchy.",
+        "section": "layout"
+      },
+      {
+        "name": "Separate Facts",
+        "body": "Work progress, delivery health, source-device capture and off-machine backup remain distinct labels. Color supplements their text and icon; a saved file is not a synchronization or backup claim.",
+        "section": "colors"
+      },
+      {
+        "name": "Reading Before Display",
+        "body": "The hierarchy is compact and role-based. Preserve readable Chinese and English body text and wrapping titles; there is no promotional display tier.",
+        "section": "typography"
+      },
+      {
+        "name": "Flat Structure",
+        "body": "The index, transcript and evidence dock separate through surface tone and fine dividers. Floating feedback, menus and confirmation dialogs may use soft shadows.",
+        "section": "elevation"
+      },
+      {
+        "name": "Ownership Before Action",
+        "body": "A teammate checkpoint reveals read-only file scope inline. An own-workspace restore opens a preview and explicit confirmation dialog. Viewing a teammate's history never supplies a restore action for the viewer's directory.",
+        "section": "components"
+      }
+    ],
+    "dos": [
+      "Do keep this record local to the replacement sample until the user evaluates it.",
+      "Do keep activity selection, selected file and reading position coherent while changing views.",
+      "Do show progress and delivery as separate facts, and distinguish source-device capture from off-machine backup.",
+      "Do use Google Sans for supported glyphs, the declared Chinese fallbacks and Phosphor regular icons.",
+      "Do keep teammate file scope attached to its checkpoint and own restore behind preview and confirmation.",
+      "Do expose keyboard focus, text equivalents for status, wrapping full paths and reduced-motion behavior."
+    ],
+    "donts": [
+      "Don't treat this sample or its synthetic fixtures as an approved whole-product migration or a proven backend workflow.",
+      "Don't restore another member's files into the viewer's independent workspace.",
+      "Don't infer Agent attribution from proximity, or label manual saved edits as an Agent conversation.",
+      "Don't turn checkpoint history into a global destination detached from the selected work.",
+      "Don't recolor or redraw the supplied peanut artwork, replace the consistent icon family with text glyphs, or import marketing-page hierarchy.",
+      "Don't promote unused copper CSS declarations, sample test controls or source-only verification assumptions into reusable product rules."
+    ]
+  }
+}

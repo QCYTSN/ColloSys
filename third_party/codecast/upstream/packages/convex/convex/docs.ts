@@ -1,0 +1,2720 @@
+import { FOREIGN_TEXT_CAPS, fenceForeignText, inlineForeignText } from "@codecast/shared/contracts";
+import { FOREIGN_PLAN_CAPS, foreignProse, referenceGuidance, foreignTaskSource } from "@codecast/shared/tasks";
+import type { RegisteredQuery } from "convex/server";
+import { resolveActor } from "./lib/actor";
+import { afterRoleDocWrite } from "./orgRoles";
+import { v, type ObjectType } from "convex/values";
+import { mutation, query, internalMutation, internalQuery, type MutationCtx, type QueryCtx } from "./functions";
+import { Id, type Doc } from "./_generated/dataModel";
+import { paginationOptsValidator } from "convex/server";
+import { verifyApiToken } from "./apiTokens";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { createDataContext, scopedFetch, resolveEffectiveTeam, stampEffectiveTeam } from "./data";
+import { resolveTeamForPath, isTeamMember, createTeamFeedFilter, teamVisibleConvTeam } from "./privacy";
+import {
+  webDocsNeedsUserDoc,
+  resolveWebDocsTeamId,
+  clampWebDocsPageSize,
+} from "./webDocsPagination";
+// Owner-or-team access check for a doc. Moved to lib/access.ts (Wave-1 auth/access
+// seam). Imported for local use here and re-exported below so the web mutation
+// and the dispatch side-effect still enforce one rule, not two.
+import {
+  canAccessConversation,
+  canAccessDoc,
+  canAccessPlan,
+  canAccessTask,
+  isSameWorkspace,
+  parseWorkspaceKey,
+  resolveWorkspaceKey,
+  requireAccessibleDoc,
+  requireAccessibleProject,
+  requireSameWorkspace,
+  requireTeamMembership,
+  resolveSessionConversation,
+  workspaceForResource,
+} from "./lib/access";
+import { notFound } from "./lib/auth";
+import { claimShareToken } from "./publicShare";
+import { packSnapshotContent } from "./lib/docSnapshot";
+import { docTitleFromContent, draftTextNodes, renderDocMentionExcerpt, setTitleHeading, withTitleHeading } from "@codecast/shared/docs";
+import { identityFieldsOf } from "./lib/sessionIdentityFields";
+export { canAccessDoc };
+
+function generatePlanShortId(): string {
+  const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let id = "pl-";
+  for (let i = 0; i < 4; i++) id += chars[Math.floor(Math.random() * chars.length)];
+  return id;
+}
+
+function normalizeToRoot(path: string): string {
+  const parts = path.split('/');
+  const srcIndex = parts.findIndex(p => p === 'src' || p === 'projects' || p === 'repos' || p === 'code');
+  if (srcIndex >= 0 && srcIndex < parts.length - 1) {
+    return parts.slice(0, srcIndex + 2).join('/');
+  }
+  return path;
+}
+
+function repoName(path: string): string {
+  return normalizeToRoot(path).split('/').filter(Boolean).pop() || path;
+}
+
+function docGitRoot(d: any, convMap: Map<string, any>): string | null {
+  const cid = d.conversation_id || d.related_conversation_ids?.[0];
+  if (cid) {
+    const conv = convMap.get(String(cid));
+    if (conv?.git_root) return conv.git_root;
+  }
+  return null;
+}
+
+function dedupeProjectPaths(paths: string[], docs?: any[], convMap?: Map<string, any>): string[] {
+  const gitRootForPath = new Map<string, string>();
+  if (docs && convMap) {
+    for (const d of docs) {
+      if (!d.project_path) continue;
+      const root = docGitRoot(d, convMap);
+      if (root) gitRootForPath.set(d.project_path, root);
+    }
+  }
+
+  const byName = new Map<string, string>();
+  for (const path of paths) {
+    const root = gitRootForPath.get(path) || normalizeToRoot(path);
+    const name = root.split('/').filter(Boolean).pop() || path;
+    const existing = byName.get(name);
+    if (!existing || (path.includes('/src/') && !existing.includes('/src/'))) {
+      byName.set(name, path);
+    }
+  }
+  return Array.from(byName.values());
+}
+
+function docRepoName(d: any, convMap: Map<string, any>): string {
+  const root = docGitRoot(d, convMap);
+  if (root) return root.split('/').filter(Boolean).pop() || root;
+  return d.project_path ? repoName(d.project_path) : "";
+}
+
+
+function isNoiseDocForWeb(d: any): boolean {
+  const CONFIG_DOC_NAMES = new Set(["README", "AGENTS", "CLAUDE", "CLAUDE.md", "AGENTS.md", "README.md"]);
+  return CONFIG_DOC_NAMES.has(d.title);
+}
+
+export function extractPlanTitleForWeb(d: any) {
+  if (d.source === "plan_mode" && d.content) {
+    const match = d.content.match(/^#\s+(.+)/m);
+    if (match) return { ...d, display_title: match[1].trim(), plan_name: d.title };
+  }
+  return d;
+}
+
+export type WebDocRelatedConversation = {
+  _id: Id<"conversations">;
+  session_id: string;
+  title?: string;
+  project_path?: string;
+  started_at: number;
+  updated_at: number;
+  message_count: number;
+  short_id?: string;
+};
+
+export type WebDocActivePlan = {
+  _id: Id<"plans">;
+  short_id: string;
+  title: string;
+  status: string;
+};
+
+export type WebDocDetail = Doc<"docs"> & {
+  display_title?: string;
+  plan_name?: string;
+  related_conversations?: WebDocRelatedConversation[];
+  active_plan?: WebDocActivePlan;
+};
+
+export function isWebDocOwner(doc: Doc<"docs"> | null | undefined, userId: Id<"users">): doc is Doc<"docs"> {
+  return !!doc && doc.user_id === userId;
+}
+
+export function mapWebDocDetail(input: {
+  doc: Doc<"docs">;
+  relatedConversations?: WebDocRelatedConversation[];
+  activePlan?: WebDocActivePlan;
+}): WebDocDetail {
+  const result: WebDocDetail = { ...input.doc };
+
+  if (input.doc.source === "plan_mode" && input.doc.content) {
+    const match = input.doc.content.match(/^#\s+(.+)/m);
+    if (match) {
+      result.display_title = match[1].trim();
+      result.plan_name = input.doc.title;
+    }
+  }
+
+  if (input.relatedConversations && input.relatedConversations.length > 0) {
+    result.related_conversations = input.relatedConversations;
+  }
+
+  if (input.activePlan) {
+    result.active_plan = input.activePlan;
+  }
+
+  return result;
+}
+
+async function buildWebDocList(
+  ctx: any,
+  args: {
+    doc_type?: string;
+    project_id?: string;
+    project_path?: string;
+    scope?: string;
+    team_id?: Id<"teams">;
+    workspace?: "personal" | "team" | "all";
+  },
+  requestedCount?: number
+) {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) return { docs: [], projectPaths: [] };
+
+  const user = await ctx.db.get(userId);
+  const resolvedTeamId = args.workspace === "team" && args.team_id
+    ? args.team_id
+    : !args.workspace ? user?.active_team_id : undefined;
+  const effectiveWorkspace = args.scope === "projects"
+    ? "personal" as const
+    : args.workspace;
+
+  const { records: rawDocs, convMap } = await scopedFetch(ctx, "docs", {
+    userId,
+    teamId: resolvedTeamId,
+    workspace: effectiveWorkspace,
+    limit: requestedCount,
+    stripFields: ["content", "embedding", "entries"],
+  });
+
+  let docs: any[];
+  let projectPaths: string[] = [];
+
+  if (args.scope === "projects" || args.project_path) {
+    if (args.scope === "projects") {
+      docs = rawDocs;
+      if (args.project_path) {
+        const filterName = repoName(args.project_path);
+        docs = docs.filter((d) => d.project_path && docRepoName(d, convMap) === filterName);
+      }
+    } else {
+      const filterName = repoName(args.project_path!);
+      docs = rawDocs.filter((d) => d.project_path && docRepoName(d, convMap) === filterName);
+    }
+    const unscopedDocs = rawDocs.filter((d) => !d.archived_at && !isNoiseDocForWeb(d));
+    projectPaths = dedupeProjectPaths([...new Set(unscopedDocs.map((d) => d.project_path).filter(Boolean))] as string[], unscopedDocs, convMap);
+  } else {
+    docs = rawDocs;
+  }
+
+  // No server-side doc_type filter — all filtering is client-side.
+  docs = docs.filter((d) => !d.archived_at && !isNoiseDocForWeb(d) && d.source !== "plan_mode");
+
+  if (!projectPaths.length) {
+    projectPaths = dedupeProjectPaths([...new Set(docs.map((d) => d.project_path).filter(Boolean))] as string[], docs, convMap);
+  }
+
+  const enriched = docs.map((d) => {
+    const cid = d.conversation_id || (d.related_conversation_ids?.[0]);
+    const conv = cid ? convMap.get(String(cid)) : undefined;
+    if (conv?.started_at) return { ...d, originated_at: conv.started_at };
+    return d;
+  });
+
+  enriched.sort((a: any, b: any) => (b.originated_at || b.created_at) - (a.originated_at || a.created_at));
+
+  const userIds = new Set<string>();
+  for (const d of enriched) {
+    if (d.user_id) userIds.add(String(d.user_id));
+  }
+  const userMap = new Map<string, { name?: string; image?: string; github_username?: string }>();
+  for (const uid of userIds) {
+    const u = await ctx.db.get(uid as Id<"users">);
+    if (u) userMap.set(uid, { name: u.name, image: u.image || (u as any).github_avatar_url, github_username: (u as any).github_username });
+  }
+
+  const planIds = new Set<string>();
+  const docIdsNeedingPlan: string[] = [];
+  for (const d of enriched) {
+    if (d.plan_id) planIds.add(String(d.plan_id));
+    else if (d.doc_type === "plan") docIdsNeedingPlan.push(d._id as string);
+  }
+  const planMap = new Map<string, { short_id: string; status: string }>();
+  for (const pid of planIds) {
+    const p = await ctx.db.get(pid as Id<"plans">);
+    if (p && (await canAccessPlan(ctx, userId, p))) {
+      planMap.set(pid, { short_id: (p as any).short_id, status: (p as any).status });
+    }
+  }
+  const docToPlanMap = new Map<string, { short_id: string; status: string }>();
+  for (const docId of docIdsNeedingPlan) {
+    const p = await ctx.db.query("plans").withIndex("by_doc_id", (q: any) => q.eq("doc_id", docId)).first();
+    if (p && (await canAccessPlan(ctx, userId, p))) {
+      docToPlanMap.set(docId, { short_id: p.short_id, status: p.status as string });
+    }
+  }
+
+  const withAuthors = enriched.map(extractPlanTitleForWeb).map((d: any) => {
+    const author = d.user_id ? userMap.get(String(d.user_id)) : undefined;
+    const plan = d.plan_id ? planMap.get(String(d.plan_id)) : (docToPlanMap.get(d._id as string) || undefined);
+    return {
+      ...d,
+      ...(author ? { author_name: author.name, author_image: author.image, author_username: author.github_username } : {}),
+      ...(plan ? { plan_short_id: plan.short_id, plan_status: plan.status } : {}),
+    };
+  });
+
+  return { docs: withAuthors, projectPaths };
+}
+
+type DocNode = { type: string; attrs?: Record<string, any>; content?: DocNode[]; text?: string };
+
+export function markdownToDoc(text: string): DocNode {
+  const lines = text.split("\n");
+  const content: DocNode[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    if (line.startsWith("```")) {
+      const lang = line.slice(3).trim();
+      const codeLines: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++;
+      const node: DocNode = { type: "codeBlock" };
+      if (lang) node.attrs = { language: lang };
+      if (codeLines.length > 0) node.content = [{ type: "text", text: codeLines.join("\n") }];
+      content.push(node);
+      continue;
+    }
+
+    if (/^---+$/.test(line.trim())) { content.push({ type: "horizontalRule" }); i++; continue; }
+
+    const hm = line.match(/^(#{1,3})\s+(.+)/);
+    if (hm) {
+      content.push({ type: "heading", attrs: { level: hm[1].length }, content: draftTextNodes(hm[2]) });
+      i++;
+      continue;
+    }
+
+    if (line.startsWith("> ")) {
+      const ql: string[] = [];
+      while (i < lines.length && lines[i].startsWith("> ")) { ql.push(lines[i].slice(2)); i++; }
+      content.push({ type: "blockquote", content: [{ type: "paragraph", content: draftTextNodes(ql.join("\n")) }] });
+      continue;
+    }
+
+    if (/^[-*]\s/.test(line)) {
+      const items: DocNode[] = [];
+      while (i < lines.length && /^[-*]\s/.test(lines[i])) {
+        items.push({ type: "listItem", content: [{ type: "paragraph", content: draftTextNodes(lines[i].replace(/^[-*]\s/, "")) }] });
+        i++;
+      }
+      content.push({ type: "bulletList", content: items });
+      continue;
+    }
+
+    if (line.trim() === "") { i++; continue; }
+
+    const paraLines: string[] = [];
+    while (i < lines.length && lines[i].trim() !== "" &&
+           !lines[i].startsWith("#") && !lines[i].startsWith("```") &&
+           !lines[i].startsWith("> ") && !/^[-*]\s/.test(lines[i]) &&
+           !/^---+$/.test(lines[i].trim())) {
+      paraLines.push(lines[i]);
+      i++;
+    }
+    const pc: DocNode[] = [];
+    paraLines.forEach((pl, idx) => {
+      if (idx > 0) pc.push({ type: "hardBreak" });
+      // Drafting spans (@codecast/shared/docs drafting) open as live editor marks.
+      pc.push(...draftTextNodes(pl));
+    });
+    if (pc.length > 0) content.push({ type: "paragraph", content: pc });
+  }
+
+  if (content.length === 0) content.push({ type: "paragraph" });
+  return { type: "doc", content };
+}
+
+/**
+ * A doc is one text and its title is its leading heading (@codecast/shared/docs).
+ * The (title, content) pair to store for any text write, given the row as it
+ * is now:
+ * - a title edit rewrites the leading heading of the content;
+ * - a content edit adopts the body's own leading heading as the title, and
+ *   when the body has none, writes the current title in as one.
+ * Returns only the fields that changed.
+ */
+export function docTextUpdates(
+  doc: { title: string; content?: string },
+  args: { title?: string; content?: string },
+): { title?: string; content?: string } {
+  if (args.title === undefined && args.content === undefined) return {};
+  const content =
+    args.title !== undefined
+      ? setTitleHeading(args.title, args.content ?? doc.content)
+      : withTitleHeading(doc.title, args.content);
+  const title = docTitleFromContent(content, args.title ?? doc.title);
+  const out: { title?: string; content?: string } = {};
+  if (content !== (doc.content ?? "")) out.content = content;
+  if (title !== doc.title) out.title = title;
+  return out;
+}
+
+function extractPlanInfo(content: string): { title: string; goal?: string } {
+  const titleMatch = content.match(/^#\s+(.+)/m);
+  const title = titleMatch ? titleMatch[1].trim() : "";
+  const afterTitle = titleMatch ? content.slice(content.indexOf(titleMatch[0]) + titleMatch[0].length).trim() : content.trim();
+  const firstPara = afterTitle.split(/\n\n/)[0]?.trim();
+  const goal = firstPara && firstPara.length > 10 && !firstPara.startsWith("#") ? firstPara.slice(0, 500) : undefined;
+  return { title, goal };
+}
+
+/** One person's docs carrying `sourceFile`, newest first. Anyone can create a
+ *  doc with any source_file, so a lookup keyed on it filters by owner before
+ *  it takes a row: another person's row with the same key is never the
+ *  answer, and never hides this person's own. */
+export function ownDocsBySourceFile(ctx: Pick<QueryCtx, "db">, userId: Id<"users">, sourceFile: string) {
+  return ctx.db
+    .query("docs")
+    .withIndex("by_source_file", (q) => q.eq("source_file", sourceFile))
+    .order("desc")
+    .filter((q) => q.eq(q.field("user_id"), userId));
+}
+
+export const create = mutation({
+  args: {
+    api_token: v.string(),
+    title: v.string(),
+    content: v.string(),
+    doc_type: v.optional(v.string()),
+    source: v.optional(v.string()),
+    source_file: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    conversation_id: v.optional(v.string()),
+    labels: v.optional(v.array(v.string())),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    let conversation_id: Id<"conversations"> | undefined;
+    let conversationTeamId: Id<"teams"> | undefined;
+    if (args.conversation_id) {
+      // Unresolvable session ref = create the doc without the link, never
+      // reject the create (see resolveSessionConversation).
+      const conv = await resolveSessionConversation(ctx, auth.userId, args.conversation_id);
+      if (conv) {
+        conversation_id = conv._id;
+        conversationTeamId = teamVisibleConvTeam(conv);
+      }
+    }
+
+    const db = await createDataContext(ctx, {
+      userId: auth.userId,
+      project_path: args.project_path,
+      ...(conversationTeamId ? { workspace: "team" as const, team_id: conversationTeamId } : {}),
+    });
+    const now = Date.now();
+    // One text: the body opens with its title heading, and the title is that heading.
+    const content = withTitleHeading(args.title, args.content);
+    const title = docTitleFromContent(content, args.title);
+
+    let project_id: Id<"projects"> | undefined;
+    if (args.project_id) {
+      const projectId = ctx.db.normalizeId("projects", args.project_id);
+      if (!projectId) notFound("Project not found");
+      const project = await requireAccessibleProject(ctx, auth.userId, projectId);
+      requireSameWorkspace(project, db.workspace, "project");
+      project_id = projectId;
+    }
+
+    // Check for existing doc by source_file (for upsert on plan sync)
+    if (args.source_file) {
+      const existing = await ownDocsBySourceFile(ctx, auth.userId, args.source_file).first();
+      if (existing) {
+        requireSameWorkspace(existing, db.workspace, "existing doc");
+        await ctx.db.patch(existing._id, { title, content, updated_at: now });
+        const userTeamId = db.workspace.type === "team" ? db.workspace.teamId : undefined;
+        if ((args.source || existing.source) === "plan_mode") {
+          await syncDocToPlanEntity(ctx, existing._id, content, auth.userId, userTeamId, existing.project_id, existing.conversation_id);
+        }
+        return { id: existing._id, updated: true };
+      }
+    }
+
+    let team_id = db.workspace.type === "team" ? db.workspace.teamId : undefined;
+
+    const id = await ctx.db.insert("docs", {
+      user_id: auth.userId,
+      team_id,
+      title,
+      content,
+      doc_type: (args.doc_type || "note") as any,
+      source: (args.source || "human") as any,
+      source_file: args.source_file,
+      project_path: args.project_path,
+      project_id,
+      conversation_id,
+      labels: args.labels,
+      created_at: now,
+      updated_at: now,
+    });
+
+    // Auto-create plan entity for plan_mode docs
+    let plan_short_id: string | undefined;
+    if (args.source === "plan_mode") {
+      plan_short_id = await syncDocToPlanEntity(ctx, id, args.content, auth.userId, team_id, project_id, conversation_id);
+    }
+
+    return { id, updated: false, plan_short_id };
+  },
+});
+
+async function syncDocToPlanEntity(
+  ctx: any,
+  docId: Id<"docs">,
+  content: string,
+  userId: Id<"users">,
+  teamId: any,
+  projectId: any,
+  conversationId: any,
+): Promise<string | undefined> {
+  const now = Date.now();
+  const { title, goal } = extractPlanInfo(content);
+  if (!title) return undefined;
+
+  const doc = await ctx.db.get(docId);
+  if (doc?.plan_id) {
+    const plan = await ctx.db.get(doc.plan_id);
+    if (plan) {
+      await ctx.db.patch(plan._id, { title, goal, updated_at: now });
+      if (conversationId && !plan.session_ids?.some((id: any) => String(id) === String(conversationId))) {
+        await ctx.db.patch(plan._id, { session_ids: [...(plan.session_ids || []), conversationId] });
+      }
+      if (conversationId) {
+        const conv = await ctx.db.get(conversationId);
+        if (conv && !conv.active_plan_id) {
+          const planIds = (conv as any).plan_ids || [];
+          if (!planIds.some((pid: any) => pid.toString() === plan._id.toString())) {
+            planIds.push(plan._id);
+          }
+          await ctx.db.patch(conversationId, { active_plan_id: plan._id, plan_ids: planIds });
+        }
+      }
+      return plan.short_id;
+    }
+  }
+
+  const existingPlan = await ctx.db
+    .query("plans")
+    .withIndex("by_doc_id", (q: any) => q.eq("doc_id", docId))
+    .first();
+  if (existingPlan) {
+    await ctx.db.patch(existingPlan._id, { title, goal, updated_at: now });
+    if (!doc?.plan_id) await ctx.db.patch(docId, { plan_id: existingPlan._id });
+    if (conversationId && !existingPlan.session_ids?.some((id: any) => String(id) === String(conversationId))) {
+      await ctx.db.patch(existingPlan._id, { session_ids: [...(existingPlan.session_ids || []), conversationId] });
+    }
+    if (conversationId) {
+      const conv = await ctx.db.get(conversationId);
+      if (conv && !conv.active_plan_id) {
+        const planIds = (conv as any).plan_ids || [];
+        if (!planIds.some((pid: any) => pid.toString() === existingPlan._id.toString())) {
+          planIds.push(existingPlan._id);
+        }
+        await ctx.db.patch(conversationId, { active_plan_id: existingPlan._id, plan_ids: planIds });
+      }
+    }
+    return existingPlan.short_id;
+  }
+
+  const short_id = generatePlanShortId();
+  const planId = await ctx.db.insert("plans", {
+    user_id: userId,
+    team_id: teamId || undefined,
+    project_id: projectId || undefined,
+    short_id,
+    title,
+    goal,
+    status: "active" as const,
+    source: "plan_mode" as const,
+    doc_id: docId,
+    session_ids: conversationId ? [conversationId] : [],
+    created_from_conversation_id: conversationId || undefined,
+    created_at: now,
+    updated_at: now,
+  });
+  await ctx.db.patch(docId, { plan_id: planId });
+  if (conversationId) {
+    const conv = await ctx.db.get(conversationId);
+    if (conv) {
+      const planIds = (conv as any).plan_ids || [];
+      planIds.push(planId);
+      await ctx.db.patch(conversationId, { active_plan_id: planId, plan_ids: planIds });
+    }
+  }
+  return short_id;
+}
+
+export const list = query({
+  args: {
+    api_token: v.string(),
+    doc_type: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    pinned: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    // Newest first, streamed, and stopped at the limit. A user's docs carry
+    // bodies, entries and embeddings, and collecting the whole set to sort it
+    // in memory blew the query's budget at ~5k docs (2026-09-12: "ran out of
+    // memory (maximum memory usage: 64 MB)" on `cast doc ls`). Filters that
+    // are not index keys (doc_type, pinned, archived) apply to the stream.
+    // The by_project_id index is global: a client-supplied project_id could
+    // surface another user's/team's docs, so that branch routes each row
+    // through canAccessDoc (owner or effective-team member) rather than a
+    // hand-rolled team_id check, so a doc linked to a private conversation
+    // stays owner-only here too.
+    const stream = args.project_id
+      ? ctx.db
+          .query("docs")
+          .withIndex("by_project_id", (q) => q.eq("project_id", args.project_id as any))
+          .order("desc")
+      : ctx.db
+          .query("docs")
+          .withIndex("by_user_updated", (q) => q.eq("user_id", auth.userId))
+          .order("desc");
+
+    const limit = args.limit || 50;
+    const out: any[] = [];
+    for await (const d of stream) {
+      if (d.archived_at) continue;
+      if (args.doc_type && d.doc_type !== args.doc_type) continue;
+      if (args.pinned !== undefined && !!d.pinned !== args.pinned) continue;
+      if (args.project_id && !(await canAccessDoc(ctx, auth.userId, d))) continue;
+      // The list is a shelf, not the corpus: bodies, timelines and vectors stay
+      // behind `docs.get`.
+      const { content: _c, entries: _e, embedding: _m, ...thin } = d as any;
+      out.push(thin);
+      if (out.length >= limit) break;
+    }
+    if (args.project_id) out.sort((a, b) => b.updated_at - a.updated_at);
+    return out;
+  },
+});
+
+export const get = query({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const doc = await ctx.db.get(args.id);
+    // Owner-or-team, matching web (docs.webGet) — the CLI must see exactly what
+    // the same human sees in the browser.
+    if (!doc || !(await canAccessDoc(ctx, auth.userId, doc))) return null;
+    return doc;
+  },
+});
+
+// A charter belongs to the humans (org-roles-standing.md T2): no session
+// carrying a standing or hand pointer may write one. Keyed on the STORED doc
+// type, so retyping the doc in the same call cannot slip past it, and on a
+// session the caller RUNS (resolveSessionConversation resolves only rows the
+// caller can see; the ownership check keeps a teammate's id from mattering).
+export async function refuseRoleCharterWrite(ctx: any, userId: Id<"users">, doc: any, sessionRef: string | undefined): Promise<void> {
+  if (doc.doc_type !== "charter" || !sessionRef) return;
+  const caller = await resolveSessionConversation(ctx, userId, sessionRef);
+  if (!caller || String(caller.user_id) !== String(userId)) return;
+  if (caller.standing_role_id || caller.org_role_id) {
+    throw new Error("A charter is written by people: a role's session or a hand may read it but not change it");
+  }
+}
+
+export const update = mutation({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+    title: v.optional(v.string()),
+    content: v.optional(v.string()),
+    doc_type: v.optional(v.string()),
+    labels: v.optional(v.array(v.string())),
+    pinned: v.optional(v.boolean()),
+    archived: v.optional(v.boolean()),
+    project_id: v.optional(v.string()),
+    overflow: v.optional(v.string()),
+    // The session the CLI runs inside, when any (the charter guard reads it).
+    session_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const doc = await requireAccessibleDoc(ctx, auth.userId, args.id);
+    await refuseRoleCharterWrite(ctx, auth.userId, doc, args.session_id);
+
+    const text = docTextUpdates(doc, { title: args.title || undefined, content: args.content });
+    const updates: any = { updated_at: Date.now(), ...text };
+    if (args.doc_type) updates.doc_type = args.doc_type;
+    if (args.labels) updates.labels = args.labels;
+    if (args.pinned !== undefined) updates.pinned = args.pinned;
+    if (args.archived !== undefined) updates.archived_at = args.archived ? Date.now() : undefined;
+    if (args.overflow !== undefined) updates.overflow = args.overflow;
+    if (args.project_id !== undefined) {
+      if (!args.project_id) {
+        updates.project_id = undefined;
+      } else {
+        const projectId = ctx.db.normalizeId("projects", args.project_id);
+        if (!projectId) notFound("Project not found");
+        const project = await requireAccessibleProject(ctx, auth.userId, projectId);
+        const docWorkspace = doc.team_id
+          ? { type: "team" as const, teamId: doc.team_id }
+          : { type: "personal" as const, userId: doc.user_id };
+        requireSameWorkspace(project, docWorkspace, "project");
+        updates.project_id = projectId;
+      }
+    }
+
+    await ctx.db.patch(args.id, updates);
+
+    // A brief mirrors its first line into the standing session's state; a
+    // charter wakes its role at once (org-roles-standing.md T2, T3).
+    if (text.content !== undefined) await afterRoleDocWrite(ctx, doc, text.content);
+
+    // The HTTP route resets the collab snapshot from the returned content, so a
+    // title edit (which rewrites the heading line) reaches open editors too.
+    return { success: true, content: text.content };
+  },
+});
+
+export const addComment = mutation({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+    content: v.string(),
+    type: v.optional(v.string()),
+    rationale: v.optional(v.string()),
+    path_or_url: v.optional(v.string()),
+    session_id: v.optional(v.string()),
+    author: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const doc = await requireAccessibleDoc(ctx, auth.userId, args.id);
+    const callerConv = args.session_id ? await resolveSessionConversation(ctx, auth.userId, args.session_id) : null;
+    const actor = await resolveActor(ctx, auth.userId, callerConv);
+
+    const entries = (doc as any).entries || [];
+    const entry: Record<string, any> = {
+      type: args.type || "note",
+      timestamp: Date.now(),
+      content: args.content,
+    };
+    if (args.session_id) entry.session_id = args.session_id;
+    // The name is the server resolved identity; the author argument is
+    // accepted for older CLIs and never read.
+    if (actor.name) entry.author = actor.name;
+    if (args.rationale) entry.rationale = args.rationale;
+    if (args.path_or_url) entry.path_or_url = args.path_or_url;
+
+    entries.push(entry);
+    await ctx.db.patch(args.id, { entries, updated_at: Date.now() } as any);
+    return { success: true };
+  },
+});
+
+export const resetSync = mutation({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+    content: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    // Owner-or-team, matching the sibling `patch` mutation. Without this, any caller
+    // could wipe a doc's deltas and overwrite its snapshot content by id.
+    await requireAccessibleDoc(ctx, auth.userId, args.id);
+    const docId = args.id as string;
+    const snapshots = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) => q.eq("id", docId))
+      .collect();
+    const deltas = await ctx.db
+      .query("doc_deltas")
+      .withIndex("id_version", (q: any) => q.eq("id", docId))
+      .collect();
+    for (const d of deltas) await ctx.db.delete(d._id);
+
+    const json = JSON.stringify(markdownToDoc(args.content || ""));
+    // Past every version an open editor can hold, snapshots AND deltas: the
+    // newest snapshot often trails the deltas. A version at or below one a tab
+    // already reached would let that tab keep syncing steps written against
+    // the old content on top of the new (docSync's stepsAfter refuses only
+    // clients behind the rewrite).
+    const version = Math.max(0, ...snapshots.map((s: any) => s.version), ...deltas.map((d: any) => d.version)) + 1;
+
+    if (snapshots.length > 0) {
+      const latest = snapshots.reduce((a: any, b: any) => a.version > b.version ? a : b);
+      // Write the compressed form and drop any legacy uncompressed content so the
+      // row carries exactly one representation (see doc_snapshots in schema.ts).
+      await ctx.db.patch(latest._id, {
+        content_gz: packSnapshotContent(json),
+        content: undefined,
+        version,
+      });
+      for (const s of snapshots) {
+        if (s._id !== latest._id) await ctx.db.delete(s._id);
+      }
+    } else {
+      await ctx.db.insert("doc_snapshots", { id: docId, version, content_gz: packSnapshotContent(json) });
+    }
+    await ctx.db.patch(args.id, { cli_edited_at: Date.now() });
+    return { success: true };
+  },
+});
+
+export const patch = mutation({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+    old_string: v.string(),
+    new_string: v.string(),
+    // The session the CLI runs inside, when any (the charter guard reads it).
+    session_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const doc = await requireAccessibleDoc(ctx, auth.userId, args.id);
+    await refuseRoleCharterWrite(ctx, auth.userId, doc, args.session_id);
+
+    const content = doc.content || "";
+    const idx = content.indexOf(args.old_string);
+    if (idx === -1) throw new Error("old_string not found in document content");
+
+    const newContent = content.slice(0, idx) + args.new_string + content.slice(idx + args.old_string.length);
+    const now = Date.now();
+    await ctx.db.patch(args.id, {
+      content: newContent,
+      title: docTitleFromContent(newContent, doc.title),
+      updated_at: now,
+      cli_edited_at: now,
+    });
+
+    if (doc.plan_id) {
+      const plan = await ctx.db.get(doc.plan_id);
+      if (plan) {
+        const { title, goal } = extractPlanInfo(newContent);
+        if (title) await ctx.db.patch(plan._id, { title, goal, updated_at: Date.now() });
+      }
+    }
+
+    return { success: true, length: newContent.length, content: newContent };
+  },
+});
+
+export const search = query({
+  args: {
+    api_token: v.string(),
+    query: v.string(),
+    doc_type: v.optional(v.string()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    // Search the whole title index, then apply the owner-or-team gate — the
+    // user_id filter field would hide teammates' team docs that `cast doc show`
+    // (and the web) will happily open. Overfetch so the gate doesn't starve the page.
+    const limit = args.limit || 20;
+    const results = await ctx.db
+      .query("docs")
+      .withSearchIndex("search_docs_v2", (q) => {
+        let search = q.search("title", args.query);
+        if (args.doc_type) search = search.eq("doc_type", args.doc_type as any);
+        return search;
+      })
+      .take(limit * 5);
+
+    const visible: typeof results = [];
+    for (const d of results) {
+      if (d.archived_at) continue;
+      if (await canAccessDoc(ctx, auth.userId, d)) visible.push(d);
+      if (visible.length >= limit) break;
+    }
+    return visible;
+  },
+});
+
+// --- Web-facing queries ---
+
+export const webList = query({
+  args: {
+    doc_type: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    scope: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    team_id: v.optional(v.id("teams")),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"), v.literal("all"))),
+  },
+  handler: async (ctx, args) => {
+    const fetchCount = args.limit || undefined;
+    const { docs, projectPaths } = await buildWebDocList(ctx, args, fetchCount);
+    return { docs, projectPaths };
+  },
+});
+
+// Cursor format: JSON-encoded { phase, inner } where phase is "primary" or
+// "orphans" and inner is the Convex paginate cursor for that phase. Two-phase
+// pagination lets team view stream team-tagged records first, then the
+// viewer's untagged orphans, without merging both streams in one handler.
+// Long-term: heavy fields (content/embedding/entries) should move to a
+// sibling doc_contents table so list queries never pay their memory cost.
+type WebDocsCursor = { phase: "primary" | "orphans"; inner: string | null };
+
+function parseCursor(cursor: string | null): WebDocsCursor {
+  if (!cursor) return { phase: "primary", inner: null };
+  try {
+    const parsed = JSON.parse(cursor);
+    if (parsed?.phase === "primary" || parsed?.phase === "orphans") {
+      return { phase: parsed.phase, inner: typeof parsed.inner === "string" ? parsed.inner : null };
+    }
+  } catch {}
+  return { phase: "primary", inner: null };
+}
+
+function encodeCursor(c: WebDocsCursor): string {
+  return JSON.stringify(c);
+}
+
+function stripDoc(d: any): any {
+  const { content, embedding, entries, ...rest } = d;
+  return rest;
+}
+
+async function buildConvMapForPage(ctx: any, records: any[]): Promise<Map<string, any>> {
+  const convIds = new Set<string>();
+  for (const r of records) {
+    const cid = r.conversation_id || r.created_from_conversation || r.related_conversation_ids?.[0] || r.conversation_ids?.[0];
+    if (cid) convIds.add(String(cid));
+  }
+  const convMap = new Map<string, any>();
+  for (const cid of convIds) {
+    const conv = await ctx.db.get(cid as any);
+    if (conv) convMap.set(cid, {
+      team_id: conv.team_id,
+      is_private: conv.is_private,
+      auto_shared: conv.auto_shared,
+      team_visibility: conv.team_visibility,
+      git_root: conv.git_root,
+      started_at: conv.started_at,
+      project_path: conv.project_path,
+    });
+  }
+  return convMap;
+}
+
+async function enrichPage(
+  ctx: any,
+  userId: Id<"users">,
+  records: any[],
+  convMap: Map<string, any>,
+  args: { doc_type?: string; project_id?: string; project_path?: string; scope?: string },
+): Promise<any[]> {
+  let docs = records;
+
+  if (args.scope === "projects" || args.project_path) {
+    if (args.project_path) {
+      const filterName = repoName(args.project_path);
+      docs = docs.filter((d) => d.project_path && docRepoName(d, convMap) === filterName);
+    }
+  }
+
+  docs = docs.filter((d) => !d.archived_at && !isNoiseDocForWeb(d) && d.source !== "plan_mode");
+
+  const enriched = docs.map((d) => {
+    const cid = d.conversation_id || (d.related_conversation_ids?.[0]);
+    const conv = cid ? convMap.get(String(cid)) : undefined;
+    if (conv?.started_at) return { ...d, originated_at: conv.started_at };
+    return d;
+  });
+  enriched.sort((a: any, b: any) => (b.originated_at || b.created_at) - (a.originated_at || a.created_at));
+
+  const userIds = new Set<string>();
+  for (const d of enriched) if (d.user_id) userIds.add(String(d.user_id));
+  const userMap = new Map<string, any>();
+  for (const uid of userIds) {
+    const u = await ctx.db.get(uid as Id<"users">);
+    if (u) userMap.set(uid, { name: u.name, image: u.image || (u as any).github_avatar_url, github_username: (u as any).github_username });
+  }
+
+  const planIds = new Set<string>();
+  const docIdsNeedingPlan: string[] = [];
+  for (const d of enriched) {
+    if (d.plan_id) planIds.add(String(d.plan_id));
+    else if (d.doc_type === "plan") docIdsNeedingPlan.push(d._id as string);
+  }
+  const planMap = new Map<string, { short_id: string; status: string }>();
+  for (const pid of planIds) {
+    const p = await ctx.db.get(pid as Id<"plans">);
+    if (p && (await canAccessPlan(ctx, userId, p))) {
+      planMap.set(pid, { short_id: (p as any).short_id, status: (p as any).status });
+    }
+  }
+  const docToPlanMap = new Map<string, { short_id: string; status: string }>();
+  for (const docId of docIdsNeedingPlan) {
+    const p = await ctx.db.query("plans").withIndex("by_doc_id", (q: any) => q.eq("doc_id", docId)).first();
+    if (p && (await canAccessPlan(ctx, userId, p))) {
+      docToPlanMap.set(docId, { short_id: p.short_id, status: p.status as string });
+    }
+  }
+
+  return enriched.map(extractPlanTitleForWeb).map((d: any) => {
+    const author = d.user_id ? userMap.get(String(d.user_id)) : undefined;
+    const plan = d.plan_id ? planMap.get(String(d.plan_id)) : (docToPlanMap.get(d._id as string) || undefined);
+    return {
+      ...d,
+      ...(author ? { author_name: author.name, author_image: author.image, author_username: author.github_username } : {}),
+      ...(plan ? { plan_short_id: plan.short_id, plan_status: plan.status } : {}),
+    };
+  });
+}
+
+// Change-feed batch fetch: current state for a set of doc ids the user can
+// access (own or team). Decorates like enrichPage (display_title via
+// extractPlanTitleForWeb, author + plan badges) but DELIBERATELY skips
+// enrichPage's presentation filters: catch-up must deliver an archived doc WITH
+// archived_at set (so the client hides it) and plan-docs too, rather than
+// dropping them. Inaccessible / gone ids are omitted; callers prune ids the
+// response omits (authorized absence). Consumers: the sync-log applier
+// (syncLog.ts / web useSyncChangeFeed.ts) and, for deployed old bundles,
+// changeFeed.ts.
+export const webGetByIds = query({
+  args: { ids: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { docs: [] };
+    const rows: any[] = [];
+    for (const raw of args.ids.slice(0, 300)) {
+      const id = ctx.db.normalizeId("docs", raw);
+      if (!id) continue;
+      const doc = await ctx.db.get(id);
+      if (!doc || !(await canAccessDoc(ctx, userId, doc))) continue;
+      rows.push(doc);
+    }
+    // These rows merge into the same client cache as the list queries, which
+    // ship the EFFECTIVE team as team_id — stamp here too so a doc doesn't
+    // flap between raw and resolved team depending on which channel last
+    // delivered it.
+    stampEffectiveTeam(rows, await buildConvMapForPage(ctx, rows));
+    const userMap = new Map<string, any>();
+    for (const d of rows) {
+      const uid = d.user_id ? String(d.user_id) : null;
+      if (!uid || userMap.has(uid)) continue;
+      const u = await ctx.db.get(uid as Id<"users">);
+      if (u) userMap.set(uid, { name: u.name, image: u.image || (u as any).github_avatar_url, github_username: (u as any).github_username });
+    }
+    const planMap = new Map<string, { short_id: string; status: string }>();
+    const docToPlan = new Map<string, { short_id: string; status: string }>();
+    for (const d of rows) {
+      if (d.plan_id) {
+        const p = await ctx.db.get(d.plan_id as Id<"plans">);
+        if (p && (await canAccessPlan(ctx, userId, p))) {
+          planMap.set(String(d.plan_id), { short_id: (p as any).short_id, status: (p as any).status });
+        }
+      } else if (d.doc_type === "plan") {
+        const p = await ctx.db.query("plans").withIndex("by_doc_id", (q: any) => q.eq("doc_id", d._id as string)).first();
+        if (p && (await canAccessPlan(ctx, userId, p))) {
+          docToPlan.set(d._id as string, { short_id: p.short_id, status: p.status as string });
+        }
+      }
+    }
+    // Same shape as the list channel (webListPaginated): title derived from
+    // the body, then the body stripped. These rows merge into the client's
+    // thin `docs` cache; bodies are served by webGet / the doc detail query,
+    // and shipping them here let every doc that ever changed pin its full
+    // content in the persisted list cache.
+    const docs = rows.map(extractPlanTitleForWeb).map(stripDoc).map((d: any) => {
+      const author = d.user_id ? userMap.get(String(d.user_id)) : undefined;
+      const plan = d.plan_id ? planMap.get(String(d.plan_id)) : docToPlan.get(d._id as string);
+      return {
+        ...d,
+        ...(author ? { author_name: author.name, author_image: author.image, author_username: author.github_username } : {}),
+        ...(plan ? { plan_short_id: plan.short_id, plan_status: plan.status } : {}),
+      };
+    });
+    return { docs };
+  },
+});
+
+// Body backfill for the client's persisted docDetails cache: content + entries
+// for a small batch of ids the viewer can access (the list channels strip
+// bodies — see stripDoc). One-shot, not a live subscription. The batch is
+// clamped hard because Convex loads each doc's FULL row into the isolate heap
+// before we project it (the same per-doc memory limit that forced
+// webListPaginated's page down to 12) — callers chunk and pace.
+export const webGetBodies = query({
+  args: { ids: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { bodies: [] };
+    const bodies: any[] = [];
+    for (const raw of args.ids.slice(0, 6)) {
+      const id = ctx.db.normalizeId("docs", raw);
+      if (!id) continue;
+      const doc = await ctx.db.get(id);
+      if (!doc || !(await canAccessDoc(ctx, userId, doc))) continue;
+      bodies.push({
+        _id: doc._id,
+        content: doc.content ?? "",
+        entries: (doc as any).entries,
+        updated_at: doc.updated_at,
+      });
+    }
+    return { bodies };
+  },
+});
+
+export const webListPaginated = query({
+  args: {
+    doc_type: v.optional(v.string()),
+    project_id: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    scope: v.optional(v.string()),
+    team_id: v.optional(v.id("teams")),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { page: [], isDone: true, continueCursor: "" };
+
+    // Only read the (hot, heartbeat-churned) user doc when we actually need its
+    // active_team_id — i.e. when the caller didn't pin a workspace. Reading it
+    // unconditionally made this subscription invalidate on every daemon heartbeat.
+    // The branch logic lives in webDocsPagination.ts so the invariant is tested.
+    const userActiveTeamId = webDocsNeedsUserDoc(args)
+      ? (await ctx.db.get(userId))?.active_team_id
+      : undefined;
+    const resolvedTeamId: typeof args.team_id | undefined = resolveWebDocsTeamId(
+      args,
+      userActiveTeamId
+    ) as typeof args.team_id | undefined;
+    const effectiveWorkspace = args.scope === "projects"
+      ? "personal" as const
+      : args.workspace;
+    const isTeamView = !!resolvedTeamId && (effectiveWorkspace === "team" || !effectiveWorkspace);
+    if (isTeamView && resolvedTeamId) {
+      await requireTeamMembership(ctx, userId, resolvedTeamId);
+    }
+    if (effectiveWorkspace === "team" && !resolvedTeamId) {
+      throw new Error("team_id is required for the team workspace");
+    }
+
+    // Defensive clamp: Convex returns full documents from storage before our
+    // strip step runs, so a single page that includes a doc with multi-MB
+    // content/entries can blow the 64MB query memory cap. Originally 100 —
+    // lowered to 30 after observing TooMuchMemoryCarryOver on this UDF
+    // (2026-05-13), then tightened to 12. Confirmed 2026-05-30: bumping to 24
+    // re-triggered TooMuchMemoryCarryOver (~63 MiB carryover) because Convex
+    // loads each doc's full content/entries into the isolate heap before
+    // stripDoc runs — so per-doc size, not count, is the binding limit. The
+    // webListPaginated invalidation storm is addressed client-side instead (cap
+    // the auto-load of all pages in useSyncDocs), not by enlarging the page.
+    // Clamp (WEB_DOCS_MAX_PAGE=12) lives in webDocsPagination.ts so it's tested.
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: clampWebDocsPageSize(args.paginationOpts.numItems),
+    };
+    const cursor = parseCursor(paginationOpts.cursor);
+
+    // Phase: primary stream.
+    //   Team view: paginate by_team_id, keep records whose effective team matches.
+    //   Personal view: paginate by_user_id, keep records with no effective team.
+    if (cursor.phase === "primary") {
+      const primaryQuery = isTeamView
+        ? ctx.db.query("docs").withIndex("by_team_id", (q: any) => q.eq("team_id", resolvedTeamId)).order("desc")
+        : ctx.db.query("docs").withIndex("by_user_id", (q: any) => q.eq("user_id", userId)).order("desc");
+
+      const result = await primaryQuery.paginate({ ...paginationOpts, cursor: cursor.inner });
+      const stripped = result.page.map(stripDoc);
+      const convMap = await buildConvMapForPage(ctx, stripped);
+
+      // Strict workspace boundary: team view keeps ONLY docs whose effective
+      // team is this team; personal keeps ONLY docs with no effective team. A
+      // doc tagged to this team but linked to a PRIVATE conversation resolves
+      // personal (conversation privacy wins) and is excluded from the team
+      // stream — the old "keep my untagged rows" fallback here leaked personal
+      // docs into team views.
+      const filtered = stripped.filter((r) => {
+        const eff = resolveEffectiveTeam(r, convMap);
+        if (isTeamView) return !!eff && String(eff) === String(resolvedTeamId);
+        return !eff;
+      });
+      stampEffectiveTeam(filtered, convMap);
+
+      const page = await enrichPage(ctx, userId, filtered, convMap, args);
+
+      // Primary stream still has more → stay in primary phase.
+      if (!result.isDone) {
+        return {
+          page,
+          isDone: false,
+          continueCursor: encodeCursor({ phase: "primary", inner: result.continueCursor }),
+        };
+      }
+      // Primary done. Team view has a second phase for the viewer's own
+      // conversation-derived team docs; personal does not.
+      if (isTeamView) {
+        return {
+          page,
+          isDone: false,
+          continueCursor: encodeCursor({ phase: "orphans", inner: null }),
+        };
+      }
+      return { page, isDone: true, continueCursor: "" };
+    }
+
+    // Phase 2 (team view only; cursor phase keeps its legacy "orphans" name for
+    // in-flight-cursor compat): the viewer's own docs whose raw team tag is
+    // unset but whose linked conversation makes them EFFECTIVELY this team's.
+    // They never enter the by_team_id primary scan, yet the client treats this
+    // crawl as the complete set for the workspace (absent-prune) — without this
+    // phase they'd be pruned from the cache every reconcile. Note this covers
+    // only the viewer's own rows (by_user_id); a teammate's conversation-derived
+    // docs have never been reachable here or in webList. What this phase does
+    // NOT do anymore is ship personal docs into team view — the filter keeps
+    // strictly effective-team rows.
+    const orphanQuery = ctx.db
+      .query("docs")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+      .order("desc");
+    const result = await orphanQuery.paginate({ ...paginationOpts, cursor: cursor.inner });
+    const stripped = result.page.map(stripDoc);
+    const convMap = await buildConvMapForPage(ctx, stripped);
+    const convDerived = stripped.filter((r) => {
+      if (r.team_id) return false; // already covered by the primary by_team_id scan
+      const eff = resolveEffectiveTeam(r, convMap);
+      return !!eff && String(eff) === String(resolvedTeamId);
+    });
+    stampEffectiveTeam(convDerived, convMap);
+    const page = await enrichPage(ctx, userId, convDerived, convMap, args);
+
+    return {
+      page,
+      isDone: result.isDone,
+      continueCursor: result.isDone
+        ? ""
+        : encodeCursor({ phase: "orphans", inner: result.continueCursor }),
+    };
+  },
+});
+
+export const webGet = query({
+  // Accept a raw string rather than v.id("docs"). These ids arrive from clickable
+  // pills/links embedded in untrusted message and doc content, where a stale or
+  // mistyped id (e.g. a conversation id in a malformed /docs/<id> link) would make
+  // the v.id("docs") validator throw ArgumentValidationError and crash the page.
+  // normalizeId returns null for anything that isn't a docs-table id, so we degrade
+  // to "not found" instead. (It also avoids ctx.db.get silently returning a
+  // cross-table document, since Convex ids are globally unique.)
+  args: {
+    id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    const docId = ctx.db.normalizeId("docs", args.id);
+    if (!docId) return null;
+    const doc = await ctx.db.get(docId);
+    if (!doc) return null;
+    // Creator OR any member of the doc's EFFECTIVE team (canAccessDoc — the
+    // one access rule, conversation privacy included). Creator-only made a
+    // teammate's embedded doc reference (inline pill / hover preview) resolve
+    // to nothing.
+    if (!(await canAccessDoc(ctx, userId, doc))) return null;
+
+    const convIds = doc.related_conversation_ids || (doc.conversation_id ? [doc.conversation_id] : []);
+    const relatedConversations: WebDocRelatedConversation[] = [];
+    if (convIds.length > 0) {
+      for (const cid of convIds) {
+        const conv = await ctx.db.get(cid);
+        if (conv && (await canAccessConversation(ctx, userId, conv))) relatedConversations.push({
+          _id: conv._id,
+          session_id: conv.session_id,
+          title: conv.title,
+          project_path: conv.project_path,
+          started_at: conv.started_at,
+          updated_at: conv.updated_at,
+          message_count: conv.message_count,
+          short_id: conv.short_id,
+        });
+      }
+    }
+
+    let activePlan: WebDocActivePlan | undefined;
+    if (doc.conversation_id) {
+      const conv = await ctx.db.get(doc.conversation_id);
+      if (conv?.active_plan_id && (await canAccessConversation(ctx, userId, conv))) {
+        const plan = await ctx.db.get(conv.active_plan_id);
+        if (plan && (await canAccessPlan(ctx, userId, plan))) {
+          activePlan = { _id: plan._id, short_id: plan.short_id, title: plan.title, status: plan.status };
+        }
+      }
+    }
+
+    return mapWebDocDetail({ doc, relatedConversations, activePlan });
+  },
+});
+
+export const webSearch = query({
+  args: {
+    query: v.string(),
+    doc_type: v.optional(v.string()),
+    limit: v.optional(v.number()),
+    scope: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(userId);
+    const team_id = user?.active_team_id;
+
+    const results = await ctx.db
+      .query("docs")
+      .withSearchIndex("search_docs_v2", (q) => {
+        let search = q.search("title", args.query).eq("user_id", userId);
+        if (args.doc_type) search = search.eq("doc_type", args.doc_type as any);
+        return search;
+      })
+      .take((args.limit || 20) * 3);
+
+    let filtered = results.filter((d) => !d.archived_at);
+
+    const convIds = new Set<string>();
+    for (const d of filtered) {
+      const cid = d.conversation_id || (d.related_conversation_ids?.[0]);
+      if (cid) convIds.add(String(cid));
+    }
+    const convMap = new Map<string, any>();
+    for (const cid of convIds) {
+      const conv = await ctx.db.get(cid as Id<"conversations">);
+      if (conv) convMap.set(cid, {
+        team_id: conv.team_id,
+        is_private: conv.is_private,
+        auto_shared: conv.auto_shared,
+        team_visibility: conv.team_visibility,
+      });
+    }
+
+    // The doc's ACCESS team: its stored workspace key when present, else the
+    // write-time rule recomputed against the conversation map. Shared with
+    // every other list path (data.ts), so this filter can't drift — the local
+    // copy this replaces also read only two of the four link fields, so a doc
+    // linked via created_from_conversation escaped the boundary entirely.
+    const resolveTeam = (d: any) => resolveEffectiveTeam(d, convMap);
+
+    if (args.scope === "projects") {
+      filtered = filtered.filter((d) => !resolveTeam(d));
+    } else if (team_id) {
+      filtered = filtered.filter((d) => {
+        const effectiveTeamId = resolveTeam(d);
+        return String(effectiveTeamId) === String(team_id);
+      });
+    }
+
+    return filtered.slice(0, args.limit || 20);
+  },
+});
+
+
+const webUpdateArgs = {
+  id: v.id("docs"),
+  title: v.optional(v.string()),
+  content: v.optional(v.string()),
+  doc_type: v.optional(v.string()),
+  labels: v.optional(v.array(v.string())),
+  pinned: v.optional(v.boolean()),
+  archived: v.optional(v.boolean()),
+};
+
+export const webUpdate = mutation({
+  args: webUpdateArgs,
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    return await updateDocAs(ctx, userId, args);
+  },
+});
+
+/** Update a doc as `userId`, the way the web's update does. The hosted
+ *  assistant's write_doc runs this same path. */
+export async function updateDocAs(ctx: MutationCtx, userId: Id<"users">, args: ObjectType<typeof webUpdateArgs>) {
+  const doc = await ctx.db.get(args.id);
+  if (!doc) throw new Error("Doc not found");
+  if (!(await canAccessDoc(ctx, userId, doc))) throw new Error("Unauthorized");
+
+  const updates: any = { updated_at: Date.now(), ...docTextUpdates(doc, args) };
+  if (args.doc_type !== undefined) updates.doc_type = args.doc_type;
+  if (args.labels !== undefined) updates.labels = args.labels;
+  if (args.pinned !== undefined) updates.pinned = args.pinned;
+  if (args.archived !== undefined) updates.archived_at = args.archived ? Date.now() : undefined;
+
+  await ctx.db.patch(args.id, updates);
+  return { success: true };
+}
+
+export const deleteBySource = internalMutation({
+  args: {
+    source: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const docs = await ctx.db.query("docs").collect();
+    const toDelete = docs.filter((d) => d.source === args.source);
+    for (const doc of toDelete) {
+      await ctx.db.delete(doc._id);
+    }
+    return { deleted: toDelete.length };
+  },
+});
+
+
+// Once, after extraction from session transcripts was retired: archives the
+// docs it made (Markdown files a session wrote, long assistant replies), so they
+// leave the list and search. Archiving is reversible; clear archived_at to undo.
+export const archiveExtractedDocs = internalMutation({
+  args: { dry_run: v.boolean(), cursor: v.optional(v.union(v.string(), v.null())) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("docs").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+    const now = Date.now();
+    let archived = 0;
+    for (const d of page.page) {
+      if (d.archived_at || (d.source !== "file_sync" && d.source !== "inline_extract")) continue;
+      archived++;
+      if (!args.dry_run) await ctx.db.patch(d._id, { archived_at: now });
+    }
+    return { scanned: page.page.length, archived, cursor: page.continueCursor, done: page.isDone };
+  },
+});
+
+export const debugList = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const docs = await ctx.db.query("docs").collect();
+    const bySource: Record<string, number> = {};
+    const byType: Record<string, number> = {};
+    const byTeam: Record<string, number> = {};
+    const samples: Array<{ title: string; source: string; doc_type: string }> = [];
+    for (const d of docs) {
+      bySource[d.source] = (bySource[d.source] || 0) + 1;
+      byType[d.doc_type] = (byType[d.doc_type] || 0) + 1;
+      byTeam[d.team_id ? String(d.team_id) : "none"] = (byTeam[d.team_id ? String(d.team_id) : "none"] || 0) + 1;
+      if (d.source === "inline_extract" && samples.length < 10) {
+        let title = d.title;
+        if (d.content) {
+          const m = d.content.match(/^#\s+(.+)/m);
+          if (m) title = m[1].trim();
+        }
+        samples.push({ title: title.slice(0, 80), source: d.source, doc_type: d.doc_type });
+      }
+    }
+    return { total: docs.length, bySource, byType, byTeam, inlineSamples: samples };
+  },
+});
+
+export const fixDocTeamsByProject = internalMutation({
+  args: {
+    teamPatterns: v.array(v.object({
+      team_id: v.string(),
+      patterns: v.array(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const docs = await ctx.db.query("docs").collect();
+    let updated = 0;
+    for (const doc of docs) {
+      if (!doc.project_path) continue;
+      let matchedTeam: string | undefined;
+      for (const { team_id, patterns } of args.teamPatterns) {
+        if (patterns.some((p) => doc.project_path!.includes(p))) {
+          matchedTeam = team_id;
+          break;
+        }
+      }
+      if (matchedTeam && doc.team_id !== matchedTeam) {
+        await ctx.db.patch(doc._id, { team_id: matchedTeam as any });
+        updated++;
+      } else if (!matchedTeam && doc.team_id) {
+        await ctx.db.patch(doc._id, { team_id: undefined });
+        updated++;
+      }
+    }
+    return { updated, total: docs.length };
+  },
+});
+
+export const backfillPlanDocs = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const docs = await ctx.db
+      .query("docs")
+      .collect();
+    const planDocs = docs.filter(d => d.source === "plan_mode" && !d.plan_id);
+    let created = 0;
+    for (const doc of planDocs) {
+      await syncDocToPlanEntity(ctx, doc._id, doc.content, doc.user_id, doc.team_id, doc.project_id, doc.conversation_id);
+      created++;
+    }
+    return { created, total: planDocs.length };
+  },
+});
+
+export const fixDocTeams = internalMutation({
+  args: { team_id: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const batchSize = args.limit || 500;
+    let docs;
+    if (args.team_id) {
+      docs = await ctx.db
+        .query("docs")
+        .withIndex("by_team_id", (q) => q.eq("team_id", args.team_id as any))
+        .take(batchSize);
+    } else {
+      docs = await ctx.db.query("docs").take(batchSize);
+    }
+    let updated = 0;
+    const mappingsCache = new Map<string, any[]>();
+    for (const doc of docs) {
+      const path = doc.project_path;
+      if (!path) continue;
+
+      const uid = String(doc.user_id);
+      if (!mappingsCache.has(uid)) {
+        mappingsCache.set(uid, await ctx.db
+          .query("directory_team_mappings")
+          .withIndex("by_user_id", (q: any) => q.eq("user_id", doc.user_id))
+          .collect());
+      }
+      const { teamId: resolvedTeamId } = resolveTeamForPath(mappingsCache.get(uid)!, path, undefined);
+
+      if (String(doc.team_id || "") !== String(resolvedTeamId || "")) {
+        await ctx.db.patch(doc._id, { team_id: resolvedTeamId || undefined });
+        updated++;
+      }
+    }
+    return { updated, total: docs.length };
+  },
+});
+
+export const webPatch = mutation({
+  args: {
+    id: v.id("docs"),
+    old_string: v.string(),
+    new_string: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const doc = await ctx.db.get(args.id);
+    if (!doc) throw new Error("Doc not found");
+    if (doc.user_id !== userId) throw new Error("Not authorized");
+
+    const idx = doc.content.indexOf(args.old_string);
+    if (idx === -1) throw new Error("old_string not found in document");
+
+    const newContent =
+      doc.content.slice(0, idx) +
+      args.new_string +
+      doc.content.slice(idx + args.old_string.length);
+
+    await ctx.db.patch(args.id, {
+      content: newContent,
+      updated_at: Date.now(),
+    });
+
+    return { success: true, content: newContent };
+  },
+});
+
+export const webMentionList = query({
+  args: {
+    team_id: v.optional(v.id("teams")),
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"), v.literal("all"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return { items: [] };
+    if (args.team_id) await requireTeamMembership(ctx, userId, args.team_id);
+    if (args.workspace === "team" && !args.team_id) {
+      throw new Error("team_id is required for the team workspace");
+    }
+
+    // Bound the scan to a small recent slice. The client only renders the
+    // top-6-per-type "recents" (see useMentionQuery); anything beyond that is
+    // served by `mentionSearch`. The old 4000/1500 caps were chosen for the
+    // 8192-array return limit, but the real failure mode is MEMORY: `.take()`
+    // materializes whole `docs` rows — including the heavy `content` body,
+    // the ~8KB `embedding`, and the unbounded `entries[]` timeline (Convex has
+    // no field projection) — so thousands of rows blow the 64 MB isolate cap
+    // and crash the whole app. A small cap keeps the scan well under it while
+    // still giving the client plenty of recent candidates.
+    const MAX_TOTAL = 50;
+    const MAX_PER_TEAM = 25;
+    const seen = new Set<string>();
+    const docs: any[] = [];
+    const pushUnique = (d: any) => {
+      if (docs.length >= MAX_TOTAL) return;
+      const id = String(d._id);
+      if (!seen.has(id)) { seen.add(id); docs.push(d); }
+    };
+
+    if (args.workspace === "all") {
+      // The person's own rows first (tasks.webMentionList does the same):
+      // filled after the teams, two busy teams took every slot.
+      const userDocs = await ctx.db
+        .query("docs")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+        .order("desc")
+        .take(MAX_PER_TEAM);
+      for (const d of userDocs) pushUnique(d);
+      const memberships = await ctx.db
+        .query("team_memberships")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+        .collect();
+      for (const m of memberships) {
+        if (docs.length >= MAX_TOTAL) break;
+        const teamDocs = await ctx.db
+          .query("docs")
+          .withIndex("by_team_id", (q: any) => q.eq("team_id", m.team_id))
+          .order("desc")
+          .take(MAX_PER_TEAM);
+        for (const d of teamDocs) pushUnique(d);
+      }
+    } else if (args.workspace === "team" && args.team_id) {
+      const teamDocs = await ctx.db
+        .query("docs")
+        .withIndex("by_team_id", (q: any) => q.eq("team_id", args.team_id))
+        .order("desc")
+        .take(MAX_TOTAL);
+      for (const d of teamDocs) pushUnique(d);
+    } else {
+      const userDocs = await ctx.db
+        .query("docs")
+        .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+        .order("desc")
+        .take(MAX_TOTAL);
+      for (const d of userDocs) {
+        if (args.workspace === "personal" && d.team_id) continue;
+        pushUnique(d);
+      }
+    }
+
+    return {
+      items: docs
+        .filter((d: any) => !d.archived_at && d.source !== "plan_mode")
+        .map((d: any) => ({
+          _id: String(d._id),
+          title: d.title,
+          doc_type: d.doc_type,
+          // Filename/path so the palette can find a file-synced doc by its name,
+          // not just its content-derived title (e.g. "backend/ROADMAP_EXPLAINED.md").
+          source_file: d.source_file ?? null,
+          updated_at: d.updated_at,
+          team_id: d.team_id ?? null,
+          user_id: d.user_id ?? null,
+        })),
+    };
+  },
+});
+
+export const mentionSearch = query({
+  args: {
+    query: v.string(),
+    types: v.optional(v.array(v.string())),
+    limit: v.optional(v.number()),
+    projectPath: v.optional(v.string()),
+    teamId: v.optional(v.string()),
+    // Explicit workspace: "personal" pins the search to teamless items and
+    // disables every team fallback below. Older clients omit it and get the
+    // legacy resolution (explicit teamId, else mapping/active team).
+    workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(userId);
+    const db = await createDataContext(ctx, {
+      userId,
+      project_path: args.projectPath,
+    });
+    const teamId = args.workspace === "personal"
+      ? undefined
+      : (args.teamId
+          || (db.workspace.type === "team" ? db.workspace.teamId : undefined)
+          || user?.active_team_id
+          || (user as any)?.team_id);
+    // teamId can be client-supplied: every team-scoped branch below reads that
+    // team's rows directly (members, task/doc/plan titles), so membership is
+    // mandatory — without this check any authenticated user holding a team id
+    // could enumerate a foreign team's roster and titles.
+    if (teamId) await requireTeamMembership(ctx, userId, teamId as any);
+    // Strict personal semantics: the by_user_id scans below return the user's
+    // own rows INCLUDING team-tagged ones; the personal workspace shows only
+    // teamless items, so filter those out when no team scope applies.
+    const personalOnly = <T extends { team_id?: any }>(rows: T[]): T[] =>
+      rows.filter((r) => !r.team_id);
+    const q = args.query.toLowerCase();
+    const limit = args.limit || 10;
+    const types = args.types || ["person", "doc", "task", "session", "plan"];
+    const results: Array<{
+      id: string;
+      type: string;
+      label: string;
+      sublabel?: string;
+      image?: string;
+      shortId?: string;
+      status?: string;
+      priority?: string;
+      docType?: string;
+      messageCount?: number;
+      projectPath?: string;
+      goal?: string;
+      model?: string;
+      agentType?: string;
+      updatedAt?: number;
+      idleSummary?: string;
+      /** A session's identity row (session-characters.md S1): the character
+       *  and role fields the dropdown hands to `sessionIdentity` so the row
+       *  wears the same face and name the inbox card does. */
+      identity?: any;
+    }> = [];
+
+    const perType = Math.max(10, Math.ceil(limit / types.length));
+    const byUpdated = (a: { updated_at?: number }, b: { updated_at?: number }) => (b.updated_at ?? 0) - (a.updated_at ?? 0);
+
+    if (types.includes("person") && teamId) {
+      const memberships = await ctx.db
+        .query("team_memberships")
+        .withIndex("by_team_id", (tm: any) => tm.eq("team_id", teamId))
+        .collect();
+      let count = 0;
+      for (const m of memberships) {
+        if (count >= perType) break;
+        const u = await ctx.db.get(m.user_id);
+        if (!u) continue;
+        const name = (u.name || "").toLowerCase();
+        const username = (u.github_username || "").toLowerCase();
+        if (q && !name.includes(q) && !username.includes(q)) continue;
+        results.push({
+          id: String(u._id),
+          type: "person",
+          label: u.name || u.github_username || "Unknown",
+          sublabel: u.github_username ? `@${u.github_username}` : u.email,
+          image: u.image || u.github_avatar_url,
+          shortId: u.github_username ? `@${u.github_username}` : undefined,
+        });
+        count++;
+      }
+    }
+
+    if (types.includes("task")) {
+      let tasks;
+      if (teamId && q) {
+        // Team workspace with query: use full-text search on title, then filter
+        // by team_id. Without this, the by_team_id-only path is capped at the
+        // most-recent N tasks and older matches are invisible.
+        const teamStr = String(teamId);
+        const searchHits = await ctx.db
+          .query("tasks")
+          .withSearchIndex("search_tasks_v2", (s: any) => s.search("title", args.query))
+          .take(perType * 20);
+        tasks = searchHits.filter((t: any) => String(t.team_id || "") === teamStr);
+      } else if (teamId) {
+        tasks = await ctx.db
+          .query("tasks")
+          .withIndex("by_team_id", (t: any) => t.eq("team_id", teamId))
+          .order("desc")
+          .take(perType * 10);
+      } else if (q) {
+        tasks = await ctx.db
+          .query("tasks")
+          .withSearchIndex("search_tasks_v2", (s: any) => s.search("title", args.query).eq("user_id", userId))
+          .take(perType * 5);
+      } else {
+        tasks = await ctx.db
+          .query("tasks")
+          .withIndex("by_user_id", (t: any) => t.eq("user_id", userId))
+          .order("desc")
+          .take(perType * 5);
+      }
+      if (!teamId) tasks = personalOnly(tasks);
+      for (const task of tasks.sort(byUpdated).slice(0, perType)) {
+        results.push({
+          id: String(task._id),
+          type: "task",
+          label: task.title,
+          sublabel: task.short_id,
+          shortId: task.short_id,
+          status: task.status,
+          priority: (task as any).priority,
+          updatedAt: task.updated_at,
+        });
+      }
+    }
+
+    if (types.includes("doc")) {
+      // A file-synced doc is titled from its content heading, not its filename, so
+      // match the source file path too — lets you find a doc by name/path.
+      const docMatches = (d: any) =>
+        d.title?.toLowerCase().includes(q) || d.source_file?.toLowerCase().includes(q);
+      let docs;
+      if (teamId) {
+        // Recent team docs by recency — the local-cache window. Raised well past
+        // the old 100 so more of a team's docs are reachable as plain recents
+        // without any search round-trip.
+        docs = await ctx.db
+          .query("docs")
+          .withIndex("by_team_id", (d: any) => d.eq("team_id", teamId))
+          .order("desc")
+          .take(perType * 30);
+        if (q) {
+          docs = docs.filter(docMatches);
+          // The recency scan only sees the newest rows; a full-text title lookup
+          // reaches docs far older than any cache window. Without this a team doc
+          // outside the recent set was unfindable by @-mention — unlike team
+          // tasks and sessions, which already union a search-index fallback the
+          // same way (see the task/session branches above).
+          const teamStr = String(teamId);
+          const titleHits = (await ctx.db
+            .query("docs")
+            .withSearchIndex("search_docs_v2", (s: any) => s.search("title", args.query))
+            .take(perType * 20))
+            .filter((d: any) => String(d.team_id || "") === teamStr);
+          const seen = new Set(docs.map((d: any) => String(d._id)));
+          for (const hit of titleHits) {
+            if (!seen.has(String(hit._id))) docs.push(hit);
+          }
+        }
+      } else if (q) {
+        // The title search index can't see source_file, so union the title-index
+        // hits with filename hits from a bounded recent scan.
+        const byTitle = await ctx.db
+          .query("docs")
+          .withSearchIndex("search_docs_v2", (s: any) => s.search("title", args.query).eq("user_id", userId))
+          .take(perType * 5);
+        const byFile = (await ctx.db
+          .query("docs")
+          .withIndex("by_user_id", (d: any) => d.eq("user_id", userId))
+          .order("desc")
+          .take(perType * 20))
+          .filter((d: any) => d.source_file?.toLowerCase().includes(q));
+        const seen = new Set(byTitle.map((d: any) => String(d._id)));
+        docs = [...byTitle, ...byFile.filter((d: any) => !seen.has(String(d._id)))];
+      } else {
+        docs = await ctx.db
+          .query("docs")
+          .withIndex("by_user_id", (d: any) => d.eq("user_id", userId))
+          .order("desc")
+          .take(perType * 5);
+      }
+      if (!teamId) {
+        // Docs derive their workspace from a linked conversation: a raw-teamless
+        // doc born from a team-visible session is EFFECTIVELY that team's and
+        // must not surface in personal scope. Raw pass first (cheap), then the
+        // effective filter over the bounded remainder.
+        docs = personalOnly(docs);
+        const convMap = await buildConvMapForPage(ctx, docs);
+        docs = docs.filter((d: any) => !resolveEffectiveTeam(d, convMap));
+      }
+      for (const doc of docs.filter((d: any) => !d.archived_at).sort(byUpdated).slice(0, perType)) {
+        results.push({
+          id: String(doc._id),
+          type: "doc",
+          label: doc.title,
+          // Show the filename when the doc is backed by a file, so a name/path
+          // match is legible (the title may not contain what you typed).
+          sublabel: doc.source_file ? (doc.source_file.split("/").pop() || doc.doc_type) : doc.doc_type,
+          docType: doc.doc_type,
+          updatedAt: doc.updated_at,
+        });
+      }
+    }
+
+    if (types.includes("plan")) {
+      let plans;
+      if (teamId) {
+        plans = await ctx.db
+          .query("plans")
+          .withIndex("by_team_id", (p: any) => p.eq("team_id", teamId))
+          .order("desc")
+          .take(perType * 10);
+      } else {
+        plans = await ctx.db
+          .query("plans")
+          .withIndex("by_user_id", (p: any) => p.eq("user_id", userId))
+          .order("desc")
+          .take(perType * 5);
+      }
+      const filtered = q
+        ? plans.filter((p: any) => p.title?.toLowerCase().includes(q))
+        : plans;
+      for (const plan of (teamId ? filtered : personalOnly(filtered)).sort(byUpdated).slice(0, perType)) {
+        results.push({
+          id: String(plan._id),
+          type: "plan",
+          label: plan.title,
+          sublabel: plan.short_id,
+          shortId: plan.short_id,
+          status: (plan as any).status,
+          goal: (plan as any).goal,
+          updatedAt: plan.updated_at,
+        });
+      }
+    }
+
+    if (types.includes("session")) {
+      let sessions;
+      if (teamId) {
+        sessions = await ctx.db
+          .query("conversations")
+          .withIndex("by_team_id", (c: any) => c.eq("team_id", teamId))
+          .order("desc")
+          .take(perType * 10);
+      } else {
+        sessions = await ctx.db
+          .query("conversations")
+          .withIndex("by_user_updated", (c: any) => c.eq("user_id", userId))
+          .order("desc")
+          .take(perType * 5);
+      }
+      let filtered = q
+        ? sessions.filter((s: any) =>
+            s.title?.toLowerCase().includes(q) ||
+            s.idle_summary?.toLowerCase().includes(q))
+        : sessions;
+      if (q) {
+        // The recency window above only sees the most recent rows; a full-text
+        // title lookup reaches sessions far older than any client cache window.
+        // Recency matches stay first (most likely target), older hits fill in.
+        let titleHits;
+        if (teamId) {
+          const teamStr = String(teamId);
+          titleHits = (await ctx.db
+            .query("conversations")
+            .withSearchIndex("search_title_v2", (s: any) => s.search("title", args.query))
+            .take(perType * 20))
+            .filter((c: any) => String(c.team_id || "") === teamStr);
+        } else {
+          titleHits = await ctx.db
+            .query("conversations")
+            .withSearchIndex("search_title_v2", (s: any) =>
+              s.search("title", args.query).eq("user_id", userId))
+            .take(perType * 5);
+        }
+        const seen = new Set(filtered.map((c: any) => String(c._id)));
+        for (const hit of titleHits) {
+          if (!seen.has(String(hit._id))) filtered.push(hit);
+        }
+      }
+      if (teamId) {
+        // team_id is routing, not visibility. Two gates: the session must be
+        // EFFECTIVELY this team's (a private session routed here belongs to
+        // its owner's personal scope, even for the owner), and a teammate's
+        // session must pass the feed visibility filter.
+        const feedFilter = await createTeamFeedFilter(ctx, teamId as any);
+        filtered = filtered.filter((c: any) => {
+          if (String(teamVisibleConvTeam(c) ?? "") !== String(teamId)) return false;
+          return String(c.user_id) === String(userId) || feedFilter.isVisible(c);
+        });
+      } else {
+        // Personal scope: only sessions that are EFFECTIVELY personal. A
+        // session's team_id is routing — a private session routed to a team
+        // still belongs here, while a team-visible one belongs to team scope.
+        filtered = filtered.filter((c: any) => !teamVisibleConvTeam(c));
+      }
+      for (const sess of filtered.sort(byUpdated).slice(0, perType)) {
+        results.push({
+          id: String(sess._id),
+          type: "session",
+          label: sess.title || "Untitled Session",
+          sublabel: (sess as any).idle_summary?.slice(0, 80) || sess.short_id,
+          shortId: sess.short_id,
+          messageCount: sess.message_count,
+          projectPath: sess.project_path,
+          status: sess.status,
+          model: sess.model,
+          agentType: sess.agent_type,
+          updatedAt: sess.updated_at,
+          idleSummary: (sess as any).idle_summary,
+          identity: { _id: String(sess._id), title: sess.title, ...(await identityFieldsOf(sess, (id: any) => ctx.db.get(id))) },
+        });
+      }
+    }
+
+    return results;
+  },
+});
+
+export const expandMentions = query({
+  args: {
+    mentions: v.array(v.object({
+      type: v.string(),
+      shortId: v.optional(v.string()),
+      id: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const results: Array<{ type: string; shortId?: string; id?: string; markdown: string }> = [];
+
+    for (const mention of args.mentions) {
+      try {
+        if (mention.type === "task" && mention.shortId) {
+          const task = await ctx.db.query("tasks")
+            .filter((q: any) => q.eq(q.field("short_id"), mention.shortId))
+            .first();
+          if (task && (await canAccessTask(ctx, userId, task))) {
+            const comments = await ctx.db.query("task_comments")
+              .withIndex("by_task_id", (c: any) => c.eq("task_id", task._id))
+              .order("desc")
+              .take(10);
+            let md = `### Task: ${inlineForeignText(task.title)}\n`;
+            md += `\`${task.short_id}\` | Status: **${task.status || "open"}** | Priority: **${(task as any).priority || "medium"}**\n`;
+            if ((task as any).labels?.length) md += `Labels: ${inlineForeignText((task as any).labels.join(", "))}\n`;
+            md += `\n`;
+            if (task.description) {
+              md += `#### Description\n\n${foreignProse(task.description, FOREIGN_TEXT_CAPS.descriptionChars) || ""}\n\n`;
+            }
+            if ((task as any).acceptance_criteria) {
+              md += `#### Acceptance Criteria\n\n${foreignProse(task.acceptance_criteria?.join("\n"), FOREIGN_TEXT_CAPS.descriptionChars) || ""}\n\n`;
+            }
+            // Linked sessions
+            const linkedConvs = await ctx.db.query("conversations")
+              .withIndex("by_user_updated", (c: any) => c.eq("user_id", userId))
+              .order("desc")
+              .take(100);
+            const taskSessions = linkedConvs.filter((c: any) => String(c.active_task_id) === String(task._id)).slice(0, 5);
+            if (taskSessions.length > 0) {
+              md += `#### Linked Sessions\n\n`;
+              for (const s of taskSessions) {
+                md += `- **${inlineForeignText(s.title) || "Untitled"}** \`${(s as any).short_id}\` (${(s as any).message_count || 0} msgs)`;
+                if ((s as any).idle_summary) md += ` — ${inlineForeignText((s as any).idle_summary)}`;
+                md += `\n`;
+              }
+              md += `\n`;
+            }
+            if (comments.length > 0) {
+              md += `#### Activity Log (${comments.length} recent)\n\n`;
+              for (const c of comments.reverse()) {
+                const content = c.text || "";
+                const ts = new Date((c as any)._creationTime).toISOString().slice(0, 16).replace("T", " ");
+                const tag = (c as any).comment_type ? `[${(c as any).comment_type}]` : "";
+                md += `**${ts}** ${tag}\n${foreignProse(content, FOREIGN_TEXT_CAPS.commentChars) || ""}\n\n`;
+              }
+            }
+            const taskSource = foreignTaskSource(task);
+            const taskBlock = fenceForeignText(md, taskSource, {
+              maxChars: FOREIGN_TEXT_CAPS.blockChars,
+              note: referenceGuidance(taskSource),
+            });
+            results.push({
+              type: "task",
+              shortId: mention.shortId,
+              markdown: `\n\n---\n${taskBlock}\n\n> \`cast task context ${task.short_id}\` for full context including all sessions and docs\n---\n`,
+            });
+          }
+
+        } else if (mention.type === "plan" && mention.shortId) {
+          const plan = await ctx.db.query("plans")
+            .filter((q: any) => q.eq(q.field("short_id"), mention.shortId))
+            .first();
+          if (plan && (await canAccessPlan(ctx, userId, plan))) {
+            let md = `### Plan: ${inlineForeignText((plan as any).title)}\n`;
+            md += `\`${(plan as any).short_id}\` | Status: **${(plan as any).status || "draft"}**\n\n`;
+            if ((plan as any).goal) {
+              md += `#### Goal\n\n${foreignProse((plan as any).goal, FOREIGN_TEXT_CAPS.descriptionChars) || ""}\n\n`;
+            }
+            if ((plan as any).acceptance_criteria) {
+              md += `#### Acceptance Criteria\n\n${foreignProse(plan.acceptance_criteria?.join("\n"), FOREIGN_TEXT_CAPS.descriptionChars) || ""}\n\n`;
+            }
+            const taskIds = (plan as any).task_ids || [];
+            if (taskIds.length > 0) {
+              let doneCount = 0, ipCount = 0, openCount = 0;
+              md += `#### Tasks (${taskIds.length})\n\n`;
+              for (const tid of taskIds.slice(0, 20)) {
+                const t: any = await ctx.db.get(tid);
+                if (
+                  !t
+                  || !isSameWorkspace(t, workspaceForResource(plan))
+                  || !(await canAccessTask(ctx, userId, t))
+                ) continue;
+                const st = (t as any).status || "open";
+                if (st === "done") doneCount++;
+                else if (st === "in_progress") ipCount++;
+                else openCount++;
+                const icon = st === "done" ? "[x]" : st === "in_progress" ? "[~]" : "[ ]";
+                md += `- ${icon} **${inlineForeignText((t as any).title)}** \`${(t as any).short_id}\` — ${st}`;
+                if ((t as any).priority && (t as any).priority !== "medium") md += ` (${(t as any).priority})`;
+                md += `\n`;
+                if (t.description) {
+                  md += `  ${inlineForeignText(t.description)}\n`;
+                }
+              }
+              md += `\nProgress: ${doneCount}/${taskIds.length} done, ${ipCount} in progress, ${openCount} open\n\n`;
+            }
+            // Comments timeline (unified entries + legacy arrays)
+            const entries: any[] = [...((plan as any).entries || [])];
+            const seenKeys = new Set(entries.map((e: any) => `${e.timestamp}:${e.content}`));
+            for (const e of ((plan as any).progress_log || [])) {
+              const key = `${e.timestamp}:${e.entry}`;
+              if (!seenKeys.has(key)) entries.push({ type: "progress", timestamp: e.timestamp, content: e.entry });
+            }
+            for (const e of ((plan as any).decision_log || [])) {
+              const key = `${e.timestamp}:${e.decision}`;
+              if (!seenKeys.has(key)) entries.push({ type: "decision", timestamp: e.timestamp, content: e.decision, rationale: e.rationale });
+            }
+            for (const e of ((plan as any).discoveries || [])) {
+              const key = `${e.timestamp}:${e.finding}`;
+              if (!seenKeys.has(key)) entries.push({ type: "discovery", timestamp: e.timestamp, content: e.finding });
+            }
+            entries.sort((a: any, b: any) => a.timestamp - b.timestamp);
+
+            const decisions = entries.filter((e: any) => e.type === "decision").slice(-5);
+            if (decisions.length) {
+              md += `#### Decisions\n\n`;
+              for (const d of decisions) {
+                md += `- **${inlineForeignText(d.content)}**${d.rationale ? `: ${inlineForeignText(d.rationale)}` : ""}\n`;
+              }
+              md += `\n`;
+            }
+            const recentProgress = entries.filter((e: any) => e.type === "progress").slice(-5);
+            if (recentProgress.length) {
+              md += `#### Progress Log (recent)\n\n`;
+              for (const entry of recentProgress) {
+                const ts = entry.timestamp ? new Date(entry.timestamp).toISOString().slice(0, 16).replace("T", " ") : "";
+                md += `**${ts}** ${foreignProse(entry.content, FOREIGN_TEXT_CAPS.commentChars) || ""}\n\n`;
+              }
+            }
+            // Linked doc content
+            if ((plan as any).doc_id) {
+              const doc: any = await ctx.db.get((plan as any).doc_id);
+              if (
+                doc
+                && isSameWorkspace(doc, workspaceForResource(plan))
+                && (await canAccessDoc(ctx, userId, doc))
+                && (doc as any).content
+              ) {
+                md += `#### Plan Document\n\n${foreignProse(renderDocMentionExcerpt((doc as any).content, String(doc._id)), FOREIGN_PLAN_CAPS.bodyChars) || ""}\n\n`;
+              }
+            }
+            const planSource = `plan ${inlineForeignText((plan as any).short_id)}`;
+            const planBlock = fenceForeignText(md, planSource, {
+              maxChars: FOREIGN_PLAN_CAPS.blockChars,
+              note: referenceGuidance(planSource),
+            });
+            results.push({
+              type: "plan",
+              shortId: mention.shortId,
+              markdown: `\n\n---\n${planBlock}\n\n> \`cast plan show ${(plan as any).short_id}\` for full plan with all task details\n---\n`,
+            });
+          }
+
+        } else if (mention.type === "session" && mention.shortId) {
+          const sess = await ctx.db.query("conversations")
+            .filter((q: any) => q.eq(q.field("short_id"), mention.shortId))
+            .first();
+          if (sess && (await canAccessConversation(ctx, userId, sess))) {
+            let md = `\n\n---\n### Session: ${sess.title || "Untitled"}\n`;
+            md += `\`${(sess as any).short_id}\` | ${(sess as any).message_count || 0} messages | ${sess.status || "active"}`;
+            if ((sess as any).project_path) md += ` | ${(sess as any).project_path}`;
+            if ((sess as any).agent_type) md += ` | Agent: ${(sess as any).agent_type}`;
+            md += `\n\n`;
+            if ((sess as any).idle_summary) {
+              md += `#### Summary\n\n${(sess as any).idle_summary}\n\n`;
+            }
+            // Fetch messages — get a mix of user and assistant
+            const messages = await ctx.db.query("messages")
+              .withIndex("by_conversation_id", (m: any) => m.eq("conversation_id", sess._id))
+              .order("asc")
+              .take(50);
+            const significant = messages.filter((m: any) =>
+              m.role === "user" || (m.role === "assistant" && (m.content?.length || 0) > 100)
+            );
+            if (significant.length > 0) {
+              md += `#### Conversation Highlights\n\n`;
+              // First user message in full
+              const firstUser = significant.find((m: any) => m.role === "user");
+              if (firstUser) {
+                md += `**User** (initial):\n${(firstUser as any).content?.slice(0, 800) || ""}${((firstUser as any).content?.length || 0) > 800 ? "..." : ""}\n\n`;
+              }
+              // Last few exchanges
+              const recent = significant.slice(-8);
+              for (const m of recent) {
+                if (m === firstUser) continue;
+                const role = (m as any).role === "user" ? "**User**" : "**Assistant**";
+                const content = (m as any).content || "";
+                const limit = (m as any).role === "user" ? 500 : 800;
+                md += `${role}:\n${content.slice(0, limit)}${content.length > limit ? "..." : ""}\n\n`;
+              }
+            }
+            // Active task/plan context
+            if ((sess as any).active_task_id) {
+              const t = await ctx.db.get((sess as any).active_task_id);
+              if (t && (await canAccessTask(ctx, userId, t))) {
+                md += `Active task: **${(t as any).title}** \`${(t as any).short_id}\`\n\n`;
+              }
+            }
+            if ((sess as any).active_plan_id) {
+              const p = await ctx.db.get((sess as any).active_plan_id);
+              if (p && (await canAccessPlan(ctx, userId, p))) {
+                md += `Active plan: **${(p as any).title}** \`${(p as any).short_id}\`\n\n`;
+              }
+            }
+            md += `> \`cast read ${(sess as any).short_id}\` for full conversation transcript\n---\n`;
+            results.push({ type: "session", shortId: mention.shortId, markdown: md });
+          }
+
+        } else if (mention.type === "trigger" && mention.shortId) {
+          // A trigger expands to what it runs and how it last went, so the
+          // agent can reason about (or amend) standing work without a lookup.
+          const trig = await ctx.db.query("agent_tasks")
+            .withIndex("by_short_id", (q: any) => q.eq("short_id", mention.shortId!.toLowerCase()))
+            .unique();
+          if (trig && String(trig.user_id) === String(userId)) {
+            const cadence = trig.schedule_type === "recurring" && trig.interval_ms
+              ? `every ${Math.round(trig.interval_ms / 60000)}m`
+              : trig.schedule_type === "event"
+                ? `on ${trig.event_filter?.event_type || "event"}`
+                : "one-time";
+            let md = `\n\n---\n### Trigger: ${trig.display_title || trig.title}\n`;
+            md += `\`${trig.short_id}\` | ${cadence} | Status: **${trig.status}**`;
+            if (trig.run_count) md += ` | ${trig.run_count} run${trig.run_count === 1 ? "" : "s"}`;
+            md += `\n\n#### Prompt\n\n${trig.prompt.slice(0, 2000)}${trig.prompt.length > 2000 ? "\n\n… (truncated)" : ""}\n\n`;
+            if (trig.last_run_summary) {
+              md += `#### Last run${trig.last_run_failed ? " (FAILED)" : ""}\n\n${trig.last_run_summary.slice(0, 1000)}\n\n`;
+            }
+            md += `> \`cast trigger log ${trig.short_id}\` for the last run's conversation\n---\n`;
+            results.push({ type: "trigger", shortId: mention.shortId, markdown: md });
+          }
+
+        } else if (mention.type === "doc" && mention.id) {
+          const doc = await ctx.db.get(mention.id as Id<"docs">);
+          if (doc && (await canAccessDoc(ctx, userId, doc))) {
+            let md = `\n\n---\n### Doc: ${doc.title}\n`;
+            md += `Type: ${doc.doc_type || "note"}`;
+            if ((doc as any).labels?.length) md += ` | Labels: ${(doc as any).labels.join(", ")}`;
+            md += `\n\n`;
+            if (doc.content) md += `${renderDocMentionExcerpt(doc.content, String(doc._id))}\n`;
+            // Related conversations
+            const linkedConvs = await ctx.db.query("conversations")
+              .withIndex("by_user_updated", (c: any) => c.eq("user_id", userId))
+              .order("desc")
+              .take(50);
+            const docSessions = linkedConvs.filter((c: any) => String((c as any).active_doc_id) === String(doc._id)).slice(0, 3);
+            if (docSessions.length > 0) {
+              md += `#### Related Sessions\n\n`;
+              for (const s of docSessions) {
+                md += `- **${s.title || "Untitled"}** \`${(s as any).short_id}\` (${(s as any).message_count || 0} msgs)\n`;
+              }
+              md += `\n`;
+            }
+            md += `---\n`;
+            results.push({ type: "doc", id: mention.id, markdown: md });
+          }
+
+        } else if (mention.type === "label" && mention.id) {
+          // A label (inbox bucket) mention expands to the sessions the user
+          // filed under it, so the agent can pull any of them with cast read.
+          const bucket = await ctx.db.get(mention.id as Id<"inbox_buckets">);
+          if (bucket && String((bucket as any).user_id) === String(userId)) {
+            const assignments = await ctx.db.query("bucket_assignments")
+              .withIndex("by_user_id", (a: any) => a.eq("user_id", userId))
+              .collect();
+            const convIds = assignments
+              .filter((a: any) => String(a.bucket_id) === String(bucket._id))
+              .map((a: any) => a.conversation_id);
+            const assignedConversations = await Promise.all(
+              convIds.slice(0, 30).map((id: any) =>
+                ctx.db.get(id as Id<"conversations">)),
+            );
+            const convs: any[] = [];
+            for (const conversation of assignedConversations) {
+              if (conversation && (await canAccessConversation(ctx, userId, conversation))) {
+                convs.push(conversation);
+              }
+            }
+            convs.sort((a: any, b: any) => (b.updated_at || 0) - (a.updated_at || 0));
+            let md = `\n\n---\n### Label: ${(bucket as any).name}\n`;
+            md += `${convs.length} session${convs.length === 1 ? "" : "s"} filed under this label\n\n`;
+            for (const s of convs as any[]) {
+              md += `- **${s.title || "Untitled"}** \`${s.short_id}\` (${s.message_count || 0} msgs${s.project_path ? `, ${s.project_path}` : ""})`;
+              if (s.idle_summary) md += ` — ${s.idle_summary.slice(0, 150)}`;
+              md += `\n`;
+            }
+            md += `\n> \`cast sessions --label "${(bucket as any).name}" -a\` for live state · \`cast read <id>\` for a transcript\n---\n`;
+            results.push({ type: "label", id: mention.id, markdown: md });
+          }
+
+        } else if (mention.type === "person") {
+          results.push({ type: "person", shortId: mention.shortId, id: mention.id, markdown: "" });
+        }
+      } catch {}
+    }
+    return results;
+  },
+});
+
+const webCreateArgs = {
+  title: v.string(),
+  content: v.optional(v.string()),
+  doc_type: v.optional(v.string()),
+  labels: v.optional(v.array(v.string())),
+  parent_id: v.optional(v.id("docs")),
+  workspace: v.optional(v.union(v.literal("personal"), v.literal("team"))),
+  team_id: v.optional(v.id("teams")),
+};
+
+export const webCreate = mutation({
+  args: webCreateArgs,
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    return await createDocAs(ctx, userId, args);
+  },
+});
+
+/** Create a doc as `userId`, the way the web's create does. The hosted
+ *  assistant's write_doc runs this same path. */
+export async function createDocAs(ctx: MutationCtx, userId: Id<"users">, args: ObjectType<typeof webCreateArgs>) {
+  // The doc lives in the workspace it was created in: a doc made while in a
+  // team space is that team's doc, one made in the personal space stays
+  // personal. Membership is enforced by resolveWorkspace; callers that send
+  // nothing (older clients) land personal — never the active team, which
+  // would silently auto-share every web-created doc.
+  const db = await createDataContext(ctx, {
+    userId,
+    workspace: args.workspace ?? "personal",
+    team_id: args.team_id,
+  });
+
+  // If adding under a parent, compute sort_order as last child
+  let sort_order: number | undefined;
+  if (args.parent_id) {
+    const parent = await requireAccessibleDoc(ctx, userId, args.parent_id);
+    requireSameWorkspace(parent, db.workspace, "parent doc");
+    const siblings = await ctx.db
+      .query("docs")
+      .withIndex("by_parent_id", (q) => q.eq("parent_id", args.parent_id!))
+      .collect();
+    sort_order = siblings.length > 0
+      ? Math.max(...siblings.map((s) => s.sort_order ?? 0)) + 1
+      : 0;
+  }
+
+  const content = withTitleHeading(args.title, args.content);
+  const id = await db.insert("docs", {
+    title: docTitleFromContent(content, args.title),
+    content,
+    doc_type: (args.doc_type || "note") as any,
+    source: "human" as any,
+    labels: args.labels,
+    parent_id: args.parent_id,
+    sort_order,
+  });
+
+  // The row rides back with the receipt so the client seeds its store before
+  // navigating: the doc page paints from the store, never waiting on the
+  // list feed to echo the create.
+  return { id, row: await ctx.db.get(id) };
+}
+
+/** Move a doc to a new parent (or to root if parent_id is null) and update sort_order */
+export const webMoveDoc = mutation({
+  args: {
+    id: v.id("docs"),
+    parent_id: v.optional(v.id("docs")),
+    sort_order: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.user_id !== userId) throw new Error("Not found");
+    const docWorkspace = doc.team_id
+      ? { type: "team" as const, teamId: doc.team_id }
+      : { type: "personal" as const, userId: doc.user_id };
+
+    // Prevent circular: can't parent under self or a descendant
+    if (args.parent_id) {
+      const parent = await requireAccessibleDoc(ctx, userId, args.parent_id);
+      requireSameWorkspace(parent, docWorkspace, "parent doc");
+      let current: Id<"docs"> | undefined = args.parent_id;
+      while (current) {
+        if (current === args.id) throw new Error("Cannot nest a doc under itself");
+        const ancestor: any = await ctx.db.get(current);
+        if (!ancestor || !(await canAccessDoc(ctx, userId, ancestor))) notFound("Doc not found");
+        requireSameWorkspace(ancestor, docWorkspace, "ancestor doc");
+        current = ancestor?.parent_id;
+      }
+    }
+
+    await ctx.db.patch(args.id, {
+      parent_id: args.parent_id,
+      sort_order: args.sort_order ?? 0,
+      updated_at: Date.now(),
+    });
+  },
+});
+
+/** Reorder children within a parent — bulk update sort_order */
+export const webReorderDocs = mutation({
+  args: {
+    items: v.array(v.object({
+      id: v.id("docs"),
+      sort_order: v.number(),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    for (const item of args.items) {
+      const doc = await ctx.db.get(item.id);
+      if (doc && doc.user_id === userId) {
+        await ctx.db.patch(item.id, { sort_order: item.sort_order });
+      }
+    }
+  },
+});
+
+/** Add/remove a wiki link between two docs */
+export const webToggleDocLink = mutation({
+  args: {
+    doc_id: v.id("docs"),
+    linked_doc_id: v.id("docs"),
+    action: v.union(v.literal("add"), v.literal("remove")),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+
+    const doc = await ctx.db.get(args.doc_id);
+    if (!doc || doc.user_id !== userId) throw new Error("Not found");
+    const docWorkspace = doc.team_id
+      ? { type: "team" as const, teamId: doc.team_id }
+      : { type: "personal" as const, userId: doc.user_id };
+    if (args.action === "add") {
+      const linkedDoc = await requireAccessibleDoc(ctx, userId, args.linked_doc_id);
+      requireSameWorkspace(linkedDoc, docWorkspace, "linked doc");
+    }
+
+    const existing = doc.linked_doc_ids ?? [];
+    const linkedStr = String(args.linked_doc_id);
+
+    if (args.action === "add") {
+      if (!existing.some((id) => String(id) === linkedStr)) {
+        await ctx.db.patch(args.doc_id, {
+          linked_doc_ids: [...existing, args.linked_doc_id],
+          updated_at: Date.now(),
+        });
+      }
+    } else {
+      await ctx.db.patch(args.doc_id, {
+        linked_doc_ids: existing.filter((id) => String(id) !== linkedStr),
+        updated_at: Date.now(),
+      });
+    }
+  },
+});
+
+type WebDocTreeEntry = Pick<
+  Doc<"docs">,
+  "_id" | "title" | "doc_type" | "source" | "updated_at" | "created_at"
+> & {
+  parent_id: Id<"docs"> | null;
+  sort_order: number;
+  pinned: Doc<"docs">["pinned"];
+};
+
+/** Lightweight query for sidebar doc tree — returns id, title, parent_id, sort_order, doc_type only */
+export const webDocTree: RegisteredQuery<"public", Record<string, never>, Promise<WebDocTreeEntry[]>> = query({
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const user = await ctx.db.get(userId);
+    const teamId = user?.active_team_id;
+
+    const { records } = await scopedFetch(ctx, "docs", {
+      userId,
+      teamId,
+      workspace: teamId ? "team" : "personal",
+      stripFields: ["content", "embedding", "entries", "task_ids", "related_conversation_ids", "labels", "share_token"],
+    });
+
+    return records
+      .filter((d: any) => !d.archived_at && !isNoiseDocForWeb(d) && d.source !== "plan_mode")
+      .map((d: any) => ({
+        _id: d._id,
+        title: d.title,
+        parent_id: d.parent_id ?? null,
+        sort_order: d.sort_order ?? 0,
+        doc_type: d.doc_type,
+        source: d.source,
+        pinned: d.pinned,
+        updated_at: d.updated_at,
+        created_at: d.created_at,
+      }));
+  },
+});
+
+export const linkPlanToSessions = internalMutation({
+  args: {
+    mappings: v.array(v.object({
+      plan_name: v.string(),
+      session_ids: v.array(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    let updated = 0;
+    for (const { plan_name, session_ids } of args.mappings) {
+      const sourceFile = `/Users/ashot/.claude/plans/${plan_name}.md`;
+      const doc = await ctx.db
+        .query("docs")
+        .withIndex("by_source_file", (q) => q.eq("source_file", sourceFile))
+        .first();
+      if (!doc) continue;
+
+      const convIds = [];
+      let firstConv: any = null;
+      for (const sid of session_ids) {
+        const conv = await ctx.db
+          .query("conversations")
+          .withIndex("by_session_id", (q) => q.eq("session_id", sid))
+          .first();
+        if (conv) {
+          convIds.push(conv._id);
+          if (!firstConv) firstConv = conv;
+        }
+      }
+      if (convIds.length === 0) continue;
+
+      const patch: any = {
+        related_conversation_ids: convIds,
+        updated_at: Date.now(),
+      };
+      if (!doc.conversation_id) {
+        patch.conversation_id = convIds[0];
+      }
+      if (!doc.project_path && firstConv?.project_path) {
+        patch.project_path = firstConv.project_path;
+      }
+      await ctx.db.patch(doc._id, patch);
+      updated++;
+
+      // Propagate session links to plan entity and set active_plan_id on conversations
+      if (doc.plan_id) {
+        const plan = await ctx.db.get(doc.plan_id);
+        if (plan) {
+          const existingIds = new Set((plan.session_ids || []).map((id: any) => String(id)));
+          const newIds = convIds.filter((id: any) => !existingIds.has(String(id)));
+          if (newIds.length > 0) {
+            await ctx.db.patch(plan._id, {
+              session_ids: [...(plan.session_ids || []), ...newIds],
+              updated_at: Date.now(),
+            });
+          }
+          for (const cid of convIds) {
+            const conv = await ctx.db.get(cid);
+            if (conv && !conv.active_plan_id) {
+              await ctx.db.patch(cid, { active_plan_id: plan._id });
+            }
+          }
+        }
+      }
+    }
+    return { updated };
+  },
+});
+
+export const webPromoteToPlan = mutation({
+  args: { doc_id: v.id("docs") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const doc = await ctx.db.get(args.doc_id);
+    if (!doc || doc.user_id !== userId) throw new Error("Doc not found");
+    if (doc.team_id) await requireTeamMembership(ctx, userId, doc.team_id);
+
+    if (doc.plan_id) {
+      const existing = await ctx.db.get(doc.plan_id);
+      if (
+        existing
+        && isSameWorkspace(existing, workspaceForResource(doc))
+        && (await canAccessPlan(ctx, userId, existing))
+      ) {
+        return { plan_id: doc.plan_id, short_id: (existing as any).short_id };
+      }
+      notFound("Plan not found");
+    }
+
+    const { nextShortId } = await import("./counters");
+    const short_id = await nextShortId(ctx.db, "pl");
+    const now = Date.now();
+    // The plan carries NO conversation link, so nothing can re-derive its access
+    // later — it must inherit the doc's workspace key at creation, or a doc
+    // mined from a private session becomes a team-readable plan. The plan's
+    // owner is the doc's owner, so the doc's key IS the plan's key; routing
+    // team_id comes from that same key so the two can never disagree.
+    const planWorkspace = await resolveWorkspaceKey(ctx, doc);
+    const planWs = parseWorkspaceKey(planWorkspace);
+    const planId = await ctx.db.insert("plans", {
+      user_id: doc.user_id,
+      team_id: planWs?.type === "team" ? planWs.teamId : undefined,
+      workspace: planWorkspace,
+      project_id: doc.project_id,
+      short_id,
+      title: doc.title,
+      status: "draft" as const,
+      source: "promoted" as const,
+      owner_id: userId,
+      doc_id: args.doc_id,
+      task_ids: [],
+      progress: { total: 0, done: 0, in_progress: 0, open: 0 },
+      progress_log: [],
+      decision_log: [],
+      discoveries: [],
+      context_pointers: [],
+      session_ids: [],
+      created_at: now,
+      updated_at: now,
+    });
+    await ctx.db.patch(args.doc_id, { plan_id: planId, doc_type: "plan" as const });
+    return { plan_id: planId, short_id };
+  },
+});
+
+// ── Public Sharing ─────────────────────────────────────────
+
+export const generateShareLink = mutation({
+  args: { id: v.id("docs"), api_token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = args.api_token
+      ? (await verifyApiToken(ctx, args.api_token))?.userId
+      : await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    // Owner-or-team, matching plans.generateShareLink and webUpdate: docs are
+    // team-visible/editable, so a teammate can mint the share link too.
+    const doc = await requireAccessibleDoc(ctx, userId, args.id);
+    const share_token = doc.share_token ?? crypto.randomUUID();
+    await claimShareToken(ctx, "docs", doc, share_token, userId);
+    return { share_token };
+  },
+});
+
+export const unshare = mutation({
+  args: { id: v.id("docs"), api_token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = args.api_token
+      ? (await verifyApiToken(ctx, args.api_token))?.userId
+      : await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    await claimShareToken(ctx, "docs", await requireAccessibleDoc(ctx, userId, args.id), null, userId);
+    return { success: true };
+  },
+});
+
+export const remove = mutation({
+  args: {
+    api_token: v.string(),
+    id: v.id("docs"),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const doc = await ctx.db.get(args.id);
+    if (!doc || doc.user_id !== auth.userId) throw new Error("Doc not found");
+
+    const docId = args.id as string;
+    const snapshots = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) => q.eq("id", docId))
+      .collect();
+    for (const s of snapshots) await ctx.db.delete(s._id);
+    const deltas = await ctx.db
+      .query("doc_deltas")
+      .withIndex("id_version", (q: any) => q.eq("id", docId))
+      .collect();
+    for (const d of deltas) await ctx.db.delete(d._id);
+    const presence = await ctx.db
+      .query("doc_presence")
+      .withIndex("by_doc", (q: any) => q.eq("doc_id", docId))
+      .collect();
+    for (const p of presence) await ctx.db.delete(p._id);
+
+    await ctx.db.delete(args.id);
+    return { success: true };
+  },
+});
+
+export const getShared = query({
+  args: { share_token: v.string() },
+  handler: async (ctx, args) => {
+    const doc = await ctx.db
+      .query("docs")
+      .withIndex("by_share_token", (q) => q.eq("share_token", args.share_token))
+      .first();
+    if (!doc) return null;
+    const user = await ctx.db.get(doc.user_id);
+    return {
+      _id: doc._id,
+      title: doc.title,
+      content: doc.content,
+      doc_type: doc.doc_type,
+      labels: doc.labels,
+      entries: doc.entries,
+      created_at: doc.created_at,
+      updated_at: doc.updated_at,
+      user: user ? { name: user.name, image: user.image } : null,
+    };
+  },
+});

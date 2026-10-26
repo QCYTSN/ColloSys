@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/codecast-sh/codecast",
+  "commit": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+  "license": "MIT",
+  "directory": "upstream",
+  "import": "Full tracked source tree from git archive, including complete web, shared, Convex and platform source",
+  "omittedSymlinks": { "CLAUDE.md": "AGENTS.md", "convex": "packages/convex/convex" },
+  "adaptations": "collo/ contains local integration configuration; upstream source content is unchanged; git archive on Windows converted text line endings to CRLF, which verification explicitly permits only when the normalized Git blob matches"
+}

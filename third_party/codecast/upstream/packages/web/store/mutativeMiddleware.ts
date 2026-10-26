@@ -1,0 +1,556 @@
+import { captureException } from "./pendingInputError";
+import { persistPendingMessageChanges } from "./idbCache";
+// Codecast's binding of the @platform/engine middleware. The engine owns the
+// mechanics (mutative drafts, auto-pending, the durable dispatch outbox, the
+// storage watchdog, receipt envelopes); everything codecast-shaped — the sync
+// registry, the view-motion guard, must-deliver actions, create continuations —
+// is injected here through PlatformConfig. The exported surface is unchanged:
+// consumers keep importing from this module.
+import {
+  action,
+  asyncAction,
+  receiptAsyncAction,
+  sync,
+  mutativeMiddleware as engineMutativeMiddleware,
+  groupPatchesByTable as engineGroupPatchesByTable,
+  outboxCoalesceKeyFor as engineOutboxCoalesceKeyFor,
+  makeIsMustDeliverEntry,
+  makeOutboxFailureDisposition,
+  defaultIsServerId,
+  deriveRegistryMaps,
+  isPermanentDispatchError as isPermanentDispatchErrorImpl,
+  isParkedDispatchError as isParkedDispatchErrorImpl,
+  DispatchNotWiredError as DispatchNotWiredErrorImpl,
+  type GroupPatchesContext,
+  type MiddlewareOptions,
+  type OutboxEntry,
+  type PlatformConfig,
+  type ReceiptContinuations,
+  type ViewGuard,
+  type ViewGuardChange,
+  type UndoConfig,
+} from "@platform/engine";
+import { noteFreshDoc } from "../lib/docSyncCache";
+import { routerNavigate } from "../lib/tabRoutes";
+import type { Patch } from "mutative";
+import {
+  CLIENT_SYNC_REGISTRY,
+  REPLICATION_CLASSIFICATION,
+  REPLICATED_EPHEMERAL_KEYS,
+} from "./clientSyncRegistry";
+import { consumeViewNav, declareViewNav, noteViewNavApplied, recordNavEvent } from "./viewNav";
+import { broadcastGesture, BRIDGED_FIELDS, type BridgedField } from "./gestureBridge";
+import { UNDO_SPECS } from "./undo/policy";
+import { UNDO_WRITERS } from "./undo/writers";
+import { runUndoRevert } from "./undo/onRevert";
+import { OPTIONAL_INBOX_TIMESTAMPS } from "./syncProtocol";
+
+
+export {
+  action,
+  asyncAction,
+  receiptAsyncAction,
+  sync,
+  isPermanentDispatchError,
+  isParkedDispatchError,
+  CommandReceiptRejectedError,
+  DispatchNotWiredError,
+  StaleDispatchBindingError,
+  UnsupportedOutboxOperationSchemaError,
+  MAX_OUTBOX_BOOT_ATTEMPTS,
+  OUTBOX_MAX_REPLAY_AGE_MS,
+  STORAGE_WATCHDOG_MS,
+  STORAGE_WATCHDOG_MAX_TIMER_LAG_MS,
+  STORAGE_WATCHDOG_RECHECK_MS,
+  CURRENT_OUTBOX_OPERATION_SCHEMA_VERSION,
+} from "@platform/engine";
+
+/** The write will never land: the server refused it for good, or it was
+ *  dropped before reaching the outbox. A caller holding a painted change
+ *  reverts it and says why. Every other failure (a write parked for the next
+ *  dispatch binding, a transient one left queued) is still on its way, and
+ *  the outbox and the server's echo settle it; reverting then would put back
+ *  what is about to land. */
+export function isRefusedDispatchError(error: unknown): boolean {
+  if (isParkedDispatchErrorImpl(error)) return false;
+  return isPermanentDispatchErrorImpl(error) || error instanceof DispatchNotWiredErrorImpl;
+}
+
+export type DurableCreateContinuation =
+  | { version: 1; kind: "navigate" }
+  | { version: 1; kind: "assignBucket"; conversationIds: string[] }
+  // A project created from a goal's sheet: the server attaches it to the goal
+  // in the create's own transaction, and the acknowledgement moves the goal's
+  // list from the stub id to the real one.
+  | { version: 1; kind: "attachToInitiative"; initiativeId: string };
+
+const SINGLETON_KEY = "_";
+
+// Everything the engine derives from the registry (dispatch table maps, the
+// protected-collection check) comes from the same CLIENT_SYNC_REGISTRY the
+// rest of the store wires from.
+const REGISTRY_MAPS = deriveRegistryMaps(CLIENT_SYNC_REGISTRY as any);
+
+const GROUP_CTX: GroupPatchesContext = {
+  tableMap: REGISTRY_MAPS.dispatchTableMap,
+  fieldToTable: REGISTRY_MAPS.dispatchFieldTableMap,
+  isServerId: defaultIsServerId,
+};
+
+export function groupPatchesByTable(
+  patches: Patch[],
+  state?: any,
+): Record<string, any> | undefined {
+  return engineGroupPatchesByTable(patches, state, GROUP_CTX);
+}
+
+// A replayed dispatch is stale by definition — it survived a reload. The
+// conversation pointer means "where the user is right now", so re-pushing an
+// old value from the outbox would repoint the user's other clients at a
+// position they already left. Drop it from replays; the rest of the patch
+// (and the action itself) still re-fires.
+export function stripStalePointerFromReplay(patches: any): any {
+  const cs = patches?.client_state?.[SINGLETON_KEY];
+  if (!cs || typeof cs !== "object" || !("current_conversation_id" in cs)) return patches;
+  const { current_conversation_id: _omit, ...rest } = cs;
+  if (Object.keys(rest).length > 0) {
+    return { ...patches, client_state: { ...patches.client_state, [SINGLETON_KEY]: rest } };
+  }
+  const { [SINGLETON_KEY]: _doc, ...otherDocs } = patches.client_state;
+  const { client_state: _table, ...otherTables } = patches;
+  if (Object.keys(otherDocs).length > 0) {
+    return { ...otherTables, client_state: otherDocs };
+  }
+  return Object.keys(otherTables).length > 0 ? otherTables : undefined;
+}
+
+// Actions carrying user-authored content that MUST reach the server — losing
+// one silently drops something the user typed. These are never given up on:
+// they ride the outbox until the server acknowledges them, however many
+// reloads/outages that takes. The boot cap only bounds low-stakes bookkeeping
+// writes (dismiss, client_state) whose loss is recoverable and which must not
+// slow every page load forever if permanently broken. dispatch.sendMessage
+// dedups on client_id, so unbounded retry is safe.
+export const MUST_DELIVER_ACTIONS = new Set([
+  "sendMessage",
+  "addComment",
+  "editComment",
+  "deleteComment",
+  "askAgentInThread",
+  // A chat line is user-authored content on the same terms. chat.sendMessage
+  // dedupes on client_id (and refuses to wake an anchor twice for it), so
+  // re-driving it forever is safe.
+  "dispatchChatSend",
+]);
+
+// Fork creates ride convCommand, so the action name alone can't mark them —
+// but they carry the same "user-authored intent" stakes as a send: giving one
+// up silently strands a fork stub the user is already working in. Safe to
+// retry forever: forkFromMessage dedups on session_id.
+const isForkCreateEntry = (entry: OutboxEntry): boolean =>
+  entry.action === "convCommand" && Array.isArray(entry.args) && entry.args[1] === "forkFromMessage";
+
+export const isMustDeliverEntry = makeIsMustDeliverEntry(MUST_DELIVER_ACTIONS, isForkCreateEntry);
+
+// What to do with an outbox entry whose boot-time replay failed: keep it for
+// the next boot with the attempt counted, or give up at the cap. User sends
+// and fork creates are never dropped — see isMustDeliverEntry.
+export const outboxFailureDisposition = makeOutboxFailureDisposition(isMustDeliverEntry);
+
+// Comment commands were briefly persisted with their optimistic payload as
+// `result`, before receiptAsyncAction added an envelope. New servers still
+// return a V2 command receipt for those rows. Interpret a terminal rejection
+// during replay so an upgraded client does not acknowledge it as success and
+// leave the optimistic comment protected forever.
+const LEGACY_RECEIPT_ACTIONS = new Set([
+  "addComment",
+  "editComment",
+  "deleteComment",
+  "askAgentInThread",
+]);
+
+// Repeated writes that rewrite the same logical value each time (full-value
+// LWW per key). The outbox keeps at most one row per derived key: a newer
+// enqueue replaces the older row instead of appending. This makes write floods
+// structurally unable to grow the durable queue — a resize loop enqueues one
+// row, not thousands. Only register actions whose args carry the COMPLETE new
+// value for the key; partial-field updates (e.g. updateTab) must never
+// coalesce, since dropping the older row would drop the older fields.
+export const OUTBOX_COALESCE_KEYS: Record<string, (args: any[]) => string | null> = {
+  updateClientLayout: (args) =>
+    typeof args[0] === "string" ? `updateClientLayout:${args[0]}` : null,
+  updateClientDismissed: (args) =>
+    typeof args[0] === "string" ? `updateClientDismissed:${args[0]}` : null,
+  // A permission-mode press is a keystroke into a live pane, not a value: a
+  // burst parked during a rewire window (boot, HMR) and drained later must
+  // land as ONE press, not walk the session several modes past where the
+  // user last saw it (five presses drained at once on 2026-09-12). A press
+  // already in flight is unaffected; only queued rows collapse.
+  convCommand: (args) =>
+    typeof args[0] === "string" && args[1] === "setPermissionMode" ? `setPermissionMode:${args[0]}` : null,
+  // Record and Stop for a room: the args are the room's whole wanted state,
+  // so Record, Stop, Record pressed while offline is one queued row (the
+  // last), not three presses replayed in turn into a room being filmed.
+  setRoomRecording: (args) => (typeof args[0] === "string" ? `setRoomRecording:${args[0]}` : null),
+  // A label's args are its whole wanted state (verdict and note), so a burst
+  // of presses on one decision queued offline lands as the last one.
+  labelDecision: (args) => (typeof args[0] === "string" && typeof args[1] === "string" ? `labelDecision:${args[0]}:${args[1]}` : null),
+};
+
+export function outboxCoalesceKeyFor(action: string, args: any[]): string | null {
+  return engineOutboxCoalesceKeyFor(action, args, OUTBOX_COALESCE_KEYS);
+}
+
+// ---------------------------------------------------------------------------
+// Receipt continuations — the follow-up work a create asks for once the server
+// acknowledges its command (navigate to the new row, attach conversations to
+// the new bucket).
+// ---------------------------------------------------------------------------
+
+function durableCreateContinuation(
+  actionName: string,
+  localResult: unknown,
+): DurableCreateContinuation | null {
+  if (!localResult || typeof localResult !== "object") return null;
+  const raw = (localResult as { continuation?: unknown }).continuation;
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Partial<DurableCreateContinuation>;
+  if (candidate.version !== 1) return null;
+
+  if (
+    candidate.kind === "navigate" &&
+    (actionName === "createDoc" ||
+      actionName === "createPlan" ||
+      actionName === "createProject")
+  ) {
+    return { version: 1, kind: "navigate" };
+  }
+
+  if (
+    candidate.kind === "assignBucket" &&
+    actionName === "createBucket" &&
+    Array.isArray(candidate.conversationIds)
+  ) {
+    const conversationIds = [...new Set(candidate.conversationIds)]
+      .filter((id): id is string => typeof id === "string" && id.length > 0)
+      .slice(0, 100);
+    if (conversationIds.length > 0) {
+      return { version: 1, kind: "assignBucket", conversationIds };
+    }
+  }
+
+  if (
+    candidate.kind === "attachToInitiative" &&
+    actionName === "createProject" &&
+    typeof candidate.initiativeId === "string" &&
+    candidate.initiativeId
+  ) {
+    return { version: 1, kind: "attachToInitiative", initiativeId: candidate.initiativeId };
+  }
+  return null;
+}
+
+function acknowledgedNavigationHref(
+  actionName: string,
+  result: unknown,
+): string | null {
+  if (!result || typeof result !== "object") return null;
+  const value = result as Record<string, unknown>;
+  if (actionName === "createDoc" && typeof value.id === "string" && value.id) {
+    return `/docs/${encodeURIComponent(value.id)}`;
+  }
+  if (
+    actionName === "createPlan" &&
+    typeof value.short_id === "string" &&
+    value.short_id
+  ) {
+    return `/plans/${encodeURIComponent(value.short_id)}`;
+  }
+  if (
+    actionName === "createProject" &&
+    typeof value.id === "string" &&
+    value.id
+  ) {
+    return `/projects/${encodeURIComponent(value.id)}`;
+  }
+  return null;
+}
+
+const RECEIPT_CONTINUATIONS: ReceiptContinuations = {
+  resolve: durableCreateContinuation,
+  apply: ({ actionName, continuation, serverResult, commandId, getState }) => {
+    const resolved = continuation as DurableCreateContinuation;
+
+    if (resolved.kind === "assignBucket") {
+      const handler = getState()?._handleReceiptAcknowledgement;
+      if (
+        !serverResult ||
+        typeof serverResult !== "object" ||
+        typeof (serverResult as { bucketId?: unknown }).bucketId !== "string" ||
+        !(serverResult as { bucketId: string }).bucketId
+      ) {
+        throw new Error(
+          "Acknowledged createBucket receipt is missing its bucket id",
+        );
+      }
+      if (typeof handler !== "function") {
+        throw new Error("Create-label continuation runtime is unavailable");
+      }
+      handler(actionName, resolved, serverResult, commandId);
+      return true;
+    }
+
+    if (resolved.kind === "attachToInitiative") {
+      const handler = getState()?._handleReceiptAcknowledgement;
+      const id = (serverResult as { id?: unknown } | null)?.id;
+      if (typeof id !== "string" || !id) {
+        throw new Error("Acknowledged createProject receipt is missing its project id");
+      }
+      if (typeof handler !== "function") {
+        throw new Error("Create-project continuation runtime is unavailable");
+      }
+      handler(actionName, resolved, serverResult, commandId);
+      return true;
+    }
+
+    const href = acknowledgedNavigationHref(actionName, serverResult);
+    if (!href) {
+      throw new Error(
+        `Acknowledged ${actionName} receipt is missing its navigation id`,
+      );
+    }
+    if (typeof window === "undefined" || !window.location) {
+      throw new Error("Create navigation runtime is unavailable");
+    }
+    if (window.location.pathname === href) return true;
+
+    // Seed local state BEFORE moving the view, so the target page paints from
+    // the store on its first frame instead of waiting for the list feed to
+    // echo the create. A doc created empty also gets its collab cache seeded:
+    // the editor then mounts live with no snapshot round trip.
+    const handler = getState()?._handleReceiptAcknowledgement;
+    if (typeof handler === "function") {
+      handler(actionName, resolved, serverResult, commandId);
+    }
+    if (actionName === "createDoc") {
+      const row = (serverResult as { row?: { content?: string } }).row;
+      noteFreshDoc((serverResult as { id: string }).id, {
+        empty: !!row && !(row.content ?? "").trim(),
+      });
+    }
+
+    // Navigate in-app: push the history entry the way tabNavigate does and
+    // fire popstate, which is exactly what browser back/forward does —
+    // DashboardLayout mirrors the URL into the active tab and React Router
+    // re-matches outside the tab shell. Hook-free, so it also works during a
+    // boot replay; the pathname then proves completion and the row retires.
+    if (routerNavigate(href, "push", { tabNav: true, tabId: getState()?.activeTabId })) {
+      return true;
+    }
+    if (typeof window.location.assign !== "function") {
+      throw new Error("Create navigation runtime is unavailable");
+    }
+    // Last resort (no History API): a full navigation. Deliberately leave the
+    // row in place: the next runtime observes the target pathname, then
+    // retires the intent — a crash after navigation stays idempotent.
+    window.location.assign(href);
+    return false;
+  },
+};
+
+// ---------------------------------------------------------------------------
+// View-motion guard — the two fields that decide which conversation the user
+// is looking at. Changing either to a different conversation requires a
+// declared ViewNavSource (see viewNav.ts); an undeclared change is reverted
+// and logged instead of applied. Clearing to null is always allowed (it can't
+// teleport anyone) but still audited.
+// ---------------------------------------------------------------------------
+
+const VIEW_FIELDS = ["currentSessionId", "pendingNavigateId"] as const;
+
+// Shared verdict for both write paths (action patches and raw setState).
+// Returns the fields that must be reverted to their previous values.
+function auditViewWrites(changes: ViewGuardChange[], actionName: string): string[] {
+  // Consume unconditionally: a token declared by a write that ended up not
+  // changing the view must not linger and authorize a later unrelated write.
+  const source = consumeViewNav();
+  if (changes.length === 0) return [];
+  const revert: string[] = [];
+  for (const { field, from, to } of changes) {
+    if (source) {
+      recordNavEvent({ field: field as any, from, to, source });
+      if (field === "currentSessionId") noteViewNavApplied();
+    } else if (to == null) {
+      recordNavEvent({ field: field as any, from, to: null, source: `untracked:${actionName}` });
+    } else {
+      recordNavEvent({ field: field as any, from, to, source: `untracked:${actionName}`, blocked: "undeclared view change" });
+      revert.push(field);
+    }
+  }
+  return revert;
+}
+
+const VIEW_GUARD: ViewGuard = {
+  fields: [...VIEW_FIELDS],
+  audit: auditViewWrites,
+};
+
+// ---------------------------------------------------------------------------
+// Undo — the engine records every action with a spec (store/undo/policy.ts)
+// and replays the prior values through the same pipeline. What it needs from
+// the store itself (moving the conversation pointer, the bridge's user id)
+// the store hands over once it exists, through bindUndoStore: importing the
+// store here would be an evaluation-time cycle.
+// ---------------------------------------------------------------------------
+
+type UndoStoreBinding = {
+  /** Re-point the conversation pointer and the inbox tab at a restored view. */
+  restoreView: (draft: any, field: string, value: unknown) => void;
+  /** The signed-in user the gesture bridge stamps on its messages. */
+  bridgeUserId: () => string | null;
+};
+
+let undoStoreBinding: UndoStoreBinding | null = null;
+
+export function bindUndoStore(binding: UndoStoreBinding): void {
+  undoStoreBinding = binding;
+}
+
+// Never captured: this window's own state, sync bookkeeping, and server-fed
+// projections no gesture writes. Everything else an undoable action touches
+// is a cell (local-first keys are conflict-checked; the rest are mirrors).
+export const UNDO_IGNORE_KEYS: ReadonlySet<string> = new Set([
+  ...Object.entries(REPLICATION_CLASSIFICATION)
+    .filter(([, scope]) => scope === "local")
+    .map(([key]) => key),
+  "pending",
+  "syncMeta",
+  "clientState",
+  "currentUser",
+  "pagination",
+  "messages",
+  ...REPLICATED_EPHEMERAL_KEYS,
+  "liveRooms",
+  "liveInboxIdList",
+  "teamInboxIdSnapshot",
+  "sessionMetricsAggregate",
+  "pendingPermissions",
+  "pendingMessageStatus",
+  "messageFeed",
+  "machineRoster",
+  "_lastViewedAt",
+  "_seenUpToAt",
+  "_seenMessageCount",
+]);
+
+const BRIDGED_FIELD_SET: ReadonlySet<string> = new Set(BRIDGED_FIELDS);
+
+// Set by beforeReplay, read by the afterReplay of the same synchronous replay.
+let replayBridgeTs = 0;
+
+const UNDO_CONFIG: UndoConfig = {
+  specs: UNDO_SPECS,
+  replayAction: "applyUndoPatches",
+  writers: UNDO_WRITERS,
+  // The UI bag stamps each key it writes for cross-device LWW; an undo of the
+  // inbox order restamps it, so the restored order is the newest write.
+  stampFields: new Set(["updated_at", "inbox_manual_order:ts"]),
+  // A created row's echo carries the server's own created_at (a bookmark).
+  serverAssignedFields: new Set(["created_at"]),
+  // archiveDoc deletes the row here, but the server keeps it with archived_at
+  // set and the sync log delivers it that way (docs.webGetByIds), so an
+  // archived doc that synced back is still the archive the undo takes back.
+  tombstone: (store, row) => (store === "docs" || store === "docDetails") && (row as { archived_at?: unknown } | undefined)?.archived_at != null,
+  ignoreKeys: UNDO_IGNORE_KEYS,
+  beforeReplay: () => {
+    // The bridge stamp predates the replay's dispatch: a sibling's
+    // acknowledgement skips a lock newer than the send it acknowledges.
+    replayBridgeTs = Date.now();
+    declareViewNav("undo");
+  },
+  restoreView: (draft, field, value) => undoStoreBinding?.restoreView(draft, field, value),
+  afterReplay: (entry, dir, applied, how) => {
+    // A redo that re-ran the original action announced its own gesture.
+    if (how === "reinvoke") return;
+    // Tell sibling windows the exact values the replay wrote to the bridged
+    // fields (an undo's restore, or a redo's field restore), one message per
+    // row under one timestamp. The message is exact: these are the values the
+    // replay dispatched, so a sibling locks only them and the replay's
+    // acknowledgement retires every one.
+    const byId = new Map<string, Partial<Record<BridgedField, number | boolean | null>>>();
+    for (const cell of applied) {
+      if ((cell.store !== "sessions" && cell.store !== "conversations") || !cell.field) continue;
+      if (!BRIDGED_FIELD_SET.has(cell.field)) continue;
+      const value = cell.before === undefined ? null : cell.before;
+      if (value !== null && typeof value !== "number" && typeof value !== "boolean") continue;
+      const fields = byId.get(cell.id) ?? {};
+      fields[cell.field as BridgedField] = value;
+      byId.set(cell.id, fields);
+    }
+    // Rows the forward forgot (a teammate's row, a stub) come back whole.
+    // Siblings that applied the forget hold excludes that drop every later
+    // push of them, so they get the rows themselves.
+    const readded = new Map<string, { id: string; sessions?: Record<string, unknown>; conversations?: Record<string, unknown> }>();
+    for (const cell of applied) {
+      if ((cell.store !== "sessions" && cell.store !== "conversations") || cell.field !== undefined) continue;
+      if (!cell.hadBefore || cell.hadAfter || !cell.before || typeof cell.before !== "object") continue;
+      const row = readded.get(cell.id) ?? { id: cell.id };
+      row[cell.store] = cell.before as Record<string, unknown>;
+      readded.set(cell.id, row);
+    }
+    if (byId.size > 0 || readded.size > 0) {
+      const ts = replayBridgeTs || Date.now();
+      const userId = undoStoreBinding?.bridgeUserId() ?? null;
+      if (readded.size > 0) broadcastGesture({ kind: "unforget", rows: [...readded.values()], ts }, userId);
+      for (const [id, fields] of byId) broadcastGesture({ kind: "fields", id, fields, exact: true, ts }, userId);
+    }
+    if (dir === "undo") runUndoRevert(entry, applied);
+  },
+};
+
+// The middleware reads only `registry` and the hook fields from this config.
+// dbName/dbVersion/syncRegistry belong to the persistence and sync stages of
+// the engine, which codecast still wires through its own idbCache/inboxStore —
+// they are placeholders until those layers move over too.
+const CODECAST_PLATFORM_CONFIG: PlatformConfig = {
+  dbName: "codecast",
+  dbVersion: 0,
+  registry: CLIENT_SYNC_REGISTRY as any,
+  syncRegistry: {},
+  mustDeliverActions: MUST_DELIVER_ACTIONS,
+  mustDeliverExtra: isForkCreateEntry,
+  legacyReceiptActions: LEGACY_RECEIPT_ACTIONS,
+  outboxCoalesceKeys: OUTBOX_COALESCE_KEYS,
+  transformReplayPatches: stripStalePointerFromReplay,
+  viewGuard: VIEW_GUARD,
+  receiptContinuations: RECEIPT_CONTINUATIONS,
+  undo: UNDO_CONFIG,
+  // The undo guard's null-equals-absent fields: a loaded conversation's meta
+  // is the raw doc, which leaves a cleared stamp out.
+  optionalClearFields: OPTIONAL_INBOX_TIMESTAMPS,
+  storageWatchdogHint:
+    'check for IndexedDB errors or a Dexie "blocked" warning above; a slow write alone does not identify the cause',
+};
+
+export function mutativeMiddleware(
+  config: any,
+  opts?: Omit<MiddlewareOptions, "registryMaps">,
+): any {
+  const middleware = engineMutativeMiddleware(config, CODECAST_PLATFORM_CONFIG, {
+    ...opts,
+    registryMaps: REGISTRY_MAPS,
+  });
+  return (set: any, get: any, api: any) => middleware((next: any, replace?: boolean) => {
+    const previous = get();
+    const value = typeof next === "function" ? next(previous) : next;
+    if (previous?.pendingMessages && value?.pendingMessages && previous.pendingMessages !== value.pendingMessages) {
+      try {
+        persistPendingMessageChanges(previous.pendingMessages, value.pendingMessages, previous.currentUser?._id);
+      } catch (error) {
+        captureException(error, { tags: { source: "pending-input-save" } });
+        throw new Error("Your message could not be saved on this device. Keep this window open and try again.", { cause: error });
+      }
+    }
+    set(value, replace);
+  }, get, api);
+}

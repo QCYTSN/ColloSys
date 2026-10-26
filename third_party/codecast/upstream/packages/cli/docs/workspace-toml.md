@@ -1,0 +1,261 @@
+# `.codecast/workspace.toml` reference
+
+The manifest describes how `cast workspace acquire` turns a fresh git worktree
+into a working environment. Every field is optional: detection fills in what it
+can infer from lockfiles and conventional files, and the manifest overrides it.
+
+Generate a starting point with `cast workspace init`, which writes the detected
+values into the file.
+
+Precedence is per field. A field the file sets non-empty replaces detection's
+value for that field; a field the file omits keeps detection's.
+
+## `[setup]`
+
+Four lists run in order after the worktree is created: `copy`, then `install`,
+`generate`, `migrate`. `share` is not a command list — it is applied before all
+of them, right after `git worktree add`.
+
+```toml
+[setup]
+copy = [".env", ".env.local", "certs"]
+share = ["node_modules", ".venv"]
+install = ["bun install"]
+generate = ["bun run codegen"]
+migrate = ["bun run db:migrate"]
+```
+
+### `copy` — gitignored files the worktree gets its own copy of
+
+Paths relative to the main checkout. Use it for the files a worktree must own:
+`.env`, credentials, local certificates. A missing source is skipped, and a file
+already present in the worktree is never overwritten.
+
+The repo-root `.wt-setup-files` convention is still the include list: when that
+file exists, detection reads its lines (one path per line, `#` comments allowed)
+into `copy`. Write the manifest's `copy` only to override it.
+
+On macOS the bytes are cloned rather than written. APFS gives the worktree a
+copy-on-write view of the same blocks, so copying a large credential directory
+costs no time and no disk. A filesystem without reflinks — and every other
+platform — falls back to a plain copy, so behaviour is identical either way.
+
+### `share` — gitignored directories the worktree borrows
+
+Each entry is symlinked from the main checkout into the same relative path in
+the worktree, so one install serves every worktree instead of each paying for
+its own. Detection offers `node_modules`, `.venv`, `venv` and `vendor` when they
+qualify.
+
+An entry is only shared when it:
+
+- exists in the main checkout as a directory,
+- is gitignored there — a tracked directory is already materialized by the
+  checkout, and a symlink at an unignored path reads as a worktree diff,
+- names a path inside the repo — an absolute path or a `..` hop is refused,
+- holds no symlinks pointing back into the repo outside the shared directory
+  itself.
+
+That last rule is why a monorepo's `node_modules` is usually **not** shared. A
+package manager links workspace packages relatively
+(`node_modules/@scope/web -> ../../packages/web`), and those links resolve from
+the real directory: inside a worktree they reach the MAIN checkout's source with
+no error, so a test run there mixes two trees at once. Codecast's own repo has
+that shape, so detection offers nothing there and each worktree installs its own
+dependencies.
+
+Only dependency installs belong here, never build outputs. Two worktrees hold
+different code, so a shared `target/` or `dist/` would have them overwrite each
+other's artifacts.
+
+An entry the worktree already has as a real directory is left alone.
+
+Destroying a workspace removes these links first. A directory-only ignore rule
+(`node_modules/`) matches the main checkout's real directory but never the
+worktree's symlink, so git reports the link as untracked and refuses to remove
+the worktree without `--force`.
+
+### Approval — what runs needs a person's yes
+
+`install`, `generate`, `migrate` and `[teardown] run` are shell commands from a
+file in the repo, and the scripts in `.codecast/hooks/` are the same thing in
+script form. A pull can change any of them, and the next acquire would run the
+new version with no prompt.
+
+So codecast records a sha256 of each hook script and each command list the
+first time a person acquires the workspace, and refuses every acquire after one
+of them changes. The refusal names the file and shows the lines that differ.
+Review the change, then approve it:
+
+```
+cast ws trust             # approve everything as it is on disk now
+cast ws trust --list      # what is approved, and what changed
+cast ws trust after-create   # approve one script or slot
+cast ws trust --revoke    # forget every approval for this repo
+```
+
+`cast ws acquire --trust` approves and acquires in one step.
+
+Two rules make the record worth keeping. An agent-driven acquire — the daemon
+creating a worktree for a session, the warm pool building a slot, any `cast`
+run inside an agent session — never approves anything by itself; it gets the
+same refusal until a person runs `cast ws trust`. And the record lives in
+`~/.codecast/workspace-trust.json`, never in the repo, so nothing in the repo
+can approve itself in the commit that changed it.
+
+Commands that come from detection rather than from this file need no approval:
+a `bun install` inferred from a lockfile is codecast's, not the repo's.
+
+## `[ports.<name>]`
+
+A named port per workspace, exported as `PORT_<NAME>`. The actual port is
+`base + resourceIndex * range`; keep `range` at 100 or more so neighbouring
+workspaces never collide.
+
+```toml
+[ports.web]
+base = 3000
+range = 100
+```
+
+Allocation starts with ten indices and can extend by ten up to three times.
+Acquire reports the extension and names reservation holders if every candidate
+is taken. Missing worktrees and deleted branches stop reserving ports, except
+while an operation owns them; the main checkout always keeps its reservation.
+
+Use `cast ws acquire <name> --no-ports` for a worker that needs no dev-server
+ports. This skips the warm pool, stores the choice, and allocates no named
+ports on later acquire or heal calls. `cast ws status <name>` shows the choice.
+
+## `[services.<name>]`
+
+A server the workspace runs, started on demand by `cast dev` in whatever
+checkout it is typed in (a worktree, the main checkout, a cloud host). `mode =
+"shared"` points every workspace at one instance and requires `url`; `mode =
+"isolated"` runs one per checkout and requires `start`.
+
+`start` runs with `bash -c` from the checkout root, detached, with its output in
+a log (`cast dev logs`). `port` names the port it listens on (`"web"` or
+`"$PORT_WEB"`): inside a workspace that is the port `[ports.<name>]` allocated;
+elsewhere `cast dev` takes the first free port from that entry's `base` (else
+3000). Both `PORT_<NAME>` and `PORT` hold it. `ready_check` (`http:<port>/path`
+or `tcp:<port>`, `$VARS` expanded) decides when it is up; the default is any HTTP
+answer at `/`. `stop` is optional: `cast dev stop` ends the process group either
+way.
+
+When no `[services.web]` is declared, detection supplies one for a web framework
+app (Vite, Next, Astro, Remix, SvelteKit, Nuxt, Angular, Vue CLI) at the root or
+under `packages/` or `apps/` whose `package.json` has a `dev` script:
+`cd packages/web && bun run dev --port "$PORT_WEB"`.
+
+```toml
+[services.web]
+mode = "isolated"
+start = "cd packages/web && bunx vite --port \"$PORT_WEB\" --strictPort"
+port = "web"
+ready_timeout_sec = 180
+
+[services.db]
+mode = "isolated"
+start = "pg_ctl start"
+stop = "pg_ctl stop"
+port = "$PORT_DB"
+ready_check = "tcp:$PORT_DB"
+```
+
+## `[env]`
+
+Static environment variables exported into every setup command and hook.
+
+```toml
+[env]
+NODE_ENV = "development"
+```
+
+Codecast exports its own names on top of these, and those always win — a
+manifest cannot redefine them. A hook script gets `CODECAST_HOOK`,
+`CODECAST_ROOT_PATH` (the main checkout the worktree was cut from),
+`CODECAST_WORKTREE_PATH`, `CODECAST_WORKTREE_NAME`, `CODECAST_BRANCH`,
+`CODECAST_RESOURCE_INDEX`, `CODECAST_PARENT_BRANCH`, and both
+`CODECAST_PORT_<NAME>` and `PORT_<NAME>` for every named port.
+
+## `[teardown]`
+
+Commands run when the workspace is destroyed, before the worktree is removed.
+
+Destroy renames the worktree to a `_trash-<uuid>` sibling and releases its Git
+registration and port reservations. The files remain there for at least five
+minutes; later workspace operations sweep expired trash. If the rename fails,
+destroy stops and retains the worktree and reservation for retry. Destroying
+the main checkout's workspace record only releases its state and ports.
+
+```toml
+[teardown]
+run = ["docker compose down"]
+```
+
+## `[verify]`
+
+The repo's check command. `cast workspace check` runs it in the current
+directory (a worktree, usually) and exits with its status; the line's verify
+station runs it between implement and review (docs/architecture/the-line.md
+L1). Leave the table out and `cast workspace check` passes with a note that
+nothing is configured.
+
+```toml
+[verify]
+command = "bun run typecheck && bun test"
+```
+
+## `[browser]`
+
+A Chromium instance bound to the workspace, off by default. `allow` is the list
+of origins `cast browser` may navigate to from this project; omitting it means
+no policy, and an empty list refuses every site. A browser that does not start
+within a minute leaves the workspace without one and prints why; the worktree
+itself is still created.
+
+```toml
+[browser]
+enabled = true
+headless = true
+allow = ["https://app.example.com"]
+
+[browser.cdp_port]
+base = 9222
+range = 100
+```
+
+## `[host]`
+
+Machine-level setup for a cloud host: what the repo needs installed and running there beyond the tools codecast installs itself. Every wake and placement applies it once per change (the host stamps a hash of it in `~/.codecast/host-setup.json`), before any worktree is acquired, so a new host and a changed spec both converge. A person's own needs go in the same table in `~/.codecast/host.toml` and merge with the repo's.
+
+```toml
+[host]
+packages = ["postgresql", "redis-server"]    # apt packages
+services = ["redis-server", "postgresql"]    # systemd units, enabled and started
+run = ["sudo -u postgres createuser -s ubuntu || true"]   # from the checkout, in order; each must be safe to run again
+```
+
+A failed step is reported with its output and retried on the next wake; it never stops a session. `cast hosts setup [id] [--force]` applies it by hand.
+
+## `[sync]`
+
+What travels between the laptop and a cloud host when a session starts there and while its folder is kept in step (`cloud/syncSide.ts`). By default the whole working folder travels, gitignored files like `.env` included, since both machines are the person's own. What stays on its own machine, each for a reason `cast sync status` names: dependency and build folders the host rebuilds (`node_modules`, `.venv`, `target`, `dist`, `dist-*`, `.next`, …), untracked audio and video (renders, recordings), untracked compiled programs (they run only where they were built), an untracked file over 100 MB, the largest untracked files while the lot is over 1 GB, files a running process owns (sockets, database journals), nested repositories, and per-machine folders (codecast's worktrees and logs, other agent tools' worktrees, a local Convex backend). A tracked file always travels. This table adjusts that for the repo:
+
+```toml
+[sync]
+always = ["fixtures/big.bin", "node_modules/@local"]   # travel even where a default would leave them
+never = ["data/local.db", "*.sqlite"]                  # stay on their own machine
+```
+
+A pattern with no `/` matches a name at any depth; `**` crosses folders. A person's own patterns go in `cast config sync_always` and `cast config sync_never` (comma-separated) and add to the repo's. Anything that stayed behind can still be fetched on request: `cast sync pull <path>`.
+
+## `backend`
+
+Which substrate the workspace runs on: `local` (a git worktree here), `e2b` or
+`mac`. See [workspace-backends.md](./workspace-backends.md).
+
+```toml
+backend = "local"
+```

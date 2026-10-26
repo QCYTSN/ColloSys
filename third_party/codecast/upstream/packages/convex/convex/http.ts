@@ -1,0 +1,5364 @@
+import { httpRouter } from "convex/server";
+import { ConvexError } from "convex/values";
+import { unsubscribeResponse } from "@platform/email";
+import { httpAction } from "./_generated/server";
+import { BRAND } from "./emails/render";
+import { auth } from "./auth";
+import { internal, api } from "./_generated/api";
+import { callback as googleOAuthCallback, GOOGLE_CALLBACK_PATH } from "./googleOAuth";
+import { callback as connectorCallback, CONNECTOR_CALLBACK_PATH } from "./oauthConnectors";
+import { installCallbackHandler } from "./githubApp";
+import { verifyLinearSignature, linearDeliveryId } from "./linearWebhooks";
+import { readConversationRange } from "./conversations";
+import { SHARED_CALL_VIDEO_PATH, signForCli } from "./callRecordings";
+import { callRecordingGetUrl } from "./lib/r2";
+import { ipRateLimited } from "./lib/httpRateLimit";
+import { CLI_ERROR_STATUS } from "./lib/cliErrorStatus";
+import { INGEST_PREFIXES, ingestPreflight, ingestServe } from "./ingestHttp";
+import { publishedKeys } from "./lib/codecastSigning";
+import { CODECAST_KEYS_PATH } from "@codecast/shared/contracts/codecastSignature";
+import { REPLAY_CHUNK_PATH, REPLAY_FRAME_ADMIT_PATH, REPLAY_PLAYER_MANIFEST_PATH, REPLAY_SIGN_PREFIXES, replayChunk, replayChunkPreflight, replayFrameAdmit, replayPlayerManifest, replayPlayerManifestPreflight, replaySign } from "./replaysHttp";
+import { signReplayChunks } from "./replays";
+import { hmacSha256Hex, timingSafeEqualHex } from "./lib/hmac";
+import { handleFaceRequest } from "./callFace";
+import { sentryWebhook, setEventGroupStatus } from "./sources/sentry";
+import { STRIPE_WEBHOOK_PATH, stripeWebhook } from "./billing";
+import { claimFrontier } from "./taskFrontier";
+import {
+  serve as repoPublicServe,
+  preflight as repoPublicPreflight,
+  PUBLIC_REPO_PREFIXES as repoPublicPrefixes,
+} from "./repoPublicHttp";
+
+const http = httpRouter();
+
+auth.addHttpRoutes(http);
+
+// IP-keyed rate limit for an unauthenticated HTTP route. Returns a 429 Response to
+// short-circuit the handler when the caller's IP exceeds the window, else null.
+// Fail-open: a limiter error never blocks the route (availability > strictness).
+// The body moved to lib/httpRateLimit so the public repository route can use the
+// same limiter instead of carrying a second copy of it.
+
+
+// Google OAuth callback (Gmail connector). GET because Google redirects the
+// browser here; the handler validates state and closes the popup.
+http.route({
+  path: GOOGLE_CALLBACK_PATH,
+  method: "GET",
+  handler: googleOAuthCallback,
+});
+// Linear, Notion, and any provider added to oauthConnectors.PROVIDERS share
+// one callback: the signed state carries the provider.
+http.route({
+  path: CONNECTOR_CALLBACK_PATH,
+  method: "GET",
+  handler: connectorCallback,
+});
+
+http.route({
+  path: "/cli/exchange-token",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      // Brute-force guard: a setup token is one-shot + TTL-bound, so 20 exchange
+      // attempts/min per IP is far above any legitimate use and caps guessing.
+      const limited = await ipRateLimited(ctx, request, "exchange-token", 20, 60_000);
+      if (limited) return limited;
+
+      const body = await request.json();
+      const setupToken = body.token;
+
+      if (!setupToken) {
+        return new Response(JSON.stringify({ error: "Missing token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // The redeeming machine's device id binds the long lived token it gets
+      // back. An older CLI sends none and gets an unbound token, as before.
+      const result = await ctx.runMutation(internal.apiTokens.exchangeSetupToken, {
+        setupToken,
+        device_id: typeof body.device_id === "string" ? body.device_id : undefined,
+      });
+
+      if (!result) {
+        return new Response(JSON.stringify({ error: "Invalid or expired token" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/exchange-token",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// Polled by `cast auth` while it waits on its localhost listener, so auth
+// also completes for CLIs the browser can't reach (SSH / remote machines).
+// The nonce is the CLI's one-time 256-bit secret; a claim is single-use.
+http.route({
+  path: "/cli/claim-auth",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const nonce = body.nonce;
+
+      if (!nonce || typeof nonce !== "string") {
+        return new Response(JSON.stringify({ error: "Missing nonce" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(internal.cliAuth.claim, { nonce });
+
+      // "Not deposited yet" is the normal polling answer, not an error.
+      if (!result) {
+        return new Response(JSON.stringify({ pending: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/claim-auth",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// The install callback lives in githubApp.ts beside the intents it spends, so
+// a test can drive the real handler.
+http.route({
+  path: "/api/github-app/callback",
+  method: "GET",
+  handler: httpAction(installCallbackHandler),
+});
+
+http.route({
+  path: "/api/webhooks/github-app",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const signature = request.headers.get("X-Hub-Signature-256");
+    const deliveryId = request.headers.get("X-GitHub-Delivery");
+    const eventType = request.headers.get("X-GitHub-Event");
+
+    if (!deliveryId || !eventType) {
+      return new Response(JSON.stringify({ error: "Missing required headers" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const body = await request.text();
+    const webhookSecret = process.env.GITHUB_APP_WEBHOOK_SECRET;
+
+    // Fail CLOSED. The old `if (webhookSecret && signature)` skipped verification
+    // entirely when the secret was unconfigured or the signature header absent —
+    // i.e. it processed unsigned payloads. A missing secret or signature must reject.
+    if (!webhookSecret) {
+      console.error("[github-app webhook] GITHUB_APP_WEBHOOK_SECRET not configured; refusing webhook");
+      return new Response(JSON.stringify({ error: "Webhook not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (!signature) {
+      return new Response(JSON.stringify({ error: "Missing signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const expectedSignature = "sha256=" + (await hmacSha256Hex(webhookSecret, body));
+
+    if (!timingSafeEqualHex(signature, expectedSignature)) {
+      return new Response(JSON.stringify({ error: "Invalid signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const payload = JSON.parse(body);
+
+    if (eventType === "installation") {
+      const action = payload.action;
+      const installationId = payload.installation?.id;
+
+      if (action === "deleted" && installationId) {
+        await ctx.runMutation(internal.githubApp.removeInstallation, {
+          installation_id: installationId,
+        });
+      } else if (action === "suspend" && installationId) {
+        await ctx.runMutation(internal.githubApp.suspendInstallation, {
+          installation_id: installationId,
+          suspended_at: Date.now(),
+        });
+      } else if (action === "unsuspend" && installationId) {
+        await ctx.runMutation(internal.githubApp.unsuspendInstallation, {
+          installation_id: installationId,
+        });
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (eventType === "installation_repositories") {
+      const installationId = payload.installation?.id;
+      if (installationId) {
+        const repo = (r: any) => ({ id: r.id, name: r.name, full_name: r.full_name });
+        const applied = await ctx.runMutation(internal.githubApp.applyInstallationRepositoriesEvent, {
+          installation_id: installationId,
+          repository_selection: payload.repository_selection,
+          added: (payload.repositories_added ?? []).map(repo),
+          removed: (payload.repositories_removed ?? []).map(repo),
+        });
+        if (applied.team_id && applied.added.length > 0) {
+          await ctx.scheduler.runAfter(0, internal.githubApp.backfillInstallationPulls, {
+            installation_id: installationId,
+            repositories: applied.added,
+          });
+        }
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Every kind a processor in githubWebhooks.ts consumes. The check events
+    // need the App's "checks" permission; until it is granted GitHub simply
+    // never sends them, and nothing here changes.
+    if ([
+      "pull_request",
+      "push",
+      "issues",
+      "issue_comment",
+      "pull_request_review",
+      "pull_request_review_comment",
+      "pull_request_review_thread",
+      "check_run",
+      "check_suite",
+      "status",
+      "workflow_run",
+    ].includes(eventType)) {
+      const action = payload.action;
+      const result = await ctx.runMutation(internal.githubWebhooks.storeWebhookEvent, {
+        delivery_id: deliveryId,
+        event_type: eventType,
+        action,
+        payload: body,
+      });
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ success: true, ignored: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+// Sentry issue and alert hooks (external-data.md X2, X7): verified, deduped by
+// Request-ID and scheduled in sources/sentry.ts, so a test drives the real
+// handler.
+http.route({ path: "/api/webhooks/sentry", method: "POST", handler: sentryWebhook });
+// Stripe: plans, top-ups and renewals onto the wallet (billing.ts).
+http.route({ path: STRIPE_WEBHOOK_PATH, method: "POST", handler: stripeWebhook });
+
+// Linear webhooks (issue sync, docs/architecture/issue-sync.md S6). Same shape
+// as the GitHub App route above: verify the raw body, refuse anything we cannot
+// verify, hand the payload to a mutation that dedupes and schedules, answer 200
+// fast. Linear retries a non-2xx and disables an endpoint that keeps failing, so
+// nothing slow or fallible belongs in this handler.
+// An agent's voice in a call (infra/call-face-worker) reaches its session here.
+http.route({
+  path: "/calls/face",
+  method: "POST",
+  // Read at call time: callFace sits in a cycle with transcripts, so its
+  // binding is not ready while this module loads.
+  handler: httpAction((ctx, request) => handleFaceRequest(ctx, request)),
+});
+
+http.route({
+  path: "/api/webhooks/linear",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const rawBody = await request.text();
+    const secret = process.env.LINEAR_WEBHOOK_SECRET;
+
+    // Missing secret is OUR misconfiguration, not a bad caller: 500 asks Linear
+    // to retry once it is set, where a 401 would tell it to give up for good.
+    if (!secret) {
+      console.error("[linear webhook] LINEAR_WEBHOOK_SECRET not configured; refusing webhook");
+      return new Response(JSON.stringify({ error: "Webhook not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (!(await verifyLinearSignature(rawBody, request.headers.get("linear-signature"), secret))) {
+      return new Response(JSON.stringify({ error: "Invalid signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    let payload: any;
+    try {
+      payload = JSON.parse(rawBody);
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Replay window. The signature alone would let a captured delivery be
+    // replayed forever; Linear signs the timestamp INTO the body, so a stale
+    // one cannot be rewritten without breaking the HMAC.
+    const ts = Number(payload?.webhookTimestamp);
+    if (!Number.isFinite(ts) || Math.abs(Date.now() - ts) > 60_000) {
+      return new Response(JSON.stringify({ error: "Stale timestamp" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    const deliveryId = linearDeliveryId(payload);
+    const result = await ctx.runMutation(internal.linearWebhooks.storeWebhookEvent, {
+      delivery_id: deliveryId,
+      event_type: String(payload.type ?? "unknown"),
+      action: typeof payload.action === "string" ? payload.action : undefined,
+      payload: rawBody,
+    });
+
+    return new Response(JSON.stringify(result), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+http.route({
+  path: "/api/webhooks/github",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const signature = request.headers.get("X-Hub-Signature-256");
+      const deliveryId = request.headers.get("X-GitHub-Delivery");
+      const eventType = request.headers.get("X-GitHub-Event");
+
+      if (!signature || !deliveryId || !eventType) {
+        return new Response(JSON.stringify({ error: "Missing required headers" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const body = await request.text();
+      const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
+
+      if (!webhookSecret) {
+        console.error("GITHUB_WEBHOOK_SECRET not configured");
+        return new Response(JSON.stringify({ error: "Server configuration error" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const expectedSignature = "sha256=" + (await hmacSha256Hex(webhookSecret, body));
+
+      if (!signature || !timingSafeEqualHex(signature, expectedSignature)) {
+        return new Response(JSON.stringify({ error: "Invalid signature" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
+      const payload = JSON.parse(body);
+      const action = payload.action;
+
+      const result = await ctx.runMutation(internal.githubWebhooks.storeWebhookEvent, {
+        delivery_id: deliveryId,
+        event_type: eventType,
+        action,
+        payload: body,
+      });
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    } catch (error) {
+      console.error("Webhook processing error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/session-links",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    };
+
+    try {
+      const body = await request.json();
+      const { session_id, api_token } = body;
+
+      if (!session_id || !api_token) {
+        return new Response(JSON.stringify({ error: "Missing session_id or api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.conversations.getSessionLinks, {
+        session_id,
+        api_token,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 404,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        conversation_id: result.conversation_id,
+        dashboard_url: `https://codecast.sh/conversation/${result.conversation_id}`,
+        share_url: `https://codecast.sh/conversation/${result.conversation_id}`,
+        title: result.title,
+        slug: result.slug,
+        started_at: result.started_at,
+        team_visible: result.team_visible,
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/session-links",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/search",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, query, limit, offset, start_time, end_time, context_before, context_after, project_path, user_only, member_name, mine_only, label, titles_only } = body;
+
+      if (!api_token || !query) {
+        return new Response(JSON.stringify({ error: "Missing api_token or query" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      let team_id = undefined;
+      if (project_path) {
+        team_id = await ctx.runQuery(api.conversations.resolveTeamFromDirectory, {
+          api_token,
+          project_path,
+        }) ?? undefined;
+      }
+
+      const result = await ctx.runQuery(api.conversations.searchForCLI, {
+        api_token,
+        query,
+        limit,
+        offset,
+        start_time,
+        end_time,
+        context_before,
+        context_after,
+        project_path,
+        user_only,
+        team_id,
+        member_name,
+        mine_only,
+        label,
+        titles_only,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Search error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/search",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/read",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, conversation_id, start_line, end_line, full_content, around_message_id, context, include_file_changes, tail } = body;
+
+      if (!api_token || !conversation_id) {
+        return new Response(JSON.stringify({ error: "Missing api_token or conversation_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await readConversationRange(
+        {
+          scan: (stepArgs) => ctx.runQuery(internal.conversations.scanConversationLines, stepArgs),
+          fetch: (stepArgs) => ctx.runQuery(internal.conversations.readConversationLines, stepArgs),
+        },
+        { api_token, conversation_id, start_line, end_line, full_content, around_message_id, context, include_file_changes, tail: typeof tail === "number" ? tail : undefined },
+      );
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Conversation not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Read error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/read",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/export",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const { api_token, conversation_id, cursor, limit } = body;
+      if (!api_token || !conversation_id) {
+        return new Response(JSON.stringify({ error: "Missing api_token or conversation_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = await ctx.runQuery(api.conversations.exportConversationMessagesPage, {
+        api_token,
+        conversation_id,
+        cursor: typeof cursor === "string" ? cursor : undefined,
+        limit: typeof limit === "number" ? limit : undefined,
+      });
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Conversation not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Export error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/export",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/local-checkouts",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const { api_token, git_remote_url } = body;
+      if (!api_token || !git_remote_url) {
+        return new Response(JSON.stringify({ error: "Missing api_token or git_remote_url" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const checkouts = await ctx.runQuery(api.conversations.findUserLocalCheckouts, {
+        git_remote_url,
+        api_token,
+      });
+      return new Response(JSON.stringify({ checkouts }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/local-checkouts",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/feed",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, limit, offset, start_time, end_time, query, project_path, member_name, mine_only, live_only, state, label } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      let team_id = undefined;
+      if (project_path) {
+        team_id = await ctx.runQuery(api.conversations.resolveTeamFromDirectory, {
+          api_token,
+          project_path,
+        }) ?? undefined;
+      }
+
+      const result = await ctx.runQuery(api.conversations.feedForCLI, {
+        api_token,
+        limit,
+        offset,
+        start_time,
+        end_time,
+        query,
+        project_path,
+        team_id,
+        member_name,
+        mine_only,
+        live_only,
+        state,
+        label,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Feed error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/feed",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// Record the stable-context feed a session was started with (posted by
+// `cast stable-context` / the daemon's Codex launch). Body: { api_token,
+// conversation_id? | session_id?, data: StableContextData JSON }.
+http.route({
+  path: "/cli/stable-context",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const { api_token, conversation_id, session_id, data } = body;
+      if (!api_token || typeof data !== "string") {
+        return new Response(JSON.stringify({ error: "Missing api_token or data" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = await ctx.runMutation(api.conversations.recordStableContext, {
+        api_token,
+        conversation_id,
+        session_id,
+        data,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: error instanceof Error ? error.message : "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/stable-context",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/inbox",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, show_all, state, limit, label, project_path, session_ids } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.conversations.inboxForCLI, {
+        api_token,
+        show_all,
+        state,
+        limit,
+        label,
+        project_path,
+        session_ids: Array.isArray(session_ids) ? session_ids : undefined,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Inbox error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/inbox",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/sessions",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const { api_token, session_ids } = body;
+      if (!api_token || !session_ids) {
+        return new Response(JSON.stringify({ error: "Missing api_token or session_ids" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = await ctx.runQuery(api.conversations.getConversationsBySessionIds, {
+        api_token,
+        session_ids,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Sessions endpoint error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/sessions",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, session_id, message_index, name, note } = body;
+
+      if (!api_token || !session_id || message_index === undefined) {
+        return new Response(JSON.stringify({ error: "Missing api_token, session_id, or message_index" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.bookmarks.createFromCLI, {
+        api_token,
+        session_id,
+        message_index,
+        name,
+        note,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Bookmark create error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark/list",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, project_path, limit } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.bookmarks.listFromCLI, {
+        api_token,
+        project_path,
+        limit,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Bookmark list error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark/list",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, name, bookmark_id } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      if (!name && !bookmark_id) {
+        return new Response(JSON.stringify({ error: "Must provide name or bookmark_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.bookmarks.deleteFromCLI, {
+        api_token,
+        name,
+        bookmark_id,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Bookmark not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Bookmark delete error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/bookmark/delete",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/decisions",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, project_path, tags, search, limit, offset } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.decisions.list, {
+        api_token,
+        project_path,
+        tags,
+        search,
+        limit,
+        offset,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Decisions list error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/decisions",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/decisions/add",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, title, rationale, alternatives, session_id, message_index, tags, project_path } = body;
+
+      if (!api_token || !title || !rationale) {
+        return new Response(JSON.stringify({ error: "Missing required fields: api_token, title, rationale" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.decisions.create, {
+        api_token,
+        title,
+        rationale,
+        alternatives,
+        session_id,
+        message_index,
+        tags,
+        project_path,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Decisions add error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/decisions/add",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/decisions/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, decision_id } = body;
+
+      if (!api_token || !decision_id) {
+        return new Response(JSON.stringify({ error: "Missing required fields: api_token, decision_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.decisions.remove, {
+        api_token,
+        decision_id,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Decision not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Decisions delete error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/decisions/delete",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// `cast decide` — an agent hands its human one explicit decision (question +
+// options + context, optionally a published HTML report). Distinct from
+// /cli/decisions (the architectural decision LOG): this is a pending question.
+http.route({
+  path: "/cli/decide",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, session_id, question, options, context_md, report_slug, blocking, default_option } = body;
+      // One route, four verbs: ask (default), edit, cancel, ls. The CLI's
+      // `cast decide` subcommands map onto these one to one.
+      const action: string = body.action || "ask";
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      let result: any;
+      if (action === "ls") {
+        // A task, stack or --mine list needs no session: `cast task show`
+        // reads a task's decisions from a plain shell (the-line.md L10).
+        if (!session_id && !body.task && !body.stack && !body.mine) {
+          return new Response(JSON.stringify({ error: "Missing session_id" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+        result = await ctx.runMutation(api.sessionDecisions.listForSession, { api_token, session_id: session_id || undefined, stack: body.stack, task: body.task, mine: body.mine });
+      } else if (action === "edit" || action === "cancel") {
+        if (!body.decision_id) {
+          return new Response(JSON.stringify({ error: "Missing decision_id" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+        result =
+          action === "cancel"
+            ? await ctx.runMutation(api.sessionDecisions.withdraw, { api_token, decision_id: body.decision_id, session_id })
+            : await ctx.runMutation(api.sessionDecisions.edit, {
+                api_token,
+                decision_id: body.decision_id,
+                session_id,
+                question,
+                options: Array.isArray(options) ? options : undefined,
+                context_md,
+                report_slug,
+                blocking,
+                default_option,
+                clear_default: body.clear_default,
+                // Every ask field (the-line.md L10).
+                kind: body.kind,
+                form: body.form,
+                doc_md: body.doc_md,
+                task: body.task,
+                station: body.station,
+                stack: body.stack,
+                category: body.category,
+                card: body.card,
+              });
+      } else {
+        if (!session_id || !question || !Array.isArray(options)) {
+          return new Response(
+            JSON.stringify({ error: "Missing required fields: api_token, session_id, question, options" }),
+            { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders } }
+          );
+        }
+        result = await ctx.runMutation(api.sessionDecisions.ask, {
+          api_token,
+          session_id,
+          question,
+          options,
+          context_md,
+          report_slug,
+          blocking,
+          default_option,
+          // W2: kind, category, document, form, task and station, stack.
+          kind: body.kind,
+          category: body.category,
+          doc_md: body.doc_md,
+          form: body.form,
+          task: body.task,
+          station: body.station,
+          stack: body.stack,
+          // the-line.md L4: the runner's failure gates bind to their run.
+          workflow_run_id: body.workflow_run_id,
+          gate_node_id: body.gate_node_id,
+          // An addressed card (org-staffing.md S31): the named people alone.
+          to: body.to,
+          // LE11: the change card the decision is about.
+          card: body.card,
+          // LM5: the expectations proposal the decision settles.
+          proposal: body.proposal,
+        });
+      }
+
+      if (result.error) {
+        // A resolved row's summary rides along so the CLI can say how the
+        // question was answered instead of only that it cannot be changed.
+        return new Response(JSON.stringify(result), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Decide error:", error);
+      return new Response(
+        JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } }
+      );
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/decide",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// The race verbs (docs/architecture/decisions-as-documents.md D2, D6): a role
+// on the ladder recommends from its session; a person in the
+// decision's people set, or the holder role under a grant, answers. Each
+// body carries api_token and decision_id (an `sd-N` or a raw id) plus the
+// verb's fields; the mutations answer { error } for a refusal.
+cliRoute("/cli/decide/recommend", (ctx, body) =>
+  ctx.runMutation(api.sessionDecisions.recommend, {
+    api_token: body.api_token,
+    decision_id: body.decision_id,
+    session_id: body.session_id,
+    recommendation: body.recommendation,
+    note: body.note,
+  }),
+);
+cliRoute("/cli/decide/answer", (ctx, body) =>
+  ctx.runMutation(api.sessionDecisions.answer, {
+    api_token: body.api_token,
+    decision_id: body.decision_id,
+    // A person at a plain shell has no session (decisions-as-documents.md
+    // D2): the CLI sends null, and the validator takes undefined only.
+    session_id: body.session_id ?? undefined,
+    for_human: body.for_human ?? undefined,
+    answer_index: body.answer_index,
+    answer_json: body.answer_json,
+    answer_text: body.answer_text,
+  }),
+);
+// The verb is renamed (org-staffing.md S28). The route stays so a CLI that
+// still sends `cast decide escalate` reads what replaced it, instead of a 404.
+cliRoute("/cli/decide/escalate", async () => ({
+  error: "cast decide escalate is now cast decide pass <sd-N> --note -: it hands the same card up to the people with your note on it. To favour an option, cast decide recommend <sd-N> <n> --note - hands it up the same way.",
+}));
+cliRoute("/cli/decide/show", (ctx, body) =>
+  ctx.runMutation(api.sessionDecisions.showForCli, { api_token: body.api_token, decision_id: body.decision_id }),
+);
+// Stacks (D5): create | ls | show | add | remove | reorder | policy. Delegation
+// rides create and policy (`delegate: "@handle"`).
+cliRoute("/cli/stack/create", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.createStack, {
+    api_token: body.api_token,
+    title: body.title,
+    session_id: body.session_id,
+    team_id: body.team_id,
+    policy: body.policy,
+    delegate: body.delegate,
+  }),
+);
+cliRoute("/cli/stack/ls", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.listStacksForCli, { api_token: body.api_token, include_done: body.include_done }),
+);
+cliRoute("/cli/stack/show", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.getStackForCli, { api_token: body.api_token, stack: body.stack }),
+);
+cliRoute("/cli/stack/add", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.addToStack, { api_token: body.api_token, stack: body.stack, decision: body.decision }),
+);
+cliRoute("/cli/stack/remove", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.removeFromStack, { api_token: body.api_token, stack: body.stack, decision: body.decision }),
+);
+cliRoute("/cli/stack/reorder", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.reorderStack, { api_token: body.api_token, stack: body.stack, decision_ids: body.decision_ids }),
+);
+cliRoute("/cli/stack/policy", (ctx, body) =>
+  ctx.runMutation(api.decisionStacks.setStackPolicy, {
+    api_token: body.api_token,
+    stack: body.stack,
+    auto_default_after_ms: body.auto_default_after_ms,
+    clear_auto_default: body.clear_auto_default,
+    delegate: body.delegate,
+    due_at: body.due_at,
+    clear_due: body.clear_due,
+  }),
+);
+
+http.route({
+  path: "/cli/patterns",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, search, tags, limit, offset } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.patterns.list, {
+        api_token,
+        search,
+        tags,
+        limit,
+        offset,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Patterns list error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/patterns",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/add",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, name, description, content, source_session_id, source_range, tags } = body;
+
+      if (!api_token || !name || !description || !content) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.patterns.create, {
+        api_token,
+        name,
+        description,
+        content,
+        source_session_id,
+        source_range,
+        tags,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Pattern create error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/add",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/show",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, name } = body;
+
+      if (!api_token || !name) {
+        return new Response(JSON.stringify({ error: "Missing api_token or name" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.patterns.get, {
+        api_token,
+        name,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Pattern not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Pattern get error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/show",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/delete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, name } = body;
+
+      if (!api_token || !name) {
+        return new Response(JSON.stringify({ error: "Missing api_token or name" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.patterns.remove, {
+        api_token,
+        name,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 :
+                 result.error === "Pattern not found" ? 404 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Pattern delete error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/patterns/delete",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/similar",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, file_path, session_id, limit } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      if (!file_path && !session_id) {
+        return new Response(JSON.stringify({ error: "Must provide file_path or session_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.fileTouches.findSimilar, {
+        api_token,
+        file_path,
+        session_id,
+        limit,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Similar search error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/similar",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/blame",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, file_path, limit } = body;
+
+      if (!api_token || !file_path) {
+        return new Response(JSON.stringify({ error: "Missing api_token or file_path" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.fileTouches.findByFile, {
+        api_token,
+        file_path,
+        limit,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Blame error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/blame",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// Line-level blame resolution: maps git blame SHAs (and uncommitted line
+// texts) to the sessions that produced them. The file-level /cli/blame above
+// stays as-is — `cast context` also consumes it.
+http.route({
+  path: "/cli/blame/resolve",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, shas, commits, file_path, uncommitted_lines, content_lines } = body;
+
+      if (!api_token || (!Array.isArray(shas) && !Array.isArray(commits))) {
+        return new Response(JSON.stringify({ error: "Missing api_token or shas/commits" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.blame.resolveBlame, {
+        api_token,
+        shas,
+        commits,
+        file_path,
+        uncommitted_lines,
+        content_lines,
+      });
+
+      if ("error" in result && result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Blame resolve error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/blame/resolve",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/sync-settings",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.users.getSyncSettingsForCLI, {
+        api_token,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Get sync settings error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/sync-settings",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/sync-settings/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, sync_mode, sync_projects } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.users.updateSyncSettingsForCLI, {
+        api_token,
+        sync_mode,
+        sync_projects,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Update sync settings error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/sync-settings/update",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/log",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, level, message, metadata, cli_version, platform } = body;
+
+      if (!api_token || !message) {
+        return new Response(JSON.stringify({ error: "Missing api_token or message" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      await ctx.runMutation(api.daemonLogs.insertBatch, {
+        api_token,
+        logs: [{
+          level: level || "error",
+          message,
+          metadata,
+          daemon_version: cli_version,
+          platform,
+          timestamp: Date.now(),
+        }],
+      });
+
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("CLI log error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/log",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/log-batch",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, logs } = body;
+
+      if (!api_token || !Array.isArray(logs) || logs.length === 0) {
+        return new Response(JSON.stringify({ error: "Missing api_token or logs array" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const validLevels = ["debug", "info", "warn", "error"] as const;
+      type LogLevel = typeof validLevels[number];
+      const toLevel = (s?: string): LogLevel => validLevels.includes(s as LogLevel) ? s as LogLevel : "error";
+
+      await ctx.runMutation(api.daemonLogs.insertBatch, {
+        api_token,
+        logs: logs.map((log: { level?: string; message: string; metadata?: Record<string, string>; daemon_version?: string; platform?: string; timestamp?: number }) => ({
+          level: toLevel(log.level),
+          message: log.message,
+          metadata: log.metadata,
+          daemon_version: log.daemon_version,
+          platform: log.platform,
+          timestamp: log.timestamp || Date.now(),
+        })),
+      });
+
+      return new Response(JSON.stringify({ success: true, inserted: logs.length }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("CLI log-batch error:", error);
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/log-batch",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/teams",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.users.getTeamsForCLI, {
+        api_token,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Get teams error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/teams",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/teams/mappings",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.users.getDirectoryMappingsForCLI, {
+        api_token,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Get mappings error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/teams/mappings",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/teams/mappings/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, path_prefix, team_id, auto_share, include_past } = body;
+      const lock = body.private === true;
+
+      if (!api_token || !path_prefix) {
+        return new Response(JSON.stringify({ error: "Missing api_token or path_prefix" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.users.updateDirectoryMappingForCLI, {
+        api_token,
+        path_prefix,
+        team_id,
+        private: lock || undefined,
+        auto_share,
+        include_past: typeof include_past === "boolean" ? include_past : undefined,
+      });
+
+      if ("error" in result) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Update mapping error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/teams/mappings/update",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/conversations/count",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, path_prefix } = body;
+
+      if (!api_token || !path_prefix) {
+        return new Response(JSON.stringify({ error: "Missing api_token or path_prefix" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.users.countConversationsForPathCLI, {
+        api_token,
+        path_prefix,
+      });
+
+      if ((result as any).error) {
+        return new Response(JSON.stringify({ error: (result as any).error }), {
+          status: (result as any).error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Count conversations error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/conversations/count",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/conversations/delete-by-path",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, path_prefix } = body;
+
+      if (!api_token || !path_prefix) {
+        return new Response(JSON.stringify({ error: "Missing api_token or path_prefix" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // Each mutation call deletes at most one message batch or one
+      // conversation (bounded transactions); drain here so a single CLI call
+      // deletes everything under the prefix. The iteration cap bounds one HTTP
+      // request — a caller with an enormous project re-invokes on hasMore.
+      let conversationsDeleted = 0;
+      let messagesDeleted = 0;
+      let hasMore = true;
+      for (let i = 0; i < 400 && hasMore; i++) {
+        const result = await ctx.runMutation(api.users.deleteConversationsForPathCLI, {
+          api_token,
+          path_prefix,
+        });
+
+        if ((result as any).error) {
+          return new Response(JSON.stringify({ error: (result as any).error }), {
+            status: (result as any).error === "Unauthorized" ? 401 : 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+        conversationsDeleted += (result as any).conversationsDeleted ?? 0;
+        messagesDeleted += (result as any).messagesDeleted ?? 0;
+        hasMore = !!(result as any).hasMore;
+      }
+
+      return new Response(JSON.stringify({ conversationsDeleted, messagesDeleted, hasMore }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Delete conversations error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/conversations/delete-by-path",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/teams/projects",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, limit } = body;
+
+      if (!api_token) {
+        return new Response(JSON.stringify({ error: "Missing api_token" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runQuery(api.users.getProjectsWithTeamsForCLI, {
+        api_token,
+        limit,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Get projects error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/teams/projects",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/heartbeat",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, version, platform, pid, autostart_enabled, has_tmux, boot_id, local_project_roots, git_plane, git_pubkey, pending_sync_count, oldest_pending_ms, pending_sync_messages, pending_sync_conversations, sync_no_progress_ms, daemon_started_at, loop_freeze_ms, loop_freeze_1h_ms, loop_freeze_max_ms, loop_freeze_top, device_id, device_label, device_hostname, wsl_distro, is_remote_device, input_idle_ms, cc_accounts, codex_usage, codex_accounts, provider_key_pubkey, managed_provider_ids, cloud_agent_blocks, settings, model_inventory, update_available } = body;
+
+      if (!api_token || !version || !platform) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const result = await ctx.runMutation(api.users.daemonHeartbeat, {
+        api_token,
+        version,
+        platform,
+        pid: pid || 0,
+        autostart_enabled,
+        has_tmux,
+        boot_id,
+        local_project_roots,
+        git_plane,
+        git_pubkey,
+        pending_sync_count,
+        oldest_pending_ms,
+        pending_sync_messages,
+        pending_sync_conversations,
+        sync_no_progress_ms,
+        daemon_started_at,
+        loop_freeze_ms,
+        loop_freeze_1h_ms,
+        loop_freeze_max_ms,
+        loop_freeze_top,
+        device_id,
+        device_label,
+        device_hostname,
+        wsl_distro: typeof wsl_distro === "string" ? wsl_distro : undefined,
+        is_remote_device,
+        input_idle_ms,
+        cc_accounts,
+        codex_usage,
+        codex_accounts,
+        provider_key_pubkey,
+        managed_provider_ids,
+        cloud_agent_blocks: Array.isArray(cloud_agent_blocks) ? cloud_agent_blocks : undefined,
+        settings,
+        model_inventory,
+        update_available: typeof update_available === "string" ? update_available : undefined,
+      });
+
+      if (result.error) {
+        return new Response(JSON.stringify({ error: result.error }), {
+          status: result.error === "Unauthorized" ? 401 : 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      // A cloud host's readiness (Settings > Machines), in its own call so a
+      // shape this server does not know never fails the heartbeat.
+      if (body.host_readiness && typeof body.host_readiness === "object" && typeof device_id === "string") {
+        try {
+          await ctx.runMutation(api.cloud.reportHostReadiness, { api_token, device_id, readiness: body.host_readiness });
+        } catch (err) {
+          console.warn(`[heartbeat] host readiness from ${device_id.slice(0, 8)} refused: ${err instanceof Error ? err.message.slice(0, 200) : String(err)}`);
+        }
+      }
+
+      // Capability inventory, when the daemon attached one. Deviation from
+      // ct-42826's literal wording (an arg on daemonHeartbeat): forwarding to
+      // reportInventory reuses its whole pipeline — sanitizer, scope cap, hash
+      // gate, per-scope docs — instead of duplicating it inside users.ts. The
+      // daemon only attaches the payload on change or the hourly floor, so this
+      // is not a per-beat write; and a failure here must not fail presence,
+      // which is why it sits after the heartbeat result, fire-and-log.
+      if (body.capability_state && typeof body.capability_state === "object") {
+        try {
+          await ctx.runMutation(api.capabilities.reportInventory, {
+            api_token,
+            device_id: body.device_id,
+            entries_json: JSON.stringify({
+              items: body.capability_state.items ?? [],
+              marketplaces: body.capability_state.marketplaces ?? [],
+            }),
+          });
+        } catch (err) {
+          console.error("capability_state ingest failed:", err);
+        }
+      }
+
+      // What codecast changed in this machine's agent harness since the last
+      // accepted beat (harnessChanges.ts). Same fire-and-log rule: a failure
+      // here must not fail presence, and the daemon resends what was not taken.
+      if (Array.isArray(body.harness_changes) && body.harness_changes.length > 0 && body.device_id) {
+        try {
+          await ctx.runMutation(api.harnessChanges.report, {
+            api_token,
+            device_id: body.device_id,
+            changes: body.harness_changes,
+          });
+        } catch (err) {
+          console.error("harness_changes ingest failed:", err);
+        }
+      }
+
+      // Skill/command bodies, batched independently of the inventory so a
+      // 5MB skills tree cannot blow the fleet row. Same fire-and-log rule:
+      // a failure here must not fail presence.
+      if (Array.isArray(body.capability_contents) && body.capability_contents.length > 0) {
+        try {
+          await ctx.runMutation(api.capabilities.reportCapabilityContents, {
+            api_token,
+            items: body.capability_contents,
+          });
+        } catch (err) {
+          console.error("capability_contents ingest failed:", err);
+        }
+      }
+
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      console.error("Heartbeat error:", error);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/heartbeat",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/command-result",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+
+    try {
+      const body = await request.json();
+      const { api_token, command_id, result, error } = body;
+
+      if (!api_token || !command_id) {
+        return new Response(JSON.stringify({ error: "Missing required fields" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      const res = await ctx.runMutation(api.users.reportCommandResult, {
+        api_token,
+        command_id,
+        result,
+        error,
+      });
+
+      return new Response(JSON.stringify(res), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (err) {
+      console.error("Command result error:", err);
+      return new Response(JSON.stringify({ error: "Internal error" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/command-result",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+
+http.route({
+  path: "/cli/fork",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      // session_id is the CLI-supplied idempotency key: forkFromMessage returns
+      // the existing row when it's seen before, so a retried/redelivered fork
+      // can't mint a duplicate "Fork:" conversation. Dropping it here silently
+      // disabled that guard for every CLI fork. direction titles the branch.
+      const { api_token, conversation_id, message_uuid, session_id, direction, target_agent_type } = body;
+      if (!api_token || !conversation_id) {
+        return new Response(JSON.stringify({ error: "Missing api_token or conversation_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = await ctx.runMutation(api.conversations.forkFromMessage, {
+        conversation_id,
+        message_uuid,
+        api_token,
+        session_id,
+        direction,
+        target_agent_type,
+        cloud_device_id: body.cloud_device_id,
+        cloud_project_path: body.cloud_project_path,
+        cloud_worktree: body.cloud_worktree,
+        cloud_seed: body.cloud_seed,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = message.includes("Unauthorized") ? 401 :
+                     message.includes("not found") ? 404 :
+                     message.includes("Access denied") ? 403 : 500;
+      return new Response(JSON.stringify({ error: message }), {
+        status,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/fork",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tree",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const { api_token, conversation_id } = body;
+      if (!api_token || !conversation_id) {
+        return new Response(JSON.stringify({ error: "Missing api_token or conversation_id" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      const result = await ctx.runQuery(api.conversations.getConversationTree, {
+        conversation_id,
+        api_token,
+      });
+      if (result && "error" in result) {
+        const status = result.error === "Unauthorized" ? 401 :
+                       result.error === "Conversation not found" ? 404 :
+                       result.error === "Access denied" ? 403 : 400;
+        return new Response(JSON.stringify({ error: result.error }), {
+          status,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      return new Response(JSON.stringify({ error: "Internal error", details: error instanceof Error ? error.message : String(error) }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tree",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// --- Agent Tasks endpoints ---
+
+http.route({
+  path: "/cli/tasks/create",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result: any = await ctx.runMutation(api.agentTasks.createTask, body);
+      // `task_id` stays a bare string on the wire — older CLIs read it directly.
+      // `short_id` ("tr-42") is additive: the handle newer CLIs print and the
+      // agent quotes.
+      return new Response(JSON.stringify({ task_id: result?.id ?? result, short_id: result?.short_id }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      const status = msg.includes("Unauthorized") ? 401 : 500;
+      return new Response(JSON.stringify({ error: msg }), {
+        status,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/create",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/list",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runQuery(api.agentTasks.listTasks, {
+        api_token: body.api_token,
+        status: body.status,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/resolve",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runQuery(api.agentTasks.resolveTask, {
+        api_token: body.api_token,
+        ref: String(body.ref ?? ""),
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/list",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/due",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runQuery(api.agentTasks.getDueTasks, {
+        api_token: body.api_token,
+        limit: body.limit,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/due",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/claim",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.claimTask, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        daemon_id: body.daemon_id,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/claim",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/renew-lease",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.renewLease, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        daemon_id: body.daemon_id,
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/renew-lease",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/complete",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.completeTaskRun, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        ...(body.daemon_id ? { daemon_id: body.daemon_id } : {}),
+        summary: body.summary,
+        conversation_id: body.conversation_id,
+        run_session_uuid: body.run_session_uuid,
+        ...(body.needs_attention !== undefined ? { needs_attention: !!body.needs_attention } : {}),
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/complete",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/fail",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.failTaskRun, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        daemon_id: body.daemon_id,
+        error: body.error,
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/fail",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/cancel",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.cancelTask, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/cancel",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/pause",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.pauseTask, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/pause",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/resume",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.resumeTask, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/resume",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/run",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.runTaskNow, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        ...(typeof body.focus === "string" ? { focus: body.focus } : {}),
+      });
+      return new Response(JSON.stringify({ success: result }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/run",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// `cast trigger update` — edit a trigger in place; every effective edit is
+// recorded in agent_task_revisions (version history + audit log).
+http.route({
+  path: "/cli/tasks/update",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runMutation(api.agentTasks.updateTask, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+        title: body.title,
+        prompt: body.prompt,
+        schedule_type: body.schedule_type,
+        run_at: body.run_at,
+        interval_ms: body.interval_ms,
+        event_filter: body.event_filter,
+        mode: body.mode,
+        agent_type: body.agent_type,
+        model: body.model,
+        project_path: body.project_path,
+        max_runtime_ms: body.max_runtime_ms,
+        precheck: body.precheck,
+        originating_conversation_id: body.originating_conversation_id,
+        target_conversation_id: body.target_conversation_id,
+        wake_creator: body.wake_creator,
+        originating_session_ref: body.originating_session_ref,
+        target_session_ref: body.target_session_ref,
+      });
+      return new Response(JSON.stringify({ success: result.ok, changed: result.changed }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/update",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// `cast trigger history` — the trigger's edit log with actor names resolved.
+http.route({
+  path: "/cli/tasks/history",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+    try {
+      const body = await request.json();
+      const result = await ctx.runQuery(api.agentTasks.listRevisions, {
+        api_token: body.api_token,
+        task_id: body.task_id,
+      });
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: msg }), {
+        status: msg.includes("Unauthorized") ? 401 : 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
+    }
+  }),
+});
+
+http.route({
+  path: "/cli/tasks/history",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
+// --- Task Layer Routes ---
+
+// ── Slack webhook (Anchor inbound) ───────────────────────────────────────────
+// An @mention or DM in a mapped channel wakes that channel's anchor. Verified by
+// Slack's v0 HMAC signature (SLACK_SIGNING_SECRET) with replay protection, then
+// deduped by event_id so a Slack retry can't double-wake.
+http.route({
+  path: "/api/webhooks/slack",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const signature = request.headers.get("X-Slack-Signature");
+    const timestamp = request.headers.get("X-Slack-Request-Timestamp");
+    const body = await request.text();
+    const secret = process.env.SLACK_SIGNING_SECRET;
+
+    if (!secret) {
+      console.error("[slack webhook] SLACK_SIGNING_SECRET not configured; refusing");
+      return new Response(JSON.stringify({ error: "Webhook not configured" }), { status: 500 });
+    }
+    if (!signature || !timestamp) {
+      return new Response(JSON.stringify({ error: "Missing signature" }), { status: 401 });
+    }
+    // Replay protection: reject stale timestamps (Slack recommends 5 minutes).
+    const ts = parseInt(timestamp, 10);
+    if (!Number.isFinite(ts) || Math.abs(Date.now() / 1000 - ts) > 300) {
+      return new Response(JSON.stringify({ error: "Stale timestamp" }), { status: 401 });
+    }
+    if (!timingSafeEqualHex(signature, "v0=" + (await hmacSha256Hex(secret, `v0:${timestamp}:${body}`)))) {
+      return new Response(JSON.stringify({ error: "Invalid signature" }), { status: 401 });
+    }
+
+    const payload = JSON.parse(body);
+    // Slack's one-time endpoint verification handshake.
+    if (payload.type === "url_verification") {
+      return new Response(payload.challenge, { status: 200, headers: { "Content-Type": "text/plain" } });
+    }
+
+    if (payload.type === "event_callback") {
+      const event = payload.event || {};
+      const eventId = payload.event_id as string | undefined;
+      // Ignore the bot's own posts on both paths, so an anchor reply that happens
+      // to @mention the app can't wake it in a loop (each loop has a new event_id,
+      // so dedup wouldn't catch it).
+      // Channel mirroring first (slackSync): a linked channel takes every event
+      // for it, including the mention (the mirrored line's @mention wakes the
+      // anchor through chat). "no_link" leaves the event for the anchor path.
+      let mirrored = false;
+      if (eventId && payload.team_id) {
+        const routed = await ctx.runMutation(internal.slackSync.ingestEvent, {
+          event_id: eventId,
+          workspace: String(payload.team_id),
+          event,
+          // A user event (a person's DM) names whose behalf it came on.
+          authed_users: Array.isArray(payload.authorizations)
+            ? payload.authorizations.map((a: any) => String(a?.user_id ?? "")).filter(Boolean)
+            : undefined,
+        });
+        mirrored = routed.status !== "no_link";
+      }
+      const isMention =
+        event.type === "app_mention" && !event.bot_id && !event.subtype;
+      const isDM =
+        event.type === "message" && event.channel_type === "im" && !event.bot_id && !event.subtype;
+      if (!mirrored && (isMention || isDM) && eventId && event.channel) {
+        // One atomic mutation: dedup + resolve channel→anchor + wake. If the wake
+        // throws it returns 500 and Slack retries — the dedup row rolls back with
+        // it, so a transient failure never silently drops the mention.
+        await ctx.runMutation(internal.slack.wakeFromSlackEvent, {
+          event_id: eventId,
+          channel: event.channel,
+          workspace: payload.team_id as string | undefined,
+          user: event.user,
+          text: String(event.text || ""),
+          thread: event.thread_ts || event.ts,
+        });
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  }),
+});
+
+
+
+function cliRoute(
+  path: string,
+  handler: (ctx: any, body: any) => Promise<any>,
+  // forwardDeviceId: this route's own function takes device_id as a real
+  // argument (cast pull's destination, a terminal pane's machine, …), so the
+  // field must survive into the body instead of being stripped. It is only
+  // ever an argument: the device a token is presented FROM rides inside
+  // api_token itself (@platform/auth tokenFormat), so a route whose argument
+  // names a different machine than the caller's is fine.
+  opts?: { forwardDeviceId?: boolean },
+) {
+  const corsHeaders = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+  http.route({
+    path,
+    method: "POST",
+    handler: httpAction(async (ctx, request) => {
+      try {
+        const body = await request.json();
+        // Device binding, asked here ahead of the handler so a request from the
+        // wrong machine gets a 403 that names the fix. The handler's own
+        // verifyApiToken enforces the same rule on api_token as it arrived, so
+        // this is the better error, not the only check: a direct Convex call
+        // that never passes through here is refused just the same.
+        if (typeof body?.api_token === "string") {
+          const allowed = await ctx.runQuery(internal.apiTokens.deviceBindingAllows, {
+            api_token: body.api_token,
+          });
+          if (!allowed) {
+            return new Response(
+              JSON.stringify({
+                error:
+                  "This token is bound to a different machine. Run `cast auth` on this machine to mint its own.",
+                code: "FORBIDDEN",
+              }),
+              { status: 403, headers: { "Content-Type": "application/json", ...corsHeaders } },
+            );
+          }
+        }
+        // A device_id body field is only forwarded on routes that declare it
+        // (forwardDeviceId). Most cliRoute handlers pass the body straight
+        // into a mutation whose validator is a closed `v.object`, so an
+        // unrecognised field is a hard rejection — but for routes whose own
+        // function REQUIRES device_id, deleting it is an equally hard rejection
+        // the other way (this broke cast pull, vault mirror, and terminal
+        // streaming: ct-44344 follow-up).
+        if (!opts?.forwardDeviceId && body && typeof body === "object" && "device_id" in body) {
+          delete body.device_id;
+        }
+        const result = await handler(ctx, body);
+        return new Response(JSON.stringify(result), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      } catch (error) {
+        // A ConvexError carries structured data — { code, message, retryable } —
+        // and flattening it to a string is what makes a caller unable to tell
+        // "wait and retry" from "this will never be accepted". Pass the data
+        // through, with a status that says the same thing, so an outbox can make
+        // that decision without parsing prose.
+        const data = (error as any)?.data;
+        if (data && typeof data === "object" && typeof data.code === "string") {
+          return new Response(
+            JSON.stringify({ ...data, error: data.message ?? data.code }),
+            {
+              status: CLI_ERROR_STATUS[data.code] ?? 500,
+              headers: { "Content-Type": "application/json", ...corsHeaders },
+            },
+          );
+        }
+        const msg = error instanceof Error ? error.message : String(error);
+        return new Response(JSON.stringify({ error: msg }), {
+          status: msg.includes("Unauthorized") ? 401 : 500,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+    }),
+  });
+  http.route({
+    path,
+    method: "OPTIONS",
+    handler: httpAction(async () => {
+      return new Response(null, {
+        status: 204,
+        headers: { ...corsHeaders },
+      });
+    }),
+  });
+}
+
+// Projects
+// ── Capability library (cast cap …) ──
+//
+// /cli/cap/status is live. The phase 2 verbs are REGISTERED but answer with a
+// structured NOT_IMPLEMENTED, because the mutations behind them do not exist
+// yet: reserving the paths now means a newer CLI against an older deploy gets
+// a clean, coded error instead of a bare 404 it cannot tell from a typo'd URL.
+//
+// RULE for whoever lands /cli/cap/bind (from the design draft, easy to lose):
+// an agent-minted capability token can NEVER create a binding above session
+// scope. The bind mutation must inspect the credential class and reject user,
+// device, project and team scopes for anything but a real api_token held by
+// the user — otherwise the consent gate is enforced only inside a CLI process
+// the agent controls.
+cliRoute("/cli/cap/status", async (ctx, body) => {
+  return await ctx.runQuery(api.capabilities.listCapabilityState, body);
+});
+cliRoute("/cli/cap/bind", async (ctx, body) => {
+  return await ctx.runMutation(api.capabilities.bindCapability, body);
+});
+cliRoute("/cli/cap/unbind", async (ctx, body) => {
+  return await ctx.runMutation(api.capabilities.unbindCapability, body);
+});
+cliRoute("/cli/cap/toggle", async (ctx, body) => {
+  // toggle is bind with the flag: same upsert, same key, so the CLI and the
+  // web can never disagree on which row a toggle lands on.
+  return await ctx.runMutation(api.capabilities.bindCapability, body);
+});
+// ── Sync and sharing (cast sharing) ──
+//
+// Every route runs the function the Sync & Privacy settings page runs, with
+// the CLI token in place of the web sign-in, so an agent that changes a
+// setting takes the same path, checks and backfills as a person clicking.
+cliRoute("/cli/sharing/overview", async (ctx, body) => {
+  const auth = { api_token: body.api_token };
+  const [settings, teams, folders, rules] = await Promise.all([
+    ctx.runQuery(api.users.getSyncSettings, auth),
+    ctx.runQuery(api.teams.getUserTeams, auth),
+    ctx.runQuery(api.users.getRecentProjectsWithGitInfo, { ...auth, limit: body.limit ?? 200 }),
+    ctx.runQuery(api.users.getDirectoryTeamMappings, auth),
+  ]);
+  if (!settings) throw new Error("Unauthorized");
+  return { settings, teams, folders, rules };
+});
+cliRoute("/cli/sharing/impact", async (ctx, body) => ctx.runQuery(api.users.shareImpactForPaths, body));
+cliRoute("/cli/sharing/stats", async (ctx, body) => ctx.runMutation(api.pathStats.refreshPathStats, body));
+cliRoute("/cli/sharing/sessions", async (ctx, body) => ctx.runQuery(api.users.listConversationsForPath, body));
+cliRoute("/cli/sharing/sync", async (ctx, body) => ctx.runMutation(api.users.updateSyncSettings, body));
+cliRoute("/cli/sharing/rule", async (ctx, body) => ctx.runMutation(api.users.updateDirectoryTeamMapping, body));
+cliRoute("/cli/sharing/rule/remove", async (ctx, body) => ctx.runMutation(api.users.removeDirectoryTeamMapping, body));
+cliRoute("/cli/sharing/delete", async (ctx, body) => ctx.runMutation(api.users.deleteConversationsForPath, body));
+cliRoute("/cli/sharing/session", async (ctx, body) => ctx.runMutation(api.conversations.setPrivacy, body));
+cliRoute("/cli/sharing/session/level", async (ctx, body) => ctx.runMutation(api.conversations.setTeamVisibility, body));
+cliRoute("/cli/sharing/team", async (ctx, body) => ctx.runMutation(api.teams.setTeamVisibility, body));
+
+cliRoute("/cli/whoami", async (ctx, body) => {
+  return await ctx.runQuery(api.capabilities.whoamiForToken, body);
+});
+cliRoute("/cli/cap/surfaces", async (ctx, body) => {
+  return await ctx.runQuery(api.capabilities.surfacesForSlug, body);
+});
+cliRoute("/cli/cap/mode", async (ctx, body) => {
+  return await ctx.runMutation(api.capabilities.setCapabilitiesMode, body);
+});
+cliRoute("/cli/cap/bindings", async (ctx, body) => {
+  return await ctx.runQuery(api.capabilities.listBindingsForToken, body);
+});
+for (const verb of ["resolve", "why"]) {
+  cliRoute(`/cli/cap/${verb}`, async () => {
+    throw new ConvexError({
+      code: "NOT_IMPLEMENTED",
+      message: `cast cap ${verb} needs a newer backend deploy — this endpoint is reserved but not live yet`,
+    });
+  });
+}
+
+cliRoute("/cli/projects/create", async (ctx, body) => {
+  return await ctx.runMutation(api.projects.create, body);
+});
+// Which table a bare id belongs to, for `cast link <id>` with no prefix.
+cliRoute("/cli/entities/type", async (ctx, body) => ctx.runQuery(api.entities.resolveIdType, body));
+cliRoute("/cli/projects/list", async (ctx, body) => {
+  return await ctx.runQuery(api.projects.list, body);
+});
+cliRoute("/cli/projects/get", async (ctx, body) => {
+  return await ctx.runQuery(api.projects.get, body);
+});
+cliRoute("/cli/projects/update", async (ctx, body) => {
+  return await ctx.runMutation(api.projects.update, body);
+});
+cliRoute("/cli/projects/post", async (ctx, body) => {
+  return await ctx.runMutation(api.projectUpdates.post, body);
+});
+cliRoute("/cli/projects/updates", async (ctx, body) => {
+  return await ctx.runQuery(api.projectUpdates.listUpdates, body);
+});
+cliRoute("/cli/projects/comment-update", async (ctx, body) => {
+  return await ctx.runMutation(api.projectUpdates.comment, body);
+});
+cliRoute("/cli/projects/timeline", async (ctx, body) => {
+  return await ctx.runQuery(api.projectUpdates.timeline, body);
+});
+
+// Initiatives (initiatives-projects-role-page.md I1): `cast initiative`.
+for (const [verb, fn] of [
+  ["create", "create"],
+  ["update", "update"],
+  ["add-project", "addProject"],
+  ["remove-project", "removeProject"],
+  ["post", "postUpdate"],
+  ["report", "report"],
+  ["record", "record"],
+] as const) {
+  cliRoute(`/cli/initiatives/${verb}`, async (ctx, body) => ctx.runMutation(api.initiatives[fn], body));
+}
+cliRoute("/cli/initiatives/list", async (ctx, body) => ctx.runQuery(api.initiatives.list, body));
+cliRoute("/cli/initiatives/get", async (ctx, body) => ctx.runQuery(api.initiatives.get, body));
+
+// The workspace's standing agent. Creating one is seating the root role
+// (org-staffing.md S22): the route an older CLI posts to runs the same staff
+// mutation `cast org staff` does, so no workspace is born with a bare anchor.
+cliRoute("/cli/anchor/create", async (ctx, body) => {
+  const { scope_type, team_id, project_path, api_token } = body ?? {};
+  return await ctx.runMutation(api.orgRoles.staff, { api_token, scope_type, team_id, project_path });
+});
+cliRoute("/cli/anchor/list", async (ctx, body) => {
+  return await ctx.runQuery(api.anchors.listAnchors, body);
+});
+cliRoute("/cli/anchor/wake", async (ctx, body) => {
+  return await ctx.runMutation(api.anchors.wakeAnchor, body);
+});
+cliRoute("/cli/anchor/resolve", async (ctx, body) => {
+  return await ctx.runQuery(api.anchors.resolveAnchorForScope, body);
+});
+cliRoute("/cli/anchor/brief", async (ctx, body) => {
+  return await ctx.runMutation(api.anchors.rebriefAnchor, body);
+});
+cliRoute("/cli/anchor/decommission", async (ctx, body) => {
+  return await ctx.runMutation(api.anchors.decommissionAnchor, body);
+});
+cliRoute("/cli/anchor/link-channel", async (ctx, body) => {
+  return await ctx.runAction(api.slack.linkChannel, body);
+});
+cliRoute("/cli/anchor/unlink-channel", async (ctx, body) => {
+  return await ctx.runMutation(api.slack.unlinkChannel, body);
+});
+cliRoute("/cli/anchor/channels", async (ctx, body) => {
+  return await ctx.runQuery(api.slack.listChannels, body);
+});
+cliRoute("/cli/anchor/say", async (ctx, body) => {
+  return await ctx.runAction(api.slack.postMessage, body);
+});
+// The anchor speaking in codecast chat on its own: a channel post, a thread
+// reply, or a DM. Authorizes the caller as the anchor's host inside.
+cliRoute("/cli/anchor/say-chat", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.sendAsAnchor, body);
+});
+
+// Org roles and the org tree (docs/architecture/org-roles.md S5, S7).
+// Agent definitions and chains (cast agent): the named client+model+effort+
+// prompt objects every launch surface resolves with --as. body carries
+// api_token plus the function's own args.
+cliRoute("/cli/agents/list", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.list, body));
+cliRoute("/cli/agents/get", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.get, body));
+cliRoute("/cli/agents/resolve", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.resolve, body));
+cliRoute("/cli/agents/upsert", async (ctx, body) => ctx.runMutation((api as any).agentDefinitions.upsert, body));
+cliRoute("/cli/agents/remove", async (ctx, body) => ctx.runMutation((api as any).agentDefinitions.remove, body));
+cliRoute("/cli/chains/list", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.listChains, body));
+cliRoute("/cli/chains/get", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.getChain, body));
+cliRoute("/cli/chains/resolve", async (ctx, body) => ctx.runQuery((api as any).agentDefinitions.resolveChain, body));
+cliRoute("/cli/chains/upsert", async (ctx, body) => ctx.runMutation((api as any).agentDefinitions.upsertChain, body));
+cliRoute("/cli/chains/remove", async (ctx, body) => ctx.runMutation((api as any).agentDefinitions.removeChain, body));
+
+cliRoute("/cli/org/reset", async (ctx, body) => ctx.runMutation(api.orgRoles.reset, body));
+// Where a request lands (org-staffing.md S35): `cast route`, and the one door
+// for scripts and systems outside codecast to hand codecast a request.
+cliRoute("/cli/route", async (ctx, body) => ctx.runAction(api.orgRoute.route, body));
+cliRoute("/cli/org/tree", async (ctx, body) => {
+  return await ctx.runQuery(api.org.tree, body);
+});
+// Where the calling session sits (`cast org where`, the session-start org context).
+cliRoute("/cli/org/where", async (ctx, body) => ctx.runQuery((api as any).orgWhere.where, body));
+cliRoute("/cli/org/sessions-under", async (ctx, body) => {
+  return await ctx.runQuery(api.org.sessionsUnder, body);
+});
+cliRoute("/cli/org/create", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.create, body);
+});
+cliRoute("/cli/org/update", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.update, body);
+});
+cliRoute("/cli/org/reparent", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.reparent, body);
+});
+cliRoute("/cli/org/retire", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.retire, body);
+});
+cliRoute("/cli/org/reparent-session", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.reparentSession, body);
+});
+
+// Standing roles (docs/architecture/org-roles-standing.md T5): the role as a
+// live agent. Create + provision, the lifecycle verbs, the wake log, the
+// brief. `/cli/role/follow` and `/unfollow` (agent channels) sit with chat.
+cliRoute("/cli/role/create", async (ctx, body) => ctx.runMutation(api.orgRoles.create, body));
+cliRoute("/cli/role/update", async (ctx, body) => ctx.runMutation(api.orgRoles.update, body));
+cliRoute("/cli/role/provision", async (ctx, body) => ctx.runMutation(api.orgRoles.provision, body));
+cliRoute("/cli/role/wake", async (ctx, body) => ctx.runMutation(api.orgRoles.wake, body));
+// A role tunes its own check (org-staffing.md S38): no trigger id, the role names the routine.
+cliRoute("/cli/role/tune", async (ctx, body) => ctx.runMutation((api as any).orgRoles.tuneRoutine, body));
+cliRoute("/cli/role/pause", async (ctx, body) => ctx.runMutation(api.orgRoles.pause, body));
+cliRoute("/cli/role/resume", async (ctx, body) => ctx.runMutation(api.orgRoles.resume, body));
+cliRoute("/cli/role/retire", async (ctx, body) => ctx.runMutation(api.orgRoles.retire, body));
+cliRoute("/cli/role/restart", async (ctx, body) => ctx.runMutation(api.orgRoles.restart, body));
+// device_id is the destination, as for /cli/sessions/reparent.
+cliRoute("/cli/role/move", async (ctx, body) => ctx.runMutation(api.orgRoles.move, body), { forwardDeviceId: true });
+// The switch (org-staffing.md S23.1) and the limits. /trust and /caps stay one
+// release for older CLIs; both pairs run the same mutation.
+cliRoute("/cli/role/autonomy", async (ctx, body) => ctx.runMutation(api.orgRoles.setTrust, body));
+cliRoute("/cli/role/trust", async (ctx, body) => ctx.runMutation(api.orgRoles.setTrust, body));
+cliRoute("/cli/role/limits", async (ctx, body) => ctx.runMutation(api.orgRoles.setCaps, body));
+cliRoute("/cli/role/caps", async (ctx, body) => ctx.runMutation(api.orgRoles.setCaps, body));
+cliRoute("/cli/role/authority", async (ctx, body) => ctx.runMutation((api as any).orgRoles.setAuthority, body));
+cliRoute("/cli/role/reports", async (ctx, body) => ctx.runMutation(api.orgRoles.setReports, body));
+cliRoute("/cli/role/self", async (ctx, body) => ctx.runQuery(api.orgRoles.selfForSession, body));
+// The scope's line (the-line.md L2): `cast role line <handle> [--set <slug>]`.
+cliRoute("/cli/role/line", async (ctx, body) => ctx.runQuery(api.orgRoles.line, body));
+cliRoute("/cli/role/line/set", async (ctx, body) => ctx.runMutation(api.orgRoles.setLine, body));
+// The line's merge step (the-line.md L12): the switch, and the runner's two
+// calls around the merge itself.
+cliRoute("/cli/role/line/merge", async (ctx, body) => ctx.runMutation(api.orgLineMerge.setLineMerge, body));
+cliRoute("/cli/line/merge/check", async (ctx, body) => ctx.runQuery(api.orgLineMerge.check, body));
+cliRoute("/cli/line/merge/record", async (ctx, body) => ctx.runMutation(api.orgLineMerge.record, body));
+// The line's deploy stage (deploys.md DP2): what waits to go out, one deploy that sends it, and the deploy path's reports.
+cliRoute("/cli/line/deploy/stage", async (ctx, body) => ctx.runQuery(api.deploys.stage, body));
+cliRoute("/cli/line/deploy/request", async (ctx, body) => ctx.runMutation(api.deploys.request, body));
+cliRoute("/cli/line/deploy/report", async (ctx, body) => ctx.runMutation(api.deploys.report, body));
+cliRoute("/cli/deploys/get", async (ctx, body) => ctx.runQuery(api.deploys.get, body));
+// Knowledge handoff (org-staffing.md S32) and the split (S34).
+cliRoute("/cli/role/handoff", async (ctx, body) => ctx.runMutation(api.orgHandoff.write, body));
+cliRoute("/cli/role/handoff/settle", async (ctx, body) => ctx.runMutation(api.orgHandoff.settle, body));
+cliRoute("/cli/role/split", async (ctx, body) => ctx.runMutation(api.orgSplit.split, body));
+cliRoute("/cli/brief/get", async (ctx, { from_session, ...body }) => {
+  const brief = await ctx.runQuery(api.org.brief, body);
+  // Read from the role's own session, the brief's "changed since" clock moves
+  // to now (org-staffing.md S25); a person reading it moves nothing.
+  if (brief && from_session) await ctx.runMutation(internal.orgRoles.markBriefRead, { role_id: brief.role._id, session: from_session });
+  return brief;
+});
+cliRoute("/cli/brief/edit", async (ctx, body) => ctx.runMutation(api.orgRoles.briefEdit, body));
+// Scopes and the scope feed (docs/architecture/scopes-and-feed.md F1, F2).
+cliRoute("/cli/org/scope", async (ctx, body) => {
+  return await ctx.runMutation(api.orgRoles.setScope, body);
+});
+cliRoute("/cli/org/scope-feed", async (ctx, body) => {
+  return await ctx.runQuery(api.org.scopeFeed, body);
+});
+cliRoute("/cli/org/scope-summary", async (ctx, body) => {
+  return await ctx.runQuery(api.org.scopeSummary, body);
+});
+// Org init and update (docs/architecture/org-init.md): the analyzer's inputs
+// and the apply path for an answered proposal.
+// An action: three bounded queries merged, so a large workspace's inputs
+// never cross one query's execution limit.
+cliRoute("/cli/org/analysis-inputs", async (ctx, body) => ctx.runAction((api as any).orgInit.analysisInputs, body));
+// The head of people (docs/architecture/org-staffing.md S6): `cast org staff
+// [--adopt] [--every 7d]` and the "Hire a Head of People" button.
+cliRoute("/cli/org/staff", async (ctx, body) => ctx.runMutation(api.orgRoles.staff, body));
+cliRoute("/cli/org/assistant", async (ctx, body) => ctx.runMutation(api.orgRoles.hireAssistant, body));
+cliRoute("/cli/org/apply-decision", async (ctx, body) => ctx.runMutation((api as any).orgInit.applyDecision, body));
+// Staffing (docs/architecture/org-staffing.md S3, S4): the health signals and
+// the proposal lifecycle. Decide, accept-all and withdraw refuse a session
+// caller on the server; the CLI passes from_session as on every org verb.
+// The fanned action (org-staffing.md S3): the decision ladder in its own
+// execution budget, so `cast org health` answers on a large workspace.
+cliRoute("/cli/org/health", async (ctx, body) => ctx.runAction((api as any).orgHealth.healthReport, body));
+cliRoute("/cli/org/loose", async (ctx, body) => ctx.runQuery((api as any).orgInbox.loose, body));
+cliRoute("/cli/org/propose", async (ctx, body) => ctx.runMutation((api as any).orgProposals.create, body));
+cliRoute("/cli/org/proposals", async (ctx, body) => ctx.runQuery((api as any).orgProposals.list, body));
+cliRoute("/cli/org/proposal", async (ctx, body) => ctx.runQuery((api as any).orgProposals.get, body));
+cliRoute("/cli/org/proposal/decide", async (ctx, body) => ctx.runMutation((api as any).orgProposals.decide, body));
+cliRoute("/cli/org/proposal/accept-all", async (ctx, body) => ctx.runMutation((api as any).orgProposals.acceptAll, body));
+cliRoute("/cli/org/proposal/decide-ask", async (ctx, body) => ctx.runMutation((api as any).orgProposals.decideAsk, body));
+cliRoute("/cli/org/proposal/withdraw", async (ctx, body) => ctx.runMutation((api as any).orgProposals.withdraw, body));
+cliRoute("/cli/org/proposal/revise", async (ctx, body) => ctx.runMutation((api as any).orgProposals.revise, body));
+cliRoute("/cli/org/proposal/hire", async (ctx, body) => ctx.runMutation((api as any).orgProposals.decideHire, body));
+// Roles hired from a template (docs/architecture/org-hire.md W8): the template
+// as a server object, the instance row and its record, lessons back to the
+// publisher. Reads are one equality against the caller's workspace key or the
+// value "codecast"; writes carry the rules the CLI applies locally.
+cliRoute("/cli/org/template/publish", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.publish, body));
+cliRoute("/cli/org/template/yank", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.yank, body));
+cliRoute("/cli/org/template/retire", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.retire, body));
+cliRoute("/cli/org/template/catalog", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.catalog, body));
+cliRoute("/cli/org/template/get", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.get, body));
+cliRoute("/cli/org/template/release", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.release, body));
+cliRoute("/cli/org/template/instance", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.upsertInstance, body));
+cliRoute("/cli/org/template/instance-status", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.instanceStatus, body));
+cliRoute("/cli/org/template/instances", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.listInstances, body));
+cliRoute("/cli/org/template/evidence", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.recordEvidenceCheck, body));
+cliRoute("/cli/org/template/report", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.report, body));
+cliRoute("/cli/org/template/setup", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.setup, body));
+cliRoute("/cli/org/template/lesson", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.fileLesson, body));
+cliRoute("/cli/org/template/lessons", async (ctx, body) => ctx.runQuery((api as any).orgTemplates.listLessons, body));
+cliRoute("/cli/org/template/lesson-status", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.setLessonStatus, body));
+// Human only (refuseUnlessHuman): the CLI call is refused with the reason; the role page calls the mutation directly.
+cliRoute("/cli/org/template/activate", async (ctx, body) => ctx.runMutation((api as any).orgTemplates.activateRoutine, body));
+// The learning loop (org-hire.md H12). The opt-in is a person's (an agent
+// session is refused); the pass, its status and the canary rollout are the
+// Codecast publishers'. The pass is an action: it asks a model per instance.
+cliRoute("/cli/org/template/learning", async (ctx, body) => ctx.runQuery((api as any).orgTemplateLearning.learning, body));
+cliRoute("/cli/org/template/learning/set", async (ctx, body) => ctx.runMutation((api as any).orgTemplateLearning.setLearning, body));
+cliRoute("/cli/org/template/learn/pass", async (ctx, body) => ctx.runAction((api as any).orgTemplateLearning.learnPass, body));
+cliRoute("/cli/org/template/learn/status", async (ctx, body) => ctx.runQuery((api as any).orgTemplateLearning.learnStatusOf, body));
+cliRoute("/cli/org/template/learn/due", async (ctx, body) => ctx.runQuery((api as any).orgTemplateLearning.learnDue, body));
+cliRoute("/cli/org/template/learn/rollout", async (ctx, body) => ctx.runMutation((api as any).orgTemplateLearning.rollout, body));
+
+// Session read marks: `cast read <id> --ack` and `cast unread <id>`. Both
+// resolve the ref (id or short id) and check conversation access inside the
+// mutation. body: { api_token, conversation_id }.
+cliRoute("/cli/session/ack", async (ctx, body) => {
+  return await ctx.runMutation(api.sessionReads.acknowledge, body);
+});
+cliRoute("/cli/session/unread", async (ctx, body) => {
+  return await ctx.runMutation(api.sessionReads.markUnread, body);
+});
+
+// Team chat. Every one of these authorizes the caller inside the function — this
+// route only forwards the request body, so the mutation's own argument list is
+// what keeps identity and scope out of the caller's hands.
+//
+// The CLI prints messages by a short id prefix, so each message-id field is
+// resolved to the full id first (chat.resolveMessageRef); the function still
+// checks access itself.
+async function withChatMessageIds(ctx: any, body: any, ...fields: string[]) {
+  for (const field of fields) {
+    if (typeof body?.[field] !== "string") continue;
+    const { id, error } = await ctx.runQuery(internal.chat.resolveMessageRef, {
+      api_token: body.api_token, ref: body[field],
+    });
+    if (!id) throw new ConvexError({ code: "NOT_FOUND", message: error });
+    body[field] = id;
+  }
+  return body;
+}
+cliRoute("/cli/chat/channels", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.listChannels, body);
+});
+cliRoute("/cli/chat/create-channel", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.createChannel, body);
+});
+cliRoute("/cli/chat/read", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.listMessages, body);
+});
+cliRoute("/cli/chat/thread", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.getThread, await withChatMessageIds(ctx, body, "root_id"));
+});
+cliRoute("/cli/chat/message", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.getMessage, await withChatMessageIds(ctx, body, "message_id"));
+});
+cliRoute("/cli/chat/search", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.searchMessages, body);
+});
+cliRoute("/cli/chat/send", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.sendMessage, await withChatMessageIds(ctx, body, "thread_root_id"));
+});
+cliRoute("/cli/chat/mark-read", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.markRead, body);
+});
+// What the anchor runs to fill the placeholder already showing in the thread.
+cliRoute("/cli/chat/reply", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.replyAsAnchor, await withChatMessageIds(ctx, body, "message_id"));
+});
+// Stop the anchor answering plain replies in one thread, or hand it a thread it
+// has not spoken in. body: { api_token, root_id, follow }.
+cliRoute("/cli/chat/anchor-follow", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.setAnchorFollow, await withChatMessageIds(ctx, body, "root_id"));
+});
+cliRoute("/cli/chat/react", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.toggleReaction, await withChatMessageIds(ctx, body, "message_id"));
+});
+// Stop one in-flight anchor turn now, instead of waiting out the deadline.
+// body: { api_token, message_id } — the thinking placeholder's id.
+cliRoute("/cli/chat/stop", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.stopAnchorReply, await withChatMessageIds(ctx, body, "message_id"));
+});
+// The roles and sessions inside a room (`cast chat add` / `cast chat remove`).
+// body: { api_token, channel_id, refs } / { api_token, channel_id, ref }.
+cliRoute("/cli/chat/add-agents", async (ctx, body) => {
+  return await ctx.runMutation(api.chatAgents.addChannelAgents, body);
+});
+cliRoute("/cli/chat/remove-agent", async (ctx, body) => {
+  return await ctx.runMutation(api.chatAgents.removeChannelAgent, body);
+});
+// Archive (or restore) a channel. body: { api_token, channel_id, archived }.
+cliRoute("/cli/chat/archive", async (ctx, body) => {
+  return await ctx.runMutation(api.chat.archiveChannel, body);
+});
+// What landed in some channels after a stamp, one short line each (a role's
+// wake frame and `cast chat read --since`). body: { channel_ids, since, limit? }.
+cliRoute("/cli/chat/lines-since", async (ctx, body) => {
+  return await ctx.runQuery(api.chat.linesSince, body);
+});
+// The Slack mirror (`cast chat slack …`): the team's installation and every
+// mirrored pair, the Slack channels the app can see, and link / update /
+// unlink. Each function checks membership and channel management inside.
+cliRoute("/cli/chat/slack/status", async (ctx, body) => {
+  return await ctx.runQuery(api.slackSync.getTeamSlack, body);
+});
+cliRoute("/cli/chat/slack/channels", async (ctx, body) => {
+  return await ctx.runAction(api.slackSync.listSlackChannels, body);
+});
+cliRoute("/cli/chat/slack/link", async (ctx, body) => {
+  return await ctx.runAction(api.slackSync.linkChannel, body);
+});
+cliRoute("/cli/chat/slack/update", async (ctx, body) => {
+  return await ctx.runMutation(api.slackSync.updateLink, body);
+});
+cliRoute("/cli/chat/slack/unlink", async (ctx, body) => {
+  return await ctx.runMutation(api.slackSync.unlinkChannel, body);
+});
+cliRoute("/cli/chat/slack/people", async (ctx, body) => {
+  return await ctx.runQuery(api.slackSync.listSlackPeople, body);
+});
+cliRoute("/cli/chat/slack/map", async (ctx, body) => {
+  return await ctx.runMutation(api.slackSync.mapSlackPerson, body);
+});
+cliRoute("/cli/chat/slack/dms", async (ctx, body) => {
+  return await ctx.runMutation(api.slackSync.setDmSync, body);
+});
+// The caller's own addresses: read, or add/remove one.
+cliRoute("/cli/me/emails", async (ctx, body) => {
+  if (body.add) await ctx.runMutation(api.users.addAlternateEmail, { api_token: body.api_token, email: body.add });
+  if (body.remove) await ctx.runMutation(api.users.removeAlternateEmail, { api_token: body.api_token, email: body.remove });
+  return await ctx.runQuery(api.users.myEmails, { api_token: body.api_token });
+});
+
+// Org roles following chat channels (agent-channels.md C1). body: { role, channel }
+// where role is "or-N" or a handle and channel is an id or "#name".
+cliRoute("/cli/role/follow", async (ctx, body) => {
+  return await ctx.runMutation(api.orgChannels.follow, body);
+});
+cliRoute("/cli/role/unfollow", async (ctx, body) => {
+  return await ctx.runMutation(api.orgChannels.unfollow, body);
+});
+
+// Tasks
+cliRoute("/cli/work/create", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.create, body);
+});
+// Signals (the-line-end-to-end.md LE3): the one typed door in, and its reads.
+cliRoute("/cli/signal/add", async (ctx, body) => {
+  return await ctx.runAction(api.signals.ingest, body);
+});
+cliRoute("/cli/signal/ls", async (ctx, body) => {
+  return await ctx.runQuery(api.signals.listForCli, body);
+});
+cliRoute("/cli/signal/show", async (ctx, body) => {
+  return await ctx.runQuery(api.signals.showForCli, body);
+});
+cliRoute("/cli/signal/move", async (ctx, body) => {
+  return await ctx.runMutation(api.signals.moveForCli, body);
+});
+// A product's issues merged or split (learning-loop.md LL3): codecast follows.
+cliRoute("/cli/signal/merge", async (ctx, body) => {
+  return await ctx.runMutation(api.signals.mergeForCli, body);
+});
+cliRoute("/cli/signal/split", async (ctx, body) => {
+  return await ctx.runMutation(api.signals.splitForCli, body);
+});
+// A line closes a problem that needs no new fix, with the outcome its reason earns (learning-loop.md LL13).
+cliRoute("/cli/line/dissolve", async (ctx, body) => {
+  return await ctx.runMutation(api.signals.dissolveForCli, body);
+});
+// A judge's finding found wrong, and what diagnosing it found (learning-loop.md LL11).
+cliRoute("/cli/signal/judge-defects", async (ctx, body) => {
+  return await ctx.runMutation((api as any).judgeReview.defectsForCli, body);
+});
+cliRoute("/cli/signal/diagnosis", async (ctx, body) => {
+  return await ctx.runMutation((api as any).judgeReview.diagnosisForCli, body);
+});
+// A repo's resolved line profile onto its projects (line-profile.md LP3).
+// device_id is the publisher's machine, where an edit of the file is routed.
+cliRoute("/cli/line/profile/publish", async (ctx, body) => {
+  return await ctx.runMutation(api.signals.publishProfile, body);
+}, { forwardDeviceId: true });
+// Bringing moments (learning-loop.md LL7, LL8): a checkout publishes its
+// extractors and judges, its machine claims due moments, runs each extractor
+// and hands the moment back, where it is kept and judged.
+cliRoute("/cli/moments/publish", async (ctx, body) => {
+  return await ctx.runMutation(api.moments.publish, body);
+}, { forwardDeviceId: true });
+cliRoute("/cli/moments/claim", async (ctx, body) => {
+  return await ctx.runMutation(api.moments.claim, body);
+}, { forwardDeviceId: true });
+cliRoute("/cli/moments/complete", async (ctx, body) => {
+  return await ctx.runAction(api.moments.complete, body);
+}, { forwardDeviceId: true });
+// A source that judges on subscription hands its judging to the machine that
+// handed the moment in; the replies come back here (moments.judgedForCli).
+cliRoute("/cli/moments/judged", async (ctx, body) => {
+  return await ctx.runAction(api.moments.judgedForCli, body);
+}, { forwardDeviceId: true });
+cliRoute("/cli/moments/ls", async (ctx, body) => {
+  return await ctx.runQuery(api.moments.listForCli, body);
+});
+cliRoute("/cli/moments/show", async (ctx, body) => {
+  return await ctx.runQuery(api.moments.showForCli, body);
+});
+cliRoute("/cli/moments/retry", async (ctx, body) => {
+  return await ctx.runMutation(api.moments.retryForCli, body);
+});
+cliRoute("/cli/moments/rejudge", async (ctx, body) => {
+  return await ctx.runAction(api.moments.rejudgeForCli, body);
+});
+cliRoute("/cli/moments/body", async (ctx, body) => {
+  return await ctx.runAction(api.moments.bodyForCli, body);
+});
+cliRoute("/cli/moments/rulings", async (ctx, body) => {
+  return await ctx.runQuery(api.moments.rulingsForCli, body);
+});
+// Agent reviews (agentReviews.ts): a machine running reviews claims queued
+// ones, renews them while their sessions run, and hands each back; a person
+// starts, stops, retries and reads them.
+cliRoute("/cli/reviews/claim", async (ctx, body) => ctx.runAction(api.agentReviews.claimForCli, body), { forwardDeviceId: true });
+cliRoute("/cli/reviews/renew", async (ctx, body) => ctx.runMutation(api.agentReviews.renewForCli, body), { forwardDeviceId: true });
+cliRoute("/cli/reviews/done", async (ctx, body) => ctx.runAction(api.agentReviews.doneForCli, body), { forwardDeviceId: true });
+cliRoute("/cli/reviews/start", async (ctx, body) => ctx.runMutation(api.agentReviews.startForCli, body));
+cliRoute("/cli/reviews/status", async (ctx, body) => ctx.runQuery(api.agentReviews.statusForCli, body));
+cliRoute("/cli/reviews/cancel", async (ctx, body) => ctx.runMutation(api.agentReviews.cancelForCli, body));
+cliRoute("/cli/reviews/retry", async (ctx, body) => ctx.runMutation(api.agentReviews.retryForCli, body));
+cliRoute("/cli/reviews/transcript", async (ctx, body) => ctx.runAction(api.agentReviews.transcriptForCli, body));
+// Trial projects (lineTrial.ts): their cards, their spend, the switch, and a
+// card's answer from a terminal.
+cliRoute("/cli/line/trial/cards", async (ctx, body) => ctx.runQuery(api.lineTrial.cards, body));
+cliRoute("/cli/line/trial/spend", async (ctx, body) => ctx.runQuery(api.lineTrial.spend, body));
+cliRoute("/cli/line/problem-cost", async (ctx, body) => ctx.runQuery(api.lineTrial.cost, body));
+cliRoute("/cli/line/trial/projects", async (ctx, body) => ctx.runQuery(api.lineTrial.projects, body));
+cliRoute("/cli/line/trial/set", async (ctx, body) => ctx.runMutation(api.lineTrial.setTrial, body));
+cliRoute("/cli/line/trial/run-target", async (ctx, body) => ctx.runQuery(api.lineTrial.runTarget, body));
+cliRoute("/cli/line/trial/dispatch-set", async (ctx, body) => ctx.runMutation(api.lineTrial.setDispatch, body));
+cliRoute("/cli/line/trial/dispatch", async (ctx, body) => ctx.runMutation(api.lineTrial.dispatchNow, body));
+cliRoute("/cli/line/trial/spend-add", async (ctx, body) => ctx.runMutation(api.lineTrial.addOutsideSpend, body));
+cliRoute("/cli/line/trial/spend-rm", async (ctx, body) => ctx.runMutation(api.lineTrial.removeOutsideSpend, body));
+cliRoute("/cli/line/trial/rerun", async (ctx, body) => ctx.runMutation(api.lineTrial.rerunForCli, body));
+cliRoute("/cli/line/trial/runs", async (ctx, body) => ctx.runQuery(api.lineTrial.runsForCli, body));
+cliRoute("/cli/line/trial/answer",async (ctx, body) => ctx.runMutation(api.lineTrial.answerForCli, body));
+cliRoute("/cli/line/trial/recard", async (ctx, body) => ctx.runMutation(api.lineTrial.recardForCli, body));
+cliRoute("/cli/line/trial/rebuild", async (ctx, body) => ctx.runMutation(api.lineTrial.rebuildForCli, body));
+cliRoute("/cli/line/trial/drop", async (ctx, body) => ctx.runMutation(api.lineTrial.dropAtCardForCli, body));
+cliRoute("/cli/line/trial/sweep", async (ctx, body) => ctx.runMutation(api.lineTrial.sweepForCli, body));
+// A graph's call node (LL1): one prompt, one answer, on the team's model budget (LL10).
+cliRoute("/cli/model/call", async (ctx, body) => {
+  return await ctx.runAction(api.modelCalls.callForCli, body);
+});
+cliRoute("/cli/model/budget", async (ctx, body) => {
+  return await ctx.runMutation(api.modelCalls.budgetForCli, body);
+});
+// `cast keys`: the person's keyboard bindings (convex/keyBindings.ts).
+cliRoute("/cli/keys/get", async (ctx, body) => {
+  return await ctx.runQuery(api.keyBindings.get, body);
+});
+cliRoute("/cli/keys/set", async (ctx, body) => {
+  return await ctx.runMutation(api.keyBindings.set, body);
+});
+
+// The goals brief the ground node reads (the-line-end-to-end.md LE5).
+cliRoute("/cli/goals/brief", async (ctx, body) => {
+  return await ctx.runQuery(api.goals.brief, body);
+});
+// A project's expectations (the-line-model.md LM5). brief is what a judge
+// reads: the active lines with ids, under the version a finding cites.
+cliRoute("/cli/expectations/show", async (ctx, body) => {
+  return await ctx.runQuery(api.expectations.show, body);
+});
+cliRoute("/cli/expectations/brief", async (ctx, body) => {
+  return await ctx.runQuery(api.expectations.brief, body);
+});
+cliRoute("/cli/expectations/propose", async (ctx, body) => {
+  return await ctx.runMutation(api.expectations.propose, body);
+});
+cliRoute("/cli/expectations/resolve", async (ctx, body) => {
+  return await ctx.runMutation(api.expectations.resolve, body);
+});
+cliRoute("/cli/calls/list", async (ctx, body) => {
+  return await ctx.runQuery(api.transcripts.cliListCalls, body);
+});
+cliRoute("/cli/calls/get", async (ctx, body) => {
+  return await ctx.runQuery(api.transcripts.cliGetCall, body);
+});
+// `cast call snap`: a call's recorded files with the clock to align them, for
+// the CLI to seek with its own ffmpeg. body: { call: "cl-42" | full id }. The
+// URLs are signed here, at request time, for ten minutes: the CLI is not a
+// subscription and needs neither a stable URL nor a long one, and a query
+// result can never hand it one signed in a window that has lapsed. Files
+// still recording carry their live frame instead (callRecordings.signForCli).
+cliRoute("/cli/calls/recordings", async (ctx, body) => {
+  const res = await ctx.runQuery(internal.callRecordings.cliCallRecordings, { api_token: body.api_token, call: body.call });
+  return res ? await signForCli(res) : null;
+});
+// `cast call snap --share`: store a frame as a public image tied to the
+// recording file it came from, so deleting the recording deletes it.
+// body: { recording_id, image_base64, at_ms? }. The picture travels in the
+// request and the server stores it itself: a storage id is never taken from
+// the client (callRecordings.cliShareFrame says why). `at_ms` is the moment
+// it shows, on the call's clock, for the room's thread line.
+cliRoute("/cli/calls/frame-share", async (ctx, body) => {
+  return await ctx.runAction(internal.callRecordings.cliShareFrame, {
+    api_token: body.api_token,
+    recording_id: String(body.recording_id ?? ""),
+    image_base64: String(body.image_base64 ?? ""),
+    ...(typeof body.at_ms === "number" && Number.isFinite(body.at_ms) ? { at_ms: body.at_ms } : {}),
+  });
+});
+// `cast call hold <duration>|off`: a fed agent asks its huddle for time.
+cliRoute("/cli/calls/hold", async (ctx, body) => {
+  return await ctx.runMutation(api.transcripts.cliHoldCall, body);
+});
+cliRoute("/cli/work/list", async (ctx, body) => {
+  return await ctx.runQuery(api.tasks.list, body);
+});
+cliRoute("/cli/work/get", async (ctx, body) => {
+  return await ctx.runQuery(api.tasks.get, body);
+});
+cliRoute("/cli/work/update", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.update, body);
+});
+cliRoute("/cli/work/comment", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.addComment, body);
+});
+// `cast task ready --claim`: start the first ready task for the caller (TG7).
+cliRoute("/cli/work/claim", async (ctx, body) => {
+  return await claimFrontier(ctx, body);
+});
+cliRoute("/cli/work/dep", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.addDep, body);
+});
+cliRoute("/cli/work/undep", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.removeDep, body);
+});
+cliRoute("/cli/work/wait", async (ctx, body) => {
+  return await ctx.runMutation(api.taskWaits.addWait, body);
+});
+cliRoute("/cli/work/unwait", async (ctx, body) => {
+  return await ctx.runMutation(api.taskWaits.removeWait, body);
+});
+// Links that do not block (TG5): supersede moves the old task's dependents.
+cliRoute("/cli/work/supersede", async (ctx, body) => {
+  return await ctx.runMutation(api.taskLinks.supersede, body);
+});
+cliRoute("/cli/work/relate", async (ctx, body) => {
+  return await ctx.runMutation(api.taskLinks.relate, body);
+});
+cliRoute("/cli/work/unrelate", async (ctx, body) => {
+  return await ctx.runMutation(api.taskLinks.unrelate, body);
+});
+cliRoute("/cli/work/context", async (ctx, body) => {
+  return await ctx.runQuery(api.tasks.context, body);
+});
+// `cast task history <ct>` and a line run's $cause_history (line-workspace.md LW5).
+cliRoute("/cli/work/history", async (ctx, body) => {
+  return await ctx.runQuery(api.lineWorkspace.cliCauseHistory, body);
+});
+cliRoute("/cli/work/resume", async (ctx, body) => {
+  return await ctx.runQuery(api.taskResume.context, body);
+});
+cliRoute("/cli/work/promote", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.promote, body);
+});
+cliRoute("/cli/work/snippet", async (ctx, body) => {
+  return await ctx.runQuery(api.tasks.snippet, body);
+});
+cliRoute("/cli/work/heartbeat", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.heartbeat, body);
+});
+cliRoute("/cli/work/spawn", async (ctx, body) => {
+  return await ctx.runMutation(api.tasks.spawnForTask, body);
+});
+
+// ── Review notes (cast review …) ──
+cliRoute("/cli/review/add", async (ctx, body) => {
+  return await ctx.runMutation(api.reviewNotes.add, body);
+});
+cliRoute("/cli/review/list", async (ctx, body) => {
+  return await ctx.runQuery(api.reviewNotes.list, body);
+});
+cliRoute("/cli/review/send", async (ctx, body) => {
+  return await ctx.runMutation(api.reviewNotes.send, body);
+});
+cliRoute("/cli/review/edit", async (ctx, body) => {
+  return await ctx.runMutation(api.codeComments.update, body);
+});
+cliRoute("/cli/review/rm", async (ctx, body) => {
+  return await ctx.runMutation(api.codeComments.remove, body);
+});
+cliRoute("/cli/review/disposition", async (ctx, body) => {
+  return await ctx.runMutation(api.reviewNotes.setDisposition, body);
+});
+
+// ── Integrations (cast integrations …) ──
+//
+// Connect/disconnect delegate to integrations.ts, which resolves the caller
+// from the api_token and then calls the SAME flow the web buttons call. The
+// issue-sync source verbs are issueSync's own cli* functions, so the CLI and
+// the /settings/integrations page act on one implementation each.
+cliRoute("/cli/integrations/list", async (ctx, body) => {
+  // appConnections.listConnections already authenticates by api_token, so the
+  // CLI reads the exact rows the integrations page renders.
+  return await ctx.runQuery(api.appConnections.listConnections, body);
+});
+cliRoute("/cli/integrations/connect-url", async (ctx, body) => {
+  return await ctx.runAction(api.integrations.cliConnectUrl, body);
+});
+cliRoute("/cli/integrations/connect-token", async (ctx, body) => {
+  return await ctx.runAction(api.integrations.cliConnectToken, body);
+});
+cliRoute("/cli/integrations/disconnect", async (ctx, body) => {
+  return await ctx.runAction(api.integrations.cliDisconnect, body);
+});
+cliRoute("/cli/integrations/sources", async (ctx, body) => {
+  return await ctx.runQuery(api.issueSync.cliListSources, body);
+});
+cliRoute("/cli/integrations/candidates", async (ctx, body) => {
+  return await ctx.runAction(api.issueSync.cliListRemoteCandidates, body);
+});
+cliRoute("/cli/integrations/add-source", async (ctx, body) => {
+  return await ctx.runMutation(api.issueSync.cliAddSource, body);
+});
+cliRoute("/cli/integrations/update-source", async (ctx, body) => {
+  return await ctx.runMutation(api.issueSync.cliUpdateSource, body);
+});
+cliRoute("/cli/integrations/remove-source", async (ctx, body) => {
+  return await ctx.runMutation(api.issueSync.cliRemoveSource, body);
+});
+cliRoute("/cli/integrations/sync", async (ctx, body) => {
+  return await ctx.runAction(api.issueSync.cliSyncNow, body);
+});
+
+// Plans
+cliRoute("/cli/plans/create", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.create, body);
+});
+cliRoute("/cli/plans/list", async (ctx, body) => {
+  return await ctx.runQuery(api.plans.list, body);
+});
+cliRoute("/cli/plans/get", async (ctx, body) => {
+  return await ctx.runQuery(api.plans.get, body);
+});
+cliRoute("/cli/plans/update", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.update, body);
+});
+cliRoute("/cli/plans/bind", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.bindSession, body);
+});
+cliRoute("/cli/plans/unbind", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.unbindSession, body);
+});
+
+// Unified comment route
+cliRoute("/cli/plans/comment", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addComment, body);
+});
+// Legacy routes — translate to addComment (only pass known args)
+cliRoute("/cli/plans/log", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addComment, {
+    api_token: body.api_token, short_id: body.short_id,
+    content: body.entry || body.content, type: "progress",
+    session_id: body.session_id,
+  });
+});
+cliRoute("/cli/plans/decide", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addComment, {
+    api_token: body.api_token, short_id: body.short_id,
+    content: body.decision || body.content, type: "decision",
+    rationale: body.rationale, session_id: body.session_id,
+  });
+});
+cliRoute("/cli/plans/discover", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addComment, {
+    api_token: body.api_token, short_id: body.short_id,
+    content: body.finding || body.content, type: "discovery",
+    session_id: body.session_id,
+  });
+});
+cliRoute("/cli/plans/pointer", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addComment, {
+    api_token: body.api_token, short_id: body.short_id,
+    content: body.label || body.content, type: "reference",
+    path_or_url: body.path_or_url,
+  });
+});
+cliRoute("/cli/plans/status", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.updateStatus, body);
+});
+cliRoute("/cli/plans/snippet", async (ctx, body) => {
+  return await ctx.runQuery(api.plans.snippet, body);
+});
+cliRoute("/cli/plans/drive-state", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.updateDriveState, body);
+});
+cliRoute("/cli/plans/drive-findings", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.recordDriveFindings, body);
+});
+cliRoute("/cli/plans/orchestration-status", async (ctx, body) => {
+  return await ctx.runQuery(api.plans.getOrchestrationStatus, body);
+});
+cliRoute("/cli/plans/escalation", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.addEscalation, body);
+});
+cliRoute("/cli/plans/recalc", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.recalcPlanProgress, body);
+});
+cliRoute("/cli/plans/save-retro", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.saveRetro, body);
+});
+cliRoute("/cli/plans/share", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.generateShareLink, body);
+});
+cliRoute("/cli/plans/unshare", async (ctx, body) => {
+  return await ctx.runMutation(api.plans.unsharePlan, body);
+});
+// `cast plan template save|ls`, and `cast plan create --template <saved name>` (TG6).
+cliRoute("/cli/plans/template-save", async (ctx, body) => {
+  return await ctx.runMutation(api.planTemplates.save, body);
+});
+cliRoute("/cli/plans/templates", async (ctx, body) => {
+  return await ctx.runQuery(api.planTemplates.list, body);
+});
+cliRoute("/cli/plans/template-remove", async (ctx, body) => {
+  return await ctx.runMutation(api.planTemplates.remove, body);
+});
+cliRoute("/cli/orchestration/emit", async (ctx, body) => {
+  return await ctx.runMutation(api.orchestrationEvents.emit, body);
+});
+cliRoute("/cli/orchestration/events", async (ctx, body) => {
+  return await ctx.runQuery(api.orchestrationEvents.listByPlan, body);
+});
+cliRoute("/cli/progress/append", async (ctx, body) => {
+  return await ctx.runMutation(api.progressEvents.append, body);
+});
+cliRoute("/cli/progress/replay", async (ctx, body) => {
+  return await ctx.runQuery(api.progressEvents.replay, body);
+});
+cliRoute("/cli/progress/latest", async (ctx, body) => {
+  return await ctx.runQuery(api.progressEvents.latest, body);
+});
+
+// Docs
+cliRoute("/cli/docs/create", async (ctx, body) => {
+  return await ctx.runMutation(api.docs.create, body);
+});
+cliRoute("/cli/docs/list", async (ctx, body) => {
+  return await ctx.runQuery(api.docs.list, body);
+});
+cliRoute("/cli/docs/get", async (ctx, body) => {
+  return await ctx.runQuery(api.docs.get, body);
+});
+cliRoute("/cli/docs/update", async (ctx, body) => {
+  const result = await ctx.runMutation(api.docs.update, body);
+  // The mutation returns the content it stored whenever the text changed — a
+  // title edit rewrites the heading line, so it resets the editor snapshot too.
+  if (result.content !== undefined) {
+    await ctx.runMutation(api.docs.resetSync, { api_token: body.api_token, id: body.id, content: result.content });
+  }
+  return result;
+});
+cliRoute("/cli/docs/comment", async (ctx, body) => {
+  return await ctx.runMutation(api.docs.addComment, body);
+});
+cliRoute("/cli/docs/search", async (ctx, body) => {
+  return await ctx.runQuery(api.docs.search, body);
+});
+// A session's share link, and the pin that makes it public (cast share).
+cliRoute("/cli/sessions/share", async (ctx, body) => {
+  return { share_token: await ctx.runMutation(api.conversations.generateShareLink, body) };
+});
+cliRoute("/cli/sessions/pin", async (ctx, body) => {
+  return await ctx.runMutation(api.conversations.pinToProfile, body);
+});
+cliRoute("/cli/sessions/unpin", async (ctx, body) => {
+  return await ctx.runMutation(api.conversations.unpinFromProfile, body);
+});
+
+cliRoute("/cli/docs/share", async (ctx, body) => {
+  return await ctx.runMutation(api.docs.generateShareLink, body);
+});
+cliRoute("/cli/docs/unshare", async (ctx, body) => {
+  return await ctx.runMutation(api.docs.unshare, body);
+});
+cliRoute("/cli/docs/delete", async (ctx, body) => {
+  return await ctx.runMutation(api.docs.remove, body);
+});
+// `cast doc lab`: a Lab tool (alternatives, trim, flag, typos) run on the
+// stored doc, its result written in as drafting markup (docLab.runOnDoc).
+cliRoute("/cli/docs/lab", async (ctx, body) => ctx.runAction((api as any).docLab.runOnDoc, body));
+cliRoute("/cli/docs/patch", async (ctx, body) => {
+  const result = await ctx.runMutation(api.docs.patch, body);
+  if (result.content) {
+    await ctx.runMutation(api.docs.resetSync, { api_token: body.api_token, id: body.id, content: result.content });
+  }
+  return result;
+});
+
+// Workflows
+cliRoute("/cli/workflows/upsert", async (ctx, body) => {
+  return await ctx.runMutation(api.workflows.upsert, body);
+});
+cliRoute("/cli/workflows/line-version", async (ctx, body) => ctx.runQuery(api.workflows.lineVersionForCli, body));
+cliRoute("/cli/workflows/list", async (ctx, body) => {
+  return await ctx.runMutation(api.workflows.list, body);
+});
+// A Try's case settling on the graph's machine (line-workspace.md LW4, cli lineTry.ts).
+cliRoute("/cli/line-tries/report", async (ctx, body) => ctx.runMutation((api as any).lineActions.reportTry, body));
+
+// Mods (shared/contracts/mods.ts): cast mod dev|publish|ls|logs|versions|pull|rollback|enable|disable|rm
+cliRoute("/cli/mods/push", async (ctx, body) => ctx.runMutation((api as any).mods.cliPush, body));
+cliRoute("/cli/mods/list", async (ctx, body) => ctx.runQuery((api as any).mods.cliList, body));
+cliRoute("/cli/mods/logs", async (ctx, body) => ctx.runQuery((api as any).mods.cliLogs, body));
+cliRoute("/cli/mods/versions", async (ctx, body) => ctx.runQuery((api as any).mods.cliVersions, body));
+cliRoute("/cli/mods/get-version", async (ctx, body) => ctx.runQuery((api as any).mods.cliGetVersion, body));
+cliRoute("/cli/mods/rollback", async (ctx, body) => ctx.runMutation((api as any).mods.cliRollback, body));
+cliRoute("/cli/mods/set-enabled", async (ctx, body) => ctx.runMutation((api as any).mods.cliSetEnabled, body));
+cliRoute("/cli/mods/remove", async (ctx, body) => ctx.runMutation((api as any).mods.cliRemove, body));
+cliRoute("/cli/mods/guide", async (ctx, body) => ctx.runQuery((api as any).mods.cliGuide, body));
+
+// Mod objects (shared/contracts/mods.ts objects): cast obj <prefix> create|ls|show|set|done
+cliRoute("/cli/objects/create", async (ctx, body) => ctx.runMutation((api as any).modObjects.cliCreate, body));
+cliRoute("/cli/objects/update", async (ctx, body) => ctx.runMutation((api as any).modObjects.cliUpdate, body));
+cliRoute("/cli/objects/get", async (ctx, body) => ctx.runQuery((api as any).modObjects.cliGet, body));
+cliRoute("/cli/objects/list", async (ctx, body) => ctx.runQuery((api as any).modObjects.cliList, body));
+cliRoute("/cli/objects/kinds", async (ctx, body) => ctx.runQuery((api as any).modObjects.cliKinds, body));
+
+// Mods' local halves (convex/modLocal.ts): the daemon's side of the bridge
+cliRoute("/cli/mods/local", async (ctx, body) => ctx.runQuery((api as any).modLocal.cliLocalMods, body));
+cliRoute("/cli/mods/local-report", async (ctx, body) => ctx.runMutation((api as any).modLocal.cliReportLocal, body));
+cliRoute("/cli/mods/local-device", async (ctx, body) => ctx.runMutation((api as any).modLocal.cliSetLocalDevice, body));
+cliRoute("/cli/mods/secret-set", async (ctx, body) => ctx.runAction((api as any).modSecrets.cliSet, body));
+cliRoute("/cli/mods/secrets", async (ctx, body) => ctx.runQuery((api as any).modSecrets.cliList, body));
+cliRoute("/cli/mods/publish-state", async (ctx, body) => ctx.runMutation((api as any).modLocal.cliPublish, body));
+cliRoute("/cli/mods/claim-calls", async (ctx, body) => ctx.runMutation((api as any).modLocal.cliClaimCalls, body));
+cliRoute("/cli/mods/finish-call", async (ctx, body) => ctx.runMutation((api as any).modLocal.cliFinishCall, body));
+cliRoute("/cli/mods/log", async (ctx, body) => ctx.runMutation((api as any).modLogs.cliLog, body));
+cliRoute("/cli/mods/call", async (ctx, body) => ctx.runMutation((api as any).modCalls.cliCall, body));
+cliRoute("/cli/mods/get-call", async (ctx, body) => ctx.runQuery((api as any).modCalls.cliGetCall, body));
+
+// Workflow Runs
+cliRoute("/cli/workflow-runs/create", async (ctx, body) => ctx.runMutation(api.workflow_runs.createFromCli, body));
+cliRoute("/cli/workflow-runs/get", async (ctx, body) => ctx.runMutation(api.workflow_runs.getForDaemon, body));
+cliRoute("/cli/workflow-runs/progress", async (ctx, body) => ctx.runMutation(api.workflow_runs.updateProgress, body));
+cliRoute("/cli/workflow-runs/gate", async (ctx, body) => ctx.runMutation(api.workflow_runs.pauseAtGate, body));
+cliRoute("/cli/workflow-runs/poll-gate", async (ctx, body) => ctx.runMutation(api.workflow_runs.pollGateResponse, body));
+cliRoute("/cli/workflow-runs/live-on-device", async (ctx, body) => ctx.runMutation(api.workflow_runs.liveRunsForDevice, body));
+cliRoute("/cli/workflow-runs/set-primary", async (ctx, body) => ctx.runMutation(api.workflow_runs.setPrimarySession, body));
+cliRoute("/cli/workflow-runs/respond-gate", async (ctx, body) => ctx.runMutation(api.workflow_runs.respondToGateFromCli, body));
+// `cast workflow reask`: a run's decision asked again by the stations as they are now.
+cliRoute("/cli/workflow-runs/reask", async (ctx, body) => ctx.runMutation(api.workflow_runs.reaskFromCli, body));
+cliRoute("/cli/workflow-runs/ingest", async (ctx, body) => ctx.runMutation(api.workflow_runs.ingestSnapshot, body));
+cliRoute("/cli/workflow-runs/by-external", async (ctx, body) => ctx.runQuery(api.workflow_runs.getByExternalRun, body));
+// the-line.md L8: `cast workflow runs [--task|--plan]`, one list across workflows.
+cliRoute("/cli/workflow-runs/list", async (ctx, body) => ctx.runQuery(api.workflow_runs.listRunsFromCli, body));
+
+// Session-to-session messaging
+cliRoute("/cli/messages/send", async (ctx, body) => ctx.runMutation(api.pendingMessages.sendSessionMessage, body));
+
+// Session labels (personal filing). List the catalog, file/unfile a session,
+// and manage the label catalog itself.
+cliRoute("/cli/labels/list", async (ctx, body) => ctx.runQuery(api.buckets.cliListLabels, body));
+cliRoute("/cli/labels/set", async (ctx, body) => ctx.runMutation(api.buckets.cliSetLabel, body));
+cliRoute("/cli/labels/clear", async (ctx, body) => ctx.runMutation(api.buckets.cliClearLabel, body));
+cliRoute("/cli/labels/create", async (ctx, body) => ctx.runMutation(api.buckets.cliCreateLabel, body));
+cliRoute("/cli/labels/rename", async (ctx, body) => ctx.runMutation(api.buckets.cliRenameLabel, body));
+cliRoute("/cli/labels/remove", async (ctx, body) => ctx.runMutation(api.buckets.cliArchiveLabel, body));
+
+// Spawn a fresh, inbox-visible session (cast spawn). `api.spawn` is filled in by
+// codegen on deploy; cast to any so the committed _generated typecheck stays green
+// until then.
+cliRoute("/cli/spawn", async (ctx, body) => ctx.runMutation((api as any).spawn.createSessionFromCli, body));
+// `cast handoff --to <agent>`: brief + compose + spawn + link, one action
+// (handoff.start), the same one the web calls signed in.
+cliRoute("/cli/handoff", async (ctx, body) => ctx.runAction((api as any).handoff.start, body));
+
+// `cast read <id> --ask "<question>"`: answer from one session, with line
+// citations, on the server's model key. body: { api_token, conversation_id, question }.
+cliRoute("/cli/read/ask", async (ctx, body) => ctx.runAction(internal.sessionAsk.ask, {
+  api_token: body.api_token,
+  conversation_id: body.conversation_id,
+  question: body.question,
+}));
+
+// Session OWNERS (cast own / disown / owners, or scripts routing an agent-run
+// session into a human's inbox). A session has a SET of owners — it can sit in
+// several teammates' inboxes at once — so `own` ADDS and `disown` REMOVES one,
+// leaving the others alone. `owners/set` replaces the set wholesale (the web
+// multi-select, and `cast disown --all`).
+// body: { api_token, session_id, owner: "<email|name>" | "me" }.
+// Inbox visibility (cast dismiss / undismiss / kill): hide a session from the
+// user's inbox (agent keeps running), restore it, or retire it (teardown +
+// Killed bucket). One mutation, action pinned per route so the URLs stay
+// self-documenting. body: { api_token, session }.
+cliRoute("/cli/sessions/dismiss", async (ctx, body) => ctx.runMutation(api.conversations.cliSetSessionVisibility, { ...body, action: "dismiss" }));
+cliRoute("/cli/sessions/undismiss", async (ctx, body) => ctx.runMutation(api.conversations.cliSetSessionVisibility, { ...body, action: "undismiss" }));
+cliRoute("/cli/sessions/kill", async (ctx, body) => ctx.runMutation(api.conversations.cliSetSessionVisibility, { ...body, action: "kill" }));
+
+// Resume (cast resume <session> --tmux): bring the agent up in its managed pane
+// without killing a live one. body: { api_token, session }.
+cliRoute("/cli/sessions/resume", async (ctx, body) => ctx.runMutation(api.conversations.cliResumeSession, body));
+
+// Hibernate (cast hibernate <session>): park the pane now, keep the transcript,
+// wake on the next message. `cast wake` posts to /cli/sessions/resume above.
+// body: { api_token, session }.
+cliRoute("/cli/sessions/hibernate", async (ctx, body) => ctx.runMutation(api.conversations.cliHibernateSession, body));
+cliRoute("/cli/sessions/command-results", async (ctx, body) => ctx.runQuery((api as any).sessionCommands.results, body));
+
+// Restart (cast restart <session>): kill the agent and resume it through the
+// daemon's resume ladder — the web header's "Restart session", from a shell.
+// body: { api_token, session, repair? }.
+cliRoute("/cli/sessions/restart", async (ctx, body) => ctx.runMutation(api.conversations.cliRestartSession, body));
+
+// In-place agent/model switch (cast switch): stay on this conversation, drop a
+// divider, reconstitute as the new agent. body: { api_token, session, agent_type?, model?, effort? }.
+cliRoute("/cli/sessions/switch", async (ctx, body) => ctx.runMutation(api.conversations.switchSessionAgent, body));
+
+// Rename (cast rename): set a session's title with the custom flag so the
+// auto-titler never overwrites it. body: { api_token, session, title }.
+cliRoute("/cli/sessions/rename", async (ctx, body) => ctx.runMutation(api.conversations.cliRenameSession, body));
+
+// Pinned thread state (cast state): the agent's standing "where this stands"
+// line, shown pinned above the composer and on the inbox card. Empty text
+// clears it. body: { api_token, session, text? }.
+cliRoute("/cli/sessions/state/set", async (ctx, body) => ctx.runMutation(api.conversations.setThreadState, body));
+// `cast browser pane <url>` / `cast preview <url>`: the agent offers a page,
+// the reader opens it beside the conversation.
+cliRoute("/cli/browser/pane-offer", async (ctx, body) => ctx.runMutation(api.conversations.offerBrowserPane, body));
+cliRoute("/cli/sessions/state/get", async (ctx, body) => ctx.runQuery(api.conversations.getThreadState, body));
+
+// Pull requests (cast pr): list, read, follow and steer a PR from a shell. Each
+// route takes the same locator: a reference the caller typed plus the
+// repository, branch and session the CLI already knew. prCli.resolve
+// decides which pull request that names. body: { api_token, ref?, repository?,
+// number?, session?, branch?, ... }.
+cliRoute("/cli/pr/ls", async (ctx, body) => ctx.runQuery((api as any).prCli.ls, body));
+cliRoute("/cli/pr/show", async (ctx, body) => ctx.runQuery((api as any).prCli.show, body));
+cliRoute("/cli/pr/events", async (ctx, body) => ctx.runQuery((api as any).prCli.events, body));
+cliRoute("/cli/pr/resolve", async (ctx, body) => ctx.runQuery((api as any).prCli.resolve, body));
+cliRoute("/cli/pr/shepherd", async (ctx, body) => ctx.runMutation((api as any).prCli.shepherd, body));
+// Commenting reuses codeComments.create wholesale: it records the comment
+// against the session, writes the timeline event and mirrors it to GitHub. The
+// only thing prCli adds is turning the caller's reference into a pull request.
+cliRoute("/cli/pr/threads", async (ctx, body) => ctx.runQuery((api as any).prCli.threads, body));
+
+// Resolving reuses codeComments the same way commenting does: prCli turns the
+// caller's words ("src/auth.ts:12", a short id) into one comment, and
+// codeComments owns the state change and its access rule.
+// Under threads/ because /cli/pr/resolve is already the reference resolver
+// that `watch` and `open` call, and older CLIs still call it.
+for (const verb of ["resolve", "unresolve"] as const) {
+  cliRoute(`/cli/pr/threads/${verb}`, async (ctx, body) => {
+    const { selector, ...locator } = body;
+    const found = await ctx.runQuery((api as any).prCli.findComment, { ...locator, selector });
+    if (!found?.pull_request) return { error: "No pull request matched that reference" };
+    if (!found.comment_id) {
+      if (!found.matches?.length) return { error: `Nothing on this pull request matches "${selector}"` };
+      const where = found.matches
+        .map((m: any) => `${m.short_id} ${m.file_path ?? ""}${m.line_number ? `:${m.line_number}` : ""}`)
+        .join(", ");
+      return { error: `"${selector}" matches several threads. Name one: ${where}` };
+    }
+    await ctx.runMutation((api as any).codeComments[verb], {
+      api_token: body.api_token,
+      comment_id: found.comment_id,
+    });
+    const thread = found.matches?.[0] ?? null;
+    return { repository: found.pull_request.repository, number: found.pull_request.number, thread, resolved: verb === "resolve" };
+  });
+}
+
+// Reviewing, merging and closing reach GitHub, so each is an action and each
+// answers with GitHub's own words when GitHub refuses.
+cliRoute("/cli/pr/review", async (ctx, body) => ctx.runAction((api as any).prCli.review, body));
+// One Ship control (ship.ts): `cast ship run`. A --pr ref resolves the way
+// every cast pr verb resolves one, then the same action the web dispatches runs.
+cliRoute("/cli/ship/run", async (ctx, body) => {
+  const { pr_locator, dry_run, task, session, requester_session, api_token } = body;
+  let pull_request_id: string | undefined;
+  if (pr_locator) {
+    const resolved = await ctx.runQuery((api as any).prCli.resolve, { api_token, ...pr_locator });
+    if (!resolved?.pull_request) return { error: "No pull request matched that reference" };
+    pull_request_id = resolved.pull_request.id;
+  }
+  const args = { api_token, task, session, pull_request_id, requester_session };
+  try {
+    return await ctx.runMutation(dry_run ? (api as any).ship.previewFromCli : (api as any).ship.startFromCli, args);
+  } catch (err) {
+    return { error: err instanceof Error ? (err.message.split("Uncaught Error: ").pop() ?? err.message).split("\n")[0] : String(err) };
+  }
+});
+cliRoute("/cli/pr/merge", async (ctx, body) => ctx.runAction((api as any).prCli.merge, body));
+cliRoute("/cli/pr/close", async (ctx, body) => ctx.runAction((api as any).prCli.close, body));
+cliRoute("/cli/pr/reopen", async (ctx, body) => ctx.runAction((api as any).prCli.reopen, body));
+cliRoute("/cli/pr/draft", async (ctx, body) => ctx.runAction((api as any).prCli.draft, body));
+cliRoute("/cli/pr/reviewers", async (ctx, body) => ctx.runAction((api as any).prCli.reviewers, body));
+cliRoute("/cli/pr/edit", async (ctx, body) => ctx.runAction((api as any).prCli.edit, body));
+
+cliRoute("/cli/pr/comment", async (ctx, body) => {
+  const { content, file_path, line_number, anchor_lines, session, hold, reply_to, ...locator } = body;
+  const resolved = await ctx.runQuery((api as any).prCli.resolve, locator);
+  const pr = resolved?.pull_request;
+  if (!pr) return { error: "No pull request matched that reference" };
+
+  // A reply names the thread it answers the way `cast pr resolve` does, by
+  // short id or file:line, and takes that thread's place in the diff.
+  let parent: any = null;
+  if (reply_to) {
+    const found = await ctx.runQuery((api as any).prCli.findComment, { ...locator, selector: reply_to });
+    if (!found?.pull_request) return { error: "No pull request matched that reference" };
+    if (!found.comment_id) {
+      const where = (found.matches ?? []).map((m: any) => `${m.short_id} ${m.file_path ?? "conversation"}:${m.line_number ?? ""}`).join(", ");
+      return { error: found.matches?.length ? `"${reply_to}" matches several threads. Name one: ${where}` : `No thread matches "${reply_to}"` };
+    }
+    parent = { id: found.comment_id };
+  }
+
+  const created = await ctx.runMutation((api as any).codeComments.create, {
+    api_token: body.api_token,
+    repository: pr.repository,
+    pull_request_id: pr.id,
+    ref: pr.head_sha ?? undefined,
+    // A reply takes its anchor from the parent (codeComments.create inherits it).
+    file_path: parent ? undefined : file_path,
+    line_number: parent ? undefined : line_number,
+    anchor_lines: parent ? undefined : anchor_lines,
+    parent_id: parent ? parent.id : undefined,
+    content,
+    conversation_ref: session,
+    author_kind: "agent",
+    // A held note waits in the caller's review until `cast pr review` sends it.
+    pending: !!hold,
+    mirror: !hold,
+  });
+  return { repository: pr.repository, number: pr.number, url: pr.url, comment_id: created?.comment_id, held: !!hold, reply: !!parent };
+});
+
+cliRoute("/cli/pr/notes", async (ctx, body) => {
+  const { discard, ...locator } = body;
+  const resolved = await ctx.runQuery((api as any).prCli.resolve, locator);
+  const pr = resolved?.pull_request;
+  if (!pr) return { error: "No pull request matched that reference" };
+  // `--discard` throws the caller's held notes away: the way back from a note
+  // written on the wrong line, before anything has been submitted.
+  if (discard) {
+    const result = await ctx.runMutation((api as any).codeComments.discardPendingReview, { api_token: body.api_token, pull_request_id: pr.id });
+    return { repository: pr.repository, number: pr.number, notes: [], ...result };
+  }
+  const notes = await ctx.runQuery((api as any).codeComments.pendingReview, { api_token: body.api_token, pull_request_id: pr.id });
+  return { repository: pr.repository, number: pr.number, notes };
+});
+
+// `cast ship mark`: a deploy marker for the Changes page (changesDeploy.ts).
+cliRoute("/cli/changes/mark-deploy", async (ctx, body) => ctx.runMutation((api as any).changesDeploy.markDeploy, body));
+
+cliRoute("/cli/sessions/own", async (ctx, body) => ctx.runMutation(api.sessionOwnership.addSessionOwner, body));
+cliRoute("/cli/sessions/disown", async (ctx, body) => ctx.runMutation(api.sessionOwnership.removeSessionOwner, body));
+cliRoute("/cli/sessions/owners/set", async (ctx, body) => ctx.runMutation(api.sessionOwnership.setSessionOwners, body));
+cliRoute("/cli/sessions/owners", async (ctx, body) => ctx.runQuery(api.sessionOwnership.listOwners, body));
+
+// Cross-user device reparent (cast pull): pull a session you run or own — or a
+// team-visible one (see findPullableConversation) — onto the
+// caller's OWN device. Account follows device — user_id becomes the caller, the
+// author is pinned. body: { api_token, session_id, device_id }.
+cliRoute("/cli/sessions/reparent", async (ctx, body) => ctx.runMutation(api.devices.reparentSessionToDevice, body), { forwardDeviceId: true });
+// This machine signed into a different account. Sessions it still owns under
+// the previous account follow it, without starting the agent again.
+cliRoute("/cli/devices/claim-account", async (ctx, body) => ctx.runMutation(api.devices.claimDeviceAccount, body));
+
+// CC account switching: route the swap + blocked-session revive through the
+// daemon fleet / nudge limit-parked sessions after a window reset.
+cliRoute("/cli/accounts/switch", async (ctx, body) => ctx.runMutation(api.accountSwitch.requestAccountSwitch, body), { forwardDeviceId: true });
+// The lease that stops two daemons on one machine from both executing the same
+// command. forwardDeviceId because the mutation takes the device as a real
+// argument: the hold is scoped to a device, so an untargeted command stays
+// visible to every other machine on the account. The daemon reads any non-200
+// as "carry on", so the binding rejection and an internal error both fail open.
+cliRoute("/cli/command-claim", async (ctx, body) => ctx.runMutation(api.users.claimDaemonCommand, {
+  api_token: body.api_token,
+  command_id: body.command_id,
+  boot_id: body.boot_id,
+  device_id: typeof body.device_id === "string" ? body.device_id : undefined,
+  release: body.release === true ? true : undefined,
+}), { forwardDeviceId: true });
+
+cliRoute("/cli/accounts/continue-blocked", async (ctx, body) => ctx.runMutation(api.accountSwitch.continueAllBlocked, body));
+cliRoute("/cli/accounts/save", async (ctx, body) => ctx.runMutation(api.accountSwitch.saveAccountProfile, body), { forwardDeviceId: true });
+cliRoute("/cli/accounts/publish", async (ctx, body) => ctx.runMutation(api.accountSwitch.publishDeviceAccounts, body), { forwardDeviceId: true });
+cliRoute("/cli/accounts/recovery-status", async (ctx, body) => ctx.runQuery(api.accountSwitch.recoveryStatus, body));
+
+// --- Published HTML artifacts (cast publish → codecast.sh/a/<slug>) ---
+// All handlers live in artifactsHttp.ts (they need Web Crypto + storage.store,
+// which only actions have). Pages/presentation: artifactPages.ts. Data:
+// artifacts.ts. Every POST here is callable from the sandboxed artifact pages
+// (opaque origin), so each registers a CORS preflight too.
+
+import {
+  publish as artifactPublish,
+  serve as artifactServe,
+  unlock as artifactUnlock,
+  emailUnlock as artifactEmailUnlock,
+  manage as artifactManage,
+  rollback as artifactRollback,
+  edit as artifactEdit,
+  comment as artifactComment,
+  identity as artifactIdentity,
+  view as artifactView,
+  corsPreflight as artifactCors,
+  mediaSign as artifactMediaSign,
+  playerJs as artifactPlayerJs,
+  dataJs as artifactDataJs,
+  motionJs as artifactMotionJs,
+} from "./artifactsHttp";
+
+const artifactPost = (path: string, handler: typeof artifactPublish) => {
+  http.route({ path, method: "POST", handler });
+  http.route({ path, method: "OPTIONS", handler: artifactCors });
+};
+
+artifactPost("/cli/artifacts/publish", artifactPublish);
+artifactPost("/cli/artifacts/unlock", artifactUnlock);
+artifactPost("/cli/artifacts/email-unlock", artifactEmailUnlock);
+artifactPost("/cli/artifacts/manage", artifactManage);
+artifactPost("/cli/artifacts/rollback", artifactRollback);
+artifactPost("/cli/artifacts/edit", artifactEdit);
+artifactPost("/cli/artifacts/comment", artifactComment);
+artifactPost("/cli/artifacts/identity", artifactIdentity);
+artifactPost("/cli/artifacts/view", artifactView);
+// Video and audio for published pages: presigned R2 uploads, and the player
+// script every page using <cast-player> loads (see lib/castPlayer.ts).
+artifactPost("/cli/media/sign", artifactMediaSign);
+http.route({ path: "/cli/player.js", method: "GET", handler: artifactPlayerJs });
+// Live data on published pages: the runtime pages with <cast-chart>/<cast-stat>
+// load (lib/castData.ts), and the owner's view behind `cast publish data`.
+// The data itself is served under the page (/cli/a/<slug>/_data), past its gates.
+http.route({ path: "/cli/data.js", method: "GET", handler: artifactDataJs });
+cliRoute("/cli/artifacts/data", async (ctx, body) => ctx.runAction(api.pageData.forCli, body));
+// The motion player HyperFrames composition pages load (see lib/castMotion.ts).
+http.route({ path: "/cli/motion.js", method: "GET", handler: artifactMotionJs });
+
+// Vault remote mirror — the daemon's push channel (packages/cli/src/vault/
+// vaultMirror.ts). Mirroring is opt-in per vault; a vault nobody turned on
+// never reaches these routes at all. The body upload URL deliberately reuses
+// images.generateUploadUrl: it is the generic "give this authenticated user a
+// storage upload URL" mutation, and a vault-specific twin of it would be the
+// same function under a second name.
+cliRoute("/cli/vault/register", async (ctx, body) => ctx.runMutation(api.vaultMirror.cliRegisterMirror, body), { forwardDeviceId: true });
+cliRoute("/cli/vault/upsert", async (ctx, body) => ctx.runMutation(api.vaultMirror.cliUpsertNotes, body), { forwardDeviceId: true });
+cliRoute("/cli/vault/upload-url", async (ctx, body) => ctx.runMutation(api.images.generateUploadUrl, body));
+
+// Remote pane watching — the daemon's frame push (packages/cli/src/terminal/
+// paneStream.ts). Only reached while a viewer holds a lease on the pane; the
+// reply carries that lease, so the capture loop learns when to stop from the
+// request it was already making.
+cliRoute("/cli/terminal/frame", async (ctx, body) => ctx.runMutation(api.terminalStream.cliPushFrame, body), { forwardDeviceId: true });
+// The viewer half, for callers with a token instead of a browser session.
+cliRoute("/cli/terminal/watch", async (ctx, body) => ctx.runMutation(api.terminalStream.watchPane, body), { forwardDeviceId: true });
+cliRoute("/cli/terminal/pane", async (ctx, body) => ctx.runQuery(api.terminalStream.getPane, body), { forwardDeviceId: true });
+cliRoute("/cli/terminal/input", async (ctx, body) => ctx.runMutation(api.terminalStream.sendPaneInput, body), { forwardDeviceId: true });
+
+// Image sharing (cast image): upload a screenshot/image to storage, then
+// resolve its stable public /api/storage/<uuid> URL for inline embedding in
+// message markdown and cast-canvas blocks. Same generic mutations as above.
+cliRoute("/cli/images/upload-url", async (ctx, body) => ctx.runMutation(api.images.generateUploadUrl, body));
+cliRoute("/cli/images/url", async (ctx, body) => ({ url: await ctx.runQuery(api.images.getImageUrl, body) }));
+
+// `cast replay ls|show|repro` (external-data.md X5). Show carries chunk URLs
+// signed at request time, never keys, the way /cli/calls/recordings does.
+cliRoute("/cli/replays/list", async (ctx, body) => ({ replays: await ctx.runQuery(api.replays.list, body) }));
+cliRoute("/cli/replays/get", async (ctx, body) => signReplayChunks(await ctx.runQuery(internal.replays.cliGet, body)));
+cliRoute("/cli/replays/recordings", async (ctx, body) => ctx.runAction(api.sources.posthog.listRecordings, body));
+cliRoute("/cli/replays/import", async (ctx, body) => ctx.runAction(api.sources.posthog.importRecording, body));
+// A replay row that mirrors a vendor recording (a Sentry replay linked to an
+// issue, a listed PostHog one), imported the first time it is read.
+cliRoute("/cli/replays/import-linked", async (ctx, body) => ctx.runAction(api.sources.vendorReplay.importLinked, body));
+// A capability for the replay player (contracts/replayPlayer.ts): `cast replay snap` posts it to the frame renderer.
+cliRoute("/cli/replays/player-link", async (ctx, body) => ctx.runAction(api.replays.playerLink, body));
+cliRoute("/cli/replays/backfill", async (ctx, body) => ctx.runMutation(api.sources.replayBackfill.start, body));
+cliRoute("/cli/replays/backfill-stop", async (ctx, body) => ctx.runMutation(api.sources.replayBackfill.stop, body));
+
+// `cast sources`, `cast events`, `cast metrics` and `cast connector`
+// (external-data.md X10): thin doors onto the functions the web reads, each of
+// which authenticates the api_token and holds rows to the workspace key itself.
+cliRoute("/cli/sources/list", async (ctx, body) => ctx.runQuery(api.ingest.listSources, body));
+cliRoute("/cli/sources/get", async (ctx, body) => ctx.runQuery(api.ingest.getSource, body));
+cliRoute("/cli/sources/create", async (ctx, body) => ctx.runMutation(api.ingest.createSource, body));
+cliRoute("/cli/sources/update", async (ctx, body) => ctx.runMutation(api.ingest.updateSource, body));
+cliRoute("/cli/sources/rotate-key", async (ctx, body) => ctx.runMutation(api.ingest.rotateKey, body));
+cliRoute("/cli/sources/remove", async (ctx, body) => ctx.runMutation(api.ingest.removeSource, body));
+cliRoute("/cli/events/list", async (ctx, body) => ctx.runQuery(api.ingest.listEvents, body));
+cliRoute("/cli/events/groups", async (ctx, body) => ctx.runQuery(api.ingest.listGroups, body));
+cliRoute("/cli/events/group", async (ctx, body) => ctx.runQuery(api.ingest.getGroup, body));
+cliRoute("/cli/events/issue", async (ctx, body) => ctx.runAction(api.sources.sentry.issueDetail, body));
+// A group mirrored from Sentry is resolved or ignored in Sentry, and the
+// mirror follows what Sentry answers; any other group changes here.
+cliRoute("/cli/events/set-status", async (ctx, body) => setEventGroupStatus(ctx, body));
+cliRoute("/cli/metrics/list", async (ctx, body) => ctx.runQuery(api.metrics.listWatches, body));
+cliRoute("/cli/metrics/get", async (ctx, body) => ctx.runQuery(api.metrics.getWatch, body));
+cliRoute("/cli/metrics/create", async (ctx, body) => ctx.runMutation(api.metrics.createWatch, body));
+cliRoute("/cli/metrics/update", async (ctx, body) => ctx.runMutation(api.metrics.updateWatch, body));
+cliRoute("/cli/metrics/remove", async (ctx, body) => ctx.runMutation(api.metrics.removeWatch, body));
+cliRoute("/cli/metrics/backfill", async (ctx, body) => ctx.runMutation(api.metrics.loadHistory, body));
+cliRoute("/cli/metrics/query", async (ctx, body) => ctx.runAction(api.sources.posthog.query, body));
+cliRoute("/cli/connector/capabilities", async (ctx, body) => ctx.runQuery(api.sources.app.capabilities, body));
+cliRoute("/cli/connector/read", async (ctx, body) => ctx.runAction(api.sources.app.read, body));
+cliRoute("/cli/connector/do", async (ctx, body) => ctx.runAction(api.sources.app.doAction, body));
+cliRoute("/cli/connector/refresh", async (ctx, body) => ctx.runAction(api.sources.app.refresh, body));
+cliRoute("/cli/connector/calls", async (ctx, body) => ctx.runQuery(api.sources.app.listCalls, body));
+// No grant or revoke door: grants are a person's, made in the browser
+// (sources/app.ts grant refuses an api token), never from an agent's CLI.
+
+cliRoute("/cli/artifacts/list", async (ctx, body) => ctx.runQuery(api.artifacts.listFromCLI, body));
+cliRoute("/cli/artifacts/delete", async (ctx, body) => ctx.runMutation(api.artifacts.deleteFromCLI, body));
+// Evidence (docs/architecture/the-line.md L6): `cast task handoff --page`
+// attaches an existing page to a task; `cast task show` and the task page
+// read one evidence object.
+cliRoute("/cli/artifacts/attach", async (ctx, body) => ctx.runMutation(api.artifacts.attachFromCLI, body));
+cliRoute("/cli/work/evidence", async (ctx, body) => ctx.runQuery(api.taskEvidence.get, body));
+
+// Raw artifact HTML + assets. Lives under /cli/ because the Caddy proxy in
+// front of the self-hosted backend forwards only that prefix (plus
+// auth/webhooks) to the HTTP-action upstream. codecast.sh/a/<slug> 302s to the
+// a.codecast.sh edge cache, which fetches this origin.
+//
+// CSP `sandbox` makes the document an opaque origin even when opened directly:
+// scripts run, but the page can never touch convex.codecast.sh state.
+http.route({ pathPrefix: "/cli/a/", method: "GET", handler: artifactServe });
+
+// A publicly shared call's video (callRecordings.sharedCallVideos): the share
+// page's <video> points here, and every request (each range a player asks
+// for) re-checks the link and the choice to include video, then redirects to
+// a URL into the private bucket. Turning the link off stops the video at the
+// next request; no URL into the bucket is ever written into the page.
+//
+// The URL is signed stable within SHARED_VIDEO_REDIRECT_WINDOW_MS (lib/r2
+// stableSigningWindow), so every redirect in a window carries the same
+// Location: a player that asks again while scrubbing lands on the object URL
+// it already holds, and its ranges come from R2 rather than through here.
+// It lives at most two windows, the ten minutes a fresh one had.
+//
+// Registered only under /cli/, the prefix the Caddy proxy in front of prod
+// forwards to HTTP actions today (infra/convex-proxy/Caddyfile): any other
+// path lands on the backend and 404s, so a second address here would be a
+// route that never answers.
+const SHARED_VIDEO_REDIRECT_WINDOW_MS = 5 * 60_000;
+const sharedCallVideo = httpAction(async (ctx, request) => {
+  const u = new URL(request.url);
+  const token = u.searchParams.get("token") ?? "";
+  const at = Number(u.searchParams.get("at"));
+  const notFound = () => new Response("Not found", { status: 404, headers: { "Cache-Control": "no-store" } });
+  if (!token || !Number.isFinite(at)) return notFound();
+  const key = await ctx.runQuery(internal.publicShare.sharedCallVideoObject, { share_token: token, at });
+  const signed = key ? await callRecordingGetUrl(key, { stable: { at: Date.now(), windowMs: SHARED_VIDEO_REDIRECT_WINDOW_MS } }) : null;
+  if (!signed) return notFound();
+  return new Response(null, { status: 302, headers: { Location: signed.url, "Cache-Control": "no-store", "Referrer-Policy": "no-referrer" } });
+});
+http.route({ path: SHARED_CALL_VIDEO_PATH, method: "GET", handler: sharedCallVideo });
+
+// Reading a public repository with no account at all — the standalone /r/ shell
+// runs on this. The handler is repoPublicHttp.ts; see the file header for why a
+// refusal there is deliberately indistinguishable from a missing repository.
+//
+// Registered on two prefixes because the Caddy proxy in front of this
+// deployment (infra/convex-proxy/Caddyfile) forwards only a fixed set of path
+// prefixes to HTTP actions, and /cli/ is the one that is already open. The
+// /api/public/ pair is the address this route should have, and starts working
+// as soon as the proxy carries that prefix too.
+for (const prefix of repoPublicPrefixes) {
+  http.route({ pathPrefix: prefix, method: "GET", handler: repoPublicServe });
+  http.route({ pathPrefix: prefix, method: "OPTIONS", handler: repoPublicPreflight });
+}
+
+// The ingest door (external-data.md X2), on both prefixes for the same reason
+// as the public repo routes above. The handler is ingestHttp.ts.
+for (const prefix of INGEST_PREFIXES) {
+  http.route({ pathPrefix: prefix, method: "POST", handler: ingestServe });
+  http.route({ pathPrefix: prefix, method: "OPTIONS", handler: ingestPreflight });
+}
+
+// Codecast's public signing keys (external-data.md X8, signed requests): an
+// app verifies the signature on every connector request against these. The
+// Caddy proxy forwards /.well-known. Cached an hour; a verifier refetches at
+// once when a request names a kid it has not seen (lib/codecastSigning.ts).
+http.route({
+  path: CODECAST_KEYS_PATH,
+  method: "GET",
+  handler: httpAction(async () =>
+    new Response(JSON.stringify(publishedKeys()), {
+      status: 200,
+      headers: { "Content-Type": "application/json", "Cache-Control": "public, max-age=3600", "Access-Control-Allow-Origin": "*" },
+    }),
+  ),
+});
+
+// Replay chunk uploads (external-data.md X5): the SDK signs one PUT per chunk
+// at <prefix><key>. A longer prefix than the door's, so the router sends it
+// here and everything else under /cli/ingest/ to the door. Preflight is the
+// door's, so the SDK sees one CORS answer. Handlers are replaysHttp.ts.
+for (const prefix of REPLAY_SIGN_PREFIXES) {
+  http.route({ pathPrefix: prefix, method: "POST", handler: replaySign });
+  http.route({ pathPrefix: prefix, method: "OPTIONS", handler: ingestPreflight });
+}
+// One chunk of a replay the reader may see: a 302 to a URL signed now.
+http.route({ path: REPLAY_CHUNK_PATH, method: "GET", handler: replayChunk });
+http.route({ path: REPLAY_CHUNK_PATH, method: "OPTIONS", handler: replayChunkPreflight });
+// The player page (replay.codecast.sh) trades its capability for the DOM capture's signed URLs.
+http.route({ path: REPLAY_PLAYER_MANIFEST_PATH, method: "GET", handler: replayPlayerManifest });
+http.route({ path: REPLAY_PLAYER_MANIFEST_PATH, method: "OPTIONS", handler: replayPlayerManifestPreflight });
+// The player worker asks before each frame request starts a browser: the capability opens and its budget has room.
+http.route({ path: REPLAY_FRAME_ADMIT_PATH, method: "POST", handler: replayFrameAdmit });
+
+// One-click unsubscribe for the notification digest (emails/digest.ts). Lives
+// under /cli/ because Caddy forwards only that prefix to HTTP actions. GET
+// serves the human clicking the footer link; POST serves RFC 8058 one-click
+// (Gmail/Yahoo fire it without opening a page). Token-bearing and idempotent.
+const emailUnsubscribe = httpAction(async (ctx, request) => {
+  const token = new URL(request.url).searchParams.get("token") ?? "";
+  const result: { ok: boolean } = await ctx.runMutation(
+    internal.emails.digest.unsubscribeByToken,
+    { token },
+  );
+  return unsubscribeResponse({
+    ok: result.ok,
+    method: request.method,
+    brand: BRAND,
+    settingsUrl: `${BRAND.url}/settings/notifications`,
+  });
+});
+http.route({ path: "/cli/email/unsubscribe", method: "GET", handler: emailUnsubscribe });
+http.route({ path: "/cli/email/unsubscribe", method: "POST", handler: emailUnsubscribe });
+
+// The caller's own suggestion profile, read by the suggest eval (packages/evals).
+// Only api_token is forwarded: the token decides whose profile it is, and any
+// other field in the body, a user id included, never reaches the query.
+cliRoute("/cli/suggestion-profile", async (ctx, body) =>
+  ctx.runQuery(internal.composerSuggestions.getOwnSuggestionProfile, { api_token: String(body?.api_token ?? "") }),
+);
+
+export default http;

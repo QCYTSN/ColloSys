@@ -1,0 +1,226 @@
+import { StyleSheet, TouchableOpacity, View as RNView } from 'react-native';
+import { Text as RNText } from '@/components/Themed';
+import FontAwesome from "@expo/vector-icons/FontAwesome";
+import { Theme, Spacing, themedStyles, useTheme } from "@/constants/Theme";
+import type { DocItem as DocItemType } from "@codecast/web/store/inboxStore";
+import { formatDateSmart, wasEdited } from "@codecast/shared/time";
+import { DOC_TYPES, DOC_TYPE_LABELS, type DocType } from "@codecast/shared/docs";
+import { useInboxStore } from "@codecast/web/store/inboxStore";
+import { useHostedMode } from "@codecast/web/lib/surfaces";
+import { formatRowTime, sessionCardTitle } from "@codecast/web/lib/sessionCard";
+import { hostedNoteLines } from "@codecast/web/lib/hostedNoteRow";
+
+type IconName = React.ComponentProps<typeof FontAwesome>["name"];
+
+// Styling only; the type list and labels come from @codecast/shared/docs.
+// Typed by DocType so a type added there without a style here fails to compile.
+const DOC_TYPE_STYLE: Record<DocType, { icon: IconName; color: string }> = {
+  note: { icon: "file-text-o", color: Theme.textMuted0 },
+  plan: { icon: "map-o", color: Theme.blue },
+  design: { icon: "paint-brush", color: Theme.violet },
+  spec: { icon: "file-code-o", color: Theme.cyan },
+  investigation: { icon: "search", color: Theme.accent },
+  handoff: { icon: "exchange", color: Theme.orange },
+  decision: { icon: "balance-scale", color: Theme.red },
+  charter: { icon: "gavel", color: Theme.violet },
+  brief: { icon: "sticky-note-o", color: Theme.green },
+};
+
+export const DOC_TYPE_CONFIG = Object.fromEntries(
+  DOC_TYPES.map((t) => [t, { ...DOC_TYPE_STYLE[t], label: DOC_TYPE_LABELS[t] }]),
+) as Record<string, { icon: IconName; label: string; color: string }>;
+
+export { DOC_TYPES };
+
+export function DocItemRow({
+  doc,
+  onPress,
+}: {
+  doc: DocItemType;
+  onPress: () => void;
+}) {
+  const Theme = useTheme();
+  const cfg = DOC_TYPE_CONFIG[doc.doc_type] ?? DOC_TYPE_CONFIG.note;
+  // Hosted mode lists notes as the web's DocRow does: the title over a line
+  // of what it says and the conversation it came from, with the rail's time
+  // words and no type icon or tag (every hosted note is a note).
+  const hosted = useHostedMode();
+  const source = useInboxStore((s) => {
+    const id = hosted ? (doc as any).conversation_id : undefined;
+    const row = id ? s.sessions[id] ?? s.conversations[id] : undefined;
+    return row ? sessionCardTitle(row as any) : null;
+  });
+
+  if (hosted) {
+    const { title, snippet } = hostedNoteLines(doc as any);
+    return (
+      <TouchableOpacity onPress={onPress} style={[styles.row, styles.hostedRow]} activeOpacity={0.6} accessibilityLabel={title}>
+        <RNView style={styles.hostedTopLine}>
+          <RNText style={[styles.title, styles.hostedTitle]} numberOfLines={1}>{title}</RNText>
+          {doc.pinned && <FontAwesome name="star" size={10} color={Theme.textMuted} />}
+          <RNText style={styles.hostedAge}>{formatRowTime(doc.updated_at, true)}</RNText>
+        </RNView>
+        {(snippet || source) ? (
+          <RNText style={styles.hostedSnippet} numberOfLines={1}>
+            {snippet}
+            {snippet && source ? " · " : null}
+            {source ? `From ${source}` : null}
+          </RNText>
+        ) : null}
+      </TouchableOpacity>
+    );
+  }
+
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.row} activeOpacity={0.6}>
+      <RNView style={styles.topLine}>
+        <RNView style={styles.leftGroup}>
+          <FontAwesome name={cfg.icon} size={13} color={cfg.color} style={styles.typeIcon} />
+          <RNText style={styles.title} numberOfLines={1}>{doc.title || "Untitled"}</RNText>
+          {doc.pinned && (
+            <FontAwesome name="star" size={10} color={Theme.accent} style={{ marginLeft: 4 }} />
+          )}
+        </RNView>
+        <RNText style={styles.age}>{formatDateSmart(wasEdited(doc) ? doc.updated_at : doc.created_at)}</RNText>
+      </RNView>
+
+      <RNView style={styles.metaLine}>
+        <RNView style={[styles.typeBadge, { borderColor: cfg.color + "40" }]}>
+          <RNText style={[styles.typeText, { color: cfg.color }]}>{cfg.label}</RNText>
+        </RNView>
+
+        {doc.source !== "human" && (
+          <>
+            <RNText style={styles.sep}>·</RNText>
+            <FontAwesome name="bolt" size={9} color={Theme.cyan} />
+          </>
+        )}
+
+        {doc.plan_short_id && (
+          <>
+            <RNText style={styles.sep}>·</RNText>
+            <RNText style={styles.planLink}>{doc.plan_short_id}</RNText>
+          </>
+        )}
+
+        {doc.labels && doc.labels.length > 0 && (
+          <>
+            <RNText style={styles.sep}>·</RNText>
+            {doc.labels.slice(0, 2).map((l) => (
+              <RNView key={l} style={styles.labelBadge}>
+                <RNText style={styles.labelText}>{l}</RNText>
+              </RNView>
+            ))}
+            {doc.labels.length > 2 && (
+              <RNText style={styles.moreLabels}>+{doc.labels.length - 2}</RNText>
+            )}
+          </>
+        )}
+      </RNView>
+    </TouchableOpacity>
+  );
+}
+
+const styles = themedStyles((Theme) => StyleSheet.create({
+  row: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: 10,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: Theme.bgHighlight,
+  },
+  topLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginBottom: 4,
+  },
+  leftGroup: {
+    flexDirection: "row",
+    alignItems: "center",
+    flex: 1,
+    marginRight: Spacing.sm,
+  },
+  typeIcon: {
+    marginRight: 8,
+    width: 16,
+    textAlign: "center",
+  },
+  title: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: Theme.text,
+    flex: 1,
+    letterSpacing: -0.2,
+  },
+  age: {
+    fontSize: 11,
+    color: Theme.textMuted0,
+    fontVariant: ["tabular-nums"],
+  },
+  metaLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginLeft: 24,
+    gap: 4,
+  },
+  typeBadge: {
+    borderWidth: 1,
+    borderRadius: 4,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  typeText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  sep: {
+    color: Theme.textMuted0,
+    fontSize: 11,
+  },
+  planLink: {
+    fontSize: 10,
+    color: Theme.cyan,
+    fontWeight: "500",
+  },
+  labelBadge: {
+    backgroundColor: Theme.bgHighlight,
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+  },
+  labelText: {
+    fontSize: 10,
+    color: Theme.textMuted,
+    fontWeight: "500",
+  },
+  moreLabels: {
+    fontSize: 10,
+    color: Theme.textMuted0,
+  },
+  // The inbox rail's time (SessionItem hostedTime), so a time reads the
+  // same in every hosted list.
+  hostedAge: {
+    fontSize: 12,
+    color: Theme.textMuted,
+    fontVariant: ["tabular-nums"],
+  },
+  hostedRow: {
+    paddingVertical: 12,
+    borderBottomColor: Theme.borderLight,
+  },
+  hostedTopLine: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  hostedTitle: {
+    fontSize: 15,
+    fontWeight: "500",
+    letterSpacing: 0,
+  },
+  hostedSnippet: {
+    marginTop: 3,
+    fontSize: 13,
+    color: Theme.textMuted0,
+  },
+}));

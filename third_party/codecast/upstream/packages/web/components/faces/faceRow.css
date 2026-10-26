@@ -1,0 +1,1697 @@
+/* THE FACE ROW: one circle per person, one ring vocabulary (pl-756 F2).
+ *
+ * A face is a circle and nothing else at rest: no hairline, no plate, no
+ * shadow. Everything drawn around it carries a fact, and the fact is written
+ * as ONE attribute, `data-state`, from the model's own vocabulary
+ * (lib/faces/faceRow). Direction is the colour, the way every walkie surface
+ * already reads: warm (`--walkie-tx`) is my voice going out, cool
+ * (`--walkie-rx`) is theirs coming in, cyan is a voice in a call, violet is a
+ * seat in a call. The thickness of a live ring is `--level`, written straight
+ * onto the seat by the meter, so a voice moves a gradient and never a tree.
+ *
+ * The circle itself (`.face`), the name under it (`.face-name`) and the mute
+ * badge (`.face-mute`) are the floating call circles' own (calls/faces.css),
+ * because a face is the same element whether it shows a photo or video.
+ *
+ * Two densities, one stylesheet: the header bar at 28px and the floating
+ * window at 64px, or the bigger size the person picked (FaceRow writes
+ * `--face` on the row; every size below is a share of it). The numbers below are mirrored in FACE_ROW_METRICS
+ * (FaceRow.tsx), which the layout test holds against this file.
+ */
+
+/* Registered so a seat's circle can glide between sizes: the stack's
+   faces shrink into it and grow back out by transitioning `--face` itself,
+   and everything drawn from it (the seat, the circle, the overlap) follows. */
+@property --face {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 28px;
+}
+
+.face-row {
+  --face: 28px;
+  --face-gap: 6px;
+  --link-w: 14px;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--face-gap);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.face-row[data-density="float"] {
+  /* Pinned to the window's edge nearest the screen's: the top, with the
+     card's room below; the bottom, with it above (data-band). The window
+     keeps that room at all times, so nothing here moves on a hover. */
+  position: absolute;
+  left: 0;
+  top: 0;
+  --face: 64px;
+  --face-gap: 10px;
+  --link-w: 26px;
+  /* The only margin: the room a live ring and its glow need (FACES_PADDING). */
+  padding: 8px;
+  background: transparent;
+  /* PAPER. The float sits over whatever the person is working in, so what it
+     says beyond the circles is drawn on paper, not in the app's theme: a
+     card that changed with the theme would sometimes be the one dark thing
+     on a light screen. The circles wear a ring of the same paper, which is
+     what keeps a dark avatar from dissolving into a dark editor. */
+  --paper: #fcfbf7;
+  --paper-deep: #f3f0e8;
+  --paper-foot: #f6f3ec;
+  --ink: #1e1c19;
+  --ink-soft: #5f5a51;
+  --ink-faint: #8d877b;
+  --hairline: rgba(30, 28, 25, 0.13);
+  --hairline-strong: rgba(30, 28, 25, 0.22);
+  --wash: rgba(30, 28, 25, 0.06);
+  --wash-strong: rgba(30, 28, 25, 0.1);
+}
+
+/* The band under the faces: the engagement card and the member card, out of
+ * the seats' line so the row never wraps. In the bar it is a zero height
+ * anchor the cards hang from; in the float it hangs right under the faces
+ * (FLOAT_BAND_GAP below the row's box), slid across to sit under the pointed
+ * face with a notch on it (floatBandPlacement, written by FaceRow), and the
+ * window is measured from it (FloatingFaceRow). Nothing else hangs under a
+ * face, so the card is the one thing there and reads as the face's own. */
+.face-row-below {
+  /* The lift both cards in the band share: the engagement card and the
+     member card are one column, so they throw one shadow. */
+  --card-shadow:
+    0 1px 2px color-mix(in srgb, var(--sol-text) 8%, transparent),
+    0 12px 32px -8px color-mix(in srgb, var(--sol-text) 22%, transparent);
+  position: absolute;
+  left: 0;
+  top: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding-top: 8px;
+  z-index: 60;
+}
+.face-row[data-density="float"] .face-row-below {
+  left: 8px;
+  top: calc(100% + 6px);
+  padding-top: 0;
+  gap: 0;
+  /* The card's own width (FACE_CARD_WIDTH), which the window always holds. */
+  width: 320px;
+  border-radius: 14px;
+  /* Sliding from face to face, the band glides rather than jumps. */
+  transition: left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+  /* A hairline, a hair of light along the top edge, and a shadow short
+     enough to stay inside the window's 8px margin: on a transparent window
+     a clipped shadow is a straight edge in mid-air. */
+  box-shadow:
+    0 0 0 1px var(--hairline-strong),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 6px rgba(20, 18, 14, 0.2);
+  color: var(--ink);
+  animation: face-card-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* The card's own tokens, rebound to paper: the member card and every
+     button in it read the app's surface tokens, and here the surface is
+     the card. */
+  --sol-bg: var(--paper);
+  --sol-bg-alt: var(--paper);
+  --sol-bg-highlight: var(--wash);
+  --sol-text: var(--ink);
+  --sol-text-muted: var(--ink-soft);
+  --sol-text-dim: var(--ink-faint);
+  --sol-border: var(--hairline-strong);
+  --card-shadow: none;
+}
+/* The notch: the band's own paper, pointing up at the face it is about. A
+   square turned 45 degrees, two of its edges in the band's hairline, half of
+   it poking above the band's top edge. The band draws no clip, so the notch
+   is not cut; the children round their own corners instead. */
+.face-row[data-density="float"] .face-row-below[data-notch]::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  left: var(--notch-x);
+  width: 11px;
+  height: 11px;
+  margin-left: -5.5px;
+  transform: rotate(45deg);
+  border-top-left-radius: 2px;
+  background: var(--paper);
+  box-shadow: -1px -1px 0 0 var(--hairline-strong);
+  transition: left 160ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.face-row[data-density="float"] .face-row-below > :first-child {
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+}
+.face-row[data-density="float"] .face-row-below > :last-child {
+  border-bottom-left-radius: 14px;
+  border-bottom-right-radius: 14px;
+}
+/* The face's card (a member's or a guest's) is the head of the paper card,
+   not a card of its own. */
+.face-row[data-density="float"] .face-row-below .face-card {
+  --lead: 0px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  animation: none;
+}
+.face-row[data-density="float"] .face-row-below .face-card::before {
+  display: none;
+}
+
+/* In the float the strip is paper too, the card's own surface: one material
+   for everything the float says beyond the circles, never a dark pill beside
+   a paper card. */
+.face-row[data-density="float"] .face-row-strip {
+  --sol-bg: var(--paper);
+  --sol-bg-alt: var(--paper);
+  --sol-bg-highlight: var(--wash);
+  --sol-text: var(--ink);
+  --sol-text-muted: var(--ink-soft);
+  --sol-text-dim: var(--ink-faint);
+  --sol-border: var(--hairline-strong);
+}
+.face-row[data-density="float"] .face-row-strip > .walkie-strip {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+  box-shadow:
+    0 0 0 1px var(--hairline-strong),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 6px rgba(20, 18, 14, 0.2);
+}
+
+/* The strip: in the row after the faces, one line with them. Positioned so
+   it paints over the call's track, which is drawn before it. */
+.face-row-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+  margin-left: 4px;
+}
+/* Nothing engaged: the strip is empty, and an empty flex item would still
+   cost the row a gap and its margin before whatever follows the faces. */
+.face-row-strip:empty {
+  display: none;
+}
+
+/* ── The call's track ───────────────────────────────────────────────────────
+ *
+ * While a call, a ring or a voice links me to somebody, the strip sits right
+ * after the last linked face and its plate runs back behind every linked
+ * face (FaceRow measures the span): the people on the call are one object
+ * with the call's controls, in the call's tone, and the rest of the team
+ * sits off the track, a step apart. The round end is concentric with the
+ * first face. In the strip the engagement card gives its own plate up to the
+ * track, so there is one surface, not a pill beside a pill. */
+.face-row-track {
+  --track-tone: var(--sol-violet);
+  position: absolute;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--track-tone) 10%, var(--sol-bg-alt));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--track-tone) 50%, transparent);
+  pointer-events: none;
+  transition: left 240ms cubic-bezier(0.2, 0.8, 0.2, 1), width 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.face-row-track[data-link-kind="ring"] { --track-tone: var(--sol-cyan); }
+.face-row-track[data-link-kind="tx"] { --track-tone: var(--walkie-tx); }
+.face-row-track[data-link-kind="rx"],
+.face-row-track[data-link-kind="both"] { --track-tone: var(--walkie-rx); }
+.face-row[data-density="float"] .face-row-track {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--track-tone) 9%, var(--paper)) 0%,
+    color-mix(in srgb, var(--track-tone) 9%, var(--paper-deep)) 100%
+  );
+  box-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--track-tone) 60%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+    0 2px 6px rgba(20, 18, 14, 0.2);
+}
+.face-row .face-row-strip[data-track] > .engagement-card,
+.face-row[data-density="float"] .face-row-strip[data-track] > .walkie-strip {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+/* ── The stack ──────────────────────────────────────────────────────────────
+ *
+ * On a call, the faces off it fold into one overlapped stack past the track:
+ * each tucks 60% under the one before, wears no marks, and a press on any of
+ * them spreads the team back out (FaceRow). Spread, the fold after the last
+ * face puts them back. The float's paper ring already parts one stacked
+ * circle from the next; the header draws its own background as the ring. */
+.face-row {
+  /* A stacked face's size, resolved here against the row's own --face (a
+     seat cannot scale its own --face without a cycle). */
+  --face-stacked: calc(var(--face) * 0.56);
+  --settle: cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Folding in, each face shrinks, dims and tucks under the one before, a
+   beat after its neighbour (`--stack-i`, written by FaceRow); spreading or
+   the call ending plays the same thing back out. The size is the seat's
+   real layout size, so the row closes up around the stack as it goes. */
+.face-row .face-seat {
+  transition:
+    opacity 180ms ease,
+    --face 480ms var(--settle) calc(var(--stack-i, 0) * 32ms),
+    margin-left 480ms var(--settle) calc(var(--stack-i, 0) * 32ms);
+}
+.face-row .face-seat[data-stacked] {
+  --face: var(--face-stacked);
+}
+.face-row .face-seat[data-stacked] + .face-seat[data-stacked] {
+  margin-left: calc(var(--face) * -0.42 - var(--face-gap));
+}
+/* Subdued by a veil, not by opacity: see-through circles tucked under one
+   another showed each other's letters through the overlap. The veil is the
+   surface behind the row (the header's background, the float's paper), laid
+   over the photo inside the circle's clip, so a stacked face fades toward
+   whatever it sits on in either theme and still hides the one beneath. */
+.face-row .face::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: var(--veil, var(--sol-bg));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 360ms ease;
+}
+.face-row[data-density="float"] .face {
+  --veil: var(--paper);
+}
+.face-row .face-seat[data-stacked] .face {
+  filter: var(--drain,) grayscale(0.6);
+}
+.face-row .face-seat[data-stacked] .face::after {
+  opacity: 0.5;
+}
+/* The header's circles are 28px, the top bar's one control height: at the
+   float's share they read as dots, so the bar's stack keeps more of its size
+   and less of the veil. */
+.face-row[data-density="bar"] {
+  --face-stacked: calc(var(--face) * 0.72);
+}
+.face-row[data-density="bar"] .face-seat[data-stacked] .face::after {
+  opacity: 0.35;
+}
+.face-row[data-density="bar"] .face-seat[data-stacked] .face {
+  box-shadow: 0 0 0 2px var(--sol-bg);
+}
+.face-row[data-density="float"] .face-seat[data-stacked] .face {
+  --edge-w: 3px;
+}
+.face-seat[data-stacked] :is(.face-pres, .face-bot, .face-unread, .face-ask, .face-mute, .face-name) {
+  display: none;
+}
+/* Pointed at, the stack wakes up: it is the way back to the team. */
+.face-row[data-stacked]:has(.face-seat[data-stacked]:hover) .face-seat[data-stacked] .face {
+  filter: var(--drain,) grayscale(0);
+  transform: translateY(-2px);
+}
+.face-row[data-stacked]:has(.face-seat[data-stacked]:hover) .face-seat[data-stacked] .face::after {
+  opacity: 0.12;
+}
+.face-row-stack-count {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(var(--face-stacked) * 0.7);
+  height: calc(var(--face-stacked) * 0.7);
+  margin-left: calc(var(--face-stacked) * -0.22 - var(--face-gap));
+  padding: 0 calc(var(--face-stacked) * 0.14);
+  position: relative;
+  z-index: 11;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sol-bg-alt);
+  box-shadow: 0 0 0 2px var(--sol-bg), 0 0 0 3px color-mix(in srgb, var(--sol-text) 18%, transparent);
+  color: var(--sol-text-muted);
+  font-family: var(--font-mono);
+  font-size: max(10px, calc(var(--face-stacked) * 0.28));
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  animation: face-stack-count-in 420ms var(--settle) calc(var(--stack-i-last, 0) * 32ms + 120ms) both;
+  transition: color 120ms ease, filter 360ms ease;
+}
+.face-row-stack-count:hover {
+  color: var(--sol-text);
+}
+@keyframes face-stack-count-in {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: none; }
+}
+.face-row[data-density="float"] .face-row-stack-count {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+  box-shadow: 0 0 0 1px var(--hairline-strong), 0 2px 6px rgba(20, 18, 14, 0.2);
+  color: var(--ink-soft);
+}
+.face-row[data-density="float"] .face-row-stack-count:hover {
+  color: var(--ink);
+}
+.face-row-fold {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(var(--face) * 0.6);
+  height: calc(var(--face) * 0.6);
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+  color: var(--sol-text-muted);
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.face-row-fold:hover {
+  background: color-mix(in srgb, var(--sol-text) 14%, transparent);
+  color: var(--sol-text);
+}
+.face-row-fold svg {
+  width: 55%;
+  height: 55%;
+}
+/* The float's others (FaceRow): everyone off the call folds behind one small
+   quiet circle after the strip, at half the call's size (floatOffCallFace).
+   A folded seat keeps its room, so the window measured from the row is the
+   same size open or folded and never moves; it only fades, a beat after its
+   neighbour, and takes no click. */
+.face-row[data-density="float"] .face-seat[data-folded] {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(var(--face) * -0.25)) scale(0.85);
+}
+.face-row[data-density="float"] .face-row-others ~ .face-seat {
+  transition:
+    opacity 220ms ease calc(var(--stack-i, 0) * 30ms),
+    transform 320ms var(--settle) calc(var(--stack-i, 0) * 30ms);
+}
+/* Pointed at, the others fan out of their circle as a small overlapped
+   stack, drawn by transform inside the room their seats already hold, so the
+   row's width (and the window measured from it) never changes. Awake, not
+   veiled: the pointer is on them. A press spreads them full size. */
+.face-row[data-density="float"] .face-row-others ~ .face-seat[data-stacked] {
+  margin-left: 0;
+  transform: translateX(calc(var(--face) * -0.12 + var(--stack-i, 0) * (var(--face) * -0.6 - var(--face-gap)))) scale(0.82);
+}
+.face-row[data-density="float"] .face-row-others ~ .face-seat[data-stacked] .face {
+  filter: var(--drain,);
+}
+.face-row[data-density="float"] .face-row-others ~ .face-seat[data-stacked] .face::after {
+  opacity: 0;
+}
+.face-row-others {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: max(24px, calc(var(--face) * 0.38));
+  height: max(24px, calc(var(--face) * 0.38));
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--paper) 70%, transparent);
+  box-shadow: 0 0 0 1px var(--hairline);
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: max(10px, calc(var(--face) * 0.15));
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  opacity: 0.6;
+  cursor: pointer;
+  transition: opacity 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+.face-row-others:hover,
+.face-row-others[data-open] {
+  opacity: 1;
+  color: var(--ink);
+  box-shadow: 0 0 0 1px var(--hairline-strong);
+}
+.face-row-strip[data-track] + .face-row-others {
+  margin-left: 8px;
+}
+.face-row[data-density="float"] .face-row-fold {
+  background: linear-gradient(180deg, var(--paper) 0%, var(--paper-deep) 100%);
+  box-shadow: 0 0 0 1px var(--hairline-strong), 0 2px 6px rgba(20, 18, 14, 0.2);
+  color: var(--ink-soft);
+}
+.face-row[data-density="float"] .face-row-fold:hover {
+  color: var(--ink);
+}
+
+/* Off the track: the first face past the call keeps its distance. */
+.face-row-strip[data-track] + .face-seat {
+  margin-left: 8px;
+}
+.face-row[data-density="float"] .face-row-strip[data-track] + .face-seat {
+  margin-left: 16px;
+}
+
+/* ── The seat ───────────────────────────────────────────────────────────────
+ *
+ * The circle's square, and the frame the name and the actions hang below.
+ * `--level` lives HERE, written by the meter's ref, and the circle inside
+ * reads it: the circle carries the crop hook's own ref, and one element can
+ * hold one ref object. */
+.face-seat {
+  --level: 0;
+  /* Where every mark sits: the circle's 45 degree edge point (see the marks). */
+  --mark-at: calc(var(--face) * 0.1464);
+  position: relative;
+  flex: none;
+  width: var(--face);
+  height: var(--face);
+  transition: opacity 180ms ease;
+}
+
+.face-seat:hover,
+.face-seat:focus-within {
+  z-index: 20;
+}
+
+.face-row .face {
+  width: var(--face);
+  height: var(--face);
+  cursor: pointer;
+  /* The edge every state ring is drawn OUTSIDE of: nothing in the header,
+     the paper ring in the float (below). A state's colour goes around the
+     paper instead of replacing it, so the circle keeps its shape. */
+  /* The edge every state ring is drawn OUTSIDE of. None in the header,
+     which sits on the app's own background the way the old bar did (a
+     white ring there was far too bright on a dark header); the float's
+     paper ring below, which keeps a dark avatar from dissolving into a dark
+     editor. */
+  --edge-w: 0px;
+  --edge: 0 0 0 0 transparent;
+  /* The presence weight (`--drain-opacity`, presence.css): the call circles'
+     `.face` base sets opacity 1 for its crossfade and ties the presence rule
+     on specificity, so an offline face in the header sat at full weight
+     (measured opacity 1 against the wall's 0.45) and only the moon told an
+     away letter avatar from an offline one. */
+  opacity: var(--drain-opacity, 1);
+  transition: opacity 320ms ease, box-shadow 400ms ease, transform 160ms ease, filter 320ms ease;
+}
+
+.face-row[data-density="float"] .face {
+  --edge-w: 5px;
+  --edge: 0 0 0 var(--edge-w) var(--paper);
+  box-shadow: var(--edge);
+}
+
+/* The face as a button: no browser chrome, the circle is the whole control. */
+.face-row button.face {
+  padding: 0;
+  border: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/* ── Keyboard focus ─────────────────────────────────────────────────────────
+ *
+ * One mark for every control on the row and in the band under it: the face,
+ * the engagement card's buttons and the member card's. Only the face and the
+ * ring card's two answers had a rule of their own; End, Mute, Join live,
+ * Snooze, Talk back, Cancel and the member card's four controls wore the
+ * browser's blue and white double ring (measured `auto 1px rgb(0, 95, 204)`)
+ * beside a designed one. The band's selector outweighs the ring card's own
+ * (calls/ringCard.css), so one row has one focus colour. */
+.face-row .face:focus-visible,
+.face-row-below :is(button, a):focus-visible {
+  outline: 2px solid var(--sol-cyan);
+  outline-offset: 2px;
+}
+
+/* ── The rings, by state ────────────────────────────────────────────────────
+ *
+ * Their voice, playing here: cool, and breathing with their level. Fast in,
+ * because the ring has to land on the first syllable. */
+.face-row .face[data-state="talking-to-me"] {
+  transform: scale(1.06);
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 2px + var(--level) * 3px) color-mix(in srgb, var(--walkie-rx) 70%, transparent),
+    0 0 calc(4px + var(--level) * 18px) var(--edge-w) color-mix(in srgb, var(--walkie-rx) 40%, transparent);
+  transition: opacity 220ms ease, box-shadow 70ms linear, transform 160ms ease;
+}
+
+/* My voice, going out: warm, and breathing with MY level. The level is my
+ * microphone whatever the room is (a burst, or an open mic in a call). At
+ * rest the band is the seat's own (`--band`: violet on a call, warm on a
+ * burst) and the warm ring grows OUTSIDE it only while I speak, so an open
+ * microphone with nothing said looks like every other seat on the line, and
+ * a mute never changes the colour of my ring, only the badge. The warm ring
+ * starts at NOTHING: the band is translucent, so a warm ring of the band's
+ * own width under it tinted my violet pink while everyone else's stayed
+ * blue (measured rgb(120,101,147) against rgb(80,92,148)). */
+.face-row .face[data-me][data-level="mic"] {
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 2px) var(--band, color-mix(in srgb, var(--walkie-tx) 75%, transparent)),
+    0 0 0 calc(var(--edge-w) + var(--level) * 6px) color-mix(in srgb, var(--walkie-tx) 75%, transparent),
+    0 0 calc(var(--level) * 18px) var(--edge-w) color-mix(in srgb, var(--walkie-tx) 40%, transparent);
+  transition: opacity 220ms ease, box-shadow 70ms linear, transform 160ms ease;
+}
+
+/* They are seated to hear my burst: a steady warm band. The motion is on the
+ * link and on my own ring; their face says only that the words reach them. */
+.face-row .face[data-state="hearing-me"] {
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 2px) color-mix(in srgb, var(--walkie-tx) 70%, transparent);
+}
+
+/* A seat in a call: violet, the call's colour everywhere else in the product.
+ * `in-call` is a room I am not in; `live-with-me` is the room I hold, with no
+ * voice going either way right now. */
+.face-row .face[data-state="in-call"],
+.face-row .face[data-state="live-with-me"],
+.face-row .face[data-state="joining"] {
+  --band: color-mix(in srgb, var(--sol-violet) 88%, transparent);
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 3px) var(--band);
+}
+
+/* Somebody stepped in on purpose: the pop the walkie strip already plays. */
+.face-row .face[data-state="joining"] {
+  animation: walkie-face-pop 320ms cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+
+/* A ring, either way: a steady band, and a ripple leaving the face, the
+ * phone on the desk. The band stays so the state reads on every frame; the
+ * ripple alone was gone for the last third of each cycle. */
+.face-row .face[data-state="ringing-them"],
+.face-row .face[data-state="ringing-me"] {
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 2px) color-mix(in srgb, var(--sol-cyan) 70%, transparent);
+  animation: face-ring-ripple 1.4s ease-out infinite;
+}
+
+@keyframes face-ring-ripple {
+  0% {
+    box-shadow:
+      var(--edge),
+      0 0 0 calc(var(--edge-w) + 2px) color-mix(in srgb, var(--sol-cyan) 70%, transparent),
+      0 0 0 calc(var(--edge-w) + 2px) color-mix(in srgb, var(--sol-cyan) 55%, transparent);
+  }
+  70%, 100% {
+    box-shadow:
+      var(--edge),
+      0 0 0 calc(var(--edge-w) + 2px) color-mix(in srgb, var(--sol-cyan) 70%, transparent),
+      0 0 0 calc(var(--edge-w) + 10px) color-mix(in srgb, var(--sol-cyan) 0%, transparent);
+  }
+}
+
+/* Speaking and followed are the call circles' rules (faces.css); in the
+   float they go around the paper too. */
+.face-row[data-density="float"] .face[data-speaking="true"] {
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 3px) var(--sol-cyan),
+    0 0 14px var(--edge-w) color-mix(in srgb, var(--sol-cyan) 40%, transparent);
+}
+.face-row[data-density="float"] .face[data-followed="true"]:not([data-speaking="true"]) {
+  box-shadow:
+    var(--edge),
+    0 0 0 calc(var(--edge-w) + 2px) var(--sol-cyan);
+}
+
+/* Speaking (cyan) and followed (the band) are the call circles' own rules in
+ * faces.css, keyed on `data-speaking` and `data-followed`; the row writes
+ * both attributes so one stylesheet answers for every surface. */
+
+/* ── Talking ────────────────────────────────────────────────────────────────
+ *
+ * Nothing on the row fades while I talk. The link and the rings already say
+ * who I am talking to; fading everyone else (a hold to talk gesture's old
+ * focus) read as the row breaking (founder, 2026-09-24). */
+
+/* ── The link ───────────────────────────────────────────────────────────────
+ *
+ * What the row draws BETWEEN two faces, and how "I am talking to them" reads
+ * at a glance. A short bridge, pulled into the gap so the linked pair sits
+ * closer than the rest of the row, with a pulse that travels in the direction
+ * of the voice: warm toward them while I send, cool toward me while they
+ * talk, both at once for a two way exchange, a steady violet bar for a call, a
+ * ripple for a ring. */
+.face-link {
+  --link-tone: var(--sol-cyan);
+  position: relative;
+  flex: none;
+  width: var(--link-w);
+  height: 3px;
+  /* The pull: each side of the bridge eats LINK_PULL of the row's gap. */
+  margin: 0 calc(var(--face-gap) * -0.35);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--link-tone) 40%, transparent);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.face-link::before,
+.face-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 60%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--link-tone), transparent);
+  opacity: 0;
+}
+
+/* Warm, toward them. */
+.face-link[data-link-kind="tx"] { --link-tone: var(--walkie-tx); }
+.face-link[data-link-kind="tx"]::before {
+  opacity: 1;
+  animation: face-link-out 900ms linear infinite;
+}
+
+/* Cool, toward me. */
+.face-link[data-link-kind="rx"] { --link-tone: var(--walkie-rx); }
+.face-link[data-link-kind="rx"]::before {
+  opacity: 1;
+  animation: face-link-in 900ms linear infinite;
+}
+
+/* Both keys down: a warm pulse going out over a cool one coming in. */
+.face-link[data-link-kind="both"] {
+  --link-tone: var(--walkie-rx);
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--walkie-rx) 40%, transparent),
+    color-mix(in srgb, var(--walkie-tx) 40%, transparent)
+  );
+}
+.face-link[data-link-kind="both"]::before {
+  opacity: 1;
+  background: linear-gradient(90deg, transparent, var(--walkie-tx), transparent);
+  animation: face-link-out 900ms linear infinite;
+}
+.face-link[data-link-kind="both"]::after {
+  opacity: 1;
+  animation: face-link-in 900ms linear infinite;
+}
+
+/* A call: steady, no travel. Two people on a line, not a voice in flight,
+ * in the seats' own violet: cyan between two violet faces read as a third
+ * state, and cyan is a voice (the speaking ring) or a bell (the ring). */
+.face-link[data-link-kind="call"] {
+  --link-tone: var(--sol-violet);
+  background: color-mix(in srgb, var(--link-tone) 70%, transparent);
+}
+
+/* A ring: a dashed bridge that breathes until somebody answers. The dashes
+ * are counted, not repeated: each sits centred in its own share of the
+ * bridge, so the run is symmetric and no dash is cut at a face. */
+.face-link[data-link-kind="ring"] {
+  --link-tone: var(--sol-cyan);
+  --ring-dashes: 2;
+  background: linear-gradient(
+    90deg,
+    transparent 0 22%,
+    color-mix(in srgb, var(--link-tone) 70%, transparent) 22% 78%,
+    transparent 78%
+  );
+  background-size: calc(var(--link-w) / var(--ring-dashes)) 100%;
+  animation: face-link-ring 1.4s ease-in-out infinite;
+}
+.face-row[data-density="float"] .face-link[data-link-kind="ring"] {
+  --ring-dashes: 3;
+}
+
+@keyframes face-link-out {
+  from { transform: translateX(-100%); }
+  to   { transform: translateX(170%); }
+}
+@keyframes face-link-in {
+  from { transform: translateX(170%); }
+  to   { transform: translateX(-100%); }
+}
+@keyframes face-link-ring {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* ── Marks on the person ────────────────────────────────────────────────────
+ *
+ * Unread messages in our DM: a count, top right, outside the circle's clip.
+ * Their sessions waiting on me: an orange dot, top left. Small, because they
+ * are facts about the person and not controls. */
+/* Every mark sits ON THE CIRCLE'S EDGE, at 45 degrees, whatever the size:
+ * `--mark-at` is how far that point is in from the seat's square corner
+ * (r - r/sqrt(2), 0.1464 of the diameter), and each mark centres itself on it
+ * with a translate. A fixed px offset from the corner was right at 32px and
+ * left the count floating off the face at 128. The marks also grow with the
+ * circle (`--mark-k`, written by FaceRow for the float's sizes). The
+ * point itself, `--mark-at`, is declared on the seat. */
+/* Red is messages, everywhere; every other mark on a face is teal. */
+.face-unread {
+  position: absolute;
+  top: var(--mark-at);
+  right: var(--mark-at);
+  transform: translate(50%, -50%) scale(var(--mark-k, 1));
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 1.5px solid var(--sol-bg);
+  background: var(--sol-red);
+  color: #fff;
+  white-space: nowrap;
+  animation: face-unread-pop 460ms cubic-bezier(0.2, 0.9, 0.25, 1.12);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: transform 120ms ease;
+}
+.face-unread:hover {
+  transform: translate(50%, -50%) scale(calc(var(--mark-k, 1) * 1.15));
+}
+/* A new count lands with a small overshoot (the seat remounts the count on
+ * every change, so each arrival pops). */
+@keyframes face-unread-pop {
+  0% { transform: translate(50%, -50%) scale(calc(var(--mark-k, 1) * 0.3)); }
+  55% { transform: translate(50%, -50%) scale(calc(var(--mark-k, 1) * 1.22)); }
+  100% { transform: translate(50%, -50%) scale(var(--mark-k, 1)); }
+}
+
+.face-ask {
+  position: absolute;
+  top: var(--mark-at);
+  left: var(--mark-at);
+  transform: translate(-50%, -50%) scale(var(--mark-k, 1));
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid var(--sol-bg);
+  background: var(--sol-cyan);
+  pointer-events: none;
+}
+
+/* The mute badge is a mark on the person, like the count and the ask: on the
+ * circle's edge, in the presence badge's corner (an engaged face wears no
+ * presence badge, so the two never meet), cut out of the ring by the same
+ * band of background the presence badge uses (`--pres-cut`). Inside the
+ * circle, the call circles' own spot, the circle's clip cut the badge to a D
+ * and the icon with it, in both densities. Filled red with the background's
+ * glyph, the way the count is filled cyan: a black plate on a cream header
+ * was the one dark thing on the light theme. */
+.face-row .face-mute {
+  right: var(--mark-at);
+  bottom: var(--mark-at);
+  transform: translate(50%, 50%) scale(var(--mark-k, 1));
+  background: var(--sol-red);
+  color: var(--sol-bg);
+  box-shadow: 0 0 0 2px var(--sol-bg);
+  backdrop-filter: none;
+  pointer-events: none;
+}
+.face-row[data-density="bar"] .face-mute {
+  width: 14px;
+  height: 14px;
+}
+.face-row[data-density="bar"] .face-mute svg {
+  width: 9px;
+  height: 9px;
+}
+
+/* The presence badge in the corner every chat app uses, only while the face
+ * is plain presence: an engaged face's ring already says more than a dot. */
+.face-seat .face-pres {
+  position: absolute;
+  right: var(--mark-at);
+  bottom: var(--mark-at);
+  transform: translate(50%, 50%) scale(var(--mark-k, 1));
+}
+/* In the float the badge's cut is the ring's paper, so badge and ring merge
+   into one edge instead of the badge biting a dark notch out of the ring. In
+   the header it is the header's own background, as the old bar drew it. */
+.face-row[data-density="float"] .face-seat .face-pres {
+  --sol-bg: #fcfbf7;
+}
+
+/* A face with its card open stays lit while the pointer is on the card. The
+ * lift composes with the presence drain (`--drain`, presence.css): a bare
+ * brightness REPLACED the grayscale, so an offline photo flipped to full
+ * colour the moment its card opened and went grey again when it closed. */
+/* A face with its card open: the card names the person, so the pill under
+   the chin steps aside and the notch meets the face. */
+.face-seat[data-card] .face-name {
+  display: none;
+}
+
+.face-seat[data-card] .face {
+  filter: var(--drain,) brightness(1.06);
+}
+
+/* ── The card ───────────────────────────────────────────────────────────────
+ *
+ * The one transient control card, under the linked faces: ONE ROW. A dot in
+ * the moment's tone, one plain sentence, and the buttons beside it, the
+ * height of a face and a half. The strip it replaced (calls/walkie.css) was
+ * built for a corner of the screen with nothing else to say who; this card
+ * hangs from the faces, so it keeps the strip's tones and button names and
+ * drops the loud word, the caption plate and the stacked full width buttons.
+ * In the bar it hangs from the header row; in the float it sits under the
+ * row in flow. */
+.engagement-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  min-width: 0;
+  max-width: min(500px, calc(100vw - 2rem));
+  padding: 5px 6px 5px 12px;
+  border-radius: 999px;
+  box-shadow: none;
+  backdrop-filter: none;
+  background: var(--sol-bg-alt);
+}
+
+.engagement-card[data-density="bar"] {
+  position: relative;
+  /* The card lands the way the member card does (one entrance for the
+     band). Only in the bar: the float's window is revealed by the shell a
+     frame after the card mounts, and an animation started under a hidden
+     window sits on its first frame (calls/ringCard.css). A change of kind
+     keeps the same element, so only the first appearance plays it. */
+  animation: face-card-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.engagement-card[data-density="float"] {
+  position: relative;
+  /* Never the viewport's: the window is sized FROM the card, so a card that
+     shrank to a seed sized window would report that width back and pin the
+     window there. */
+  max-width: none;
+}
+
+/* The line: the stage row from the strip, as a sentence. */
+.engagement-card .walkie-stage,
+.engagement-card .ring-card-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--sol-text);
+}
+.engagement-card .walkie-stage-dot,
+.engagement-card .ring-card-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--stage-tone, var(--ring-accent)) 22%, transparent);
+}
+.engagement-card-words {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.engagement-card .walkie-stage-badge {
+  font-weight: 600;
+  color: var(--sol-text);
+}
+.engagement-card .walkie-stage-with {
+  display: inline;
+  color: var(--sol-text-muted);
+}
+.engagement-card .walkie-strip-hint {
+  margin: 0;
+  padding: 0;
+  background: none;
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--sol-text);
+}
+.engagement-card-title {
+  font-weight: 600;
+  color: var(--sol-text);
+}
+.engagement-card .walkie-strip-headline-lead {
+  font-weight: 600;
+  color: var(--sol-text);
+}
+/* "Riley hears you", in the words the roster decided (senderHearing), on
+ * the same line after the stage, in the caption's weight. */
+.engagement-card-hearing {
+  color: var(--sol-text-muted);
+}
+.engagement-card-hearing[data-hearing="away"],
+.engagement-card-hearing[data-hearing="busy"] {
+  color: var(--sol-yellow);
+}
+
+/* The buttons: pills the height of the row, beside the words. */
+.engagement-card .walkie-strip-actions,
+.engagement-card .ring-card-actions {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  margin: 0;
+}
+.engagement-card :is(.walkie-strip-end, .walkie-strip-mute, .walkie-strip-join, .walkie-strip-snooze, .ring-card-join, .ring-card-decline, .engagement-card-chat) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  height: 26px;
+  padding: 0 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+}
+/* ONE INK. Every control on the row is an outlined pill in the text colour;
+   the moment's primary answer (Join live, Join) is the one filled pill, in
+   ink, never a hue. End goes red only under the pointer. Colour on this row
+   belongs to the dot and to the faces' rings: they say what is happening,
+   the buttons say what you can do. */
+.engagement-card .walkie-strip-mute,
+.engagement-card .walkie-strip-snooze,
+.engagement-card .ring-card-decline,
+.engagement-card .walkie-strip-end {
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  background: color-mix(in srgb, var(--sol-text) 7%, transparent);
+  border: 1px solid transparent;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sol-bg) 55%, transparent),
+    0 1px 1px color-mix(in srgb, var(--sol-text) 7%, transparent);
+  color: var(--sol-text);
+}
+.engagement-card :is(.walkie-strip-mute, .walkie-strip-snooze, .ring-card-decline, .walkie-strip-end) svg {
+  color: var(--sol-text-muted);
+}
+.engagement-card .walkie-strip-mute:hover,
+.engagement-card .walkie-strip-snooze:hover,
+.engagement-card .ring-card-decline:hover {
+  filter: none;
+  background: color-mix(in srgb, var(--sol-text) 12%, transparent);
+}
+.engagement-card .walkie-strip-mute:hover svg,
+.engagement-card .walkie-strip-snooze:hover svg,
+.engagement-card .ring-card-decline:hover svg {
+  color: inherit;
+}
+.engagement-card .walkie-strip-mute-on {
+  color: var(--sol-text);
+}
+.engagement-card .walkie-strip-end:hover {
+  filter: none;
+  color: var(--sol-red);
+  background: color-mix(in srgb, var(--sol-red) 12%, transparent);
+}
+.engagement-card .walkie-strip-end:hover svg {
+  color: inherit;
+}
+.engagement-card .walkie-strip-join,
+.engagement-card .ring-card-join {
+  background: var(--sol-text);
+  border: 1px solid transparent;
+  color: var(--sol-bg);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--sol-bg) 18%, transparent),
+    0 1px 1px color-mix(in srgb, var(--sol-text) 25%, transparent);
+}
+.engagement-card .walkie-strip-join:hover,
+.engagement-card .ring-card-join:hover {
+  filter: none;
+  background: color-mix(in srgb, var(--sol-text) 86%, var(--sol-bg));
+}
+.engagement-card .walkie-key.walkie-key-sm {
+  height: 26px;
+  border-radius: 999px;
+}
+
+/* A ring's two answers and the ring-out cancel wear the ring card's own
+ * buttons and line (calls/ringCard.css), in the strip's frame. The ring
+ * card is always dark and writes its own ink on `.ring-card`; here the ink
+ * is the theme's, or Join is dark words on nothing. */
+.engagement-card {
+  --ring-accent: var(--sol-text);
+  --ring-fg: var(--sol-text);
+  --ring-muted: var(--sol-text-muted);
+  border-radius: 999px;
+  /* The direction rides the border alone, quietly; the strip's glows are
+     gone with its corner. The link between the faces carries the tone. */
+  box-shadow: none;
+  border-color: color-mix(in srgb, var(--sol-text) 22%, transparent);
+}
+.engagement-card.walkie-strip-tx {
+  border-color: color-mix(in srgb, var(--walkie-tx) 40%, transparent);
+  box-shadow: none;
+}
+.engagement-card.walkie-strip-rx {
+  border-color: color-mix(in srgb, var(--walkie-rx) 40%, transparent);
+  box-shadow: none;
+}
+.engagement-card.walkie-strip-tx.walkie-strip-rx {
+  border-color: color-mix(in srgb, var(--walkie-rx) 45%, transparent);
+  box-shadow: none;
+}
+.engagement-card.walkie-strip-call,
+.engagement-card.walkie-strip-joined {
+  border-color: color-mix(in srgb, var(--sol-violet) 40%, transparent);
+  box-shadow: none;
+}
+/* The breathing dot beside "Ringing" and "Incoming huddle" is the ring's
+   own cyan, the band the two ringing faces above it wear; Join keeps the
+   ring card's green, the colour an answer is on every phone. */
+.engagement-card .ring-card-dot {
+  --ring-accent: var(--sol-cyan);
+}
+/* The ring out's one answer, Cancel, is the ring card's own button (the
+   ring in's Decline), across the whole row: the two phone cards share one
+   button family, where Cancel wore the walkie strip's Snooze plate. */
+.engagement-card .ring-card-actions > :only-child {
+  grid-column: 1 / -1;
+}
+
+/* The card above the faces (a row in the bottom half of the screen): the
+   same band, hung from the row's top, its notch on its bottom edge pointing
+   down at the face, and its entrance rising rather than dropping. */
+.face-row[data-density="float"][data-band="above"] {
+  top: auto;
+  bottom: 0;
+}
+.face-row[data-density="float"][data-band="above"] .face-row-below {
+  top: auto;
+  bottom: calc(100% + 6px);
+  animation-name: face-card-rise;
+}
+.face-row[data-density="float"][data-band="above"] .face-row-below[data-notch]::before {
+  top: auto;
+  bottom: -6px;
+  border-top-left-radius: 0;
+  border-bottom-right-radius: 2px;
+  background: var(--paper-foot);
+  box-shadow: 1px 1px 0 0 var(--hairline-strong);
+}
+@keyframes face-card-rise {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .face-row[data-density="float"] .face-seat[data-folded] {
+    transform: none;
+  }
+  .face-row[data-density="float"][data-band="above"] .face-row-below {
+    animation: none;
+  }
+  .face-row .face,
+  .face-row .face::after,
+  .face-seat,
+  .face-row .face-seat,
+  .face-row-track,
+  .face-row[data-density="float"] .face-row-below,
+  .face-row[data-density="float"] .face-row-below[data-notch]::before {
+    transition: none;
+  }
+  /* Every selector here matches the specificity of the rule it silences:
+     a bare `.face-link` loses to `.face-link[data-link-kind]`, and the
+     pulses kept travelling under reduced motion. */
+  .face-row .face[data-state="joining"],
+  .face-row .face[data-state="ringing-them"],
+  .face-row .face[data-state="ringing-me"],
+  .face-row-stack-count,
+  .face-link[data-link-kind],
+  .face-link[data-link-kind]::before,
+  .face-link[data-link-kind]::after {
+    animation: none;
+  }
+  /* A ring still says a ring, it just holds still. */
+  .face-row .face[data-state="ringing-them"],
+  .face-row .face[data-state="ringing-me"] {
+    box-shadow:
+      var(--edge),
+      0 0 0 calc(var(--edge-w) + 3px) color-mix(in srgb, var(--sol-cyan) 60%, transparent);
+  }
+  /* The pulse stops travelling and the bridge carries the colour alone:
+     two colours, still, when the voice goes both ways. */
+  .face-link[data-link-kind="tx"],
+  .face-link[data-link-kind="rx"],
+  .face-link[data-link-kind="ring"] {
+    background: color-mix(in srgb, var(--link-tone) 70%, transparent);
+    opacity: 1;
+  }
+  .face-link[data-link-kind="both"] {
+    background: linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--walkie-rx) 70%, transparent),
+      color-mix(in srgb, var(--walkie-tx) 70%, transparent)
+    );
+    opacity: 1;
+  }
+  .face-link[data-link-kind]::before,
+  .face-link[data-link-kind]::after {
+    opacity: 0;
+  }
+}
+
+/* ── The member card ────────────────────────────────────────────────────────
+ *
+ * The one thing that opens under a face (FaceCard): hover opens it, click
+ * pins it. It never repeats the face; a notch points back at the circle the
+ * pointer is on. In the bar it hangs from the header, centred on the face
+ * and pushed in from a viewport edge by --shift (measured); in the float it
+ * is the head of the band, and the band carries the notch to the face. */
+.face-card {
+  --card-w: 320px;
+  --notch: 8px;
+  /* Centred on the face. The row sits inside the header with room on both
+     sides, so the card may run left of the row; only a viewport edge pushes
+     it in, by --shift (measured from either edge in FaceCard). */
+  --lead: calc(var(--anchor) - var(--card-w) / 2 + var(--shift, 0px));
+  position: relative;
+  margin-left: var(--lead);
+  width: var(--card-w);
+  max-width: calc(100vw - 16px);
+  /* The engagement card's own inset (walkie-strip, 13px): stacked under it
+     the two cards are one column, and a name 3px off the name above it read
+     as a ragged edge. */
+  padding: 10px 13px;
+  border-radius: 12px;
+  border: 1px solid var(--sol-border);
+  background: var(--sol-bg-alt);
+  color: var(--sol-text);
+  box-shadow: var(--card-shadow);
+  cursor: default;
+  text-align: left;
+  font-family: var(--font-mono);
+  animation: face-card-in 140ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.face-card::before {
+  content: "";
+  position: absolute;
+  top: calc(-1 * var(--notch) / 2 - 1px);
+  left: clamp(14px, calc(var(--anchor) - var(--lead)), calc(var(--card-w) - 14px));
+  width: var(--notch);
+  height: var(--notch);
+  margin-left: calc(-1 * var(--notch) / 2);
+  transform: rotate(45deg);
+  background: var(--sol-bg-alt);
+  border-left: 1px solid var(--sol-border);
+  border-top: 1px solid var(--sol-border);
+}
+/* Stacked under the engagement card, the member card is the second card of
+ * one column: the same left edge, and no notch, which would point at the
+ * card above it rather than at a face. */
+.engagement-card + .face-card {
+  --lead: 0px;
+}
+.engagement-card + .face-card::before {
+  display: none;
+}
+@keyframes face-card-in {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .face-card,
+  .engagement-card[data-density="bar"] {
+    animation: none;
+  }
+}
+
+/* Who: the profile door. One target, the whole block. */
+.face-card-who {
+  display: block;
+  width: calc(100% + 12px);
+  margin: -6px -6px 0;
+  padding: 6px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background 120ms ease;
+}
+.face-card-who[data-door]:hover {
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+}
+.face-card-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+}
+.face-card-you {
+  flex: none;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--sol-text-dim);
+}
+.face-card-chev {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-left: auto;
+  color: var(--sol-text-dim);
+  transition: transform 120ms ease, color 120ms ease;
+}
+.face-card-who[data-door]:hover .face-card-chev {
+  transform: translateX(2px);
+  color: var(--sol-cyan);
+}
+.face-card-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 16px;
+}
+.face-card-sub {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--sol-text-dim);
+}
+/* The presence fact under the activity line speaks in the line's voice. The
+ * chat surfaces print it as a line of its own ("Active now", "Last seen 3h
+ * ago"); under "talking in a huddle with you" a capital read as a second
+ * voice. The clock beside it keeps its case. */
+.face-card-presence {
+  text-transform: lowercase;
+}
+
+/* Where: the session they have open, and Follow. */
+.face-card-where {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--sol-cyan) 25%, transparent);
+  background: color-mix(in srgb, var(--sol-cyan) 7%, transparent);
+  text-align: left;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+.face-card-where:hover,
+.face-card-where[data-on] {
+  border-color: color-mix(in srgb, var(--sol-cyan) 60%, transparent);
+  background: color-mix(in srgb, var(--sol-cyan) 15%, transparent);
+}
+.face-card-where-arrow {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--sol-cyan);
+  transition: transform 120ms ease;
+}
+.face-card-where:hover .face-card-where-arrow {
+  transform: translateX(2px);
+}
+.face-card-where-verb {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 15px;
+  color: var(--sol-cyan);
+}
+.face-card-where-title {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--sol-text-dim);
+}
+
+/* Their fleet, one line, and the agent's own words when it has any. */
+.face-card-fleet {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  font-size: 11px;
+  line-height: 14px;
+}
+.face-card-fleet-row {
+  display: flex;
+  gap: 12px;
+}
+.face-card-fleet-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.face-card-fleet-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+}
+.face-card-quote {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-top: 4px;
+  font-style: italic;
+  color: var(--sol-text-dim);
+}
+
+/* The three things you can do, one row, equal widths. */
+.face-card-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+}
+.face-card-actions .face-actions {
+  width: 100%;
+}
+.face-card-actions .face-action {
+  justify-content: center;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+/* Why Talk cannot start, on its own line under the three cells: kept in
+   the plate's one row it was squeezed to a letter a line beside Message. */
+.face-card-actions .face-actions-reason {
+  flex-basis: 100%;
+  padding: 5px 4px 2px;
+  line-height: 13px;
+}
+.face-card-actions[data-switch] {
+  gap: 0;
+  padding: 3px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sol-text) 5%, transparent);
+  border-top: 0;
+  margin-top: 16px;
+  padding-top: 3px;
+}
+.face-card-status {
+  flex: 1 1 0;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 5px 4px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  text-transform: capitalize;
+  color: var(--sol-text-muted);
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.face-card-status + .face-card-status::before {
+  content: "";
+  position: absolute;
+  left: -0.5px;
+  top: 22%;
+  height: 56%;
+  width: 1px;
+  background: color-mix(in srgb, var(--sol-text) 12%, transparent);
+}
+/* The status is the dot's colour, the same three the presence badge uses;
+   the chosen cell is a raised tile in ink, never a coloured fill. */
+.face-card-status-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--sol-text-dim);
+  opacity: 0.55;
+}
+.face-card-status-dot[data-status="available"] { background: var(--sol-cyan); }
+.face-card-status-dot[data-status="busy"] { background: var(--sol-red); }
+.face-card-status-dot[data-status="away"] { background: var(--sol-text-dim); }
+.face-card-status:hover,
+.face-card-status[data-on] {
+  background: var(--sol-bg-alt);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--sol-text) 14%, transparent);
+  color: var(--sol-text);
+}
+.face-card-status[data-on] .face-card-status-dot,
+.face-card-status:hover .face-card-status-dot {
+  opacity: 1;
+}
+.face-card-status[data-on] + .face-card-status::before,
+.face-card-status:hover + .face-card-status::before {
+  opacity: 0;
+}
+
+/* ── Mic and camera on the strip ────────────────────────────────────────────
+ *
+ * Two switches on one small plate beside End: the icon is the state, struck
+ * and dimmed when off, lit when on. Words live in the tooltip and for a
+ * reader; the plate keeps the row one height. */
+.engagement-card-toggles {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sol-text) 5%, transparent);
+}
+.engagement-card .engagement-card-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--sol-text);
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.engagement-card .engagement-card-toggle svg {
+  color: inherit;
+}
+.engagement-card .engagement-card-toggle.is-off {
+  color: var(--sol-text-dim);
+}
+.engagement-card .engagement-card-toggle:hover {
+  filter: none;
+  background: var(--sol-bg-alt);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--sol-text) 14%, transparent);
+  color: var(--sol-text);
+}
+.engagement-card .engagement-card-toggle:hover svg {
+  color: inherit;
+}
+
+/* A relayed frame fills the circle the way a video does. */
+.face .face-frame {
+  display: block;
+  object-fit: cover;
+}
+
+/* ── The float's chrome ─────────────────────────────────────────────────────
+ *
+ * The faces overlay's controls (calls/faces.css `.faces-chrome`: Move, Open
+ * the call, Close or Hide) as the FOOTER of the paper card, on a slightly
+ * deeper band with a rule above it. The pill's own positioning, plate and
+ * fade are all switched off: it sits in the card rather than over a face. */
+.face-row-below .face-row-chrome {
+  position: static;
+  left: auto;
+  top: auto;
+  bottom: auto;
+  transform: none;
+  opacity: 1;
+  pointer-events: auto;
+  flex: none;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: 0;
+  background: var(--paper-foot);
+  box-shadow: inset 0 1px 0 var(--hairline);
+  transition: none;
+  animation: none;
+}
+/* Leading the card (it hangs below the faces): the rule goes under the
+   controls, and the notch takes their deeper paper. */
+.face-row-below > .face-row-chrome:first-child:not(:last-child) {
+  box-shadow: inset 0 -1px 0 var(--hairline);
+}
+.face-row[data-density="float"] .face-row-below[data-notch]:has(> .face-row-chrome:first-child)::before {
+  background: var(--paper-foot);
+}
+.face-row-below .faces-btn {
+  color: var(--ink-soft);
+}
+.face-row-below .faces-btn:hover {
+  background: var(--wash);
+  color: var(--ink);
+}
+.face-row-below .faces-btn:active {
+  background: var(--wash-strong);
+}
+/* The faces' size, one step at a time: two small buttons around a word. */
+.face-row-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+}
+.face-row-below .face-row-size .faces-btn {
+  width: 26px;
+  min-width: 0;
+  padding: 0;
+  justify-content: center;
+}
+.face-row-below .face-row-size .faces-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+  background: none;
+}
+.face-row-size-word {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  padding: 0 2px;
+}
+.face-row-grip {
+  cursor: grab;
+  touch-action: none;
+}
+.face-row-grip:active {
+  cursor: grabbing;
+}
+
+/* ── Agents ─────────────────────────────────────────────────────────────────
+ *
+ * An agent is marked, quietly: the same round face as a person, and in the
+ * corner where a person's presence dot sits, a dot of the same size holding
+ * a small neutral spark instead of a colour. Nothing louder: a violet "AI"
+ * tag on every agent turned the header into a row of labels (founder,
+ * 2026-09-24). Its card offers no call and no message. */
+.face-bot {
+  position: absolute;
+  right: var(--mark-at);
+  bottom: var(--mark-at);
+  transform: translate(50%, 50%) scale(var(--mark-k, 1));
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--sol-bg-alt);
+  box-shadow: 0 0 0 2px var(--sol-bg);
+  color: var(--sol-text-dim);
+  pointer-events: none;
+}
+.face-row[data-density="float"] .face-bot {
+  box-shadow: 0 0 0 2px #fcfbf7;
+}
+/* A guest wears the same corner mark as an agent, a link in it, in the
+ * guest's yellow (GuestTag): no presence to show, and not one of the team. */
+.face-guest {
+  color: #b58900;
+}
+.face-bot-glyph {
+  width: 8px;
+  height: 8px;
+  stroke-width: 2.5;
+}
+.face-row[data-density="float"] .face-bot {
+  width: 18px;
+  height: 18px;
+}
+.face-row[data-density="float"] .face-bot-glyph {
+  width: 11px;
+  height: 11px;
+}
+.face-card-agent {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  font-size: 11px;
+  line-height: 15px;
+  color: var(--sol-text-dim);
+}
+
+/* The card's own close, in its top right corner; the profile chevron moves
+   in from it so the two never touch. */
+.face-card-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  color: var(--sol-text-dim);
+  transition: background 120ms ease, color 120ms ease;
+}
+.face-card-close:hover {
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+  color: var(--sol-text);
+}
+[data-member-card] .face-card-name {
+  padding-right: 22px;
+}
+
+/* The call's unread chat, on the card: the one hue among the ink pills,
+   the thread's cyan, because it is news rather than a control. */
+.engagement-card .engagement-card-chat {
+  color: var(--sol-bg);
+  background: var(--sol-cyan);
+  border: 1px solid var(--sol-cyan);
+  padding: 0 9px;
+  font-variant-numeric: tabular-nums;
+}
+.engagement-card .engagement-card-chat[data-agent] {
+  background: var(--sol-violet);
+  border-color: var(--sol-violet);
+}
+.engagement-card .engagement-card-chat:hover {
+  filter: brightness(1.1);
+}

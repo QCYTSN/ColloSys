@@ -1,0 +1,191 @@
+/**
+ * Cloud placement: ONE predicate deciding whether a launch aimed at the cloud
+ * host needs a laptop to prepare the host first, shared by the web composer
+ * (createSessionFromStub / handleSwitch) and the Convex chokepoint
+ * (enqueueStartSession). Two copies of this rule disagreed once — the web
+ * asked "does the target see the path?" while the server asked "is the path
+ * under a host root?" — and the web's answer failed with "not on this
+ * machine". Pure data in, verdict out; no runtime imports.
+ */
+
+/**
+ * The most files a "leave these out and start" answer may name. The list rides
+ * a Convex argument (arrays cap at 8192) and a button the human reads; a
+ * context that needs more left out than this is a project the mirror walks
+ * wrongly, reported as plain error text, never as an offer.
+ */
+export const CLOUD_LEAVE_OUT_MAX = 200;
+
+/**
+ * How long one `cast cloud start` may run: a cold EC2 boot, a clone, an
+ * install and the home mirror, on a laptop that may be heavily loaded, and
+ * when autoscale adds a host, its launch and provisioning (10 to 20 min). The
+ * daemon kills its child past this, the server keeps a claimed cloud_spawn
+ * live this long, and a placement waits this long for another push to the
+ * same host to release the mirror lock.
+ */
+export const CLOUD_START_RUN_MS = 45 * 60 * 1000;
+
+export function deviceWakesOnUse(d: { is_remote?: boolean; platform?: string }): boolean {
+  return d.is_remote === true && /^(linux|darwin|macos)$/i.test(d.platform ?? "");
+}
+
+/**
+ * How far a host's last report may trail the newest report from the same
+ * laptop before the laptop is taken to have dropped it. The laptop reports
+ * every host in its registry each pass (every 15 minutes, cloud/hostReports).
+ */
+export const CLOUD_HOST_REPORT_GAP_MS = 60 * 60 * 1000;
+
+type RetiredProbe = {
+  is_remote?: boolean;
+  platform?: string;
+  online?: boolean;
+  cloud_host?: { managed_by: string; state: string; at: number } | null;
+};
+
+/**
+ * A cloud host that is gone, not asleep: offline, and its managing laptop
+ * either reports the instance missing or has reported on its other hosts
+ * well after it last mentioned this one (the instance was terminated or
+ * replaced and left the registry). A row with no report at all counts as
+ * gone once some laptop reports on another host. Its device row outlives the
+ * instance, and without this rule it reads exactly like a sleeping host that
+ * "boots when the session starts", so a launch parks on it and waits forever.
+ */
+export function cloudHostRetired(d: RetiredProbe, roster: RetiredProbe[]): boolean {
+  if (!deviceWakesOnUse(d) || d.online) return false;
+  const own = d.cloud_host;
+  if (own?.state === "missing") return true;
+  let newest = 0;
+  for (const o of roster) {
+    if (o === d || !o.cloud_host || !deviceWakesOnUse(o)) continue;
+    if (own && o.cloud_host.managed_by !== own.managed_by) continue;
+    newest = Math.max(newest, o.cloud_host.at);
+  }
+  return newest - (own?.at ?? 0) > CLOUD_HOST_REPORT_GAP_MS;
+}
+
+/**
+ * A cloud host that queued work can boot: a laptop reports it (cloud_host),
+ * and its instance still exists. Any other remote that sleeps stays asleep.
+ */
+export function cloudHostBootable(d: RetiredProbe, roster: RetiredProbe[]): boolean {
+  return deviceWakesOnUse(d) && !!d.cloud_host && !cloudHostRetired(d, roster);
+}
+
+/**
+ * Quiet this long, a machine that nothing can wake has gone, as opposed to
+ * slept: the clutter in a real roster is short lived VMs and containers that
+ * each mint a device id and die within hours, while a laptop closed overnight
+ * is back inside the window.
+ */
+export const STALE_MACHINE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Gone quiet: no report for a day from a machine that does not boot itself on
+ * use. A cloud host's long silence means "unused", never "gone"; whether one
+ * is gone is cloudHostRetired's call.
+ */
+export function machineGoneQuiet(d: { is_remote?: boolean; platform?: string; online?: boolean; last_seen: number }, now: number): boolean {
+  return d.online !== true && !deviceWakesOnUse(d) && now - d.last_seen >= STALE_MACHINE_MS;
+}
+
+/**
+ * Out of service: gone quiet, or a cloud host that no longer exists. Nothing
+ * routes work to such a machine on its own and the machine pickers leave it
+ * out; it stays reachable by an explicit pick, and Settings → Devices removes
+ * it.
+ */
+export function machineOutOfService<T extends RetiredProbe & { last_seen: number }>(d: T, roster: T[], now: number): boolean {
+  return machineGoneQuiet(d, now) || cloudHostRetired(d, roster);
+}
+
+/** True if `p` is at or below a known project root (`root` or a child of it). */
+export function pathUnderRoot(p: string, root: string): boolean {
+  return p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
+}
+
+/**
+ * False only when the path lives in a directory namespace the device's platform
+ * provably does not have — `/Users/...` on Linux, `/home/...` on a Mac. Anything
+ * shared (`/opt`, `/tmp`, `/srv`, unknown platforms, relative paths) stays true:
+ * this exists to stop an obviously-impossible route, not to guess at checkouts.
+ */
+export function platformCanOpenPath(platform: string | undefined, p: string): boolean {
+  if (!platform) return true;
+  if (platform === "win32") return /^[A-Za-z]:[\\/]/.test(p) || !p.startsWith("/");
+  if (!p.startsWith("/")) return true;
+  if (platform === "darwin") return !p.startsWith("/home/") && !p.startsWith("/root/");
+  if (platform === "linux") return !p.startsWith("/Users/");
+  return true;
+}
+
+/** The home a path lives in (`/Users/<name>` or `/home/<name>`), or null. */
+export function pathHome(p: string): string | null {
+  const parts = p.split("/").filter(Boolean);
+  if (parts.length < 2) return null;
+  if (parts[0] !== "Users" && parts[0] !== "home") return null;
+  return `/${parts[0]}/${parts[1]}`;
+}
+
+/**
+ * Does this machine have the files behind one of these paths: a project root
+ * covering it, or the same home as one of its projects (a worktree under
+ * ~/.intern-data while the machine reports ~/src/<repo>)? A machine that runs
+ * the same platform under another home has none of them.
+ */
+export function deviceServesPath(d: { local_project_roots?: string[] }, paths: string[]): boolean {
+  const roots = d.local_project_roots ?? [];
+  if (paths.some((p) => roots.some((r) => pathUnderRoot(p, r)))) return true;
+  const homes = new Set(roots.map(pathHome).filter((h): h is string => !!h));
+  return paths.some((p) => {
+    const home = pathHome(p);
+    return !!home && homes.has(home);
+  });
+}
+
+export type PlacementDevice = { platform?: string; local_project_roots?: string[] };
+
+export type CloudPlacement = "park" | "native" | "ambiguous";
+
+/**
+ * Does a launch aimed at `target` (a wake-on-use host) need preparation?
+ *
+ *   native    — the host already holds the folder (some target root covers a
+ *               path), or no local machine could open it at all (a `/home`
+ *               path on a Mac-only account): a plain start on the host. An
+ *               account with NO local device gets no such shortcut: only a
+ *               host-root path is native there, anything else parks.
+ *   park      — the host cannot open the path (a `/Users` folder on Linux),
+ *               or a local machine's roots cover it: the folder lives on a
+ *               laptop, so the laptop prepares the host and places the row.
+ *   ambiguous — nobody claims the path (`/opt/x` with a Linux laptop around).
+ *               The web maps this to park (the user picked the host from a
+ *               laptop folder list and sends an explicit cloud_device_id); the
+ *               server chokepoint leaves the launch untouched.
+ *
+ * Empty `paths` is ambiguous: a pathless eager row carries no evidence.
+ */
+export function cloudPlacementFor(opts: {
+  target: PlacementDevice;
+  locals: PlacementDevice[];
+  paths: Array<string | null | undefined>;
+}): CloudPlacement {
+  const paths = opts.paths.filter((p): p is string => !!p);
+  if (paths.length === 0) return "ambiguous";
+  const targetRoots = opts.target.local_project_roots ?? [];
+  if (paths.some((p) => targetRoots.some((r) => pathUnderRoot(p, r)))) return "native";
+  // Only with a laptop to compare against: with NO local device the rule
+  // would be vacuously true and a stale `/Users` recent would start as a
+  // plain session on the host (remapped into its main checkout). Falling
+  // through parks it instead, and the server then says plainly that no
+  // laptop can prepare the host.
+  if (opts.locals.length > 0
+    && paths.every((p) => opts.locals.every((d) => !platformCanOpenPath(d.platform, p)))) return "native";
+  if (paths.some((p) => !platformCanOpenPath(opts.target.platform, p))) return "park";
+  if (paths.some((p) => opts.locals.some((d) => (d.local_project_roots ?? []).some((r) => pathUnderRoot(p, r))))) {
+    return "park";
+  }
+  return "ambiguous";
+}

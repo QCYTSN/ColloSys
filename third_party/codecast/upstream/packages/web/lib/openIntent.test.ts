@@ -1,0 +1,196 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { useInboxStore } from "@/store/inboxStore";
+import { besideLeafId, leavesOf } from "@/store/stageSplit";
+// The split target is served by the stage, which registers itself on load.
+import "@/lib/stage";
+import {
+  beginClickIntent,
+  divertNavigation,
+  divertSessionOpen,
+  endClickIntent,
+  installOpenIntent,
+  isPrewarmTab,
+  openTargetForClick,
+  pendingOpenTarget,
+} from "./openIntent";
+
+const inboxTab = { id: "tab_1", title: "Inbox", path: "/inbox", createdAt: 1 };
+const flush = () => new Promise<void>((r) => queueMicrotask(r));
+
+describe("openTargetForClick", () => {
+  it("maps the browser's tab gestures", () => {
+    expect(openTargetForClick({ button: 0 })).toBeNull();
+    expect(openTargetForClick({ button: 0, metaKey: true })).toBe("tab");
+    expect(openTargetForClick({ button: 0, ctrlKey: true })).toBe("tab");
+    expect(openTargetForClick({ button: 1 })).toBe("tab");
+    expect(openTargetForClick({ button: 0, metaKey: true, shiftKey: true })).toBe("window");
+    // Shift alone is not ours; Option alone splits the stage, Option with
+    // any other modifier (or a middle click) is nobody's gesture.
+    expect(openTargetForClick({ button: 0, shiftKey: true })).toBeNull();
+    expect(openTargetForClick({ button: 0, altKey: true })).toBe("split");
+    expect(openTargetForClick({ button: 0, metaKey: true, altKey: true })).toBeNull();
+    expect(openTargetForClick({ button: 0, shiftKey: true, altKey: true })).toBeNull();
+    expect(openTargetForClick({ button: 1, altKey: true })).toBeNull();
+    expect(openTargetForClick({ button: 2, metaKey: true })).toBeNull();
+  });
+});
+
+describe("divertNavigation", () => {
+  const realWindow = (globalThis as any).window;
+  let opened: string[];
+
+  beforeEach(() => {
+    // A fresh copy per test: the split tests write a layout onto the tab, and
+    // the shared fixture object carried it into the next test.
+    useInboxStore.setState({ tabs: [{ ...inboxTab }], activeTabId: inboxTab.id });
+    opened = [];
+    (globalThis as any).window = {
+      location: { pathname: "/inbox", search: "", origin: "https://codecast.sh", href: "https://codecast.sh/inbox" },
+      history: { pushState() {}, replaceState() {} },
+      open: (url: string) => { opened.push(url); },
+    };
+  });
+
+  afterEach(() => {
+    endClickIntent();
+    if (realWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = realWindow;
+  });
+
+  it("is a no-op for a plain click", () => {
+    expect(pendingOpenTarget()).toBeNull();
+    expect(divertNavigation("/tasks/ct-1")).toBe(false);
+    expect(useInboxStore.getState().tabs).toHaveLength(1);
+  });
+
+  it("opens a Cmd-click's path in a background, prewarmed tab", async () => {
+    beginClickIntent("tab");
+    expect(divertNavigation("/tasks/ct-1")).toBe(true);
+    await flush();
+    const { tabs, activeTabId } = useInboxStore.getState();
+    expect(tabs).toHaveLength(2);
+    expect(tabs[1].path).toBe("/tasks/ct-1");
+    expect(activeTabId).toBe(inboxTab.id); // background: the view stays put
+    expect(isPrewarmTab(tabs[1].id)).toBe(true);
+  });
+
+  it("claims the intent once: a second navigation in the same click stands down", async () => {
+    beginClickIntent("tab");
+    expect(divertNavigation("/tasks/ct-1")).toBe(true);
+    // e.g. handleLeaveAndOpenSession: navigateToSession(id) then router.push("/inbox")
+    expect(divertNavigation("/inbox")).toBe(true);
+    await flush();
+    expect(useInboxStore.getState().tabs).toHaveLength(2);
+  });
+
+  it("a replace never claims the intent but stands down once a sibling did", async () => {
+    beginClickIntent("tab");
+    expect(divertNavigation("/tasks?view=board", { openable: false })).toBe(false);
+    expect(divertNavigation("/tasks/ct-1")).toBe(true);
+    expect(divertNavigation("/tasks", { openable: false })).toBe(true);
+    await flush();
+    expect(useInboxStore.getState().tabs.map((t) => t.path)).toEqual(["/inbox", "/tasks/ct-1"]);
+  });
+
+  it("holds a session tab on the inbox deep-link form, with its session id", async () => {
+    beginClickIntent("tab");
+    expect(divertNavigation("/conversation/jx7abc00nvbf8jnk1234567890abcdef")).toBe(true);
+    await flush();
+    const tab = useInboxStore.getState().tabs[1];
+    expect(tab.path).toBe("/inbox?s=jx7abc00nvbf8jnk1234567890abcdef");
+    expect(tab.sessionId).toBe("jx7abc00nvbf8jnk1234567890abcdef");
+  });
+
+  it("Cmd-Shift opens a window (browser tab where there is no desktop bridge)", async () => {
+    beginClickIntent("window");
+    expect(divertSessionOpen("jx7abc", { messageId: "m1" })).toBe(true);
+    await flush();
+    expect(useInboxStore.getState().tabs).toHaveLength(1);
+    expect(opened).toEqual(["/conversation/jx7abc#msg-m1"]);
+  });
+
+  it("Option-click opens the path as a pane beside the stage", async () => {
+    (globalThis as any).window.innerWidth = 1400;
+    beginClickIntent("split");
+    expect(divertNavigation("/tasks/ct-1")).toBe(true);
+    await flush();
+    const { tabs } = useInboxStore.getState();
+    expect(tabs).toHaveLength(1); // no new tab: the view split instead
+    const leaves = tabs[0].layout ? leavesOf(tabs[0].layout) : [];
+    expect(leaves.map((l) => l.path)).toEqual(["/inbox", "/tasks/ct-1"]);
+    // The beside pane is the tab's one stable target and opens unfocused: the
+    // page the reader clicked in keeps focus, its path and its URL.
+    expect(leaves[1].id).toBe(besideLeafId("tab_1"));
+    expect(tabs[0].focusedLeafId).toBe(leaves[0].id);
+  });
+
+  it("a session link splits in as the conversation itself, not an inbox around it", async () => {
+    (globalThis as any).window.innerWidth = 1400;
+    beginClickIntent("split");
+    expect(divertSessionOpen("jx7abc")).toBe(true);
+    await flush();
+    const layout = useInboxStore.getState().tabs[0].layout;
+    expect(layout && leavesOf(layout).map((l) => l.path)).toEqual(["/inbox", "/conversation/jx7abc"]);
+  });
+
+  it("Option-click on a stage too narrow to split navigates the tab instead", async () => {
+    (globalThis as any).window.innerWidth = 800;
+    beginClickIntent("split");
+    expect(divertNavigation("/tasks/ct-1")).toBe(true);
+    await flush();
+    const { tabs } = useInboxStore.getState();
+    expect(tabs).toHaveLength(1);
+    expect(tabs[0].layout).toBeUndefined();
+    expect(tabs[0].path).toBe("/tasks/ct-1");
+  });
+
+  it("clears on the next macrotask even when nothing claimed it", async () => {
+    beginClickIntent("tab");
+    await new Promise((r) => setTimeout(r, 1));
+    expect(pendingOpenTarget()).toBeNull();
+    expect(divertNavigation("/tasks")).toBe(false);
+  });
+});
+
+describe("capture listener", () => {
+  const realWindow = (globalThis as any).window;
+  let onClick: ((e: any) => void) | null;
+  let uninstall: () => void;
+
+  beforeEach(() => {
+    onClick = null;
+    (globalThis as any).window = {
+      addEventListener: (type: string, fn: (e: any) => void) => { if (type === "click") onClick = fn; },
+      removeEventListener() {},
+    };
+    uninstall = installOpenIntent();
+  });
+
+  afterEach(() => {
+    uninstall();
+    endClickIntent();
+    if (realWindow === undefined) delete (globalThis as any).window;
+    else (globalThis as any).window = realWindow;
+  });
+
+  // Owns: whether the click lands inside a [data-owns-modifier-click] subtree.
+  const optionClick = (owns: boolean) => onClick!({
+    button: 0,
+    altKey: true,
+    target: { closest: (sel: string) => (sel === "[data-owns-modifier-click]" && owns ? {} : null) },
+    preventDefault() {},
+  });
+
+  it("arms a split for an Option-click on an ordinary row", () => {
+    optionClick(false);
+    expect(pendingOpenTarget()).toBe("split");
+  });
+
+  it("leaves an Option-click inside a subtree that owns it unarmed", () => {
+    // A label chip's Option-click excludes the label; the focus move that
+    // follows must navigate in place, not open a pane.
+    optionClick(true);
+    expect(pendingOpenTarget()).toBeNull();
+    expect(divertSessionOpen("s_top")).toBe(false);
+  });
+});

@@ -1,0 +1,625 @@
+import { useInboxStore, type ClientUI } from "../store/inboxStore";
+import { isNotificationLeader, isVoiceHost } from "./desktop";
+import { agentAlertsSuppressed, deliverAlert, reportAlertError } from "./notificationDelivery";
+import type { CueSpec } from "./cueSpec";
+import { afterCommit } from "@platform/engine";
+import { scheduleCue } from "./cuePlay";
+import {
+  CALL_JOIN,
+  DORMANT_SETTLE,
+  KILL_DOOR,
+  STASH_AWAY,
+  WALKIE_AWAY,
+  WALKIE_JOINED,
+  WALKIE_KEY_UP,
+  WALKIE_OPEN,
+  WALKIE_ROGER,
+  WALKIE_SQUELCH,
+} from "./cueSpec";
+
+let ctx: AudioContext | null = null;
+
+function isSupported(): boolean {
+  return typeof AudioContext !== "undefined";
+}
+
+// Every cue belongs to exactly one category, and each category is one switch
+// in the Sounds settings panel. The master switch outranks them all: off means
+// silence, whatever the per-category switches say.
+export type SoundCategory = "sessions" | "chat" | "calls" | "walkie" | "ui";
+
+const CATEGORY_KEY: Record<SoundCategory, keyof ClientUI> = {
+  sessions: "session_sounds_enabled",
+  chat: "chat_sounds_enabled",
+  calls: "call_sounds_enabled",
+  walkie: "walkie_sounds_enabled",
+  ui: "ui_sounds_enabled",
+};
+
+function isEnabled(category?: SoundCategory): boolean {
+  if (agentAlertsSuppressed()) return false;
+  const ui = useInboxStore.getState().clientState?.ui;
+  if (ui?.sounds_enabled === false) return false;
+  if (!category) return true;
+  return ui?.[CATEGORY_KEY[category]] !== false;
+}
+
+function announce(category: SoundCategory, key: string, play: () => boolean | void, options: { ttl: number; preferDesktop?: boolean }) {
+  if (!isSupported()) return;
+  const deliver = () => { void deliverAlert(key, () => isEnabled(category) ? play() : false, options).catch(reportAlertError); };
+  try {
+    const ac = getCtx(false);
+    if (ac.state === "running") deliver();
+    else void Promise.race([ac.resume(), new Promise((resolve) => setTimeout(resolve, 250))])
+      .then(() => { if (ac.state === "running" && isEnabled(category)) deliver(); })
+      .catch(reportAlertError);
+  } catch (error) {
+    reportAlertError(error as Error);
+  }
+}
+
+/** The user's output level as a multiplier over each cue's calibrated gain.
+ *  1 (and unset) = the exact measured levels in cueSpec.ts; the slider's
+ *  headroom to 1.5 is safe because master gains sit near 0.05. */
+function volumeFactor(): number {
+  const v = useInboxStore.getState().clientState?.ui?.sound_volume;
+  if (typeof v !== "number" || Number.isNaN(v)) return 1;
+  return Math.min(1.5, Math.max(0, v));
+}
+
+// Sounds that ANNOUNCE something (a message, a ring, a session waiting) play
+// in every window that observes the event — on the desktop that is the main
+// window plus every detached tab window, all subscribed to the same data. Only
+// the shell-elected leader window sounds them, so one event is one sound.
+// Feedback for the user's own gesture (send, kill, dismiss) is not gated: it
+// happens in exactly the window that acted.
+//
+// The voice host is an announcer too. It is never the shell's leader — it is
+// hidden or floating beside the work, not a place the person looks — but it
+// is the ONLY window that hears a teammate's burst and the only one seated in
+// a room, so the cues those events raise (a burst opening, a knock at the
+// door) would sound nowhere without it. Nothing it observes is observed by
+// the leader as well, so no event sounds twice.
+function isAnnouncer(): boolean {
+  return isNotificationLeader() || isVoiceHost();
+}
+
+function getCtx(resume = true): AudioContext {
+  if (!ctx) ctx = new AudioContext();
+  if (resume && ctx.state === "suspended") void Promise.resolve(ctx.resume()).catch(reportAlertError);
+  return ctx;
+}
+
+/** Drop the cached AudioContext.
+ *
+ *  One context per page is the production rule — browsers cap how many may be
+ *  open — so `getCtx` caches one and never lets go. Under `bun test` that cache
+ *  outlives the file that filled it: each sound test installs its own stand-in
+ *  AudioContext and counts the nodes a cue builds, so the FIRST file to sound
+ *  anything pins the context for every file after it, and those files count
+ *  zero. The symptom is a suite that passes one file at a time and fails when
+ *  run together. Every sound test drops the cache before it counts. */
+export function resetAudioContext() {
+  ctx = null;
+}
+
+function play(
+  notes: Array<{ freq: number; start: number; dur: number; gain?: number; type?: OscillatorType }>,
+  masterGain = 0.12,
+) {
+  playCue({ master: masterGain, tones: notes.map((n) => ({ ...n, gain: n.gain ?? 1 })) });
+}
+
+// A cue asked for inside an action body plays when that action commits, and
+// never for a draft the undo engine throws away (a refused redo).
+function playCue(spec: CueSpec) {
+  if (!isSupported()) return;
+  afterCommit(() => {
+    try {
+      scheduleCue(getCtx(), spec, volumeFactor());
+    } catch {}
+  });
+}
+
+export function soundNewSession() {
+  if (!isEnabled("sessions")) return;
+  play([
+    { freq: 392, start: 0, dur: 0.2, gain: 0.5, type: "sine" },
+    { freq: 523.25, start: 0.12, dur: 0.25, gain: 0.35, type: "sine" },
+  ], 0.05);
+}
+
+function playIdleMotif() {
+  play([
+    { freq: 392, start: 0, dur: 0.25, gain: 0.4, type: "sine" },
+    { freq: 494, start: 0.15, dur: 0.3, gain: 0.3, type: "sine" },
+  ], 0.05);
+}
+
+export function soundIdle(key?: string) {
+  if (!isEnabled("sessions") || !isAnnouncer()) return;
+  announce("sessions", `sound:idle:${key ?? "arrival"}`, playIdleMotif, { ttl: key ? 60_000 : 1_000 });
+}
+
+export function soundDismiss() {
+  if (!isEnabled("ui")) return;
+  playCue(STASH_AWAY);
+}
+
+export function soundKill() {
+  if (!isEnabled("ui")) return;
+  playCue(KILL_DOOR);
+}
+
+export function soundDormant() {
+  if (!isEnabled("ui")) return;
+  playCue(DORMANT_SETTLE);
+}
+
+// A chat message that raised a toast. One sound for every chat toast, quiet
+// or loud — the way Slack's "Knock Brush" is one sound: the CARD says how much
+// the message matters, the sound only says "someone spoke". A separate louder
+// sound for mentions trains people to ignore the ordinary one.
+//
+// The character is a soft mallet on wood — two short marimba notes rising a
+// fourth (G5 → C6), each with the 4× partial that makes a marimba read as
+// marimba rather than as a sine, plus a 20 ms filtered-noise transient for
+// the wooden knock at the front. Over in ~300 ms, master gain kept low so it
+// can land mid-sentence in another window without startling.
+//
+// `messageId` collapses one arrival to one sound. Two layers watch the same
+// message through two different feeds and neither can see the other: the
+// in-page toast reads the chat rail, and the notification watcher in
+// DesktopProvider reads notification rows and sounds the unfocused case that
+// silent OS banners leave mute. Both are right to sound it. Unfocused, both
+// fired, ~15 ms apart, and it was audible as a doubled blip on every arrival.
+// The message's own id settles it — the same rule notifyNative already uses to
+// collapse one row reported by every open window into one banner.
+export function soundChatMessage(messageId?: string) {
+  if (!isEnabled("chat") || !isSupported() || !isAnnouncer()) return;
+  if (soundedRecently(messageId)) return;
+  announce("chat", `sound:chat:${messageId ?? "arrival"}`, playKnockMotif, { ttl: messageId ? 60_000 : 1_000 });
+}
+
+// Long enough to cover the two feeds answering the same push (measured 15 ms
+// apart), short enough that a real second message from the same author is
+// never swallowed — nobody sends the same message id twice.
+const ARRIVAL_COLLAPSE_MS = 3_000;
+const soundedAt = new Map<string, number>();
+
+function soundedRecently(key: string | undefined): boolean {
+  if (!key) return false;
+  const now = Date.now();
+  for (const [k, t] of soundedAt) if (now - t > ARRIVAL_COLLAPSE_MS) soundedAt.delete(k);
+  const seen = soundedAt.has(key);
+  soundedAt.set(key, now);
+  return seen;
+}
+
+// Someone knocking at the locked huddle you are in. The SAME two-tap wooden
+// motif — it is literally a knock, and it can't be mistaken for a ring — but
+// gated as a call event rather than a chat one: muting chat must not mute the
+// door. One motif, two gates, so the two can never drift apart.
+export function soundRoomKnock(key?: string) {
+  if (!isEnabled("calls") || !isSupported() || !isAnnouncer()) return;
+  announce("calls", `sound:knock:${key ?? "arrival"}`, playKnockMotif, { ttl: key ? 60_000 : 1_000, preferDesktop: false });
+}
+
+function playKnockMotif() {
+  try {
+    const ac = getCtx();
+    const master = ac.createGain();
+    master.gain.value = 0.045 * volumeFactor();
+    master.connect(ac.destination);
+    const t0 = ac.currentTime;
+
+    const knock = (at: number, gain: number) => {
+      const len = Math.floor(ac.sampleRate * 0.03);
+      const buf = ac.createBuffer(1, len, ac.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+      const src = ac.createBufferSource();
+      src.buffer = buf;
+      const bp = ac.createBiquadFilter();
+      bp.type = "bandpass";
+      bp.frequency.value = 1900;
+      bp.Q.value = 1.2;
+      const env = ac.createGain();
+      env.gain.setValueAtTime(gain, t0 + at);
+      env.gain.exponentialRampToValueAtTime(0.001, t0 + at + 0.03);
+      src.connect(bp);
+      bp.connect(env);
+      env.connect(master);
+      src.start(t0 + at);
+      src.stop(t0 + at + 0.035);
+    };
+
+    const mallet = (freq: number, at: number, dur: number, gain: number) => {
+      // Fundamental and the marimba's bright 4× partial, the partial dying
+      // faster — that is what makes it wood, not glass.
+      for (const [mult, g, d] of [[1, 1, dur], [4, 0.18, dur * 0.35]] as const) {
+        const osc = ac.createOscillator();
+        osc.type = "sine";
+        osc.frequency.value = freq * mult;
+        const env = ac.createGain();
+        env.gain.setValueAtTime(0, t0 + at);
+        env.gain.linearRampToValueAtTime(gain * g, t0 + at + 0.006);
+        env.gain.exponentialRampToValueAtTime(0.001, t0 + at + d);
+        osc.connect(env);
+        env.connect(master);
+        osc.start(t0 + at);
+        osc.stop(t0 + at + d + 0.01);
+      }
+    };
+
+    knock(0, 0.5);
+    mallet(783.99, 0, 0.26, 0.6);
+    // The second strike lands while the first still rings, so the two read as
+    // one gesture ("plink-plonk"), not two events.
+    knock(0.085, 0.35);
+    mallet(1046.5, 0.085, 0.32, 0.55);
+  } catch {}
+}
+
+// Older name for soundChatMessage. useChatToasts still imports it on main;
+// the rename to soundChatMessage lands with the chat toast rework. Alias, not
+// a copy, so the two can never drift into different sounds.
+export const soundChatMention = soundChatMessage;
+
+// One ring cycle for an incoming huddle: two warm fifths, held slightly —
+// unmistakably a "someone wants you", distinct from every notification chirp
+// above. The ring HOOK (useCallRing) repeats this on an interval and owns the
+// 45s ceiling; this stays a single cycle so a dismissed ring stops instantly.
+//
+// LOUD, AND RISING. A ring is the one cue in this file that has to reach a
+// person who is not listening for it — across a room, over headphones on
+// somebody else's call — so it does not sit with the chirps at 0.05. The
+// first cycle is twice a chirp, and the next two climb to nearly four times,
+// which is the difference between "something happened" and "somebody wants
+// you". `cycle` is which repeat this is; the callers that loop it count.
+// There is no ring volume of its own: the app's one volume scales it like
+// everything else, and the calls category mutes it.
+export const RING_MASTER_BY_CYCLE = [0.11, 0.15, 0.19];
+
+export function soundCallRing(cycle = 0, key?: string) {
+  if (!isEnabled("calls") || !isAnnouncer()) return;
+  announce("calls", `sound:ring:${key ?? "incoming"}`, () => {
+    if (key && !useInboxStore.getState().myCalls?.incoming.some((invite) => String(invite._id) === key)) return false;
+    playRingMotif(RING_MASTER_BY_CYCLE[Math.min(Math.max(0, cycle | 0), RING_MASTER_BY_CYCLE.length - 1)]);
+  }, { ttl: 2_500 });
+}
+
+function playRingMotif(master = RING_MASTER_BY_CYCLE[0]) {
+  // The huddle ring motif — same bell call-and-answer the mobile app plays
+  // (assets/sounds/huddle-ring.m4a, generated by packages/mobile/scripts/
+  // ringtone.py, candidate A): a friendly knock (G#5→E5), then a brighter
+  // answer (B5→E6), over a soft low E. Each strike carries a quiet octave
+  // partial for the struck-bell timbre. One cell = CALL_RING_PERIOD_MS.
+  play([
+    { freq: 329.63, start: 0, dur: 0.4, gain: 0.22, type: "sine" },
+    { freq: 830.61, start: 0, dur: 1.0, gain: 0.5, type: "sine" },
+    { freq: 1661.22, start: 0, dur: 0.6, gain: 0.14, type: "sine" },
+    { freq: 659.25, start: 0.18, dur: 1.1, gain: 0.45, type: "sine" },
+    { freq: 1318.51, start: 0.18, dur: 0.65, gain: 0.12, type: "sine" },
+    { freq: 247.22, start: 0.72, dur: 0.35, gain: 0.13, type: "sine" },
+    { freq: 987.77, start: 0.72, dur: 0.9, gain: 0.34, type: "sine" },
+    { freq: 1975.53, start: 0.72, dur: 0.5, gain: 0.09, type: "sine" },
+    { freq: 1318.51, start: 0.9, dur: 1.15, gain: 0.3, type: "sine" },
+    { freq: 2637.02, start: 0.9, dur: 0.55, gain: 0.07, type: "sine" },
+  ], master);
+}
+
+// The shell noticed a meeting starting and the offer window just appeared —
+// off to the side, without focus, so this chime is most of how anyone learns
+// it is there. Two soft notes a fourth apart, quieter than the ring and
+// warmer than the chat knock: a tap on the shoulder, not a summons. Gated as
+// a call event; only the offer window plays it, so no leader election.
+export function soundMeetingDetected() {
+  if (!isEnabled("calls")) return;
+  play([
+    { freq: 587.33, start: 0, dur: 0.2, gain: 0.2, type: "sine" },
+    { freq: 783.99, start: 0.1, dur: 0.26, gain: 0.15, type: "sine" },
+  ], 0.05);
+}
+
+// Someone joined the room you're in (or you connected): a soft rising triad.
+export function soundCallJoin() {
+  if (!isEnabled("calls")) return;
+  playCue(CALL_JOIN);
+}
+
+// An agent in the room you are in answered: its reply just landed in the
+// call's chat. A clear two-note chime rising a fifth (C6 → G6), brighter and
+// shorter than the join triad and nothing like the wooden knock, so a person
+// talking hears "the agent said something" without looking. Keyed by the
+// reply, so every window watching the room sounds it once between them.
+export function soundAgentReply(rowId: string) {
+  if (!isEnabled("calls") || !isSupported() || !isAnnouncer()) return;
+  announce(
+    "calls",
+    `sound:agent-reply:${rowId}`,
+    () =>
+      // A rising C-E-G over the room's voices: brighter and louder than the
+      // chat knock, so an agent's answer is heard mid-conversation.
+      play([
+        { freq: 1046.5, start: 0, dur: 0.16, gain: 0.32, type: "sine" },
+        { freq: 2093, start: 0, dur: 0.1, gain: 0.06, type: "sine" },
+        { freq: 1318.51, start: 0.09, dur: 0.18, gain: 0.3, type: "sine" },
+        { freq: 1567.98, start: 0.18, dur: 0.4, gain: 0.32, type: "sine" },
+        { freq: 3135.96, start: 0.18, dur: 0.22, gain: 0.05, type: "sine" },
+      ], 0.09),
+    { ttl: 60_000, preferDesktop: false },
+  );
+}
+
+// A participant left / the call ended: the join triad, descending.
+export function soundCallLeave() {
+  if (!isEnabled("calls")) return;
+  play([
+    { freq: 783.99, start: 0, dur: 0.15, gain: 0.35, type: "sine" },
+    { freq: 659.25, start: 0.08, dur: 0.18, gain: 0.3, type: "sine" },
+    { freq: 523.25, start: 0.16, dur: 0.25, gain: 0.25, type: "sine" },
+  ], 0.045);
+}
+
+// The room you are in began to be recorded, or stopped: the two beeps a
+// recorder makes, level and unmistakable for the join triad (which rises) or
+// a knock (which is wood), then one lower beep when it ends. Everyone in the
+// room hears it whichever window has focus, the person who pressed included:
+// being filmed is the one call event nobody should have to be looking at the
+// app to learn. Keyed by the run, so the windows that all watch the room
+// sound it once between them.
+export function soundRecordingOn(runId: string) {
+  if (!isEnabled("calls") || !isSupported() || !isAnnouncer()) return;
+  announce(
+    "calls",
+    `sound:record-on:${runId}`,
+    () =>
+      play([
+        { freq: 880, start: 0, dur: 0.12, gain: 0.4, type: "sine" },
+        { freq: 880, start: 0.2, dur: 0.12, gain: 0.4, type: "sine" },
+      ], 0.05),
+    { ttl: 60_000, preferDesktop: false },
+  );
+}
+
+export function soundRecordingOff(runId: string) {
+  if (!isEnabled("calls") || !isSupported() || !isAnnouncer()) return;
+  announce(
+    "calls",
+    `sound:record-off:${runId}`,
+    () => play([{ freq: 587.33, start: 0, dur: 0.22, gain: 0.4, type: "sine" }], 0.05),
+    { ttl: 60_000, preferDesktop: false },
+  );
+}
+
+// ── the walkie cues ───────────────────────────────────────────────────────
+//
+// The founder's report was "no sound that i started recording". The cause was
+// measurable rather than a matter of taste: all four walkie cues peaked around
+// 0.011 while the ring peaks at 0.046. They were a factor of four below
+// everything else the app plays, and none of them lasted a fifth of a second.
+// They were not missing. They were under the floor of a room.
+//
+// Each is a spec in `cueSpec.ts` now, and every number here is what
+// `cueRender.ts` measures off that spec rather than what anyone intended.
+// Peak is the loudest sample. RMS is taken over a fixed 150 ms from the start,
+// because whole-cue RMS only rewards a cue for being short. ">2k" is the share
+// of energy above 2 kHz, which is the one column that sees harshness: peak and
+// RMS cannot tell a square from a sine, and the ear has no trouble at all.
+//
+//   cue       peak     was      rms    >2k    length   what it says
+//   joined   0.0532      —    0.0138  0.07     310ms   they stepped in; a call now
+//   keyUp    0.0458   0.0124  0.0141  0.08     185ms   your mic is open, speak
+//   roger    0.0386   0.0122  0.0096  0.00     130ms   your burst is closed and sent
+//   open     0.0339   0.0121  0.0103  0.07     105ms   a teammate's burst is arriving
+//   away     0.0229      —    0.0057  0.00      90ms   nobody live; it goes as a message
+//   squelch  0.0208   0.0036  0.0021  0.49      90ms   that burst ended
+//
+// For scale: soundCallJoin peaks at 0.0196, soundChatMessage at 0.0316, and
+// soundCallRing at 0.0458 — which keyUp now matches to the fourth decimal, by
+// arithmetic rather than by aim. Nothing here approaches the 0.08 ceiling.
+//
+// The order is the point. The two moments that carry news — your mic opening,
+// and someone stepping into your burst — are the two loudest. The two that are
+// only punctuation are the two quietest. squelch's high >2k figure is what
+// band-limited noise is; it is also the quietest thing in the table by a
+// factor of five, so it reads as a tail and not as a hiss.
+//
+// ── which of these the leader window owns ─────────────────────────────────
+//
+// The split is the one this file has always drawn, stated for six cues
+// instead of four. A cue that ANNOUNCES an event is gated on
+// `isNotificationLeader()`, because on the desktop the main window and every
+// detached tab window watch the same data and would each sound it. A cue that
+// answers THIS window's own burst is not, for the same reason `soundSend` is
+// not: only one window is holding the key.
+//
+//   leader gated   open, squelch          a teammate's burst, observed by all
+//   not gated      keyUp, roger,          your own burst, in the window that
+//                  joined, away           is holding the key
+//
+// `joined` looks like the exception and is not. It fires from a roster
+// watcher, which every window runs — but `useWalkieUpgrade` only arms that
+// watcher for a room the WALKIE is in, and the walkie's status is module
+// state in `walkie.ts`, one copy per window. Only the window that held the
+// key has the room, so only that window fires. The election has nothing to
+// settle, exactly as with keyUp. `away` is the same burst's other ending.
+//
+// The guard, not the intention, is what keeps them off the gated side. If
+// either is ever raised from a watcher that is not narrowed to this window's
+// own room, it has become an announcement and belongs above.
+
+/** YOUR key going down, at the moment the mic is genuinely open — the classic
+ *  two-tone rising chirp a radio makes when it keys up, a fifth from A5 to E6.
+ *
+ *  The cue the founder named, and the one everything else was levelled
+ *  against: it is the only confirmation that arrives without looking at the
+ *  screen, and it marks the exact instant it becomes worth speaking. It peaks
+ *  at 0.0458, which is soundCallRing's peak to the fourth decimal.
+ *
+ *  Square waves, because that is what makes a chirp read as a radio rather
+ *  than as a chime, but each note through its own lowpass — 1500 Hz for the
+ *  A5, 2200 Hz for the E6 — placed just above that note's fundamental, where
+ *  a handheld radio's speaker gives out. That keeps the buzz and drops the
+ *  harmonics that would make it harsh at nearly four times its old level:
+ *  measured share of energy above 2 kHz falls from 0.33 to 0.08. */
+export function soundWalkieKeyUp() {
+  if (!isEnabled("walkie")) return;
+  playCue(WALKIE_KEY_UP);
+}
+
+/** Your key coming up: the "roger" beep, one tone falling from A5 to D5. It
+ *  says the burst is closed and on its way, which is the half a push-to-talk
+ *  key cannot show — the hand is already off it and the eye has moved on. */
+export function soundWalkieRoger() {
+  if (!isEnabled("walkie")) return;
+  playCue(WALKIE_ROGER);
+}
+
+/** Someone stepped into the burst you are sending: it is a call now, and the
+ *  mic that was going to close is staying open. The biggest change of state
+ *  the walkie has, so it is the loudest of the six and the only one that
+ *  climbs three notes.
+ *
+ *  Deliberately not soundCallJoin, which is a major triad on C. This is a
+ *  fifth then a fourth from E5 to E6, brighter, shorter, and with an octave
+ *  over the last note only — so the two never trade places in the ear, and
+ *  "they joined my burst" never sounds like "someone entered a room". */
+export function soundWalkieJoined() {
+  if (!isEnabled("walkie")) return;
+  playCue(WALKIE_JOINED);
+}
+
+/** Your burst is landing as a message: nobody is live to hear it now. One
+ *  soft low tick, the quiet end of the set, because this is the ordinary
+ *  case and not a failure — the words still arrive, they just wait to be
+ *  read. Its attack is shorter than one cycle at 220 Hz, which is what makes
+ *  it a tick rather than a note. */
+export function soundWalkieAway() {
+  if (!isEnabled("walkie")) return;
+  playCue(WALKIE_AWAY);
+}
+
+/** The walkie door opened: a teammate's push-to-talk burst is about to play
+ *  through this machine's speakers. Deliberately NOT a ring — nobody is being
+ *  summoned, the voice is already coming — so it is the two-click squelch of a
+ *  radio keying up: short, dry, and over before the first word. Both clicks
+ *  are the same pitch, so it reads as a click rather than a tune and cannot be
+ *  mistaken for the rising keyUp or the falling roger. */
+export function soundWalkieOpen() {
+  if (!isEnabled("walkie") || !isAnnouncer()) return;
+  playCue(WALKIE_OPEN);
+}
+
+/** The walkie door closed: the burst you were hearing ended. A radio's squelch
+ *  tail — the short hiss that follows a released key — so the end of a
+ *  sentence is as audible as its start. Noise rather than a tone, because a
+ *  squelch tail is the receiver's own hiss coming back and any pitch in it
+ *  would read as a second voice. The quietest of the six on purpose: it is
+ *  punctuation, and broadband noise carries further than a sine at the same
+ *  peak. */
+export function soundWalkieSquelch() {
+  if (!isEnabled("walkie") || !isAnnouncer()) return;
+  playCue(WALKIE_SQUELCH);
+}
+
+// The six walkie cues, for the one surface that plays them on purpose.
+//
+// Settings is the only place a person can hear a cue without a teammate on
+// the other end, so the list lives beside the cues rather than in the page:
+// a cue added above and forgotten below would be a cue nobody can check.
+export const WALKIE_PREVIEWS: ReadonlyArray<{ id: string; label: string; spec: CueSpec }> = [
+  { id: "keyUp", label: "Live", spec: WALKIE_KEY_UP },
+  { id: "roger", label: "Roger", spec: WALKIE_ROGER },
+  { id: "open", label: "Incoming", spec: WALKIE_OPEN },
+  { id: "squelch", label: "Ended", spec: WALKIE_SQUELCH },
+  { id: "joined", label: "Joined", spec: WALKIE_JOINED },
+  { id: "away", label: "Away", spec: WALKIE_AWAY },
+];
+
+/** Play a cue because somebody asked to hear it.
+ *
+ *  Not gated on the leader window, and the two receive cues are the reason:
+ *  the election exists to keep several windows from answering one event, and a
+ *  click is not that event — it happened in exactly this window. A preview
+ *  that stayed silent in a second window would read as a broken sound rather
+ *  than as a rule. Not gated on any switch either: the Sounds panel is where
+ *  switches are decided, and auditioning a cue is the only honest basis for
+ *  that decision. Volume still applies, so the slider is auditable too. */
+export function previewWalkieCue(spec: CueSpec) {
+  if (agentAlertsSuppressed()) return;
+  playCue(spec);
+}
+
+// ── the sound categories, for the Sounds settings panel ───────────────────
+//
+// One entry per gate in CATEGORY_KEY, each with the cue that best represents
+// it, so the panel can offer "hear it" beside every switch. The list lives
+// beside the cues for the same reason WALKIE_PREVIEWS does: a category added
+// above and forgotten here would be a switch nobody can audition.
+export const SOUND_CATEGORIES: ReadonlyArray<{
+  id: SoundCategory;
+  key: keyof ClientUI;
+  label: string;
+  desc: string;
+}> = [
+  { id: "sessions", key: "session_sounds_enabled", label: "Sessions", desc: "A session needs you or a new one arrives" },
+  { id: "chat", key: "chat_sounds_enabled", label: "Team chat", desc: "A chat message raises a toast" },
+  { id: "calls", key: "call_sounds_enabled", label: "Calls", desc: "Rings, joins and leaves, a knock at a locked huddle" },
+  { id: "walkie", key: "walkie_sounds_enabled", label: "Walkie", desc: "The push-to-talk cues: your key, their bursts" },
+  { id: "ui", key: "ui_sounds_enabled", label: "Your actions", desc: "Feedback for your own gestures: send, dismiss, kill" },
+];
+
+/** Audition a category: its most representative cue, ungated like
+ *  previewWalkieCue and for the same reason — the click is the intent. */
+export function previewSoundCategory(id: SoundCategory) {
+  if (agentAlertsSuppressed()) return;
+  switch (id) {
+    case "sessions": return playIdleMotif();
+    case "chat": return playKnockMotif();
+    case "calls": return playRingMotif();
+    case "walkie": return playCue(WALKIE_KEY_UP);
+    case "ui": return playSendMotif();
+  }
+}
+
+// Your ring was declined or timed out — one low, brief, apologetic note.
+export function soundCallDeclined(key?: string) {
+  if (!isEnabled("calls") || !isAnnouncer()) return;
+  announce("calls", `sound:declined:${key ?? "arrival"}`, () => play([
+    { freq: 329.63, start: 0, dur: 0.25, gain: 0.4, type: "sine" },
+    { freq: 261.63, start: 0.18, dur: 0.3, gain: 0.3, type: "sine" },
+  ], 0.045), { ttl: key ? 60_000 : 1_000 });
+}
+
+export function soundSend() {
+  if (!isEnabled("ui") || !isSupported()) return;
+  playSendMotif();
+}
+
+function playSendMotif() {
+  if (!isSupported()) return;
+  try {
+    const ac = getCtx();
+    const master = ac.createGain();
+    master.gain.value = 0.04 * volumeFactor();
+    master.connect(ac.destination);
+
+    // Quick upward sweep — gives a soft "fwip" send feel
+    const osc = ac.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(620, ac.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(1240, ac.currentTime + 0.07);
+
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0, ac.currentTime);
+    env.gain.linearRampToValueAtTime(0.4, ac.currentTime + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.1);
+
+    osc.connect(env);
+    env.connect(master);
+    osc.start(ac.currentTime);
+    osc.stop(ac.currentTime + 0.12);
+  } catch {}
+}

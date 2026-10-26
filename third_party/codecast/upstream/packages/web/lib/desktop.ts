@@ -1,0 +1,1696 @@
+import { conversationIdFromPath } from "./desktopHandoff";
+import { useSyncExternalStore } from "react";
+import { naturalTier, type FaceTier, type FacesMode } from "./calls/faceCrop";
+import { BrowserBannerGate } from "./notificationGate";
+import { PANE_EMBED } from "./browserPane";
+import type { DesktopMenuKeys } from "@codecast/shared/contracts/keyBindings";
+import { extractDeepLinkIntent, parseDesktopDeepLinkPath } from "./desktopHandoff";
+import { cmpVersions, parseShellVersion } from "./desktopFloor";
+import { agentAlertsSuppressed, deliverAlert } from "./notificationDelivery";
+import type { GuestMedia } from "./calls/callMedia";
+import type { MeetingDetectConfig, MeetingDetectMode, MeetingOffer } from "./desktopMeetings";
+
+declare global {
+  interface Window {
+    __CODECAST_ELECTRON__?: {
+      getVersion: () => Promise<string>;
+      setBadgeCount: (count: number) => Promise<void>;
+      onDeepLink: (cb: (url: string) => void) => void;
+      onUpdateStatus: (cb: (status: { status: string; version?: string; percent?: number }) => void) => void;
+      restartForUpdate: () => Promise<void>;
+      checkForUpdate: (opts?: { manual?: boolean }) => Promise<void>;
+      // Resolves { shown } on builds with multi-window routing (undefined on
+      // older builds, which always showed the banner).
+      showNotification: (
+        title: string,
+        body: string,
+        data?: NotifyNativeData,
+      ) => Promise<{ shown: boolean; reason?: string } | void>;
+      // OS-level permissions (System Settings, not the in-app prefs) — see
+      // lib/osPermissions.ts for the vocabulary. All absent on older builds —
+      // gate on them; readiness is then "unknown" and nothing nags.
+      getOsPermissions?: () => Promise<Record<string, string>>;
+      requestOsPermission?: (kind: string) => Promise<string>;
+      openOsPermissionSettings?: (kind: string) => Promise<void>;
+      // The grants that belong to the codecast computer helper, read through
+      // the cast CLI (the shell never asks macOS for them itself). Slow — it
+      // launches that helper — so it is its own call, not part of the map
+      // above. Absent on older builds; readiness is then "unknown".
+      getComputerPermissions?: () => Promise<Record<string, string>>;
+      // The CLI and daemon on this machine, set up from the app (the shell's
+      // daemonSetup.js): whether they are here, and the installer run with a
+      // setup token this page minted. Absent on older builds; the page then
+      // offers the terminal command.
+      getDaemonSetup?: () => Promise<DaemonSetupState>;
+      runDaemonSetup?: (token: string) => Promise<{ ok: boolean; error?: string; detail?: string }>;
+      // Multi-window notification routing (see main.js). Absent on older
+      // builds — gate on them; without them this window behaves as the only one.
+      reportWindowState?: (state: DesktopWindowState) => void;
+      onWindowRole?: (cb: (role: DesktopWindowRole) => void) => void;
+      getShortcuts: () => Promise<Record<string, string>>;
+      getShortcutConfig: () => Promise<DesktopShortcutConfig>;
+      setShortcut: (key: string, accelerator: string) => Promise<Record<string, string>>;
+      paletteNavigate: (path: string) => void;
+      paletteHide: () => void;
+      paletteNewSession: () => void;
+      paletteReady: (mode: "compose" | "search") => void;
+      onPaletteShow: (cb: () => void) => () => void;
+      // Compose popup (floating new-session window):
+      onComposeShow: (cb: () => void) => () => void;
+      composeSubmit: (data: { conversationId?: string; navigate: boolean }) => void;
+      // Open an https URL in the system default browser (used by the
+      // browser-based desktop sign-in). Absent on older builds — gate on it.
+      openExternal: (url: string) => Promise<void>;
+      // Machine-wide seconds since last user input (Electron powerMonitor).
+      // Absent on older builds — gate on it.
+      getSystemIdleSeconds: () => Promise<number>;
+      // Detached tab windows: a dashboard tab broken out into its own OS
+      // window. All absent on older builds — gate on them.
+      isTabWindow?: boolean;
+      detachTab: (path: string) => Promise<void>;
+      attachTab: (path: string) => Promise<void>;
+      onAdoptTab: (cb: (path: string) => void) => void;
+      // The app windows (Chat, Work): `appWindow` names the app THIS renderer
+      // is (null in the main window and a plain breakout). `openAppWindow`
+      // opens or raises one, on a path when given; `routeNavigate` hands a
+      // path to the shell to land in whichever window owns it (lib/desktopApps).
+      // All absent on older builds — gate on them.
+      appWindow?: string | null;
+      openAppWindow?: (app: string, path?: string | null) => Promise<boolean>;
+      closeAppWindow?: (app: string) => Promise<void>;
+      routeNavigate?: (path: string) => Promise<boolean>;
+      // Brings another app to the front by pid; only the active app may on
+      // macOS 14+. Absent on older builds.
+      raiseApp?: (pid: number) => Promise<boolean>;
+      // The people window (the floating buddy list at /people). A singleton:
+      // openPeopleWindow focuses the one that exists. setAlwaysOnTop resolves
+      // the pin the shell actually applied — it is honored only from the people
+      // window, so any other window gets false back. Absent on older builds —
+      // gate on them (isPeopleWindow is then undefined, i.e. not one).
+      isPeopleWindow?: boolean;
+      openPeopleWindow?: () => Promise<void>;
+      // With a voice host the buddy list is the WALL, a shape of that window;
+      // this puts it away. Absent on older builds — gate on it.
+      closePeopleWindow?: () => Promise<void>;
+      setAlwaysOnTop?: (on: boolean) => Promise<boolean>;
+      getAlwaysOnTop?: () => Promise<boolean>;
+      // The call panel (a huddle in a window of its own, at /call-panel). One
+      // window, because one call: opening it for a second room moves the one
+      // that exists. `closeCallPanel({ended})` hangs up; without ended the
+      // shell hides the window (the huddle stays there). Absent on older
+      // builds — gate on them.
+      isCallPanelWindow?: boolean;
+      openCallPanel?: (roomKey: string, opts?: { mic?: boolean; camera?: boolean; scribe?: boolean; size?: CallWindowSize }) => Promise<void>;
+      showCallPanel?: () => Promise<boolean>;
+      closeCallPanel?: (opts?: { ended?: boolean }) => Promise<void>;
+      // The panel keeps the shell told what it is hosting, so the shell can
+      // hand the same room, mic and camera back when the window closes by any
+      // route — the panel's own button or the OS close box.
+      reportCallPanelState?: (state: {
+        room: string | null;
+        mic: boolean;
+        camera: boolean;
+        scribe: boolean;
+      }) => void;
+      // Main window only: the call is coming back, take it.
+      onCallPanelHandback?: (
+        cb: (payload: { room: string; mic: boolean; camera: boolean; scribe: boolean }) => void,
+      ) => void;
+      // The voice host. The shell keeps ONE persistent see-through window
+      // (this route) that holds the walkie's ear and every call; it hands the
+      // window rooms as commands, relays commands from every other window to
+      // it, and relays its mirror back. All absent on older shells — gate on
+      // them; without them the call panel is the per-call window it used to
+      // be and every other window keeps its own microphone.
+      voiceHostReady?: () => void;
+      onCallPanelOpen?: (cb: (payload: VoiceOpenPayload) => void) => void;
+      onCallPanelShow?: (cb: () => void) => void;
+      voiceCommand?: (cmd: string, args?: unknown[]) => Promise<boolean>;
+      onVoiceCommand?: (cb: (payload: { cmd: string; args: unknown[] }) => void) => void;
+      voiceMirror?: (payload: VoiceMirror) => void;
+      onVoiceMirror?: (cb: (payload: VoiceMirror) => void) => void;
+      getVoiceWindowState?: () => Promise<{ size: VoiceWindowShape; callSize: CallWindowSize } | null>;
+      // The voice window's shapes: the float (the face row over the work),
+      // the stage, the wall and idle. ONE window: `transparent` and `frame`
+      // are construction-time options, so the window is born see-through and
+      // frameless and the stage paints its own card inside that glass. A
+      // shape change therefore never moves the call between windows.
+      //
+      // The last three are what the float needs and the stage does not:
+      // `setCallWindowInteractive` is the click-through switch (the window
+      // ignores the mouse except over a face or the card),
+      // `setCallWindowContentSize` keeps the window the size of its row, and
+      // `setCallWindowDragging` has the shell follow the cursor while a face
+      // is held. Absent on older builds; gate on them.
+      // An older shell still answers the legacy circle sizes, which is why
+      // the setter takes both: the legacy panel asks it for those.
+      setCallWindowSize?: (size: VoiceWindowShape | CallWindowSize) => Promise<VoiceWindowShape | CallWindowSize | null>;
+      getCallWindowSize?: () => Promise<VoiceWindowShape | CallWindowSize | null>;
+      setCallWindowInteractive?: (on: boolean) => void;
+      setCallWindowContentSize?: (size: { width: number; height: number; pinY?: number }) => void;
+      setCallWindowDragging?: (on: boolean) => void;
+      // The host has a ring up: the dock bounces until the app is activated.
+      setRingAttention?: (on: boolean) => void;
+      // The face row popped out of the header into the float. A standing
+      // arrangement the shell persists; the host reads it off the window
+      // role (`facesOverlay`). Absent on older builds; gate on them.
+      openFacesWindow?: () => Promise<void>;
+      closeFacesWindow?: () => Promise<void>;
+      // Screen-share primitives (huddles). The shell lists capturable
+      // screens/windows and lets the web pre-select one for the NEXT
+      // getDisplayMedia; the picker UI itself is web-owned. Absent on older
+      // builds — gate on them (a missing selectDisplaySource means the shell
+      // captures the primary screen on its own).
+      getDisplaySources?: (opts?: { types?: Array<"screen" | "window"> }) => Promise<DesktopDisplaySource[]>;
+      selectDisplaySource?: (id: string | null) => Promise<boolean>;
+      // Read (no arg) or additively extend (patch) the shell's capability
+      // grant table. Persisted in the shell's settings; lets the web layer
+      // light up a new permission-gated feature without a desktop release.
+      // Absent on older builds — gate on it.
+      hostPolicy?: (patch?: { permissions?: string[]; hosts?: string[] }) => Promise<{
+        permissions: string[];
+        hosts: string[];
+        version: string;
+      } | null>;
+      // Meeting detection. The shell polls the NAMES of running programs while
+      // the setting is on and pushes an offer when a meeting app starts; the
+      // answer and the recording are the web layer's. All absent on older
+      // builds — gate on them, and the feature simply does not exist there.
+      onMeetingDetected?: (cb: (offer: MeetingOffer) => void) => void;
+      // Edit > Undo/Redo (or its ⌘Z) with focus outside a text field: the
+      // menu takes the key before the page, so the shell hands the press to
+      // the app's undo (packages/electron/editUndo.js). Absent on older builds.
+      onAppEditCommand?: (cb: (command: "undo" | "redo") => void) => () => void;
+      // The menu bar's accelerators, following the person's key bindings.
+      setMenuKeys?: (keys: DesktopMenuKeys | null) => void;
+      getMeetingDetect?: () => Promise<MeetingDetectConfig>;
+      setMeetingDetect?: (patch: {
+        mode?: MeetingDetectMode;
+        never?: string[];
+      }) => Promise<{ mode: MeetingDetectMode; never: string[] }>;
+      // The meeting-offer window (route /meeting-offer): the offer as a small
+      // chromeless corner window. The renderer reports its content size — the
+      // shell reshapes the window around it, and the first report is the
+      // reveal signal; hide puts it away; openCall lands the transcript in
+      // the main window. All absent on older shells, which route offers to an
+      // app window's toasts instead.
+      isMeetingOfferWindow?: boolean;
+      meetingOfferSize?: (size: { width: number; height: number }) => void;
+      meetingOfferHide?: () => void;
+      meetingOfferOpenCall?: (transcriptId: string) => void;
+      // The ring window: an incoming huddle as a small chromeless corner card
+      // (route /call-ring). `callRingAnswer` hands the room to the CALL window
+      // — the media plane is per-renderer, so a ring card must never join.
+      isCallRingWindow?: boolean;
+      // A see-through window: loading paints nothing in it.
+      isTransparentWindow?: boolean;
+      openCallRingWindow?: () => Promise<boolean>;
+      callRingSize?: (size: { width: number; height: number }) => void;
+      callRingHide?: () => void;
+      callRingAnswer?: (inviteId: string, roomKey: string) => void;
+      // Call window only: the ring window answered, accept the invite here —
+      // this is the renderer that will hold the media.
+      onCallRingAccept?: (cb: (payload: { inviteId: string; roomKey: string }) => void) => void;
+      // App-defined IPC (@platform/desktop's bridge, the generic half): invoke
+      // a handler main registered as "app:<name>", or subscribe to what main
+      // pushes on that name. This is how a web feature grows a shell half
+      // without a new preload surface — the browser pane's native view is the
+      // first one. Absent on older builds; a name main never registered
+      // rejects, which is the answer a capability probe wants.
+      call?: <T = unknown>(name: string, ...args: unknown[]) => Promise<T>;
+      subscribe?: (name: string, cb: (payload: unknown) => void) => () => void;
+      platform: string;
+    };
+  }
+}
+
+// ── Share cursors ─────────────────────────────────────────────────────────
+//
+// Teammates' pointers over MY screen share, drawn on my real screen by the
+// shell (electron shareCursors.js), which knows what the capture covers.
+// Rides the generic app IPC, so a shell without the handler just rejects:
+// the first rejection turns the forwarder off for this renderer.
+
+export type DaemonSetupState = { supported: boolean; installed: boolean; linked: boolean; running: boolean };
+
+export type ShareCursor = { id: string; name: string; nx: number; ny: number };
+
+let shareCursorsUnsupported = false;
+
+/** The cursors pointing at my share right now; an empty list clears them. */
+export function sendShareCursors(cursors: ShareCursor[]): void {
+  if (shareCursorsUnsupported || !isElectron()) return;
+  const call = bridge("call");
+  if (!call) {
+    shareCursorsUnsupported = true;
+    return;
+  }
+  call("share-cursors", cursors).catch(() => {
+    shareCursorsUnsupported = true;
+  });
+}
+
+/** The glass window's side: what the shell asks it to draw. */
+export function onShareCursors(cb: (cursors: ShareCursor[]) => void): () => void {
+  const subscribe = bridge("subscribe");
+  if (!subscribe) return () => {};
+  return subscribe("share-cursors", (payload) => cb(Array.isArray(payload) ? (payload as ShareCursor[]) : []));
+}
+
+// ── The ring window ───────────────────────────────────────────────────────
+//
+// An incoming huddle, as a card in a window of its own. A ring is the one
+// huddle surface that arrives unannounced, so it is the one that cannot live
+// inside an app window: the person it is for is usually looking at something
+// else entirely.
+
+/** Report the ring card's content size; the shell reshapes the window around
+ *  it and reveals it (without focus) on the first report. */
+export function callRingSize(size: { width: number; height: number }): void {
+  bridge("callRingSize")?.(size);
+}
+
+/** Nothing is ringing — put the glass away rather than float an empty pane. */
+export function callRingHide(): void {
+  bridge("callRingHide")?.();
+}
+
+/**
+ * Answer, in the call window.
+ *
+ * NOT in the ring window: `acceptInvite` joins the media in whichever renderer
+ * calls it, and the media plane is a per-renderer singleton — answering here
+ * would put the huddle in a 340px corner card with no stage and no controls.
+ * The shell opens (or raises) the call window on this room, which joins by the
+ * ordinary route.
+ */
+export function callRingAnswer(inviteId: string, roomKey: string): void {
+  bridge("callRingAnswer")?.(inviteId, roomKey);
+}
+
+/** Whether this build can give a ring a window of its own. False in a browser
+ *  and on a desktop build that predates it — the in-app toast stays the ring
+ *  there, which is why the toast is gated on this rather than deleted. */
+export function canRingInWindow(): boolean {
+  return typeof bridge("openCallRingWindow") === "function";
+}
+
+/**
+ * A ring landed — make sure the window that shows it exists.
+ *
+ * Built on the first ring rather than at launch: an always-on-top transparent
+ * window with a subscription behind it is real cost, and most launches never
+ * see a ring. The shell cannot see invites (they arrive on a subscription in a
+ * renderer), so the window that DID see one asks for it. Idempotent.
+ */
+export async function openCallRingWindow(): Promise<boolean> {
+  const open = bridge("openCallRingWindow");
+  if (!open) return false;
+  return (await open()) === true;
+}
+
+/** This renderer is a see-through shell window (palette, rings, dock). */
+export function isTransparentWindow(): boolean {
+  return typeof window !== "undefined" && window.__CODECAST_ELECTRON__?.isTransparentWindow === true;
+}
+
+/** This renderer IS the ring window. */
+export function isCallRingWindow(): boolean {
+  return typeof window !== "undefined" && window.__CODECAST_ELECTRON__?.isCallRingWindow === true;
+}
+
+// What a banner carries besides its text. `key` is a stable id for the event
+// (a notification row id, `ring:<invite>`) so every window reporting the same
+// event collapses to one banner; `kind` hints the click target for banners
+// with no route ("call" → the window hosting the call / the calls page).
+export type NotifyNativeData = {
+  conversationId?: string;
+  route?: string;
+  key?: string;
+  kind?: string;
+  /** Show it whatever is focused. A ring is for a person who is not looking
+   *  at the app, and "the app is in front" does not mean they are. */
+  force?: boolean;
+};
+
+// What this window shows, reported to the desktop shell so a banner click can
+// land in the best window: the active surface path, every surface it could
+// switch to (the main window's tabs), and whether it hosts a connected call.
+export type DesktopWindowState = {
+  active: string | null;
+  open: Array<{ id: string | null; path: string }>;
+  inCall: boolean;
+};
+
+// This window's role among the desktop's windows, pushed by the shell.
+//   leader:       the ONE window that may play notification sounds
+//   appFocused:   a window the person works in (any app window but the
+//                 voice window) has OS focus. The voice host shows the float
+//                 for a ring or a burst only while this is false
+//   anyInCall:    some window hosts a connected call
+//   peopleWindow: a people window exists somewhere in the app. The window that
+//                 IS it (isPeopleWindow) owns the roster, the call and walkie
+//                 pumps and their sounds; the others stand down from them.
+//   callPanel:    the call has a window of its own — whichever of its three
+//                 sizes it is in. The call lives THERE, so no other window
+//                 draws a dock for it; they show the elsewhere pill.
+export type DesktopWindowRole = {
+  leader: boolean;
+  appFocused: boolean;
+  anyInCall: boolean;
+  peopleWindow: boolean;
+  callPanel: boolean;
+  /** A VOICE HOST exists: the persistent window that holds the walkie's ear
+   *  and every call, and takes presses and joins as commands. Every other
+   *  window sends its gestures there instead of opening a microphone of its
+   *  own. False on an older shell, where each window keeps its own. */
+  voiceWindow: boolean;
+  /** The person popped the face row out of the header into the float. The
+   *  voice host keeps the float up off this; the header shows a chip that
+   *  brings the row back (useFacesFloating). */
+  facesOverlay: boolean;
+  /** The person wants the buddy list up, as the WALL shape of the voice host.
+   *  Exclusive with the float: they are two sizes of one glance at the team. */
+  peopleWall: boolean;
+  /** Which of the Chat and Work windows exist right now (lib/desktopApps):
+   *  the sidebar marks their sections as popped out, and every navigation
+   *  to their routes is handed to them. Null on a shell from before app
+   *  windows, which cannot say; the windows then say it for themselves
+   *  (lib/appWindowRegistry). */
+  apps: Partial<Record<string, boolean>> | null;
+  /** The app THIS window is, when the shell made it one out of a warm spare
+   *  window: a spare's preload arguments were fixed before anyone knew what
+   *  it would become, so its identity arrives here instead. */
+  app: string | null;
+};
+
+/** A room handed to the voice host, with the state the person is already in. */
+export type VoiceOpenPayload = {
+  room: string;
+  mic: boolean;
+  camera: boolean;
+  scribe: boolean;
+  /** Opened by an answered ring: the accept follows on its own channel and is
+   *  what joins; a takeover racing it would join a room this person has not
+   *  been admitted to yet. */
+  ring: boolean;
+  size: CallWindowSize | null;
+};
+
+/** What the host mirrors to every other window: the walkie's status as the
+ *  engine holds it, and the call facts a talk key reads beside it. Plain data
+ *  on purpose — it crosses a process boundary. */
+export type VoiceMirror = {
+  walkie: unknown;
+  /** `speaking` is the host's active speaker list: a remote's face row draws
+   *  the speaking ring from it, and my own camera face from `camera`.
+   *  `cameras` is who has a camera up in the host's room, by identity: the
+   *  header's circles draw those people as video (the relayed frames), the
+   *  same as the float does from the tracks. Absent from an older host. */
+  call: {
+    roomKey: string | null;
+    phase: string;
+    muted: boolean;
+    micDenied: boolean;
+    camera: boolean;
+    speaking: string[];
+    cameras?: string[];
+    /** The room's guests in the host's media, with their microphones
+     *  (callMedia.guestMediaOf): a guest has no seat to say either. Absent
+     *  from an older host. */
+    guests?: GuestMedia[];
+  };
+};
+
+export type DesktopDisplaySource = {
+  id: string;
+  name: string;
+  kind: "screen" | "window";
+  /** data: URL thumbnail, ~320px wide. */
+  thumbnail: string;
+  /** data: URL of the owning app's icon, windows only. Absent on older shells. */
+  appIcon?: string;
+};
+
+export function isElectron(): boolean {
+  return typeof window !== "undefined" && !!window.__CODECAST_ELECTRON__;
+}
+
+// Resolve an Electron bridge method, returning undefined when it isn't present.
+// The runtime `typeof fn === "function"` check is what makes callers safe on
+// OLDER desktop builds whose preload predates a given method (e.g. composeSubmit
+// on builds before the compose popup shipped) — the typings declare every method
+// as required, so a bare `?.method?.()` would silently no-op instead of letting
+// the caller fall back.
+export function bridge<K extends keyof NonNullable<Window["__CODECAST_ELECTRON__"]>>(
+  method: K,
+): NonNullable<Window["__CODECAST_ELECTRON__"]>[K] | undefined {
+  const b = window.__CODECAST_ELECTRON__;
+  const fn = b?.[method];
+  return typeof fn === "function" ? fn.bind(b) as any : undefined;
+}
+
+export function isDesktop(): boolean {
+  return isElectron();
+}
+
+/** Open a URL OUTSIDE the app: the system browser on desktop, a new tab on the
+ *  web. Every handoff to somebody else's consent screen goes through here.
+ *  Inside the desktop app a consent screen must not be navigated to in place:
+ *  the person ends up in a page the app shell cannot finish, with no address
+ *  bar and no way back. The system browser also already holds their sign in,
+ *  which is what the OAuth return needs. */
+export function openExternalUrl(url: string): void {
+  const openExternal = bridge("openExternal");
+  if (openExternal) {
+    void openExternal(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener");
+}
+
+// Am I inside the desktop app AT ALL — asked of the browser, not of the bridge.
+//
+// isElectron() is the right question wherever the bridge is the thing being
+// used: no bridge, no verb to call. It is the WRONG question for "is there a
+// shell around me", because the global is exactly what goes missing when the
+// preload fails. Build 1.1.100 shipped a preload that required a module under a
+// sandboxed renderer; it threw, __CODECAST_ELECTRON__ never existed, and every
+// caller believed it was in a browser — so window.open, which Electron hands to
+// shell.openExternal, popped surfaces of the app out into CHROME.
+//
+// Electron stamps its own token into the user agent, and no preload can take
+// that away. lib/desktopHandoff.ts carries the same two lines on purpose: that
+// file is inlined into <head> before any bundle exists and may import nothing.
+export function isDesktopShell(): boolean {
+  return isElectron() || (typeof navigator !== "undefined" && / Electron\//.test(navigator.userAgent));
+}
+
+// The running desktop app's version, read from the user agent so it answers
+// on a build whose bridge is dead (the case the floor gate exists for). Null
+// in a browser.
+export function desktopShellVersion(): string | null {
+  return typeof navigator === "undefined" ? null : parseShellVersion(navigator.userAgent);
+}
+
+// This renderer is a DETACHED TAB WINDOW — one dashboard surface broken out
+// into its own OS window (main.js createTabWindow, flagged via preload argv).
+// Such a window renders its route directly with no tab shell of its own, and
+// must never write shared tab state or persist layout — the main window owns
+// both. Checked by the tab router, TabBar, DashboardLayout and the store.
+export function isDetachedTabWindow(): boolean {
+  return typeof window !== "undefined" && window.__CODECAST_ELECTRON__?.isTabWindow === true;
+}
+
+// This document shows a route but does not OWN the tab shell: a detached tab
+// window, or the app framed as a browser pane's page (PANE_EMBED). Both render
+// one route with no tab shell, both hydrate the SHARED tabs, and neither may
+// write them — the window that owns the shell does. Every "keep your hands off
+// the tabs" check asks this rather than naming one of the two.
+export function borrowsTabShell(): boolean {
+  return isDetachedTabWindow() || PANE_EMBED;
+}
+
+// ---------------------------------------------------------------------------
+// The people window: the floating buddy list — roster, status and calling in a
+// window of its own, like an AIM buddy list. On the desktop the shell owns it
+// (main.js createPeopleWindow); in a browser it is a popup of the same route.
+// ---------------------------------------------------------------------------
+
+export const PEOPLE_ROUTE = "/people";
+
+/** What every surface calls the gesture, so three of them cannot call it three
+ *  different things. Pop out and dock are one pair (header and float), as
+ *  expand and shrink are the other (the row and the call's stage). */
+export const POP_OUT_PEOPLE_TITLE = "Pop out the faces, over your work";
+export const DOCK_FACES_TITLE = "Dock the faces back in the header";
+
+// This renderer IS the people window. It draws the panel, mounts the call,
+// walkie and ring pumps, and (on the desktop) is the shell's notification
+// leader while it lives. Every other window stands down from those.
+export function isPeopleWindow(): boolean {
+  return typeof window !== "undefined" && window.__CODECAST_ELECTRON__?.isPeopleWindow === true;
+}
+
+// A people window exists somewhere — this one or another. True inside the
+// people window itself, so a caller can ask "is the panel up anywhere?" with
+// one question. Before the shell's first role push (and outside the desktop)
+// only this window's own flag can answer.
+export function hasPeopleWindow(): boolean {
+  return isPeopleWindow() || windowRole.peopleWindow;
+}
+
+// Opening the buddy list is a LADDER, not a call: the shell's own window, then
+// a detached tab window on a build that predates it, then a browser popup — and
+// never a browser popup inside the desktop app. It lives in lib/popOut, with
+// components/people/popOutPeople wiring it to this route.
+
+// The pin: float this window above other apps. Only the desktop people window
+// may, so this resolves the pin the shell actually applied — false everywhere
+// else, including a browser popup, where the caller hides the control.
+export async function setAlwaysOnTop(on: boolean): Promise<boolean> {
+  return (await bridge("setAlwaysOnTop")?.(on)) ?? false;
+}
+
+export async function getAlwaysOnTop(): Promise<boolean> {
+  return (await bridge("getAlwaysOnTop")?.()) ?? false;
+}
+
+// Whether this window can be pinned at all (an older shell has no pin). The
+// people window of its own, or the voice host — where the pin is the wall's.
+export function canPin(): boolean {
+  return (isPeopleWindow() || isVoiceHost()) && typeof window.__CODECAST_ELECTRON__?.setAlwaysOnTop === "function";
+}
+
+/** Put the buddy list away: the wall on a voice host, the people window on an
+ *  older shell. False when this build has no such verb. */
+export async function closePeopleWindow(): Promise<boolean> {
+  const close = bridge("closePeopleWindow");
+  if (!close) return false;
+  await close();
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// The call panel: a huddle in a window of its own — the stage full-window, with
+// the controls, and nothing else. On the desktop the shell owns it (main.js
+// createCallWindow); it is deliberately NOT a browser popup anywhere, which is
+// why every helper here is desktop-gated rather than falling back like the
+// people window does. A call in a Chrome popup was the screenshot that started
+// this: the window has no app chrome, the OS treats it as a browser, and the
+// mic permission belongs to a window the person cannot recognize.
+//
+// One window, because one call: the product allows one huddle at a time, and
+// `joinRoom` enforces it server-side. Opening the panel for a second room moves
+// the window that exists rather than making another.
+// ---------------------------------------------------------------------------
+
+export const CALL_PANEL_ROUTE = "/call-panel";
+
+/**
+ * The panel's own URL. The room is in the query string rather than the path
+ * because a room key is not a path segment — `dm:<a>:<b>` and `session:<id>`
+ * both carry colons — and because the mic, camera and scribe state ride along
+ * with it. Those three are the handoff's payload: the window taking the call
+ * over has to arrive in the state the person was already in, or popping out
+ * mid-sentence mutes them.
+ */
+export function callPanelRoute(
+  roomKey: string,
+  opts?: { mic?: boolean; camera?: boolean; scribe?: boolean },
+): string {
+  const q = new URLSearchParams({ room: roomKey });
+  if (opts?.mic) q.set("mic", "1");
+  if (opts?.camera) q.set("cam", "1");
+  if (opts?.scribe) q.set("scribe", "1");
+  return `${CALL_PANEL_ROUTE}?${q.toString()}`;
+}
+
+/** This renderer IS the call panel: it hosts the call and draws the stage. */
+export function isCallPanelWindow(): boolean {
+  return typeof window !== "undefined" && window.__CODECAST_ELECTRON__?.isCallPanelWindow === true;
+}
+
+/**
+ * A call panel exists somewhere — this window or another.
+ *
+ * The other windows read this to stand down: the call is hosted in the panel,
+ * so they must not draw a second dock for it. True inside the panel itself, so
+ * one question answers for every window.
+ */
+export function hasCallPanel(): boolean {
+  return isCallPanelWindow() || windowRole.callPanel;
+}
+
+/**
+ * Whether this build can give a call a window of its own AT ALL.
+ *
+ * False in a browser, and that is the whole point: the popout control does not
+ * render there. Every other popout in the app degrades to `window.open`; a call
+ * refuses to, so the honest thing is to not offer the gesture rather than to
+ * offer it and produce a browser popup.
+ */
+export function canPopOutCall(): boolean {
+  return isDesktop() && !isCallPanelWindow();
+}
+
+/** Tell the shell to open (or move) the panel onto this room. */
+export async function openCallPanel(
+  roomKey: string,
+  /** `size` opens the window straight into that shape — the walkie card's
+   *  "Float over your work" wants circles, not a stage that shrinks a frame
+   *  later. Absent, the shell uses the size the person last left. */
+  opts?: { mic?: boolean; camera?: boolean; scribe?: boolean; size?: CallWindowSize },
+): Promise<boolean> {
+  const open = bridge("openCallPanel");
+  if (!open) return false;
+  await open(roomKey, opts);
+  return true;
+}
+
+/**
+ * Close the panel from inside it.
+ *
+ * `ended` is hang-up: destroy the window, the huddle is over. Without it the
+ * shell HIDES the window, like the palette — the microphone stays, and the
+ * main window does not grow a card trapped in its edges. Showing the window
+ * again (`showCallPanel`) is how you get back.
+ */
+export async function closeCallPanel(opts?: { ended?: boolean }): Promise<void> {
+  await bridge("closeCallPanel")?.(opts);
+}
+
+/** Raise the huddle window. False when this build has no call window. */
+export async function showCallPanel(): Promise<boolean> {
+  const show = bridge("showCallPanel");
+  if (!show) return false;
+  return (await show()) === true;
+}
+
+/**
+ * The panel tells the shell what it is hosting, so a handback carries it.
+ *
+ * `room` is what a handback would carry, and it has to be right from the FIRST
+ * report — which fires before the join, at phase idle. Reporting null there
+ * would wipe the room the shell opened the window with, and a close in that
+ * instant would hand back nothing.
+ */
+export function reportCallPanelState(state: {
+  room: string | null;
+  mic: boolean;
+  camera: boolean;
+  scribe: boolean;
+}): void {
+  bridge("reportCallPanelState")?.(state);
+}
+
+/**
+ * Call window: the ring window answered, so accept the invite HERE.
+ *
+ * The accept is what joins the media, and the media plane is per-renderer —
+ * so it has to run in the window that will hold the huddle, not in the 340px
+ * card the person pressed Join on.
+ */
+export function onCallRingAccept(
+  cb: (payload: { inviteId: string; roomKey: string }) => void,
+): void {
+  bridge("onCallRingAccept")?.(cb);
+}
+
+/** Main window: the panel is closing, take the call back. */
+export function onCallPanelHandback(
+  cb: (payload: { room: string; mic: boolean; camera: boolean; scribe: boolean }) => void,
+): void {
+  bridge("onCallPanelHandback")?.(cb);
+}
+
+// ---------------------------------------------------------------------------
+// The four sizes of the call window.
+//
+//   panel     the stage: the huddle full bleed, a card you resize by its edges.
+//   circles   everybody, as a row of face circles floating over the work.
+//   speaker   one circle, whoever is talking.
+//   tiny      the same one circle at the size of a menu bar icon.
+//
+// ONE window, not four. `transparent` and `frame` are decided when a
+// BrowserWindow is CONSTRUCTED, so the window is born see-through and frameless
+// and the stage paints its own card inside that glass. That is the whole point:
+// a call changing shape must never be a call changing WINDOWS, because changing
+// windows means leaving the room and re-joining it, and a person switching to
+// the float is not asking for their audio to be re-established.
+//
+// The shell keeps the last size per machine, so the next popout comes back the
+// shape the person left it.
+// ---------------------------------------------------------------------------
+
+/**
+ * The older per call window's sizes: the stage and its three circle sizes.
+ * Still spoken by the LEGACY path (CallPanel on a shell without a voice
+ * host, CallFaces, the stage's shrink menu); a voice host lands every one
+ * of them that is not the stage on the float.
+ */
+export type CallWindowSize = "panel" | "circles" | "speaker" | "tiny";
+
+/**
+ * Every shape the voice window takes. Presence, a burst, a ring and a call
+ * are the same row of faces in different states, so they are ONE shape at
+ * ONE anchor, and a burst becoming a call is the float drawing something
+ * else in a window that does not move.
+ *
+ *   float   the face row and its card, always on top, click through except
+ *           the faces and the card, anchored to one remembered corner
+ *   panel   the stage: the expanded call, opened on an explicit expand
+ *   wall    the buddy list, in the people window's own rectangle
+ *   idle    nothing to show: the window is hidden and waits
+ */
+export type VoiceWindowShape = "float" | "panel" | "wall" | "idle";
+
+/** The shape the host gives a legacy call size: the stage stays the stage,
+ *  every circle size is the float. */
+export function voiceShapeForCallSize(size: CallWindowSize): "panel" | "float" {
+  return size === "panel" ? "panel" : "float";
+}
+
+export const CALL_WINDOW_SIZES: readonly CallWindowSize[] = ["panel", "circles", "speaker", "tiny"];
+
+export function isCallWindowSize(size: unknown): size is CallWindowSize {
+  return (CALL_WINDOW_SIZES as readonly unknown[]).includes(size);
+}
+
+/**
+ * Every size that is not the stage — the ones a person shrinks INTO.
+ *
+ * Listed here rather than in the surface that draws the buttons, so a size the
+ * shell knows about cannot end up with no way to reach it. The stage maps over
+ * this and looks each one's icon and words up by key, which makes a missing
+ * button a type error rather than a shape nobody can find.
+ */
+export const SMALL_CALL_WINDOW_SIZES = ["circles", "speaker", "tiny"] as const;
+
+export type SmallCallWindowSize = (typeof SMALL_CALL_WINDOW_SIZES)[number];
+
+// The face circles' own vocabulary lives in faceCrop.ts, next to the geometry.
+// Re-exported here because the window's size and the circles' mode are two
+// names for one decision, and the surfaces that make it import from one place.
+export type { FacesMode };
+
+/**
+ * How many circles a size shows. Mode and tier are separate questions: mode is
+ * how many faces, tier is how big they are, and `tiny` is the one size that
+ * answers them differently — one face, at the smallest tier.
+ */
+export function facesModeForSize(size: CallWindowSize): FacesMode {
+  return size === "circles" ? "everyone" : "speaker";
+}
+
+/** How big those circles are. Every size but `tiny` takes its mode's own tier. */
+export function faceTierForSize(size: CallWindowSize): FaceTier {
+  return size === "tiny" ? "mini" : naturalTier(facesModeForSize(size));
+}
+
+/**
+ * Whether this build can make the window small at all.
+ *
+ * The float needs a see-through, click-through, always-on-top window, and
+ * only the shell can make one; a browser has no approximation worth offering.
+ * An older desktop build has the panel and none of this, which is why the check
+ * is for the FUNCTION rather than for "am I on the desktop": the surface can
+ * then say the app needs an update instead of a button doing nothing.
+ */
+export function canResizeCallWindow(): boolean {
+  return isCallPanelWindow() && typeof bridge("setCallWindowSize") === "function";
+}
+
+/**
+ * Put the window into a shape. Returns the shape it actually landed on, or
+ * null if this build cannot do it; the caller says so rather than pretending.
+ */
+export async function setCallWindowSize(
+  size: VoiceWindowShape | CallWindowSize,
+): Promise<VoiceWindowShape | CallWindowSize | null> {
+  const set = bridge("setCallWindowSize");
+  if (!set) return null;
+  return (await set(size)) ?? null;
+}
+
+/** Which shape the shell has this window in. Null on a build without shapes. */
+export async function getCallWindowSize(): Promise<VoiceWindowShape | CallWindowSize | null> {
+  const get = bridge("getCallWindowSize");
+  if (!get) return null;
+  return (await get()) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// The voice host.
+//
+// On a shell that has one, the call panel window is PERSISTENT: built at boot,
+// hidden, holding the walkie's ear; every burst is heard and spoken there, and
+// every call joins there, so the window that holds the microphone never
+// changes. Every other window is a remote for it. These are the two sides of
+// that arrangement, and every one of them is a no-op on a shell without it.
+// ---------------------------------------------------------------------------
+
+/** This renderer IS the persistent voice host: the call panel window, on a
+ *  shell that keeps it alive and hands it rooms as commands. */
+export function isVoiceHost(): boolean {
+  return isCallPanelWindow() && typeof bridge("voiceHostReady") === "function";
+}
+
+/** A voice host exists — this window, or another. */
+export function hasVoiceHost(): boolean {
+  return isVoiceHost() || windowRole.voiceWindow;
+}
+
+/** A voice host exists and it is not this window: every microphone gesture
+ *  made here is sent there. */
+export function voiceHostElsewhere(): boolean {
+  return !isVoiceHost() && windowRole.voiceWindow;
+}
+
+/** The host says it is up: from here rooms arrive as commands. */
+export function declareVoiceHost(): void {
+  bridge("voiceHostReady")?.();
+}
+
+/** A room for the host to join, as an opener handed it over. */
+export function onCallPanelOpen(cb: (payload: VoiceOpenPayload) => void): void {
+  bridge("onCallPanelOpen")?.(cb);
+}
+
+/** Host: another window asked for the call to be shown — stop hiding it. */
+export function onCallPanelShow(cb: () => void): void {
+  bridge("onCallPanelShow")?.(cb);
+}
+
+/**
+ * Send a microphone gesture to the host. Resolves true when a host took it;
+ * false means there is none (an older shell, or the second before it
+ * declares), and the caller acts locally as it always did.
+ */
+export async function sendVoiceCommand(cmd: string, args: unknown[] = []): Promise<boolean> {
+  const send = bridge("voiceCommand");
+  if (!send) return false;
+  return (await send(cmd, args)) === true;
+}
+
+/** Host: commands from the other windows. */
+export function onVoiceCommand(cb: (payload: { cmd: string; args: unknown[] }) => void): void {
+  bridge("onVoiceCommand")?.(cb);
+}
+
+/** Host: tell every other window what the walkie and the call are doing. */
+export function mirrorVoice(payload: VoiceMirror): void {
+  bridge("voiceMirror")?.(payload);
+}
+
+/** Every other window: the host's mirror. */
+export function onVoiceMirror(cb: (payload: VoiceMirror) => void): void {
+  bridge("onVoiceMirror")?.(cb);
+}
+
+
+/** Host: a ring is up (or has stopped) — the dock bounces beside it. */
+export function setRingAttention(on: boolean): void {
+  bridge("setRingAttention")?.(on);
+}
+
+/** Host: the shape the shell has it in, and the call size the person chose. */
+export async function getVoiceWindowState(): Promise<{ size: VoiceWindowShape; callSize: CallWindowSize } | null> {
+  const get = bridge("getVoiceWindowState");
+  if (!get) return null;
+  return (await get()) ?? null;
+}
+
+/**
+ * Does the window take the mouse right now?
+ *
+ * In the float the window is a rectangle and the product is a few faces and
+ * a card. Everywhere else the pointer belongs to whatever application is
+ * underneath, so the window ignores mouse events and the renderer, the only
+ * side that knows where the faces are, turns that off while the pointer is
+ * over one. Ignored by the shell in the panel shape, where the stage takes
+ * every click by construction.
+ */
+export function setCallWindowInteractive(on: boolean): void {
+  bridge("setCallWindowInteractive")?.(on);
+}
+
+/** Size the window to its row. `pinY` is the point (CSS px from the top)
+ *  that holds still on screen, the faces; an older shell ignores it. */
+export function setCallWindowContentSize(size: { width: number; height: number; pinY?: number }): void {
+  bridge("setCallWindowContentSize")?.(size);
+}
+
+/**
+ * Drag the window by a face.
+ *
+ * Deliberately not `-webkit-app-region: drag`, which is what the STAGE uses:
+ * over a drag region the window manager takes the mouse events, so a
+ * click-through renderer would stop receiving the moves that tell it when the
+ * pointer LEFT the face, and the window would be stuck taking clicks that
+ * belong to the app underneath. Instead the shell follows the cursor itself
+ * between these two calls: no per-move IPC, and it composes with click-through
+ * rather than fighting it.
+ */
+export function setCallWindowDragging(on: boolean): void {
+  bridge("setCallWindowDragging")?.(on);
+}
+
+// ---------------------------------------------------------------------------
+// The face row, popped out. The row lives in the app's header until the
+// person sends it to the float: the voice host's see-through window over the
+// work, always on top, click-through except over a face or the card. The
+// header then shows one chip that brings the row back. A standing
+// arrangement: the shell persists it (settings.facesWindow.open) and tells
+// every window through the role (`facesOverlay`), so the chip and the host
+// read the same answer.
+//
+// Desktop-only, for the same reason as every see-through shape: a transparent
+// click-through always-on-top window is something only the shell can make,
+// and a browser has no approximation worth offering.
+// ---------------------------------------------------------------------------
+
+/** Whether this build can float the row at all. The check is for the
+ *  function rather than "am I on the desktop", so an older shell reads as
+ *  "needs an update" instead of a button doing nothing. */
+export function canOpenFacesOverlay(): boolean {
+  return typeof bridge("openFacesWindow") === "function";
+}
+
+export async function openFacesWindow(): Promise<void> {
+  await bridge("openFacesWindow")?.();
+}
+
+export async function closeFacesWindow(): Promise<void> {
+  await bridge("closeFacesWindow")?.();
+}
+
+/**
+ * The pop out, as a React value: whether this build can float the row,
+ * whether it is floating now, and the one switch. The header renders the row
+ * and a pop out button while `floating` is false, and a single chip that
+ * brings the row back while it is true.
+ */
+export function useFacesFloating(): {
+  available: boolean;
+  floating: boolean;
+  setFloating: (on: boolean) => void;
+} {
+  const role = useSyncExternalStore(subscribeWindowRole, getDesktopWindowRole, getDesktopWindowRole);
+  return {
+    available: canOpenFacesOverlay(),
+    floating: role.facesOverlay,
+    setFloating: setFacesFloating,
+  };
+}
+
+function setFacesFloating(on: boolean): void {
+  void (on ? openFacesWindow() : closeFacesWindow());
+}
+
+/**
+ * Send a navigation to the MAIN window and raise it.
+ *
+ * A satellite window — the palette, the compose popup, the buddy list — is a
+ * place you stand, not a place you browse. Clicking a person in it must open
+ * the conversation where the work already is, in the window that holds the
+ * work, and leave the satellite showing what it was showing.
+ *
+ * The shell's verb is named for the palette because that was its first caller;
+ * what it DOES is show the main window, focus it, and hand it the path. A
+ * browser popup has no shell, so its opener plays that part.
+ *
+ * Returns false when there is no other window to send it to — a bare tab on
+ * /people, say — so the caller can navigate itself rather than swallow the
+ * click and look broken.
+ */
+/**
+ * A window you STAND in rather than browse: the people window and the voice
+ * window (the call panel, in every shape from the burst strip to the stage).
+ * Any link in one of them belongs to the main window. Navigating the
+ * satellite itself boots the whole app inside a strip the size of a button,
+ * and takes the microphone with it.
+ */
+export function isSatelliteWindow(): boolean {
+  return isPeopleWindow() || isCallPanelWindow();
+}
+
+/**
+ * Follow a path from wherever the gesture happened: a satellite hands it to
+ * the main window and stays as it was; anywhere else `here` moves this window.
+ * The one rule for every "open the chat" button, so a new surface cannot
+ * get it wrong by forgetting which window it is drawn in.
+ */
+export function navigateFromHere(path: string, here: (path: string) => void): void {
+  if (isSatelliteWindow() && navigateMainWindow(path)) return;
+  here(path);
+}
+
+export function navigateMainWindow(path: string): boolean {
+  const send = bridge("paletteNavigate");
+  if (send) {
+    send(path);
+    return true;
+  }
+  if (typeof window === "undefined") return false;
+  const opener = window.opener as Window | null;
+  if (!opener || opener.closed) return false;
+  try {
+    // A real navigation, not an event: the opener only listens for
+    // `codecast-navigate` on the desktop, and a popup's opener is a browser
+    // tab. Same origin, so this is allowed; the app boots from its local cache,
+    // so the tab lands on the DM rather than on a loading screen.
+    opener.location.href = path;
+    opener.focus();
+    return true;
+  } catch {
+    // A cross-origin or already-navigated-away opener. Not ours to move.
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// OS-global shortcuts (Electron globalShortcut) — the bindings that work from
+// any app, not just inside Codecast. One metadata list feeds both the desktop
+// settings page and the keyboard shortcuts help panel.
+// ---------------------------------------------------------------------------
+
+/**
+ * The agent dock (lib/desktopAgentDock.ts) is unreleased. While this is false
+ * nothing offers it, and a shell that opens the dock window anyway (1.1.169 to
+ * 1.1.172 turned it on by default) is told to turn it off.
+ */
+export const AGENT_DOCK_RELEASED = false;
+
+export const DESKTOP_SHORTCUTS: { key: string; label: string; description: string }[] = [
+  { key: "newSession", label: "New Session", description: "Open the new-session compose popup from any app" },
+  { key: "toggleWindow", label: "Toggle Main Window", description: "Show or hide the main Codecast window" },
+  { key: "togglePalette", label: "Quick Command Palette", description: "Open the floating command palette from anywhere" },
+  { key: "toggleEnv", label: "Switch Local / Prod", description: "Switch between local dev and production" },
+  ...(AGENT_DOCK_RELEASED
+    ? [{ key: "toggleAgentDock", label: "Agent Dock", description: "Open the agent dock's card from any app (only while the dock is on)" }]
+    : []),
+];
+
+export type DesktopShortcutConfig = {
+  shortcuts: Record<string, string>;
+  // null on older desktop builds whose preload predates get-shortcut-config —
+  // callers hide default-dependent affordances (reset) rather than guessing.
+  defaults: Record<string, string> | null;
+  // Bindings that failed to register (another app owns the accelerator).
+  issues: Record<string, string>;
+};
+
+export async function getDesktopShortcutConfig(): Promise<DesktopShortcutConfig | null> {
+  if (!isElectron()) return null;
+  const full = bridge("getShortcutConfig");
+  if (full) return await full();
+  const shortcuts = await bridge("getShortcuts")?.();
+  return shortcuts ? { shortcuts, defaults: null, issues: {} } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Browser → desktop hand-off (codecast:// deep links).
+//
+// The contract — link format, the gate that decides whether a browser page
+// should redirect into the app, the localStorage mirror, and the pre-boot runner
+// that fires the link before any app chunk is fetched — lives in
+// ./desktopHandoff, which stays import-free because it is ALSO inlined into
+// index.html's <head>. Re-exported here so callers keep a single desktop entry
+// point.
+// ---------------------------------------------------------------------------
+
+export {
+  AUTO_HANDOFF_PARAM,
+  buildDesktopDeepLink,
+  extractDeepLinkIntent,
+  parseDesktopDeepLinkPath,
+  isHandoffEligiblePath,
+  isAutoHandoffHost,
+  isForegroundTab,
+  isAgentDrivenTab,
+  isFreshNavigation,
+  shouldAttemptHandoff,
+  shouldAttemptPreBootHandoff,
+  writeHandoffMirror,
+  skipHandoffForUrl,
+  readSkippedUrl,
+  takePendingPreferBrowser,
+  preBootVerdict,
+  bootAfterHandoffGate,
+  openDesktop,
+  armForegroundHandoff,
+  showHandoffScreen,
+  runPreBootHandoff,
+  ARM_WINDOW_MS,
+  HANDOFF_MIRROR_KEY,
+  HANDOFF_MIRROR_DEV,
+  HANDOFF_SKIP_KEY,
+  HANDOFF_PERSIST_KEY,
+  AGENT_TAB_KEY,
+  AGENT_TAB_EVENT,
+  type HandoffContext,
+  type PreBootHandoffContext,
+  type PreBootVerdict,
+  type HandoffScreenOptions,
+} from "./desktopHandoff";
+
+export { conversationIdFromPath, shareTokenInPath } from "./desktopHandoff";
+
+// --- Desktop user-activity tracker -----------------------------------------
+// An auto handoff may move the desktop's view only when the user is NOT in the
+// middle of using it: a background tab (often automation — agents drive Chrome
+// with the user's own profile) firing a handoff while the user types here must
+// not yank the view. Installed once by DesktopProvider.
+let lastDesktopInputAt = 0;
+// Two clocks, on purpose, because two consumers ask different questions.
+//
+// INPUT is a committed gesture: a click or a keystroke. Auto handoff asks
+// "may I move the view", and only a committed gesture should say no — a
+// resting hand nudging the mouse must not block a handoff for ever.
+//
+// ACTIVITY is "a person is here", which is what presence reports. Scrolling a
+// long conversation with a trackpad is that, and pointerdown/keydown cannot
+// see it: read for the three minutes of INPUT_ACTIVE_MS without clicking and
+// the whole team watched you go idle while you were plainly using the app.
+// The desktop never had this, because Electron answers with the OS-wide
+// powerMonitor idle, which counts a moving mouse. Only the browser was blind,
+// and only to the gestures that leave no mark.
+//
+// wheel and pointermove and nothing else: both are unambiguously human. A
+// `scroll` listener would have been the obvious third and is exactly wrong —
+// the app auto-scrolls a streaming conversation on its own, and that would
+// pin an empty room "active" for as long as an agent kept talking.
+let lastDesktopActivityAt = 0;
+let inputTrackerInstalled = false;
+export function installDesktopInputTracker(): void {
+  if (typeof window === "undefined" || inputTrackerInstalled) return;
+  inputTrackerInstalled = true;
+  const note = () => {
+    lastDesktopInputAt = Date.now();
+    lastDesktopActivityAt = lastDesktopInputAt;
+  };
+  const noteActivity = () => { lastDesktopActivityAt = Date.now(); };
+  window.addEventListener("pointerdown", note, { capture: true, passive: true });
+  window.addEventListener("keydown", note, { capture: true, passive: true });
+  window.addEventListener("wheel", noteActivity, { capture: true, passive: true });
+  window.addEventListener("pointermove", noteActivity, { capture: true, passive: true });
+}
+
+// 0 until the first input after page load. Consumers that need "activity"
+// rather than strictly "input" (presence) should combine this with their own
+// signals (focus changes) — see usePresenceReporter.
+export function getLastDesktopInputAt(): number {
+  return lastDesktopInputAt;
+}
+
+/** The widest honest "a person is at this page" signal — see above. */
+export function getLastDesktopActivityAt(): number {
+  return lastDesktopActivityAt;
+}
+
+// Milliseconds since the machine's last user input. On Electron this is the
+// OS-wide answer (powerMonitor), so it stays correct while Codecast sits
+// unfocused behind another app. In a browser we only see input on our own
+// page — callers pass their best in-page activity floor.
+export async function getIdleMs(inPageActivityFloor: number): Promise<number> {
+  if (isElectron()) {
+    const fn = bridge("getSystemIdleSeconds");
+    if (fn) {
+      try {
+        return (await fn()) * 1000;
+      } catch { /* fall through to in-page signal */ }
+    }
+  }
+  const last = Math.max(lastDesktopActivityAt, inPageActivityFloor);
+  return last > 0 ? Date.now() - last : Number.MAX_SAFE_INTEGER;
+}
+
+const AUTO_DEEPLINK_QUIET_MS = 30_000;
+
+// Pure policy, unit-testable: a manual link always applies; an auto handoff
+// applies only when the desktop has been quiet (no local input) long enough
+// that moving the view cannot interrupt anything.
+export function shouldApplyAutoDeepLink(now: number = Date.now(), lastInputAt: number = lastDesktopInputAt): boolean {
+  return now - lastInputAt > AUTO_DEEPLINK_QUIET_MS;
+}
+
+// What to do with a codecast:// link the shell delivered. Pure so the whole
+// policy is unit-testable; the provider only wires the three outcomes.
+//  - navigate: move the view. A link the user clicked always does; an auto
+//    handoff (the browser page redirecting itself) does only once the desktop
+//    has been quiet (see shouldApplyAutoDeepLink).
+//  - offer: the browser handed off while the user was working here. Raise the
+//    handoff card so the switch is theirs to make. This is the ONLY notice the
+//    link gets, so the caller must show it through a path that cannot fail
+//    quietly (a static import, not a lazy chunk).
+//  - ignore: the link names nothing navigable, or the user is already looking
+//    at the target.
+export type DeepLinkArrival = { kind: "navigate" | "offer"; path: string } | { kind: "ignore" };
+
+export function planDeepLinkArrival(
+  url: string,
+  currentSessionId: string | null,
+  now: number = Date.now(),
+  lastInputAt: number = lastDesktopInputAt,
+): DeepLinkArrival {
+  const raw = parseDesktopDeepLinkPath(url);
+  if (!raw) return { kind: "ignore" };
+  const { path, auto } = extractDeepLinkIntent(raw);
+  if (!auto || shouldApplyAutoDeepLink(now, lastInputAt)) return { kind: "navigate", path };
+  const convId = conversationIdFromPath(path);
+  if (convId && currentSessionId === convId) return { kind: "ignore" };
+  return { kind: "offer", path };
+}
+
+export function hasBrowserNotificationPermission(): boolean {
+  return typeof Notification !== "undefined" && Notification.permission === "granted";
+}
+
+export async function requestNotificationPermission(): Promise<boolean> {
+  if (agentAlertsSuppressed()) return false;
+  if (isDesktop()) return true;
+  if (typeof Notification === "undefined") return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  // An embedded webview (an in-app browser, a kiosk shell) can expose the
+  // Notification global with no way to ask.
+  if (typeof Notification.requestPermission !== "function") return false;
+  const result = await Notification.requestPermission();
+  return result === "granted";
+}
+
+// The browser tab's own copy of the banner rules (ct-49551). On the desktop the
+// shell applies them instead — it is the one process that sees every window.
+const browserBanners = new BrowserBannerGate();
+
+// Resolves true when THIS window announced the event to the user — the caller
+// may pair a sound with it. False when the user is already looking at what the
+// banner is about, when the conversation banner already fired inside the burst
+// window, or, on desktop, when another window showed the same banner (the shell
+// dedupes by `data.key`).
+export async function notifyNative(
+  title: string,
+  body: string,
+  data?: NotifyNativeData,
+): Promise<boolean> {
+  const key = data?.key ?? Array.from(new Uint8Array(await crypto.subtle.digest(
+    "SHA-256", new TextEncoder().encode(JSON.stringify([title, body, data?.route, data?.conversationId])),
+  )), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return deliverAlert(`banner:${key}`, () => deliverNative(title, body, data));
+}
+
+async function deliverNative(title: string, body: string, data?: NotifyNativeData): Promise<boolean> {
+  // One click target per banner: an explicit route (chat, tasks, docs) wins,
+  // else the conversation. Electron receives both and applies the same rule.
+  const route = data?.route ?? (data?.conversationId ? `/conversation/${data.conversationId}` : undefined);
+  if (isElectron()) {
+    // The shell decides whether it goes up: only it knows which of its windows
+    // is focused and what each one shows.
+    const res = await bridge("showNotification")?.(title, body, { ...data, route });
+    // Older shells resolve void: they showed it.
+    return res ? res.shown : true;
+  }
+  // A browser tab is the whole app, so it applies the same rules to itself.
+  const focused = typeof document !== "undefined" && document.hasFocus();
+  const verdict = await browserBanners.admit(
+    { focused, active: reportedWindowState?.active ?? null },
+    { ...data, route },
+  );
+  if (!verdict.shown) return false;
+  if (hasBrowserNotificationPermission()) {
+    const n = new Notification(title, { body, icon: "/icon-192.png", tag: data?.conversationId ?? route, silent: true });
+    if (route) {
+      n.onclick = () => {
+        window.focus();
+        window.location.href = route;
+      };
+    }
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Window role. The desktop can run several windows of this app (main +
+// detached tabs); the shell elects one leader for notification sounds and
+// tells each window whether the app as a whole is focused. Outside the desktop
+// (or before the shell's first push) this window is the only one: leader.
+// ---------------------------------------------------------------------------
+
+let windowRole: DesktopWindowRole = {
+  leader: true,
+  appFocused: false,
+  anyInCall: false,
+  peopleWindow: false,
+  callPanel: false,
+  voiceWindow: false,
+  facesOverlay: false,
+  peopleWall: false,
+  apps: null,
+  app: null,
+};
+// The bridge the tracker installed on. In the app there is exactly one and it
+// never changes; a test that stands a second shell up gets a second install
+// rather than a tracker bound to a bridge nobody is pushing through.
+let windowRoleBridge: unknown = null;
+
+export function getDesktopWindowRole(): DesktopWindowRole {
+  return windowRole;
+}
+
+// True when this window should be the one that sounds a notification.
+export function isNotificationLeader(): boolean {
+  return windowRole.leader;
+}
+
+// Watchers of the role above. The sound paths ASK for the role at the moment
+// they need it, so a plain module variable was enough; a surface that DRAWS it
+// (the people window's pin, the "in a huddle in another window" pill) has to
+// learn when it changes. The snapshot is replaced wholesale on every push, so
+// useSyncExternalStore can compare refs.
+const windowRoleWatchers = new Set<() => void>();
+
+export function subscribeWindowRole(cb: () => void): () => void {
+  windowRoleWatchers.add(cb);
+  return () => {
+    windowRoleWatchers.delete(cb);
+  };
+}
+
+// Subscribe once (DesktopProvider) so the role above tracks the shell.
+export function installWindowRoleTracker(): void {
+  const on = bridge("onWindowRole");
+  if (!on || windowRoleBridge === on) return;
+  windowRoleBridge = on;
+  on((role) => {
+    windowRole = {
+      leader: role.leader !== false,
+      appFocused: !!role.appFocused,
+      anyInCall: !!role.anyInCall,
+      peopleWindow: !!role.peopleWindow,
+      callPanel: !!role.callPanel,
+      voiceWindow: !!role.voiceWindow,
+      facesOverlay: !!role.facesOverlay,
+      peopleWall: !!role.peopleWall,
+      apps: role.apps && typeof role.apps === "object" ? { ...role.apps } : null,
+      app: typeof role.app === "string" ? role.app : null,
+    };
+    for (const cb of windowRoleWatchers) cb();
+  });
+}
+
+// What this window shows, as last reported. The desktop shell keeps the same
+// fact per window for banner routing; a browser tab keeps it for itself, so
+// notifyNative can tell whether the banner's target is already on screen.
+let reportedWindowState: DesktopWindowState | null = null;
+
+// Tell the shell what this window shows (the bridge call is a no-op in a
+// browser; the local record is what the banner gate reads there).
+export function reportDesktopWindowState(state: DesktopWindowState): void {
+  reportedWindowState = state;
+  bridge("reportWindowState")?.(state);
+}
+
+export async function updateBadge(count: number) {
+  if (isElectron()) {
+    bridge("setBadgeCount")?.(count);
+  }
+}
+
+export async function onDeepLink(cb: (urls: string[]) => void) {
+  if (isElectron()) {
+    bridge("onDeepLink")?.((url: string) => cb([url]));
+  }
+}
+
+export function onUpdateStatus(cb: (status: { status: string; version?: string; percent?: number }) => void) {
+  if (isElectron()) {
+    bridge("onUpdateStatus")?.(cb);
+  }
+}
+
+export function restartForUpdate() {
+  if (isElectron()) {
+    bridge("restartForUpdate")?.();
+  }
+}
+
+// Ask the desktop app to check the feed now. `manual: true` makes it surface a
+// native "up to date" / "ready" / "failed" notification (undefined on older
+// builds whose preload predates this method — callers fall back gracefully).
+export function checkForUpdate(opts?: { manual?: boolean }) {
+  if (isElectron()) {
+    bridge("checkForUpdate")?.(opts);
+  }
+}
+
+// True on desktop builds that carry the in-process updater (download-with-
+// progress + foreground swap-on-restart). False on the web and on older builds
+// whose preload predates `checkForUpdate` — there the banner falls back to the
+// daemon-driven update path (server mutation → daemon swap).
+export function hasInProcessUpdater(): boolean {
+  return isElectron() && typeof window.__CODECAST_ELECTRON__?.checkForUpdate === "function";
+}
+
+export function desktopHeaderClass(): string {
+  if (typeof window === "undefined") return "";
+  if (isElectron()) return "electron-drag-region pl-[var(--titlebar-inset)]";
+  return "";
+}
+
+// The macOS traffic lights sit at x:16,y:12 (main.js trafficLightPosition),
+// three 12px lights 20px apart — they end at x=68, y=24. A row whose top is
+// below them is clear of them. --titlebar-inset in globals.css is the CSS twin.
+const TRAFFIC_LIGHTS_W = 78;
+const TRAFFIC_LIGHTS_H = 24;
+// Rows starting within this band act as the titlebar (drag surface).
+const TITLEBAR_H = 36;
+
+// Zen mode hides the global header, yet a desktop window still needs a
+// surface to drag by and the traffic lights cleared. Rather than a dedicated
+// strip, the top row of whatever surface is showing plays that role: while it
+// lies in the titlebar band it becomes the drag region (the .titlebar-head
+// rules), and when it also sits at the window's left edge it indents past the
+// lights. Both are measured, not declared, because which row is topmost and
+// leftmost depends on layout — a tab bar, a breadcrumb trail, or a rail may or
+// may not be open. Re-measured when the row resizes (horizontal layout changes
+// reach it that way) and when it moves through the band (an IntersectionObserver
+// whose root is the band — vertical shifts from rows appearing above it).
+export function attachTitlebarHead(el: HTMLElement): () => void {
+  const measure = () => {
+    const r = el.getBoundingClientRect();
+    const inBand = r.width > 0 && r.top < TITLEBAR_H;
+    const edge = inBand && r.top < TRAFFIC_LIGHTS_H && r.left < TRAFFIC_LIGHTS_W;
+    // Indent only past the part of the lights this row actually sits under
+    // (a row beside a 44px rail needs 34px, not 78). A row too narrow to indent
+    // (an icon-only rail) drops below the lights instead.
+    const inset = TRAFFIC_LIGHTS_W - Math.max(0, r.left);
+    const fits = r.width >= inset + 40;
+    el.classList.toggle("titlebar-head", inBand);
+    el.classList.toggle("titlebar-head--edge", edge && fits);
+    el.classList.toggle("titlebar-head--under", edge && !fits);
+    if (edge && fits) el.style.setProperty("--titlebar-edge-inset", `${inset}px`);
+    else el.style.removeProperty("--titlebar-edge-inset");
+  };
+  // Every trigger fires at the START of a layout change; the sidebar and the
+  // rails animate their width, so the row keeps sliding for a few hundred ms
+  // after. Measure now and again once the motion has settled.
+  let settle: ReturnType<typeof setTimeout>[] = [];
+  const kick = () => {
+    settle.forEach(clearTimeout);
+    measure();
+    settle = [400, 900].map((ms) => setTimeout(measure, ms));
+  };
+  kick();
+  const ro = new ResizeObserver(kick);
+  ro.observe(el);
+  // Vertical moves (a tab bar or breadcrumb appearing above) change how much of
+  // the row lies in the titlebar band; horizontal moves (a rail opening beside
+  // it) change how much lies in the traffic-light corner. Neither resizes the
+  // row itself, so each gets an IntersectionObserver rooted on that region —
+  // rebuilt on window resize since the regions are expressed as root margins.
+  let observers: IntersectionObserver[] = [];
+  const watch = () => {
+    observers.forEach((o) => o.disconnect());
+    const threshold = Array.from({ length: 11 }, (_, i) => i / 10);
+    observers = [
+      `0px 0px ${TITLEBAR_H - window.innerHeight}px 0px`,
+      `0px ${TRAFFIC_LIGHTS_W - window.innerWidth}px ${TITLEBAR_H - window.innerHeight}px 0px`,
+    ].map((rootMargin) => {
+      const io = new IntersectionObserver(kick, { rootMargin, threshold });
+      io.observe(el);
+      return io;
+    });
+  };
+  watch();
+  const onResize = () => { watch(); kick(); };
+  window.addEventListener("resize", onResize);
+  return () => {
+    settle.forEach(clearTimeout);
+    ro.disconnect();
+    observers.forEach((o) => o.disconnect());
+    window.removeEventListener("resize", onResize);
+    el.classList.remove("titlebar-head", "titlebar-head--edge", "titlebar-head--under");
+    el.style.removeProperty("--titlebar-edge-inset");
+  };
+}
+
+export function useIsDesktop(): boolean {
+  if (typeof window === "undefined") return false;
+  return isDesktop();
+}
+
+export function setupDesktopDrag(_el: HTMLElement): (() => void) | undefined {
+  return;
+}
+
+export async function checkForUpdates() {
+  // Electron auto-update is handled in main process
+}
+
+export async function getAppVersion(): Promise<string | null> {
+  if (isElectron()) {
+    return bridge("getVersion")?.() ?? null;
+  }
+  return null;
+}
+
+// Latest published desktop version, from our own server (same-origin — avoids a
+// cross-origin fetch to the R2 feed). Bumped with every desktop release.
+export async function getLatestDesktopVersion(): Promise<string | null> {
+  try {
+    const res = await fetch("/api/desktop/latest", { cache: "no-store" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data?.version === "string" ? data.version : null;
+  } catch {
+    return null;
+  }
+}
+
+// { current, latest } when the running desktop app is behind the published
+// version, else null (also null on web / non-desktop).
+export async function checkDesktopUpdate(): Promise<{ current: string; latest: string } | null> {
+  if (!isDesktop()) return null;
+  const [current, latest] = await Promise.all([getAppVersion(), getLatestDesktopVersion()]);
+  if (!current || !latest) return null;
+  return cmpVersions(latest, current) > 0 ? { current, latest } : null;
+}
+
+// Pause CSS animations while the desktop window is in the background.
+//
+// The desktop app runs with backgroundThrottling disabled (electron/main.js) so
+// the Convex live-query socket keeps delivering while the window is hidden. The
+// side effect: Chromium also keeps compositing every infinite CSS animation (the
+// per-session pulse/ping/spin status dots) at the full display refresh rate even
+// when Codecast is sitting unfocused behind another app — pinning the GPU process
+// for nothing visible. Toggling one attribute on <html> on focus/visibility
+// changes lets a single CSS rule park those animations; JS and the socket keep
+// running, so live data still flows and everything resumes instantly on focus.
+export function installIdleAnimationPause(): void {
+  if (typeof window === "undefined" || !isElectron()) return;
+  const root = document.documentElement;
+  const update = () => {
+    const idle = !document.hasFocus() || document.visibilityState === "hidden";
+    root.toggleAttribute("data-idle", idle);
+  };
+  window.addEventListener("focus", update);
+  window.addEventListener("blur", update);
+  document.addEventListener("visibilitychange", update);
+  update();
+}
+
+// ---------------------------------------------------------------------------
+// The browser pane's native view (packages/electron/browserPanes.js).
+//
+// A pane on the stage can show a page in an iframe anywhere, but a site that
+// refuses to be framed needs a real browser view, and only the desktop shell
+// has one. Everything below is the typed end of ONE app-defined IPC name:
+// commands go out through `call("browser-pane", cmd, payload)`, pane events
+// come back through `subscribe("browser-pane", cb)`.
+// ---------------------------------------------------------------------------
+
+export type BrowserPaneCommand =
+  | "create"
+  | "navigate"
+  | "bounds"
+  | "show"
+  | "hide"
+  | "reload"
+  | "back"
+  | "forward"
+  | "devtools"
+  | "focus"
+  | "destroy"
+  | "destroyAll"
+  /** Read-only: what the shell's views are doing right now. The only way to
+   *  observe a native view from outside the shell, since it is in no DOM and
+   *  in no screenshot the renderer can take. */
+  | "state";
+
+/** What main says about one pane. `paneId` is the renderer's own id for it —
+ *  the shell keys views by (window, paneId) and never invents one. */
+export type BrowserPaneEvent = {
+  paneId: string;
+  event: "title" | "url" | "loading" | "favicon" | "fail" | "focus" | "blur" | "chord";
+  title?: string;
+  url?: string;
+  inPage?: boolean;
+  loading?: boolean;
+  favicon?: string | null;
+  errorCode?: number;
+  errorDescription?: string;
+  /** A key the page was not allowed to keep, because the app owns it
+   *  (the palette, the address strip, reload). */
+  key?: string;
+  shift?: boolean;
+};
+
+export type BrowserPaneBridge = {
+  send: (cmd: BrowserPaneCommand, payload?: Record<string, unknown>) => Promise<unknown>;
+  on: (cb: (event: BrowserPaneEvent) => void) => () => void;
+};
+
+/** The pane bridge, or null in a browser and on a desktop build too old to
+ *  carry app-defined IPC at all. */
+export function browserPaneBridge(): BrowserPaneBridge | null {
+  if (!isElectron()) return null;
+  const call = bridge("call");
+  const subscribe = bridge("subscribe");
+  if (!call || !subscribe) return null;
+  return {
+    send: (cmd, payload) => call("browser-pane", cmd, payload ?? {}),
+    on: (cb) => subscribe("browser-pane", (payload) => cb(payload as BrowserPaneEvent)),
+  };
+}
+
+// Whether this shell actually has the view. The bridge existing is not the
+// answer — every desktop build has `call`, and one from before the native pane
+// shipped rejects the name. So the truth is what the capabilities handler
+// says, asked once per renderer and remembered.
+let paneCapabilities: { available: boolean; commands: string[] } | null = null;
+let paneProbe: Promise<boolean> | null = null;
+const paneWatchers = new Set<() => void>();
+
+export function nativeBrowserPaneAvailable(): boolean {
+  if (paneCapabilities === null) void probeNativeBrowserPane();
+  return paneCapabilities?.available === true;
+}
+
+export function probeNativeBrowserPane(): Promise<boolean> {
+  if (paneCapabilities) return Promise.resolve(paneCapabilities.available);
+  if (paneProbe) return paneProbe;
+  const call = isElectron() ? bridge("call") : undefined;
+  if (!call) {
+    paneCapabilities = { available: false, commands: [] };
+    return Promise.resolve(false);
+  }
+  paneProbe = call<{ available?: boolean; commands?: string[] }>("browser-pane-capabilities")
+    .then((caps) => ({ available: caps?.available === true, commands: caps?.commands ?? [] }))
+    .catch(() => ({ available: false, commands: [] }))
+    .then((caps) => {
+      paneCapabilities = caps;
+      for (const fn of paneWatchers) fn();
+      return caps.available;
+    });
+  return paneProbe;
+}
+
+/** Re-render when the probe answers (useSyncExternalStore). */
+export function subscribeNativeBrowserPane(fn: () => void): () => void {
+  paneWatchers.add(fn);
+  return () => paneWatchers.delete(fn);
+}
+
+/**
+ * The community rooms (/community) loaded in a plain browser are a standalone
+ * page: no app sidebar, no tab strip, their own slim header. Inside the desktop
+ * app (and in a detached tab window that borrows the shell) they are an
+ * ordinary tab beside the workspace. DashboardLayout paints the bare frame
+ * from this and the chat page adds the header from the same answer, so the two
+ * can never disagree.
+ */
+export function isStandaloneCommunityPath(pathname: string): boolean {
+  if (!/^\/community(\/|$)/.test(pathname)) return false;
+  return !isElectron() && !borrowsTabShell();
+}

@@ -1,0 +1,225 @@
+// Single source of truth for the commands a daemon can be told to run. Mirrors
+// the daemon_commands.command union in convex/schema.ts exactly, including
+// "move_to_device".
+//
+// DIVERGENCE NOTE: convex/users.ts sendDaemonCommand currently accepts only 17
+// of these (it omits "move_to_device" — that command is enqueued through the
+// device-move path, not this generic mutation). It is intentionally a subset of
+// this full set; do not assume the mutation's arg union equals DAEMON_COMMANDS.
+//
+// PURE isomorphic data — safe to import from the Convex runtime, the daemon, and
+// the browser.
+export const DAEMON_COMMANDS = [
+  "status",
+  "restart",
+  "force_update",
+  "version",
+  "start_session",
+  "escape",
+  "resume_session",
+  "kill_session",
+  "send_keys",
+  "set_permission_mode",
+  "rewind",
+  "config_list",
+  "config_read",
+  "config_write",
+  "config_create",
+  "config_delete",
+  "run_workflow",
+  "reinstall",
+  "move_to_device",
+  // The web asked for a session on the cloud host. Targeted at an online LOCAL
+  // daemon (the one with the host registry + SSH key): it wakes the host,
+  // refreshes the checkout there, copies the manifest's secret files, acquires
+  // an isolated worktree with `cast ws acquire` on the host, then places the
+  // conversation on the host's device (cloud.placeConversation). Runs as
+  // `cast cloud start <conversation>` in a child, like move_to_device. args:
+  // { conversation_id, cloud_device_id?, placement_token?, workspace?:
+  // "isolated"|"shared", start_from?: "checkout"|"origin_main" }. In
+  // `workspace: "shared"` mode the child claims the host's main checkout in
+  // Convex first (cloud.claimSharedCheckout) and runs `cast ws root` there
+  // instead of acquiring a worktree. `start_from` rides to `cast cloud start
+  // --from`: the isolated worktree is seeded from the preparing laptop's
+  // checkout (default) or made from origin/main. Old daemons: "Unknown command".
+  "cloud_spawn",
+  // A session on the cloud host asked for the owner's browser login for one
+  // site (`cast browser sync <site>` there). The host has no Keychain, so the
+  // request is targeted at an online LOCAL daemon, which runs `cast cloud
+  // browser-sync` in a child: decrypt the laptop's cookies for that origin and
+  // inject them into the host's Chrome through an SSH port forward. args:
+  // { host_device_id, cdp_port, origin: string|null, all: boolean,
+  // conversation_id?: string } — an ORIGIN, never a URL. Result JSON:
+  // { ok, injected, sites?, rejected?, host, reason? } — counts only, never a
+  // cookie. Never parked on an offline laptop (cloud.requestBrowserSync
+  // refuses instead). Old daemons: "Unknown command".
+  "cloud_browser_sync",
+  // Mirror a cloud session's working tree into a worktree on THIS laptop, live
+  // (cloud/liveSyncJobs.ts), or stop. Targeted at the laptop that holds the
+  // repo (localMirror.ts mirrorLaptopFor). args: { conversation_id, enable,
+  // host_device_id, remote_cwd, local_root, overwrite? }. The laptop reports
+  // state to conversations.local_mirror (cloud.reportLocalMirror). Old
+  // daemons: "Unknown command".
+  "cloud_live_sync",
+  // The web's actions on a cloud host (Settings → Machines): wake, sleep,
+  // apply the declared setup, save an image, delete an image. Targeted at the
+  // laptop that manages the host (devices.cloud_host.managed_by), which runs
+  // the matching `cast hosts` command in a child and reports the outcome in
+  // its next cloud_host report. args: { host_device_id, action, image_id? }.
+  "cloud_host_action",
+  // Fork fast path: resume a fork by copying the parent's local JSONL. A
+  // SEPARATE command (not resume_session) so daemons that predate it report
+  // "Unknown command" and do nothing — falling into their resume_session path
+  // would reconstitute from a mid-copy export and truncate the fork's history.
+  "fork_session",
+  // An isolated subagent finished done: bring its worktree's changes into its
+  // parent's checkout, content based and all or nothing (cli/src/mergeBack.ts),
+  // and report the outcome with subagentFleet.reportMergeBack. Targeted at the
+  // device holding the worktree. args: { conversation_id, worktree_path,
+  // target_path }. Old daemons: "Unknown command" (the chip stays "merging
+  // back"; the worktree keeps the work).
+  "merge_back",
+  // Swap the machine's active Claude Code account to a saved profile, tear down
+  // the listed blocked sessions (parked on a limit, auth, or dropped-connection
+  // banner), and enqueue "continue" to each so the delivery rail resumes them
+  // on the new account.
+  "switch_account",
+  // User clicked "Update now" on the in-app desktop-update banner: apply the
+  // published desktop release immediately (force quit + swap + relaunch), rather
+  // than waiting for the next app quit. Old daemons: "Unknown command".
+  "desktop_update",
+  // Web Settings toggled an agent-feature snippet for THIS device: run
+  // `cast install <slug>` (or `--disable`) locally, then heartbeat so the new
+  // state round-trips back. args: { snippet: <slug>, enabled: boolean }. Old
+  // daemons: "Unknown command" (the toggle just doesn't take on that machine).
+  "apply_snippet",
+  // Ownership of a conversation was reassigned AWAY from this device ("Run
+  // here" on another machine). Targeted at the PREVIOUS owner: kill the local
+  // tmux + process tree so no stale copy keeps running there — the same
+  // teardown move_to_device runs on the source after a transfer. Old daemons:
+  // "Unknown command" (the stale tmux just survives on that machine).
+  "release_session",
+  // Web set/removed a managed provider API key for THIS device (pl-207). args is a
+  // ProviderKeyCommand JSON: {op:"set", payload:<encrypted>} or {op:"remove",
+  // provider}. The key is sealed to the device's ECDH public key so Convex never
+  // sees plaintext; the daemon decrypts, updates its 0600 store, and fans out to
+  // remotes. Old daemons: "Unknown command" (the key just doesn't take there).
+  "set_provider_key",
+  // The web's host step for a role hired from a template (org-hire.md H3):
+  // run `cast org template bind <instance>` on the machine that holds the
+  // project's checkout. args: OrgTemplateBindArgs (orgTemplateBind.ts). A
+  // secret input arrives SEALED to this device's provider-key public key, the
+  // same transport as set_provider_key: the daemon decrypts it into a 0600
+  // file and hands bind the path, so the value never enters Convex in plain
+  // text. Result: OrgTemplateBindResult. Old daemons: "Unknown command" (the
+  // role page says to update codecast there or bind from the terminal).
+  "org_template_bind",
+  // The web's Connect dialog for a sign-in based cloud agent provider (Codex
+  // Cloud) on THIS device. args: { provider, op: "check" | "start" }. check
+  // answers with the machine's login state ({state, account?, plan?,
+  // detail?}); start runs the provider's own sign-in (`codex login`) in a
+  // utility tmux pane and answers {state: "started"} at once. Old daemons:
+  // "Unknown command" (the dialog says to update codecast there).
+  "cloud_agent_login",
+  // A session header's action on its cloud agent, on the device that hosts
+  // the session. args: { conversation_id, action } (CLOUD_AGENT_ACTIONS:
+  // create_pr, apply, archive, unarchive). The daemon says the result in the
+  // session's thread and answers {detail}. Old daemons: "Unknown command"
+  // (the header says to update codecast there).
+  "cloud_agent_action",
+  // Web sign-in CTA: run `claude auth login` in a utility tmux pane (opens the
+  // browser OAuth flow on this machine), watch the keychain for the outcome,
+  // and report it via accountSwitch.completeLoginFlow. args: { email? } — the
+  // account to pre-fill on the login page. Old daemons: "Unknown command" (the
+  // web's pending flow goes stale and the CTA returns).
+  "start_login",
+  // Integrated terminal discovery: reply with this daemon's loopback terminal
+  // endpoint ({port, token, device_id, tmux}). The web sends one per live
+  // device and connects to whichever endpoint answers on 127.0.0.1 — only the
+  // machine the browser is on is reachable. Old daemons: "Unknown command"
+  // (the web treats no-answer as "no local daemon"). See
+  // packages/cli/src/terminal/.
+  "get_terminal_endpoint",
+  // Watch a tmux pane on THIS device for a browser that can't reach it on
+  // loopback (the pane runs on another of the user's machines). args:
+  // StreamPaneArgs — { target }. The daemon captures the pane's screen while
+  // the viewer's lease is live and pushes changed frames to /cli/terminal/frame;
+  // the lease lapsing is what stops it. Old daemons: "Unknown command" (the
+  // split reports the machine can't stream and offers the ssh command instead).
+  // See packages/shared/contracts/terminalStream.ts.
+  "stream_pane",
+  // Park a session's pane to give the machine back its resources: the reaper's
+  // teardown (heartbeat stopped first, transcript kept, tmux session and its
+  // process tree killed) plus the "hibernated" agent status. The next message
+  // resumes it. args: { session_id, conversation_id }. Old daemons: "Unknown
+  // command" (the session just stays live). There is no wake_session: waking is
+  // a resume, so `cast wake` sends resume_session.
+  "hibernate_session",
+  // Bulk local<->cloud migration (sessionMigrations.ts). Targeted at the
+  // batch's EXECUTOR daemon — an online local machine: the source for a move
+  // to the cloud, the destination for a move back. The daemon starts a
+  // detached `cast migrate run <batch_id>` child and answers immediately, so
+  // a batch that transfers for an hour never blocks the command loop. args:
+  // { batch_id }. Old daemons: "Unknown command" (the batch row reports it).
+  "migrate_sessions",
+  // Stop a session's local backends so its transcript is final before a
+  // migration transfers it. Targeted at the CURRENT owner; runs the same
+  // teardown as move_to_device/release_session but leaves ownership alone —
+  // the flip is a separate, later mutation. args: { conversation_id,
+  // session_id, mode: "idle" | "force" }. "idle" refuses (quiesced: false,
+  // reason) while a turn is in progress; "force" interrupts it. Old daemons:
+  // "Unknown command" (the runner reports the source must be upgraded).
+  "quiesce_session",
+  // The app's edit of a project's .codecast/line.toml (plan pl-838), sent
+  // through users.sendConfigCommand like config_read/config_write and
+  // targeted at the device that published the profile. args:
+  // LineProfileEditArgs (packages/cli/src/lineProfileEdit.ts) — { root,
+  // edits[] | content, base? }. The daemon applies the edits in place,
+  // validates with the profile loader, writes atomically and republishes.
+  // Station edits (set_station, reset_station) write the repo's own line in
+  // `.codecast/line/` instead (line-map.md LX5); an older daemon refuses them
+  // as an unknown edit op. Result: LineProfileEditReply. Old daemons:
+  // "Unknown command".
+  "line_profile_edit",
+  // The app's edit of one step of a published graph (line-workspace.md LW4):
+  // the prompt or script file a .cast names, in the checkout its origin
+  // names (workflows.origin), targeted at the device that pushed it. args:
+  // LineGraphEditArgs (packages/cli/src/lineGraphEdit.ts) — { root, file,
+  // node, field?, text, base_hash?, base_text? }. Written atomically after the parser
+  // accepts the result, then pushed again. Result: LineGraphEditReply. Old
+  // daemons: "Unknown command".
+  "line_graph_edit",
+  // Try (LW4): a step's edited prompt run on past cases through the dry-run
+  // harness with writes refused, on the device that pushed the graph. args:
+  // LineTryArgs (packages/cli/src/lineTry.ts). Answers { accepted } at once;
+  // each case reports to its line_tries row (/cli/line-tries/report). Old
+  // daemons: "Unknown command".
+  "line_try",
+  // "Re-ask" on a trial run paused where no answer can land (its step left
+  // the line, or no session asked its card), targeted at the run's machine.
+  // args: { task (ct-N), project_path? }. Runs `cast line trial rerun <task>
+  // --reask` there, which stops the run's runner and has its asking station
+  // present a new decision. Result: that command's JSON. Old daemons:
+  // "Unknown command".
+  "line_trial_reask",
+  // Deploy on the line (deploys.md DP2): the Line page's Deploy, targeted at
+  // the device that publishes the project's line profile. args: { deploy
+  // (dp-N), root }. Runs `cast line deploy run <dp-N>` in the root, detached,
+  // and answers at once; the run reports to the deploy row. Old daemons:
+  // "Unknown command" (the deploy stays requested until someone runs it).
+  "line_deploy",
+  // The setup card under a `cast browser`/`cast computer` command that failed
+  // for want of the Chrome extension or the macOS grants (agentToolSetup.ts).
+  // Targeted at the session's device. args: AgentToolSetupArgs — check answers
+  // AgentToolSetupStatus; start runs `cast browser extension setup` or `cast
+  // computer setup --yes` there in a detached child and answers at once, and
+  // the card checks until it lands. Old daemons: "Unknown command" (the card
+  // says to update codecast there).
+  "agent_tool_setup",
+] as const;
+
+export type DaemonCommand = (typeof DAEMON_COMMANDS)[number];
+
+/** How long a command waits for its daemon: one not picked up by then is
+ *  closed with error "expired_ttl" and never runs. */
+export const DAEMON_COMMAND_TTL_MS = 5 * 60 * 1000;

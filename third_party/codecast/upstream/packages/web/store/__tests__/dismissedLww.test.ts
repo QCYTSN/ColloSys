@@ -1,0 +1,196 @@
+import { beforeEach, describe, expect, it } from "bun:test";
+import { mergeStampedBagLww, PER_DEVICE_UI_KEYS, useInboxStore } from "../inboxStore";
+
+// The `dismissed` preference bag syncs per-key last-writer-wins via ":ts"
+// stamps (mergeStampedBagLww) instead of blanket local_wins. Regression for
+// the "Open links in desktop app" toggle showing ON on one device while the
+// server — and the browser client that actually decides the hand-off — said
+// OFF: local_wins meant a preference written on one device could never reach
+// another that already had its own copy of the bag.
+
+describe("mergeStampedBagLww", () => {
+  it("takes the server wholesale before hydration finishes", () => {
+    expect(mergeStampedBagLww({ a: 1 }, { a: 2 }, false)).toEqual({ a: 2 });
+  });
+
+  it("a newer server stamp wins the key (cross-device toggle propagates)", () => {
+    const local = { prefer_browser_links: false, "prefer_browser_links:ts": 100 };
+    const server = { prefer_browser_links: true, "prefer_browser_links:ts": 200 };
+    expect(mergeStampedBagLww(local, server, true)).toEqual(server);
+  });
+
+  it("a newer local stamp survives a stale server echo (no flicker)", () => {
+    const local = { prefer_browser_links: false, "prefer_browser_links:ts": 300 };
+    const server = { prefer_browser_links: true, "prefer_browser_links:ts": 200 };
+    expect(mergeStampedBagLww(local, server, true)).toEqual(local);
+  });
+
+  it("unstamped keys keep local_wins per-key semantics (legacy bags)", () => {
+    const local = { has_used_desktop: true };
+    const server = { has_used_desktop: false, desktop_app: true };
+    // local value beats the echo; the server-only key flows in.
+    expect(mergeStampedBagLww(local, server, true)).toEqual({ has_used_desktop: true, desktop_app: true });
+  });
+
+  it("a stamped write beats an unstamped legacy value on either side", () => {
+    const stamped = { prefer_browser_links: false, "prefer_browser_links:ts": 100 };
+    const legacy = { prefer_browser_links: true };
+    expect(mergeStampedBagLww(stamped, legacy, true).prefer_browser_links).toBe(false);
+    expect(mergeStampedBagLww(legacy, stamped, true).prefer_browser_links).toBe(false);
+  });
+});
+
+// The ui bag rides stamped LWW by default. Per-device keys (this window,
+// this hardware) opt out and keep local_wins. A new preference must persist
+// without joining a whitelist — that whitelist is what dropped sidebar pins.
+describe("updateClientUI stamped view keys", () => {
+  beforeEach(() => {
+    useInboxStore.setState({ clientState: {}, clientStateInitialized: true, pending: {} });
+  });
+
+  it("stamps inbox-view keys so the toolbar follows the user across devices", () => {
+    const before = Date.now();
+    useInboxStore.getState().updateClientUI({ inbox_scope: "team", show_subagents: true });
+    const ui = useInboxStore.getState().clientState.ui as Record<string, any>;
+    expect(ui.inbox_scope).toBe("team");
+    expect(ui["inbox_scope:ts"]).toBeGreaterThanOrEqual(before);
+    expect(ui["show_subagents:ts"]).toBeGreaterThanOrEqual(before);
+  });
+
+  it("leaves per-device keys unstamped (legacy local_wins semantics)", () => {
+    useInboxStore.getState().updateClientUI({ sidebar_collapsed: true, visual_style: "minimal" });
+    const ui = useInboxStore.getState().clientState.ui as Record<string, any>;
+    expect(ui.sidebar_collapsed).toBe(true);
+    expect(ui.visual_style).toBe("minimal");
+    expect(ui["sidebar_collapsed:ts"]).toBeUndefined();
+    expect(ui["visual_style:ts"]).toBeUndefined();
+  });
+
+  it("adopts a NEWER view-mode change from another device on sync", () => {
+    useInboxStore.getState().updateClientUI({ inbox_view_mode: "grouped" });
+    const newer = Date.now() + 5_000;
+    useInboxStore.getState().syncTable("clientState", {
+      ui: { inbox_view_mode: "recent", "inbox_view_mode:ts": newer },
+    });
+    expect(useInboxStore.getState().clientState.ui?.inbox_view_mode).toBe("recent");
+  });
+
+  it("a just-made local write survives a stale server echo (no flicker)", () => {
+    useInboxStore.getState().updateClientUI({ inbox_scope: "team" });
+    useInboxStore.getState().syncTable("clientState", {
+      ui: { inbox_scope: "mine", "inbox_scope:ts": Date.now() - 60_000 },
+    });
+    expect(useInboxStore.getState().clientState.ui?.inbox_scope).toBe("team");
+  });
+
+  // A mute is a per-user preference: sounds turned off on any device must
+  // silence every client, including a localhost dev origin whose bag never
+  // held the key. Regression for the sound gates sitting outside
+  // STAMPED_UI_KEYS, where local_wins froze each device at the first value
+  // it ever saw.
+  it("stamps the sound gates so a mute reaches every device", () => {
+    const before = Date.now();
+    useInboxStore.getState().updateClientUI({ sounds_enabled: false, chat_sounds_enabled: false });
+    const ui = useInboxStore.getState().clientState.ui as Record<string, any>;
+    expect(ui["sounds_enabled:ts"]).toBeGreaterThanOrEqual(before);
+    expect(ui["chat_sounds_enabled:ts"]).toBeGreaterThanOrEqual(before);
+  });
+
+  it("a stamped mute from another device beats a legacy unstamped local value", () => {
+    useInboxStore.setState({
+      clientState: { ui: { sounds_enabled: true } },
+      clientStateInitialized: true,
+      pending: {},
+    });
+    useInboxStore.getState().syncTable("clientState", {
+      ui: { sounds_enabled: false, "sounds_enabled:ts": Date.now() },
+    });
+    expect(useInboxStore.getState().clientState.ui?.sounds_enabled).toBe(false);
+  });
+
+  // Pins to the top of the sidebar are a per-user shortcut list, not a
+  // per-device layout. Unstamped, local_wins let an empty array on another
+  // client (or a boot that took the server wholesale) drop the pin — you pin
+  // "cameron tasks", leave, come back, and the rail has forgotten it.
+  it("stamps sidebar_pins so a pin follows the user across devices", () => {
+    const before = Date.now();
+    const pins = [{ kind: "view" as const, id: "view1", label: "cameron tasks" }];
+    useInboxStore.getState().updateClientUI({ sidebar_pins: pins });
+    const ui = useInboxStore.getState().clientState.ui as Record<string, any>;
+    expect(ui.sidebar_pins).toEqual(pins);
+    expect(ui["sidebar_pins:ts"]).toBeGreaterThanOrEqual(before);
+  });
+
+  it("a just-made pin survives a stale server echo of an empty list", () => {
+    const pins = [{ kind: "view" as const, id: "view1", label: "cameron tasks" }];
+    useInboxStore.getState().updateClientUI({ sidebar_pins: pins });
+    useInboxStore.getState().syncTable("clientState", {
+      ui: { sidebar_pins: [] },
+    });
+    expect(useInboxStore.getState().clientState.ui?.sidebar_pins).toEqual(pins);
+  });
+
+  it("a stamped pin from another device beats a legacy unstamped empty local list", () => {
+    useInboxStore.setState({
+      clientState: { ui: { sidebar_pins: [] } },
+      clientStateInitialized: true,
+      pending: {},
+    });
+    const pins = [{ kind: "view" as const, id: "view1", label: "cameron tasks" }];
+    useInboxStore.getState().syncTable("clientState", {
+      ui: { sidebar_pins: pins, "sidebar_pins:ts": Date.now() },
+    });
+    expect(useInboxStore.getState().clientState.ui?.sidebar_pins).toEqual(pins);
+  });
+
+  it("stamps a ui key that was never on the old whitelist", () => {
+    const before = Date.now();
+    useInboxStore.getState().updateClientUI({ comments_enabled: true, pr_note_mode: "now" });
+    const ui = useInboxStore.getState().clientState.ui as Record<string, any>;
+    expect(ui["comments_enabled:ts"]).toBeGreaterThanOrEqual(before);
+    expect(ui["pr_note_mode:ts"]).toBeGreaterThanOrEqual(before);
+  });
+});
+
+describe("PER_DEVICE_UI_KEYS", () => {
+  it("names keys that exist on ClientUI", async () => {
+    const src = await Bun.file(new URL("../inboxStore.ts", import.meta.url)).text();
+    const block = src.match(/export type ClientUI = \{([\s\S]*?)\n\};/);
+    expect(block).toBeTruthy();
+    const keys = new Set([...block![1].matchAll(/^\s+([a-z_]+)\?:/gm)].map((m) => m[1]));
+    for (const k of PER_DEVICE_UI_KEYS) {
+      expect(keys.has(k)).toBe(true);
+    }
+  });
+});
+
+describe("updateClientDismissed", () => {
+  beforeEach(() => {
+    useInboxStore.setState({ clientState: {}, clientStateInitialized: true, pending: {} });
+  });
+
+  it("stamps the value with a ts so the write can win LWW everywhere", () => {
+    const before = Date.now();
+    useInboxStore.getState().updateClientDismissed("prefer_browser_links", false);
+    const bag = useInboxStore.getState().clientState.dismissed as Record<string, any>;
+    expect(bag.prefer_browser_links).toBe(false);
+    expect(bag["prefer_browser_links:ts"]).toBeGreaterThanOrEqual(before);
+  });
+
+  it("a stamped local write then survives a server echo carrying the old value", () => {
+    useInboxStore.getState().updateClientDismissed("prefer_browser_links", false);
+    useInboxStore.getState().syncTable("clientState", { dismissed: { prefer_browser_links: true } });
+    const bag = useInboxStore.getState().clientState.dismissed as Record<string, any>;
+    expect(bag.prefer_browser_links).toBe(false);
+  });
+
+  it("adopts a NEWER change from another device on sync", () => {
+    useInboxStore.getState().updateClientDismissed("prefer_browser_links", false);
+    const newer = Date.now() + 5_000;
+    useInboxStore.getState().syncTable("clientState", {
+      dismissed: { prefer_browser_links: true, "prefer_browser_links:ts": newer },
+    });
+    const bag = useInboxStore.getState().clientState.dismissed as Record<string, any>;
+    expect(bag.prefer_browser_links).toBe(true);
+  });
+});

@@ -1,0 +1,306 @@
+import { useCallback, useMemo } from "react";
+import { useQueryNoThrow } from "./useQueryNoThrow";
+import { api } from "@codecast/convex/convex/_generated/api";
+import type { MentionItem } from "../lib/mentionItem";
+import { matchHandle, memberHandle } from "@codecast/shared/chat";
+import { isTerminalTaskStatus } from "@codecast/shared/tasks";
+import { useInboxStore, convBucketMap, isConvexId } from "../store/inboxStore";
+import { agentStatusAt } from "../lib/liveness";
+import type { BucketItem, BucketAssignmentItem } from "../store/inboxStore";
+import type { ChatChannelRow, ChatRailRow } from "../store/chatSlice";
+import { useDebounce } from "./useDebounce";
+import { inActiveWorkspace } from "../lib/workspaceScope";
+import { teamIdForPath } from "../lib/vault/scopeModel";
+import { matchScore, mergeMentionSuggestions, mentionViewTimes } from "../lib/mentionRanking";
+import { mergeEntityRows } from "../lib/universalSearch";
+import { identityLine, identityRowOf } from "../lib/sessionIdentity";
+import { personifyAllNow } from "./usePersonifyAll";
+
+// score/matchScore moved to lib/mentionRanking, which owns ranking and must not
+// import this module back. Re-exported so every existing caller is unchanged.
+export { score, matchScore, mentionMatchRank } from "../lib/mentionRanking";
+
+export type MentionScope =
+  | { kind: "team"; teamId: string }
+  | { kind: "personal"; userId: string }
+  | { kind: "any" };
+
+const RECENT_LIMIT_PER_TYPE = 6;
+const SEARCH_LIMIT_PER_TYPE = 12;
+
+function inScope(item: { team_id?: string | null; user_id?: string | null }, scope: MentionScope): boolean {
+  if (scope.kind === "any") return true;
+  if (scope.kind === "team") return inActiveWorkspace(item, scope.teamId);
+  return inActiveWorkspace(item, null) && (item.user_id ? String(item.user_id) === scope.userId : true);
+}
+
+const EMPTY_SERVER_ITEMS: MentionItem[] = [];
+
+// People are fully covered by the local roster cache; these are the types whose
+// cache is windowed and therefore worth re-querying server-side on @-mention.
+export const SERVER_MENTION_TYPES = ["session", "task", "doc", "plan"];
+
+/** The team a session's composer mentions from: the team stamped on its row,
+ *  or, for a new session the server has not stamped yet, the team its
+ *  directory files into. Without the fallback a fresh session's @ searches
+ *  the personal workspace and misses every teammate session. */
+export function sessionMentionTeamId(
+  s: Pick<ReturnType<typeof useInboxStore.getState>, "sessions">,
+  row: { team_id?: string | null; git_root?: string | null; project_path?: string | null } | null | undefined,
+): string | null {
+  if (row?.team_id) return String(row.team_id);
+  const path = row?.git_root || row?.project_path;
+  return path ? teamIdForPath(path, s.sessions) : null;
+}
+
+/** Scope for a surface tied to a specific entity/conversation workspace. */
+export function mentionScopeFor(
+  teamId: string | null | undefined,
+  userId: string | null | undefined,
+): MentionScope {
+  if (teamId) return { kind: "team", teamId: String(teamId) };
+  if (userId) return { kind: "personal", userId: String(userId) };
+  return { kind: "any" };
+}
+
+/**
+ * The ACTIVE workspace as a mention scope. Mentions follow the same strict
+ * boundary as every other list (lib/workspaceScope): in a team space the @
+ * popover offers only that team's items; in the personal space only teamless
+ * ones. Generic surfaces (doc editors, create modals, the vault) use this;
+ * the conversation composer scopes to its conversation's workspace instead.
+ */
+export function useActiveMentionScope(): MentionScope {
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id);
+  const userId = useInboxStore((s) => s.currentUser?._id);
+  return useMemo(
+    () => mentionScopeFor(activeTeamId ? String(activeTeamId) : null, userId ? String(userId) : null),
+    [activeTeamId, userId],
+  );
+}
+
+/**
+ * Debounced server-side mention lookup that reaches past the local cache —
+ * sessions older than the inbox sync window, entities never pulled down.
+ * Pass `null` while the dropdown is closed to fully disable it. `loading`
+ * covers both the debounce settling and the in-flight query, so callers can
+ * show a "searching" affordance from the first keystroke.
+ */
+export function useMentionServerSearch(
+  rawQuery: string | null,
+  opts?: { teamId?: string | null; types?: string[] },
+): { items: MentionItem[]; loading: boolean } {
+  const current = (rawQuery ?? "").trim();
+  const debounced = useDebounce(current, 250);
+  const wantNow = rawQuery != null && current.length >= 2;
+  const settled = debounced === current;
+  // A just-created team scope carries an optimistic stub id until the server
+  // echoes; a stub is not an Id<"teams">. Skip rather than fall back to
+  // personal, which would leak personal items into a team surface.
+  const stubTeam = !!opts?.teamId && !isConvexId(String(opts.teamId));
+  const results = useQueryNoThrow(
+    api.docs.mentionSearch,
+    wantNow && settled && !stubTeam
+      ? {
+          query: current,
+          // Explicit workspace either way: without it the server falls back to
+          // the active team, which would leak team items into personal surfaces.
+          workspace: opts?.teamId ? ("team" as const) : ("personal" as const),
+          ...(opts?.teamId ? { teamId: opts.teamId } : {}),
+          ...(opts?.types ? { types: opts.types } : {}),
+        }
+      : "skip",
+  ).data as MentionItem[] | undefined;
+  // Convex full-text search ORs the terms and prefix-matches the last one, so
+  // a phrase like "jasonbenn lets do" returns every title with a "do…" word.
+  // Hold server rows to the same every-word rule the local cache uses, so a
+  // mention that has drifted into prose settles on zero matches instead of a
+  // dropdown full of strangers.
+  const items = useMemo(
+    () => (wantNow && settled && results ? results.filter((m) => mentionItemMatches(m, current)) : EMPTY_SERVER_ITEMS),
+    [wantNow, settled, results, current],
+  );
+  return {
+    items,
+    loading: wantNow && !stubTeam && (!settled || results === undefined),
+  };
+}
+
+// Labels (inbox buckets) as mention items. They're the user's personal filing —
+// always theirs, so team scope doesn't narrow them (like people, they come from
+// a local roster). Shared by every mention source: the hook below and
+// ConversationView's buildMentionItems (which feeds the conversation and
+// new-session composers).
+export function labelMentionItems(s: {
+  buckets?: Record<string, BucketItem>;
+  bucketAssignments?: Record<string, BucketAssignmentItem>;
+}): MentionItem[] {
+  const counts = new Map<string, number>();
+  for (const bucketId of Object.values(convBucketMap(s.bucketAssignments || {}))) {
+    if (bucketId) counts.set(bucketId, (counts.get(bucketId) ?? 0) + 1);
+  }
+  return Object.values(s.buckets || {})
+    .filter((b) => !b.archived_at)
+    .map((b) => {
+      const n = counts.get(String(b._id)) ?? 0;
+      return {
+        id: String(b._id),
+        type: "label",
+        label: b.name,
+        sublabel: `${n} session${n === 1 ? "" : "s"}`,
+        shortId: `label:${b._id}`,
+        updatedAt: b.updated_at || 0,
+      };
+    });
+}
+
+// Chat channels as `#` suggestions: the scope's team rooms a person can name
+// in prose (never DMs, never archived). Ordered by the rail's own activity
+// clock, and the viewer's unread count rides along as the detail line.
+export function channelMentionItems(s: {
+  chatChannels?: Record<string, ChatChannelRow>;
+  chatRail?: ChatRailRow[];
+}, scope: MentionScope): MentionItem[] {
+  const rail = new Map((s.chatRail || []).map((r) => [r.channel_id, r]));
+  return Object.values(s.chatChannels || {})
+    .filter((c) => c.kind !== "dm" && !c.archived_at && !!c.name)
+    .filter((c) => scope.kind !== "team" || c.team_id === scope.teamId)
+    .map((c) => {
+      const r = rail.get(String(c._id));
+      return {
+        id: String(c._id), type: "channel", label: c.name,
+        sublabel: c.topic || undefined, channelKind: c.kind ?? "public",
+        updatedAt: Math.max(r?.sort_at ?? 0, r?.last_message?.created_at ?? 0, c.updated_at ?? 0),
+        unread: r?.unread || undefined,
+      };
+    });
+}
+
+// The one predicate every mention surface filters by: a query hits an item
+// through its label, its sublabel (handle, path, project), its short id, or a
+// session's idle summary. Empty query matches everything but closed tasks and workers.
+export function mentionItemMatches(m: MentionItem, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  // A closed task is history: it answers only to its short id.
+  if (m.type === "task" && isTerminalTaskStatus(m.status)) return !!q && !!m.shortId && m.shortId.toLowerCase().includes(q);
+  if (!q) return !m.worker;
+  // A personified session answers to its NAME as well as its title: the
+  // dropdown shows "Dune", so typing "dune" has to find it (session-characters
+  // .md S3). The name it wears depends on the workspace switch, so this asks
+  // the same resolver the row's own rendering asks.
+  const persona = m.identity
+    ? identityLine(m.identity, m.label, personifyAllNow()).name
+    : null;
+  return (
+    (!!persona && matchScore(persona, q) !== Infinity) ||
+    matchScore(m.label, q) !== Infinity ||
+    (!!m.shortId && m.shortId.toLowerCase().includes(q)) ||
+    (!!m.sublabel && matchScore(m.sublabel, q) !== Infinity) ||
+    (!!m.idleSummary && matchScore(m.idleSummary, q) !== Infinity) ||
+    (!!m.goal && matchScore(m.goal, q) !== Infinity) ||
+    (!!m.projectPath && matchScore(m.projectPath, q) !== Infinity)
+  );
+}
+
+/** What a chat composer's @ may offer beyond the shared match: chat names
+ *  people by handle and has no labels. A bare @ belongs to the room (its
+ *  people, its roles, what the thread already cites); once anything is typed,
+ *  sessions compete by title like every other mention surface, so a session
+ *  is reachable by name and not only by its short id. */
+export function chatMentionOffers(m: MentionItem, query: string): boolean {
+  if (m.type === "label" || (m.type === "person" && !m.handle)) return false;
+  if (m.type === "session" && !m.contextAt && !query.trim()) return false;
+  return true;
+}
+
+const mentionFilterCache = new WeakMap<MentionItem[], { query: string; personify: boolean; chat: boolean; result: MentionItem[] }>();
+
+export function filterMentionItems(items: MentionItem[], query: string, chat = false): MentionItem[] {
+  const q = query.trim().toLowerCase();
+  const personify = personifyAllNow();
+  const previous = mentionFilterCache.get(items);
+  const source = previous && previous.personify === personify && previous.chat === chat && previous.query && q.startsWith(previous.query)
+    ? previous.result : items;
+  const result = source.filter(item => (!chat || chatMentionOffers(item, q)) && mentionItemMatches(item, q));
+  mentionFilterCache.set(items, { query: q, personify, chat, result });
+  return result;
+}
+
+let previousMentionInputs: unknown[] = [];
+let previousMentionItems: MentionItem[] = [];
+
+export function buildMentionItems(s: ReturnType<typeof useInboxStore.getState>, scope: MentionScope): MentionItem[] {
+  const personify = personifyAllNow();
+  const inputs = [
+    scope.kind, scope.kind === "team" ? scope.teamId : scope.kind === "personal" ? scope.userId : "",
+    s.mentionIndex, s.tasks, s.docs, s.plans, s.sessions, s.teamMembers, s.chatSlackPeople,
+    s.buckets, s.bucketAssignments, s.recentVisits, s._lastViewedAt, personify,
+  ];
+  if (inputs.length === previousMentionInputs.length && inputs.every((value, i) => value === previousMentionInputs[i])) return previousMentionItems;
+  const idx = s.mentionIndex || { tasks: {}, docs: {}, plans: {} };
+  const merged = (windowRows: Record<string, any>, storeRows: Record<string, any>) =>
+    mergeEntityRows<any>(windowRows, storeRows).filter((row) => inScope(row, scope));
+  const items: MentionItem[] = [
+    ...(s.teamMembers || []).map((m) => {
+      const handle = memberHandle(m) ?? undefined;
+      return {
+        id: String(m._id), type: "person", label: m.name || m.github_username || "Unknown",
+        sublabel: handle ? `@${handle}` : m.email,
+        image: m.image || m.github_avatar_url,
+        shortId: m.github_username ? `@${m.github_username}` : undefined,
+        handle, isBot: !!m.is_bot,
+      };
+    }),
+    // People in the team's Slack workspace with no codecast account. One
+    // already matched to a teammate is that teammate's own entry above, and so
+    // is one whose handle a teammate answers to: the send resolves the roster
+    // first and reaches Slack only when no teammate matches.
+    ...(scope.kind === "team"
+      ? Object.values(s.chatSlackPeople || {})
+        .filter((p) => p.team_id === scope.teamId && !p.codecast_user_id && !!p.handle && !matchHandle(s.teamMembers || [], p.handle))
+        .map((p) => ({
+          id: `slack:${p.slack_user_id}`, type: "person", label: p.name,
+          sublabel: `@${p.handle}`, image: p.avatar_url ?? undefined,
+          handle: p.handle!, slack: true,
+        }))
+      : []),
+    ...labelMentionItems(s),
+    ...merged(idx.tasks, s.tasks).map((t) => ({
+      id: t._id, type: "task", label: t.title, sublabel: t.short_id, shortId: t.short_id,
+      status: t.status, priority: t.priority, updatedAt: t.updated_at,
+    })),
+    ...merged(idx.docs, s.docs).map((d) => ({
+      id: d._id, type: "doc", label: d.title, sublabel: d.doc_type,
+      docType: d.doc_type, updatedAt: d.updated_at,
+    })),
+    ...merged(idx.plans, s.plans).map((p) => ({
+      id: p._id, type: "plan", label: p.title, sublabel: p.short_id, shortId: p.short_id,
+      status: p.status, goal: p.goal, updatedAt: p.updated_at,
+    })),
+    ...Object.values(s.sessions).filter((sess) => inScope(sess, scope)).map((sess) => ({
+      id: sess._id, type: "session", label: sess.title || "Untitled Session",
+      sublabel: sess.idle_summary || undefined, shortId: sess._id.slice(0, 7).toLowerCase(),
+      messageCount: sess.message_count, projectPath: sess.git_root || sess.project_path,
+      status: agentStatusAt(sess, Date.now()), agentType: sess.agent_type,
+      model: sess.model ?? undefined, updatedAt: sess.updated_at, idleSummary: sess.idle_summary,
+      identity: identityRowOf(sess as never), worker: !!sess.is_subagent || undefined,
+    })),
+  ];
+  const result = mergeMentionSuggestions(items, [], mentionViewTimes(s), Infinity, "", personify);
+  previousMentionInputs = inputs;
+  previousMentionItems = result;
+  return result;
+}
+
+export function useMentionQuery(scope: MentionScope = { kind: "any" }) {
+  const kind = scope.kind;
+  const teamId = scope.kind === "team" ? scope.teamId : "";
+  const userId = scope.kind === "personal" ? scope.userId : "";
+  return useCallback(async (rawQ: string): Promise<MentionItem[]> => {
+    const s = useInboxStore.getState();
+    return mergeMentionSuggestions(
+      filterMentionItems(buildMentionItems(s, kind === "team" ? { kind, teamId } : kind === "personal" ? { kind, userId } : { kind }), rawQ),
+      [], mentionViewTimes(s), rawQ.trim() ? SEARCH_LIMIT_PER_TYPE : RECENT_LIMIT_PER_TYPE, rawQ, personifyAllNow(),
+    );
+  }, [kind, teamId, userId]);
+}

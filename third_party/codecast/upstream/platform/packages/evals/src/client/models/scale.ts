@@ -1,0 +1,116 @@
+// The arithmetic every Evals chart shares: scales, the median step line, the
+// rep jitter inside a batch column and the nearest point under a cursor. Pure,
+// so the strip, the seismograph, the ledger and the lanes agree on geometry.
+
+/** The pass mark every score is held to unless a score says otherwise. */
+export const PASS_MARK = 0.7;
+export const DAY_MS = 86_400_000;
+
+export interface Scale {
+  (v: number): number;
+  invert: (px: number) => number;
+  domain: readonly [number, number];
+  range: readonly [number, number];
+}
+
+/** A linear map from [d0, d1] to [r0, r1]; a zero-width domain maps to the middle of the range. */
+export function linear(d0: number, d1: number, r0: number, r1: number): Scale {
+  const span = d1 - d0;
+  const f = ((v: number) => (span === 0 ? (r0 + r1) / 2 : r0 + ((v - d0) / span) * (r1 - r0))) as Scale;
+  f.invert = (px: number) => (r1 === r0 ? d0 : d0 + ((px - r0) / (r1 - r0)) * span);
+  f.domain = [d0, d1];
+  f.range = [r0, r1];
+  return f;
+}
+
+/** Score 0 at the bottom, 1 at the top. */
+export const scoreScale = (top: number, bottom: number) => linear(0, 1, bottom, top);
+
+/** A step-after line through points sorted by x: each value holds until the next. */
+export function stepPath(points: ReadonlyArray<{ x: number; y: number }>, endX?: number): string {
+  if (!points.length) return "";
+  let d = `M${r(points[0].x)},${r(points[0].y)}`;
+  for (let i = 1; i < points.length; i++) d += `H${r(points[i].x)}V${r(points[i].y)}`;
+  if (endX !== undefined && endX > points[points.length - 1].x) d += `H${r(endX)}`;
+  return d;
+}
+
+const r = (v: number) => Math.round(v * 10) / 10;
+
+/** The smallest 1, 2 or 5 times a power of ten at or above v, for an axis top that reads as a round number. */
+export function niceCeil(v: number): number {
+  if (!(v > 0)) return 0;
+  const p = 10 ** Math.floor(Math.log10(v));
+  const step = [1, 2, 5, 10].find((m) => m * p >= v * (1 - 1e-9))!;
+  return Number((step * p).toPrecision(1));
+}
+
+/** A dollar amount on an axis, at most five characters for niceCeil's values: $50, $2, $0.05, 0.5¢. */
+export const axisUsd = (v: number) => (v <= 0 ? "$0" : v < 0.01 ? `${Number((v * 100).toPrecision(2))}¢` : `$${Number(v.toPrecision(2))}`);
+
+/** A stable offset in [-spread, spread] for a key, so a rep keeps its place in its column across renders. */
+export function jitter(key: string, spread: number): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619) >>> 0;
+  return ((h % 10_000) / 10_000) * 2 * spread - spread;
+}
+
+/** The index of the value nearest x in an ascending list, or -1 for an empty one. */
+export function nearestIndex(xs: readonly number[], x: number): number {
+  if (!xs.length) return -1;
+  let lo = 0;
+  let hi = xs.length - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] <= x) lo = mid;
+    else hi = mid;
+  }
+  return Math.abs(xs[lo] - x) <= Math.abs(xs[hi] - x) ? lo : hi;
+}
+
+/** Local `YYYY-MM-DD` for every day from `from` to `to`, the shape timeAxisLabels reads. */
+export function dayList(from: number, to: number): string[] {
+  const out: string[] = [];
+  const d = new Date(from);
+  d.setHours(0, 0, 0, 0);
+  for (; d.getTime() <= to; d.setDate(d.getDate() + 1)) {
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`);
+  }
+  return out;
+}
+
+/** Midnight of a `YYYY-MM-DD` local day, the inverse of dayList. */
+export const dayStart = (day: string) => {
+  const [y, m, d] = day.split("-").map(Number);
+  return new Date(y, m - 1, d).getTime();
+};
+
+/** How dense the ink is for a mean score: never fully clear, so a scored 0 still reads as a well. */
+export const wellInk = (mean: number | null) => (mean === null ? 0 : 0.08 + 0.72 * Math.max(0, Math.min(1, mean)));
+
+export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// X-axis ticks for a continuous day series: weekly on short ranges, month
+// starts otherwise, suppressing labels that would crowd the previous one.
+// The app's activity charts draw their day axes with it too.
+/** `minGap` is the least distance between two labels' centres, in px: a caller whose labels are wider than the default's passes their width plus a gutter. */
+export function timeAxisLabels(dates: string[], toX: (i: number) => number, minGap = 28): { label: string; x: number }[] {
+  const labels: { label: string; x: number }[] = [];
+  const mn = MONTHS;
+  // Under ten days a Monday-only axis leaves one label or none, so every day ticks.
+  const daily = dates.length <= 10;
+  const weekly = dates.length <= 45;
+  let lastM = -1;
+  let lastX = -Infinity;
+  for (let i = 0; i < dates.length; i++) {
+    const [y, m, d] = dates[i].split("-").map(Number);
+    const isTick = daily || (weekly ? new Date(y, m - 1, d).getDay() === 1 : m - 1 !== lastM);
+    if (!isTick) continue;
+    lastM = m - 1;
+    const x = toX(i);
+    if (x - lastX < minGap) continue;
+    lastX = x;
+    labels.push({ label: weekly ? `${mn[m - 1]} ${d}` : mn[m - 1], x });
+  }
+  return labels;
+}

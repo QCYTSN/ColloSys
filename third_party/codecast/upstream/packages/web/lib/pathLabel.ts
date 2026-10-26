@@ -1,0 +1,269 @@
+// Default tab title for a dashboard path. Lives here — NOT in TabBar.tsx —
+// because the routing layer (src/compat/tabRouting, lib/recentVisits) needs it
+// too, and importing it from the component module tied the router compat layer
+// into a circular import (TabBar → shortcuts → next/navigation compat →
+// tabRouting → TabBar) that made vite full-reload every window instead of hot
+// updating whenever anything in that loop changed.
+import { browserPathLabel, isBrowserRoutePath } from "./browserPane";
+import { isConvexId, orgObjectOfRef } from "@codecast/shared/entities";
+import { orgRefOfPath } from "../components/org/company/sheetStack";
+import { conversationIdFromPath, directConversationId, shareTokenInPath } from "./desktopHandoff";
+import { changesDayLabel } from "./changesDay";
+import { modTabLabel, objectTabLabel } from "./mods/label";
+import { weekMonday } from "@codecast/shared/changes";
+import { codecastEvalsPaths } from "../components/evals/evalsPaths";
+import { isOpsPath, opsTabLabel } from "../components/ops/opsPaths";
+import { modePageLabel } from "./surfaceRules";
+import { isHostedUi } from "../components/simple/lanePaths";
+import { currentPagePath } from "./renamedPages";
+
+/** The mode's name for the page at `path` under this client_state.ui, or
+ *  null when the page is named the same in both modes. A label that a stored
+ *  title or record would otherwise win reads this first, since the stored
+ *  name was stamped in whichever mode opened the page. */
+export function modePathLabel(path: string, ui?: { lane?: string } | null): string | null {
+  return modePageLabel(path, isHostedUi(ui));
+}
+
+const REPO_SECTION_LABEL: Record<string, string> = {
+  commits: "Commits",
+  compare: "Compare",
+  branches: "Branches",
+  worktrees: "Worktrees",
+  tags: "Tags",
+  pulls: "Pull requests",
+  search: "Search",
+};
+
+/** `ui` is client_state.ui, for the pages named by mode (modePathLabel);
+ *  absent reads as developer mode. */
+export function pathLabel(path: string, ui?: { lane?: string } | null): string {
+  // A browser pane is named by what it shows — the page's title once a
+  // backend could read one, else the host ("localhost:3000"). "Browser" would
+  // make three open pages three identical tabs.
+  if (isBrowserRoutePath(path)) return browserPathLabel(path);
+  // Label by the ROUTE, never the query string. A stamped inbox deep link
+  // (/inbox?s=<id>) must label as "Inbox" — before this, the raw
+  // "inbox?s=jx7…" leaked into tab titles. The /files branch below still reads
+  // the original path because its label lives IN the query (?f=<file>).
+  // An old address reads as the page it moved to (/goals is the Org screen).
+  const clean = currentPagePath(path.split("?")[0].split("#")[0]).split("?")[0];
+  if (clean.startsWith("/conversation/")) return "Conversation";
+  if (clean.startsWith("/calls/")) return "Call";
+  // /chat/threads is the pre-move alias of /threads — old saved tabs keep it.
+  if (clean === "/chat/threads") return "Threads";
+  // A chat tab is titled by the surface, not the channel id — the id is opaque,
+  // and the channel's own name is only knowable from the store.
+  if (clean.startsWith("/chat/")) return "Chat";
+  if (clean.startsWith("/community/")) return "Community";
+  if (clean.startsWith("/tasks/")) return "Task";
+  // A project or a run is named from the store (tabTitle recordTabTitle);
+  // the address alone gives its kind, never its id.
+  if (clean.startsWith("/workflows/runs/")) return "Run";
+  // A trace (line-map.md LX4) titles by the ref it follows.
+  if (clean.startsWith("/line/trace/")) { const r = clean.split("/")[3]; return r ? `Trace ${decodeURIComponent(r)}` : "Trace"; }
+  // A project's line workspace: the store names the project (tabTitle).
+  if (/^\/line\/[^/]+$/.test(clean) && clean !== "/line/settings") return "Line";
+  if (clean.startsWith("/projects/") && clean.split("/")[2]) return "Project";
+  if (clean.startsWith("/docs/")) return "Doc";
+  if (clean.startsWith("/plans/")) return "Plan";
+  // A company object on the Org screen titles by its kind and the handle
+  // people quote (`Goal in-2`, `Role or-7`, `@samvit`); tabTitle upgrades it
+  // to the object's name from the store. A project's is not readable, so it
+  // is "Project" until then.
+  const org = orgRefOfPath(clean);
+  if (org?.ref) {
+    const object = orgObjectOfRef(org.ref);
+    if (object?.kind === "initiative") return `Goal ${object.ref}`;
+    if (object?.kind === "role") return `Role ${object.ref}`;
+    if (object?.kind === "project") return "Project";
+    if (object?.kind === "person") return `@${object.ref}`;
+  }
+  // A decision's document page and a stack (docs/architecture/decisions-as-
+  // documents.md D4, D5) title by their short id, the handle people quote.
+  if (clean.startsWith("/decisions/stacks/")) return clean.split("/")[3] ? `Stack ${clean.split("/")[3]}` : "Stack";
+  if (clean.startsWith("/decisions/")) return clean.split("/")[2] ? `Decision ${clean.split("/")[2]}` : "Decision";
+  // The org page with a staffing proposal open (org-staffing.md S5) titles
+  // by the proposal's short id, like a decision; the bare page stays "Org".
+  if (clean === "/org") {
+    try {
+      const op = new URLSearchParams(path.split("?")[1] ?? "").get("proposal");
+      if (op && /^op-\d+$/i.test(op)) return `Proposal ${op.toLowerCase()}`;
+    } catch {}
+  }
+  // A Changes tab names the edition it shows: a week by its Monday ("Changes,
+  // week of Mon 28 Sep"), which outranks the day a week URL keeps for the
+  // return to day mode, else a day ("Changes, Fri 2 Oct"). With neither in
+  // the query it is today's, and the bare name says so.
+  if (clean === "/mods") return "Mods";
+  if (clean === "/agent-features") return "Agent features";
+  if (clean.startsWith("/m/")) return modTabLabel(clean);
+  if (clean.startsWith("/objects/") || clean.startsWith("/o/")) return objectTabLabel(clean);
+  if (clean === "/changes") {
+    try {
+      const q = new URLSearchParams(path.split("#")[0].split("?")[1] ?? "");
+      const w = q.get("w");
+      const monday = w ? weekMonday(w) : null;
+      if (monday) return `Changes, week of ${changesDayLabel(monday)}`;
+      const day = changesDayLabel(q.get("d"));
+      if (day) return `Changes, ${day}`;
+    } catch {}
+    return "Changes";
+  }
+  // A Files tab is titled by the open file, not the encoded query string.
+  // /vault is the permanent pre-rename alias, so both prefixes title the same.
+  if (/^\/(files|vault)[?/]/.test(path)) {
+    try {
+      const f = new URLSearchParams(path.split("?")[1] ?? "").get("f");
+      if (f) {
+        const base = decodeURIComponent(f).split("/").pop() ?? "";
+        return base.replace(/\.(md|markdown)$/i, "") || "Files";
+      }
+    } catch {}
+    return "Files";
+  }
+  // Browsing a repository. The tab says what you are looking at, which for a
+  // file or a directory lives in the query (`?path=`) exactly as it does for
+  // /files above. Without this a blob tab reads "main" and a commit tab reads a
+  // forty character sha.
+  if (clean.startsWith("/repo/")) {
+    const inPath = (() => {
+      try {
+        const p = new URLSearchParams(path.split("?")[1] ?? "").get("path");
+        return p ? decodeURIComponent(p).split("/").filter(Boolean).pop() : null;
+      } catch {
+        return null;
+      }
+    })();
+    // [_, "repo", owner, name, section, ...] — the file a tree, blob or file
+    // history is showing wins, then the section, then the repository itself.
+    const section = clean.split("/")[4];
+    return inPath || REPO_SECTION_LABEL[section] || clean.split("/")[3] || "Repository";
+  }
+  if (codecastEvalsPaths.isPath(clean)) return codecastEvalsPaths.tabLabel(path);
+  if (isOpsPath(clean)) return opsTabLabel(path);
+  if (clean.startsWith("/commit/")) {
+    const sha = clean.split("/")[4] ?? "";
+    return sha ? sha.slice(0, 7) : "Commit";
+  }
+  if (clean.startsWith("/pr/")) {
+    const number = clean.split("/")[4] ?? "";
+    return number ? `PR #${number}` : "Pull request";
+  }
+
+  const segments: Record<string, string> = {
+    "/repo": "Repositories",
+    "/tasks": "Tasks",
+    "/docs": "Docs",
+    "/files": "Files",
+    "/memory": "Memory",
+    "/vault": "Files", // pre-rename alias — old saved tabs keep this path
+    "/pages": "Pages",
+    "/artifacts": "Pages", // pre-rename alias — old saved tabs keep this path
+    "/plans": "Plans",
+    "/calls": "Calls",
+    "/inbox": "Inbox",
+    "/feed": "Feed",
+    "/crosstalk": "Crosstalk",
+    "/line": "The line",
+    "/line/settings": "Line settings",
+    "/org": "Org",
+    "/map": "Session Map",
+    "/goals": "Goals",
+    "/projects": "Projects",
+    "/chat": "Chat",
+    "/community": "Community",
+    "/threads": "Threads",
+    "/settings": "Settings",
+    "/team/activity": "Activity",
+  };
+  return modePathLabel(clean, ui) || segments[clean] || clean.split("/").pop() || "Tab";
+}
+
+/** The session an /inbox?s=<id> tab is pinned to, if any. */
+export function inboxTabSessionId(path: string): string | null {
+  // Null-safe: a tab row with a missing path (bad caller, corrupted persist)
+  // must degrade to "no session", not crash the whole TabBar.
+  if (!path || !path.split("?")[0].startsWith("/inbox")) return null;
+  try {
+    return new URLSearchParams(path.split("?")[1] ?? "").get("s");
+  } catch {
+    return null;
+  }
+}
+
+/** The path an in-app TAB holds for a conversation. Tabs never sit on
+ *  /conversation/<id>: that route is a one-shot redirect into the inbox (see
+ *  RedirectToInbox), and a hidden pane on it would fire the redirect against
+ *  global view state. Only a full id takes the inbox spelling
+ *  (directConversationId): any other reference stays on the route until its
+ *  resolver redirects to the id. Everything else passes through unchanged. */
+export function conversationTabPath(path: string): string {
+  const id = directConversationId(path);
+  return id ? `/inbox?s=${id}` : path;
+}
+
+/** The session id a live URL shows, in either spelling: the inbox canonical
+ *  `/conversation/<id>` or the tab deep-link `/inbox?s=<id>`. Null when the
+ *  URL shows no session (bare /inbox, any other route). */
+export function urlSessionId(pathname: string, search: string): string | null {
+  return directConversationId(pathname) ?? inboxTabSessionId(pathname + search);
+}
+
+/** The session a desktop deep link selects in place, in either spelling
+ *  (/conversation/<id>, with its query or anchor, or /inbox?s=<id>), or null
+ *  when the link must navigate to the conversation route instead: a share
+ *  link, whose token that route presents and redeems, or a reference that is
+ *  not a full id, which only its resolver can find (selected as an id, it
+ *  selected nothing). */
+export function deepLinkSessionId(path: string): string | null {
+  if (shareTokenInPath(path)) return null;
+  const ref = conversationRefInPath(path);
+  return ref && isConvexId(ref) ? ref : null;
+}
+
+/** The conversation a path asks for, in any spelling and any form (a full id,
+ *  a short id, a session UUID): /conversation/<ref>, with its query or anchor,
+ *  or /inbox?s=<ref>. A path that names one owns the view: boot must not land
+ *  on any other session while it resolves, or when it turns out unavailable. */
+export function conversationRefInPath(path: string): string | null {
+  return conversationIdFromPath(path) ?? inboxTabSessionId(path);
+}
+
+/** Whether an active tab must rewrite the address bar to its own stored path.
+ *  False when the live URL is this tab's own content in the other spelling:
+ *  the inbox canonicalizes its URL to `/conversation/<id>` while its tab keeps
+ *  the equivalent `/inbox?s=<id>` (see stampedTabPath). Rewriting that URL
+ *  back would clobber the `{ inboxId }` history entry the inbox pushed for
+ *  the select — and with it browser back/forward across viewed sessions. */
+export function tabNeedsUrlRestore(livePathname: string, tabPath: string): boolean {
+  if (livePathname === tabPath.split("?")[0].split("#")[0]) return false;
+  return conversationTabPath(livePathname) !== tabPath;
+}
+
+/** The path the active tab must take when history traverses onto an entry,
+ *  or null when the tab already renders that entry's owner.
+ *
+ *  Two kinds of entry share the stack. A tab navigation (`{ tabNav }`) is
+ *  mirrored into the tab as-is. A session select (`{ inboxId }`) belongs to
+ *  the inbox pane, whose own popstate listener re-selects the session — but
+ *  only while that pane is mounted. Once the tab moved on to another page
+ *  (a task opened out of a conversation), the pane and its listener are
+ *  gone, so traversing back onto the select entry must re-point the tab at
+ *  the inbox in its tab spelling (`/inbox?s=<id>`): the pane mounts and its
+ *  `?s=` param drives the view. Returning null there left the address bar on
+ *  the conversation while the task page stayed on screen. */
+export function poppedTabPath(
+  state: { inboxId?: string } | null | undefined,
+  pathname: string,
+  search: string,
+  activeTabPanePaths: string[],
+): string | null {
+  if (state?.inboxId) {
+    // Any pane of the active tab on the inbox route keeps the pane's listener
+    // alive (a split stage with the inbox beside the task counts).
+    if (activeTabPanePaths.some((p) => p.split("?")[0] === "/inbox")) return null;
+    return `/inbox?s=${state.inboxId}`;
+  }
+  return pathname + search;
+}

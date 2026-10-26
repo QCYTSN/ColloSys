@@ -1,0 +1,630 @@
+// Canonical "live entity" derivation layer.
+//
+// Convex queries return records ENRICHED with derived/joined fields:
+//   task.assignee_info  (from task.assignee + the user record)
+//   plan.progress       (aggregated from the plan's task statuses)
+//   plan.tasks          (the plan's tasks, embedded as a snapshot)
+//   doc.display_title    (parsed from doc.content)
+// Those fields are SNAPSHOTS. When the store optimistically mutates the
+// underlying RAW field (e.g. updateTask sets task.assignee), the derived twin
+// does NOT update until the server round-trips and re-enriches — which is the
+// root of every "assignment isn't instant"-class bug.
+//
+// The fix is to DERIVE these fields at render from the raw fields + live
+// reference data (the team roster, the live task collection) — never to store
+// and field-protect them. Storing them doesn't work: derived fields are objects
+// and the store's field-protection reconciles by ===, so an optimistic object
+// can never match the server's re-enriched object and would freeze forever.
+// Auto-deriving in the sync layer doesn't work either: it bypasses syncTable's
+// no-change early-return and re-pushes the whole collection on every no-op sync
+// (the "listInboxSessions churn" jank class).
+//
+// So: render-time derivation is the default. Whenever you display a
+// derived/enriched field for an entity that also lives in the store, route it
+// through these helpers.
+
+import { parseProposalChangeRef, parseReplayRef, parseRepoObjectId, type EntityType } from "@codecast/shared/entities";
+import { docRelatesToTask } from "@codecast/shared/tasks";
+import { roleAssigneeInfo, sameAssigneeInfo, type AssigneeInfo as ResolvedAssignee, type AssigneeRole } from "@codecast/shared/contracts/orgAssignee";
+
+type Member = { _id: string; name?: string; email?: string; image?: string; github_avatar_url?: string; github_username?: string };
+type AssigneeInfo = ResolvedAssignee | null;
+
+/**
+ * What we call a person. ONE rule, so a teammate with a GitHub handle and no
+ * display name is not "sarah" in chat and "sarah@example.com" on every task and
+ * doc chip. Chat's lib/chatViews calls this too.
+ */
+export function memberDisplayName(m: Member | null | undefined, fallback = "Unknown"): string {
+  return m?.name || m?.github_username || m?.email || fallback;
+}
+
+/** Their face: an uploaded image, else whatever GitHub has. */
+export function memberAvatarUrl(m: Member | null | undefined): string | undefined {
+  return m?.image || m?.github_avatar_url;
+}
+
+/**
+ * Resolve a task/doc assignee's display info from the live team roster, keyed by
+ * the (optimistically-updated) assignee id. The server-enriched `fallback` is
+ * used only for ids not in the local roster, so a just-reassigned task shows the
+ * right person instantly while anyone outside the roster still renders.
+ */
+export function resolveAssigneeInfo(
+  assignee: string | null | undefined,
+  fallback: any,
+  teamMembers: Member[] | null | undefined,
+  currentUser: Member | null | undefined,
+  roles?: readonly AssigneeRole[] | null,
+): AssigneeInfo {
+  if (!assignee) return null;
+  const m = teamMembers?.find((x) => x && x._id === assignee);
+  if (m) return { name: memberDisplayName(m), image: memberAvatarUrl(m), github_username: m.github_username };
+  // A role owns the task (org-roles-run-work.md R5): its face, name and handle
+  // come from the org tree slice, so a rename or a new face shows on every task
+  // at once, and a task just handed to a role shows it before the server echo.
+  const role = roles?.find((r) => r && String(r._id) === assignee);
+  if (role) return roleAssigneeInfo(role);
+  if (currentUser && (assignee === currentUser._id || assignee === "me")) {
+    return { name: memberDisplayName(currentUser), image: memberAvatarUrl(currentUser), github_username: currentUser.github_username };
+  }
+  if (fallback) return fallback;
+  // A bare name typed by hand ("Priya") names a person; an id nobody here can
+  // resolve (a teammate who left, a role since removed) names nobody rather
+  // than a 32 character string.
+  return isEntityId(assignee) ? null : { name: String(assignee) };
+}
+
+const isEntityId = (value: string): boolean => /^[a-z0-9]{32}$/.test(value);
+
+/** What a surface prints for an assignee key: the resolved name, the bare
+ *  name a person typed, or, for an id nobody here can resolve, a phrase that
+ *  says so instead of the id. */
+export function assigneeLabelOf(key: string, info: { name: string } | null | undefined): string {
+  if (info?.name) return info.name;
+  return isEntityId(key) ? "Outside the team" : key;
+}
+
+type SessionAuthor = { name: string; avatar?: string | null } | null;
+
+/**
+ * Is this cached session a TEAMMATE's (injected by viewing/searching), not the
+ * current user's own? The ownership signal is split across the session row and
+ * the conversation meta, and either may be missing — a thin injected row can
+ * carry no user_id at all while conversations[id].is_own (the access resolver's
+ * verdict, written on every view) knows the truth. Every consumer that needs
+ * ownership (author chip, stash/kill semantics) MUST resolve through here;
+ * checking session.user_id alone misses exactly those thin rows.
+ *
+ * Precedence: conv.is_own true / session owned_by_me / owner match (any positive
+ * ownership signal wins — a session ASSIGNED to me is mine to triage even though
+ * another account runs it) → conv.is_own false → user_id vs me → source-provided
+ * author_name (team sources null it for own sessions) → assume mine.
+ *
+ * owned_by_me outranks a NEGATIVE is_own verdict deliberately: is_own is stamped
+ * on view, owned_by_me on every inbox delivery — after "assign to me" the meta
+ * from a pre-assignment view is stale exactly when the flag is fresh.
+ *
+ * This answers "whose ACCOUNT is this", not "whose inbox is it in". A session I
+ * run and then assign to a teammate is still mine by this test — it keeps its
+ * owner controls and its author chip — and leaves my inbox through the scope
+ * rule instead (isForeignRow, which adds isAssignedAwayFromViewer).
+ */
+export function isForeignSession(
+  session: { user_id?: string; author_name?: string | null; owned_by_me?: boolean; owner_user_id?: string | null },
+  conv: { user_id?: string; is_own?: boolean } | null | undefined,
+  myId: string | null | undefined,
+): boolean {
+  // A co-owner seat is mine whatever the assignment says.
+  if (session.owned_by_me) return false;
+  // Assignment decides whose session this is, ahead of "I started it": a
+  // session handed to someone else leaves the runner's inbox, so the runner
+  // reads it as another person's even though they ran it.
+  if (myId && session.owner_user_id) return session.owner_user_id !== myId;
+  if (conv?.is_own === true) return false;
+  if (conv?.is_own === false) return true;
+  const uid = session.user_id ?? conv?.user_id;
+  if (uid && myId) return uid !== myId;
+  return !!session.author_name; // no ownership signal (or "me" unknown) → assume mine
+}
+
+/**
+ * Resolve the author of an inbox session FOR DISPLAY — or null when the session
+ * is the current user's own (or the author can't be named). The inbox session
+ * cache is user-scoped, so a teammate's session only enters it by being OPENED
+ * (deep-link / search / command-palette). Author identity therefore lives in two
+ * places, and either may be missing:
+ *   - the session row: `user_id` (server rows + fresh injections) and the
+ *     source-provided `author_name`/`author_avatar` (search/recent results, which
+ *     null those out for own sessions);
+ *   - the conversation meta (`conversations[id]`, written on every view by the
+ *     access resolver + getConversationWithMeta): `is_own` (definitive ownership),
+ *     `user_id`, and `user.{name,avatar_url}`. This is what rescues rows injected
+ *     BEFORE author enrichment existed — injection is skipped for already-cached
+ *     rows, so the never-prune session row alone can stay author-less forever.
+ *
+ * Ownership precedence: conv.is_own (resolver verdict) → user_id vs currentUser →
+ * source-provided author_name (team sources exclude own sessions) → assume mine.
+ * Display precedence: live roster by user_id (instant rename/avatar) → session
+ * author fields → conversation meta user. Returns null over a raw id when the
+ * author can't be named, and never labels your own row before `currentUser`
+ * loads (an own synced row carries no author_name/is_own:false to mislead it).
+ */
+/** The identity a feed row is attributed to: the bot a role's standing session
+ * renders as (acting_user_id), else the human who ran it (user_id). Every
+ * grouping of feed rows by person (people pills, per-day people counts, the
+ * actor filter) keys on this, never on user_id alone: a seat's user_id is its
+ * human host, so keying on it files the seat under the host and, because the
+ * seat is usually the host's newest row, labels the host with the bot's name
+ * and hides the human entirely (Littlebird's "Chief 19", 2026-09-23). */
+export function feedActorId(c: { user_id?: string | null; acting_user_id?: string | null }): string | undefined {
+  const id = c.acting_user_id ?? c.user_id;
+  return id ? String(id) : undefined;
+}
+
+export type FeedPerson = { id: string; name: string; image?: string | null; sessions: number; isRole: boolean };
+
+/** People pills for a feed: one entry per acting identity, newest row's name
+ * and avatar, sorted by session count. `author_name` is already the bot's for
+ * a seat row and the host's for the rest, so keyed by feedActorId the names
+ * line up with the ids. */
+export function derivePeople(
+  convs: Array<{ user_id?: string | null; acting_user_id?: string | null; author_name?: string | null; author_avatar?: string | null }>,
+): FeedPerson[] {
+  const map = new Map<string, FeedPerson>();
+  for (const c of convs) {
+    const id = feedActorId(c);
+    if (!id) continue;
+    const cur = map.get(id) || { id, name: c.author_name || "Unknown", image: c.author_avatar, sessions: 0, isRole: !!c.acting_user_id };
+    cur.sessions += 1;
+    map.set(id, cur);
+  }
+  return [...map.values()].sort((a, b) => b.sessions - a.sessions);
+}
+
+export function resolveSessionAuthor(
+  session: { user_id?: string; author_name?: string | null; author_avatar?: string | null; acting_user_id?: string | null },
+  conv: { user_id?: string; is_own?: boolean; acting_user_id?: string | null; user?: { name?: string | null; email?: string | null; avatar_url?: string | null } | null } | null | undefined,
+  currentUser: Member | null | undefined,
+  teamMembers: Member[] | null | undefined,
+): SessionAuthor {
+  const uid = session.user_id ?? conv?.user_id;
+  // An anchor renders under its bot identity (acting_user_id) even when it is the
+  // current user's OWN session — so resolve that BEFORE the own-session short
+  // circuit. Team bots are in the roster; a personal bot isn't, but the server
+  // already stamped author_name/avatar with the bot, so fall back to those.
+  const actingId = session.acting_user_id ?? conv?.acting_user_id;
+  if (actingId) {
+    const bot = teamMembers?.find((x) => x && x._id === actingId);
+    if (bot) return { name: bot.name || bot.email || "Workspace agent", avatar: bot.image || bot.github_avatar_url };
+    if (session.author_name) return { name: session.author_name, avatar: session.author_avatar ?? null };
+  }
+  // Authorship, not steering rights: a second-party-owned session is "mine"
+  // per conv.is_own (the owner steers it like their own) but still RUN by
+  // another account — the chip must name the runner. A known user_id decides;
+  // only thin rows with no uid fall back to the is_own verdict.
+  const foreignAuthor = uid && currentUser?._id
+    ? uid !== currentUser._id
+    : isForeignSession(session, conv, currentUser?._id);
+  if (!foreignAuthor) return null;
+
+  // Display: live roster first (instant rename/avatar), then source fields, then meta.
+  const m = uid ? teamMembers?.find((x) => x && x._id === uid) : null;
+  if (m) return { name: m.name || m.email || "Unknown", avatar: m.image || m.github_avatar_url };
+  const name = session.author_name ?? conv?.user?.name ?? conv?.user?.email ?? null;
+  if (name) return { name, avatar: session.author_avatar ?? conv?.user?.avatar_url ?? null };
+  return null;
+}
+
+/**
+ * Aggregate a plan's progress counts from a task list, mirroring the server's
+ * recalcProgress so an optimistic status change moves the bar instantly.
+ * Dropped tasks are excluded from the total (matching the server).
+ */
+export function computePlanProgress(
+  tasks: Array<{ status?: string }> | null | undefined,
+): { total: number; done: number; in_progress: number; open: number } {
+  let total = 0, done = 0, in_progress = 0, open = 0;
+  for (const t of tasks || []) {
+    if (t.status === "dropped") continue;
+    total++;
+    if (t.status === "done") done++;
+    else if (t.status === "in_progress" || t.status === "in_review") in_progress++;
+    else if (t.status === "open" || t.status === "backlog") open++;
+  }
+  return { total, done, in_progress, open };
+}
+
+// The raw, user-editable fields the store owns authoritatively. When overlaying a
+// live store task onto a server snapshot we copy exactly these (so the snapshot's
+// server-only enrichment — origin_session, session_count, etc. — is preserved).
+// blocked_by and waits carry the task graph, so a plan graph shows a blocker or
+// wait the moment it is edited (task-graph.md TG12).
+const LIVE_TASK_FIELDS = ["status", "priority", "title", "assignee", "labels", "execution_status", "description", "updated_at", "blocked_by", "waits"] as const;
+
+// A list field from the store and the same list from a server snapshot are two
+// arrays even when equal, so lists compare by content: a reference check would
+// rebuild every row on every pass.
+const sameField = (a: unknown, b: unknown) =>
+  a === b || (Array.isArray(a) && Array.isArray(b) && JSON.stringify(a) === JSON.stringify(b));
+
+/**
+ * Overlay live store tasks onto a server-query snapshot (e.g. plan.tasks), so a
+ * view bound to the snapshot reflects optimistic edits immediately. Keeps the
+ * snapshot's server-only fields, applies the store's authoritative raw fields,
+ * and re-derives assignee_info from the live roster. Returns the snapshot row
+ * unchanged (same reference) when nothing diverges, to preserve memoization.
+ */
+export function mergeLiveTasks(
+  snapshotTasks: any[] | null | undefined,
+  storeTasks: Record<string, any>,
+  teamMembers?: Member[] | null,
+  currentUser?: Member | null,
+  roles?: readonly AssigneeRole[] | null,
+): any[] {
+  if (!Array.isArray(snapshotTasks)) return snapshotTasks as any;
+  return snapshotTasks.map((t) => {
+    const live = storeTasks[t._id];
+    const assignee = live ? live.assignee : t.assignee;
+    const assignee_info = resolveAssigneeInfo(assignee, t.assignee_info, teamMembers, currentUser, roles);
+    let merged = sameAssigneeInfo(assignee_info, t.assignee_info) ? t : { ...t, assignee_info };
+    if (live) {
+      for (const f of LIVE_TASK_FIELDS) {
+        if (live[f] !== undefined && !sameField(live[f], t[f])) {
+          if (merged === t) merged = { ...t, assignee_info };
+          merged[f] = live[f];
+        }
+      }
+    }
+    return merged;
+  });
+}
+
+/**
+ * The conversation ids a task points at, origin first, deduplicated. The origin
+ * (created_from_conversation) is usually also the first conversation_id, but a
+ * task adopted by a later session lists that session too.
+ */
+export function taskLinkedConversationIds(
+  task: { created_from_conversation?: string | null; conversation_ids?: string[] | null } | null | undefined,
+): string[] {
+  if (!task) return [];
+  const out: string[] = [];
+  for (const id of [task.created_from_conversation, ...(task.conversation_ids ?? [])]) {
+    if (id && !out.includes(String(id))) out.push(String(id));
+  }
+  return out;
+}
+
+/**
+ * A task's linked sessions, from what the client already knows. The server's
+ * `linked_conversations` join rides only the detail query (one round-trip per
+ * cold open), but the sessions those ids name are usually in the store already
+ * — the inbox syncs them — and the list sync fetches an origin badge for every
+ * task's source conversation. Build the same row shape from those so the
+ * Sessions list paints on the first frame; the detail snapshot, once cached,
+ * wins (it carries the insight enrichment).
+ */
+export function resolveTaskLinkedConversations(
+  task: { linked_conversations?: any[]; created_from_conversation?: string | null; conversation_ids?: string[] | null } | null | undefined,
+  sessions: Record<string, any> | null | undefined,
+  originBadges: Record<string, any> | null | undefined,
+): any[] {
+  if (!task) return [];
+  if (Array.isArray(task.linked_conversations)) return task.linked_conversations;
+  const out: any[] = [];
+  for (const id of taskLinkedConversationIds(task)) {
+    const row = sessions?.[id];
+    const badge = originBadges?.[id];
+    if (!row && !badge) continue;
+    out.push({
+      _id: id,
+      session_id: row?.session_id ?? badge?.session_id ?? id,
+      title: row?.title ?? row?.subtitle ?? badge?.title,
+      project_path: row?.project_path,
+      message_count: row?.message_count ?? badge?.message_count ?? 0,
+      is_active: row ? row.is_idle === false : false,
+      started_at: row?.started_at,
+      updated_at: row?.updated_at ?? badge?.last_message_at,
+      agent_type: row?.agent_type ?? badge?.agent_type,
+      git_branch: row?.git_branch,
+    });
+  }
+  return out;
+}
+
+/**
+ * Does this linked session own the task? The binding lives on the session
+ * (its `active_task`), so a store row decides; the detail snapshot's
+ * `is_owner` stands in only for a session the store does not hold.
+ */
+export function sessionOwnsTask(
+  snapshot: { is_owner?: boolean },
+  live: { active_task?: { _id: string } | null } | null | undefined,
+  taskId: string | null | undefined,
+): boolean {
+  // A row fed without refs carries no active_task at all; only a row that
+  // carries the field can overrule the snapshot.
+  if (!taskId || !live || !("active_task" in live)) return !!snapshot.is_owner;
+  return live.active_task?._id === taskId;
+}
+
+/** The task's one owning session among its linked sessions, or null. */
+export function taskOwnerOf<T extends { _id: string; is_owner?: boolean }>(
+  linked: T[],
+  sessions: Record<string, any> | null | undefined,
+  taskId: string | null | undefined,
+): T | null {
+  return linked.find((c) => sessionOwnsTask(c, sessions?.[c._id], taskId)) ?? null;
+}
+
+/**
+ * Conversation page href for a linked session. Always the Convex conversation
+ * id — `session_id` is the daemon handle and 404s at /conversation/<session_id>.
+ */
+export function taskSessionHref(conv: { _id?: string | null } | null | undefined): string | null {
+  return conv?._id ? `/conversation/${conv._id}` : null;
+}
+
+/**
+ * Origin session first, then live, then most recently updated. The server
+ * snapshot walks conversation_ids in write order, which is not origin-first.
+ */
+export function sortTaskLinkedConversations<T extends { _id: string; is_active?: boolean; updated_at?: number }>(
+  convs: T[],
+  originId?: string | null,
+): T[] {
+  return [...convs].sort((a, b) => {
+    if (originId) {
+      const ao = a._id === originId ? 0 : 1;
+      const bo = b._id === originId ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+    }
+    if (a.is_active && !b.is_active) return -1;
+    if (!a.is_active && b.is_active) return 1;
+    return (b.updated_at || 0) - (a.updated_at || 0);
+  });
+}
+
+/**
+ * The docs a task's origin session wrote for it, from the store's doc list
+ * when the detail snapshot (`related_docs`) hasn't been cached yet. Same
+ * filter as the server: the origin conversation's docs, archived ones
+ * excluded, narrowed by docRelatesToTask (store rows carry no body, so only
+ * timing applies until the snapshot lands).
+ */
+export function resolveTaskRelatedDocs(
+  task: { related_docs?: any[]; created_from_conversation?: string | null; short_id?: string | null; created_at?: number | null } | null | undefined,
+  docs: Record<string, any> | null | undefined,
+): any[] {
+  if (!task) return [];
+  if (Array.isArray(task.related_docs)) return task.related_docs;
+  const origin = task.created_from_conversation;
+  if (!origin || !docs) return [];
+  const out: any[] = [];
+  for (const id in docs) {
+    const d = docs[id];
+    if (d && d.conversation_id === origin && !d.archived_at && docRelatesToTask(d, task)) {
+      out.push({ _id: d._id, title: d.display_title ?? d.title, doc_type: d.doc_type, source: d.source, created_at: d.created_at });
+    }
+  }
+  return out.sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
+}
+
+/**
+ * A plan-mode doc's list title is its content's first markdown heading (the
+ * server parses it into display_title). Re-derive it on an optimistic content
+ * edit so the sidebar/doc list update instantly. Returns undefined when there's
+ * no heading (the list then falls back to doc.title, matching the server).
+ * Unlike the object derived-fields above, display_title is a string, so it
+ * reconciles cleanly under the store's === field-protection — safe to store.
+ */
+export function deriveDocDisplayTitle(doc: { source?: string; content?: string } | null | undefined): string | undefined {
+  if (!doc || doc.source !== "plan_mode" || !doc.content) return undefined;
+  const m = doc.content.match(/^#\s+(.+)/m);
+  return m ? m[1].trim() : undefined;
+}
+
+/**
+ * Client-side searchable text for a doc. A doc synced from a `.md` file is titled
+ * from its first heading, not its filename — so without this, a doc backed by
+ * `backend/ROADMAP_EXPLAINED.md` can't be found by typing its path or filename.
+ * We fold the source file path into the search text; since the full path contains
+ * the basename, both "ROADMAP_EXPLAINED.md" and "backend/ROADMAP_EXPLAINED.md"
+ * match as substrings.
+ */
+export function docSearchText(
+  doc: { display_title?: string; title?: string; source_file?: string | null } | null | undefined,
+): string {
+  if (!doc) return "";
+  return [doc.display_title, doc.title, doc.source_file].filter(Boolean).join(" ");
+}
+
+// ---------------------------------------------------------------------------
+// Resolving a reference from what the client already knows
+//
+// An inline object reference (an EntityIdPill) shows the object's TITLE. The
+// title comes from a live Convex query, which takes a round-trip — and until it
+// lands the pill can only show the id, so every task/plan mention in a
+// conversation visibly flips from "ct-38940" to its name on mount.
+//
+// The client usually knows the answer already: the mention index holds a
+// lightweight snapshot of every task/plan/doc the user can reference (across
+// ALL their teams — that is what it is for), and the active-team collections
+// hold the full rows. Seeding the pill from those makes it correct on the first
+// frame, which is what local-first means here. The query still runs and still
+// wins once it answers.
+// ---------------------------------------------------------------------------
+
+export type StoreEntitySeed = {
+  _id?: string;
+  title?: string;
+  display_title?: string;
+  name?: string;
+  short_id?: string;
+  status?: string;
+};
+
+// short_id → row, memoized on the COLLECTION's identity. The store is a
+// mutative draft, so a collection keeps its reference until one of its rows
+// changes; the index is therefore built once per version and shared by every
+// pill on screen, instead of each one scanning thousands of rows.
+const shortIdIndexes = new WeakMap<object, Map<string, any>>();
+
+function byShortId(collection: Record<string, any> | undefined | null): Map<string, any> | null {
+  if (!collection) return null;
+  const cached = shortIdIndexes.get(collection);
+  if (cached) return cached;
+  const index = new Map<string, any>();
+  for (const id in collection) {
+    if (!Object.hasOwn(collection, id)) continue;
+    const row = collection[id];
+    const sid = (row as any)?.short_id;
+    if (typeof sid === "string") index.set(sid.toLowerCase(), row);
+  }
+  shortIdIndexes.set(collection, index);
+  return index;
+}
+
+/** Look an id up in a collection by Convex id first, then by short id. */
+export function lookup(collection: Record<string, any> | undefined | null, rawId: string): any {
+  if (!collection) return undefined;
+  return collection[rawId] ?? byShortId(collection)?.get(rawId.toLowerCase());
+}
+
+// Which collection holds a bare Convex id, when the client already has the
+// row: a reference to it can name its type (and its title) on the first frame
+// instead of waiting on entities.resolveIdType.
+const TYPE_BY_COLLECTION: Array<[string, EntityType]> = [
+  ["conversations", "session"],
+  ["sessions", "session"],
+  ["tasks", "task"],
+  ["plans", "plan"],
+  ["docs", "doc"],
+  ["agentTasks", "trigger"],
+  ["projects", "project"],
+  ["initiatives", "initiative"],
+  ["orgProposals", "proposal"],
+  ["sessionDecisions", "decision"],
+  ["pullRequests", "pr"],
+  ["commits", "commit"],
+  ["opsSources", "source"],
+  ["opsReplays", "replay"],
+];
+
+export function entityTypeInStore(state: any, convexId: string): EntityType | undefined {
+  if (!state || !convexId) return undefined;
+  for (const [key, type] of TYPE_BY_COLLECTION) {
+    if (state[key]?.[convexId]) return type;
+  }
+  return undefined;
+}
+
+// The org tree's roles keyed like a collection, memoized on the array's
+// identity (a new tree is a new array) so every role pill shares one index.
+const roleCollections = new WeakMap<object, Record<string, any>>();
+
+function orgRoleInStore(state: any, rawId: string): any {
+  const roles = state.orgTree?.roles;
+  if (!Array.isArray(roles)) return undefined;
+  let byId = roleCollections.get(roles);
+  if (!byId) {
+    byId = Object.fromEntries(roles.map((r: any) => [String(r._id), r]));
+    roleCollections.set(roles, byId);
+  }
+  return lookup(byId, rawId);
+}
+
+/** A teammate as the store holds them, by GitHub handle, username or user
+ *  id: the forms personRefOf writes and the activity profile reads. */
+export function personInStore(state: any, ref: string): any {
+  const members = state?.teamMembers;
+  if (!Array.isArray(members) || !ref) return undefined;
+  const key = ref.replace(/^@/, "").toLowerCase();
+  return members.find((m: any) => String(m?._id) === ref || m?.github_username?.toLowerCase() === key || m?.username?.toLowerCase() === key);
+}
+
+/**
+ * The object a reference names, as the local store already knows it — or
+ * undefined when the client has never seen it. Sessions resolve by their 7-char
+ * short id as well as their Convex id.
+ */
+export function findEntityInStore(
+  state: any,
+  type: string,
+  rawId: string,
+): StoreEntitySeed | undefined {
+  if (!state || !rawId) return undefined;
+  const mention = state.mentionIndex;
+  switch (type) {
+    case "task":
+      return lookup(state.tasks, rawId) ?? lookup(mention?.tasks, rawId);
+    case "plan":
+      return lookup(state.plans, rawId) ?? lookup(mention?.plans, rawId);
+    case "doc":
+      return lookup(state.docs, rawId) ?? lookup(mention?.docs, rawId);
+    case "project":
+      // By Convex id or `pj-…` short id.
+      return lookup(state.projects, rawId);
+    case "role":
+      // The workspace's roles ride the org tree snapshot, by `or-N` or Convex id.
+      return orgRoleInStore(state, rawId);
+    case "person":
+      // A teammate by handle (objectHref's `@name`) or user id.
+      return personInStore(state, rawId);
+    case "initiative":
+      // The workspace's initiatives are one snapshot, so `in-N` names a row
+      // the client already holds.
+      return lookup(state.initiatives, rawId);
+    case "proposal":
+      // The workspace's proposals (list rows, and any the org page opened).
+      // One change of a proposal (`op-55#3`) names the proposal's row.
+      return lookup(state.orgProposals, parseProposalChangeRef(rawId)?.proposal ?? rawId);
+    case "decision":
+      // The viewer's decision queue (open rows, and answered ones for a day).
+      return lookup(state.sessionDecisions, rawId);
+    case "source":
+      // The workspace's product sources, as the Ops page last fed them.
+      return lookup(state.opsSources, rawId);
+    case "replay":
+      // The workspace's recordings, as the Ops page last fed them. A moment
+      // (`rp-12@1:23`) names the replay's row.
+      return lookup(state.opsReplays, parseReplayRef(rawId)?.replay ?? rawId);
+    case "deploy":
+      // The line's deploys (lineDeploys), by `dp-N`.
+      return Object.values(state.lineDeploys ?? {}).find((d: any) => d?.short_id === rawId.toLowerCase()) as StoreEntitySeed | undefined;
+    case "trigger":
+      // The viewer's own triggers (agentTasks) resolve locally by Convex id or
+      // short id; a foreign (bot-owned) trigger waits for webGet.
+      return lookup(state.agentTasks, rawId);
+    case "pr": {
+      // Timeline rows the client already holds: by Convex id, else by the
+      // `owner/repo#482` reference.
+      const direct = state.pullRequests?.[rawId];
+      if (direct) return direct;
+      const ref = parseRepoObjectId(rawId);
+      if (ref?.type !== "pr" || !state.pullRequests) return undefined;
+      return Object.values<any>(state.pullRequests).find((row) => row?.number === ref.number && row?.repository === ref.repository);
+    }
+    case "commit": {
+      const direct = state.commits?.[rawId];
+      if (direct) return direct;
+      const ref = parseRepoObjectId(rawId);
+      if (ref?.type !== "commit" || !state.commits) return undefined;
+      return Object.values<any>(state.commits).find(
+        (row) => typeof row?.sha === "string" && row.sha.startsWith(ref.sha) && (!row.repository || row.repository === ref.repository),
+      );
+    }
+    case "session": {
+      const short = rawId.slice(0, 7).toLowerCase();
+      return (
+        state.conversations?.[rawId]
+        ?? state.sessions?.[rawId]
+        ?? lookup(state.conversations, short)
+        ?? lookup(state.sessions, short)
+      );
+    }
+    default:
+      return undefined;
+  }
+}

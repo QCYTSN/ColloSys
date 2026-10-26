@@ -1,0 +1,9 @@
+.stack { display: inline-flex; align-items: center; }
+.slot { display: inline-flex; border-radius: 30%; box-shadow: 0 0 0 2px var(--ring, var(--surface)); }
+.slot + .slot { margin-left: -7px; }
+.stack[data-hop] .slot { animation: global(hop) 500ms var(--ease-pop) both; }
+.stack .arriving { animation: face-in var(--t-arrive) var(--ease-out) both; }
+@keyframes face-in { from { opacity: 0; transform: translateY(6px); } }
+.stack .leaving { animation: global(fade-out) var(--t-quick) var(--ease-out) forwards; pointer-events: none; }
+.more { margin-left: 5px; font: 600 12px/1 var(--ui); color: var(--ink-2); font-feature-settings: "tnum" 1; }
+@media (prefers-reduced-motion: reduce) { @keyframes face-in { from { opacity: 0; } } }

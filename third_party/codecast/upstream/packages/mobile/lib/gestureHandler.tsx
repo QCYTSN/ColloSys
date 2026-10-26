@@ -1,0 +1,53 @@
+import { View, TouchableOpacity, StyleSheet, type TouchableOpacityProps } from 'react-native';
+import { optionalNative } from './optionalNative';
+
+// react-native-gesture-handler's native module is ABSENT on the Feb 1.0.2 App
+// Store binary: the dependency was first installed 2026-03-05, AFTER that build
+// (build #20, Feb 24) was cut. With the new architecture a static import
+// resolves RNGestureHandlerModule via getEnforcing(), which THROWS during
+// initial JS evaluation on that binary — before expo-updates can mark the OTA
+// "launched" — so every JS-only update silently auto-rolls-back (the
+// long-running "stuck on the old version" bug). This module is the ONE place
+// gesture-handler is required: probe the native module without throwing, and
+// export null / a plain-View fallback when it is missing so the app renders and
+// is usable (gestures degrade) until a native build bundles it. Mirrors the
+// guarded requires in lib/analytics.ts, lib/clipboard.ts, store/idbCache.native.ts.
+// The whole module namespace, or null when the native module is missing.
+// Consumers must handle null with a degraded (or PanResponder) path.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const gh: any = optionalNative('RNGestureHandlerModule', () => require('react-native-gesture-handler'));
+
+export const gestureHandler: any = gh;
+
+export const GestureHandlerRootView: any =
+  gh?.GestureHandlerRootView ?? (({ style, children }: any) => <View style={style}>{children}</View>);
+
+// Native touch handling so a tap is captured even when the JS thread is busy
+// (new-session send: create, cache write, keyboard). Gesture-handler's
+// TouchableOpacity is the drop-in that recognizes the press on the UI thread.
+// RNGH Pressable is the wrong widget here: it fights the composer TextInput
+// for the responder and does not flatten `[style, false]`, so send looked
+// dead. Older binaries without the native module keep RN TouchableOpacity.
+export function NativePressable({
+  onPress,
+  style,
+  children,
+  hitSlop,
+  activeOpacity,
+  delayPressIn = 0,
+  ...rest
+}: TouchableOpacityProps) {
+  const Button = gh?.TouchableOpacity ?? TouchableOpacity;
+  return (
+    <Button
+      onPress={onPress}
+      style={StyleSheet.flatten(style)}
+      hitSlop={hitSlop}
+      activeOpacity={activeOpacity}
+      delayPressIn={delayPressIn}
+      {...rest}
+    >
+      {children}
+    </Button>
+  );
+}

@@ -1,0 +1,1273 @@
+// Pure shared pieces for CC account switching — safe to import from schema.ts,
+// the mutations (accountSwitch.ts), and tests. No server/_generated imports.
+
+import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
+import {
+  blockedKindsForAgent,
+  fallbackProfiles,
+  isUsageExhausted,
+  isWindowRolled,
+  peggedWindow,
+  livePercent,
+  worstUsagePercent,
+  switchUsagePercent,
+  usageStanding,
+  standingLabel,
+  recoveryModeOf,
+  RESUME_BURST_SPACING_MS,
+  RESUME_BURST_BATCH,
+  type UsageStanding,
+  type RecoveryMode,
+  type CcUsage,
+  UNREVIVABLE_BANNER_KINDS,
+} from "@codecast/shared/contracts";
+
+// The usage snapshot type and its predicates live in @codecast/shared/contracts
+// (the CLI reads them too); re-exported here so existing web/convex imports keep
+// one path.
+export { isWindowRolled, livePercent, worstUsagePercent, isUsageExhausted, fallbackProfiles, switchUsagePercent, usageStanding, standingLabel, recoveryModeOf };
+export type { UsageStanding, RecoveryMode };
+export type { CcUsage };
+
+// Per-account usage snapshot the daemon probes from the OAuth usage API
+// (percentages + reset times only — non-secret). Mirrors CcUsageSnapshot in
+// cli/src/ccAccounts.ts.
+const usageWindowValidator = v.object({
+  percent: v.number(),
+  resets_at: v.optional(v.number()),
+  label: v.optional(v.string()),
+});
+
+// One usage shape serves both providers. The base windows are shared; the
+// trailing optionals only appear on Codex accounts today (scoped: n
+// model-scoped limit windows vs Claude's single worst weekly_scoped; models:
+// the week's per-model token shares from rollout logs; credits/reset_credits:
+// ChatGPT's balance and grantable full resets). All percentages and labels,
+// never tokens.
+export const ccUsageValidator = v.object({
+  fetched_at: v.number(),
+  session: v.optional(usageWindowValidator), // rolling short window (5h / sub-24h)
+  weekly: v.optional(usageWindowValidator), // 7d, all models
+  weekly_scoped: v.optional(usageWindowValidator), // 7d, model-scoped
+  extra: v.optional(
+    v.object({
+      percent: v.number(),
+      enabled: v.boolean(),
+      limit: v.optional(v.number()),
+      used: v.optional(v.number()),
+      spend_limit_reached: v.optional(v.boolean()),
+    }),
+  ),
+  scoped: v.optional(
+    v.array(v.object({ label: v.string(), percent: v.number(), resets_at: v.optional(v.number()) })),
+  ),
+  credits: v.optional(
+    v.object({
+      has_credits: v.boolean(),
+      unlimited: v.optional(v.boolean()),
+      balance: v.optional(v.string()),
+    }),
+  ),
+  reset_credits: v.optional(v.object({ available: v.number() })),
+  models: v.optional(
+    v.array(
+      v.object({
+        model: v.string(),
+        label: v.string(),
+        tokens: v.number(),
+        share: v.number(),
+      }),
+    ),
+  ),
+});
+
+// Validator for the daemon-reported account inventory (names/emails/tiers
+// only — never tokens). Stored per device row; consumed by the web switcher.
+export const ccAccountsValidator = v.object({
+  active_email: v.optional(v.string()),
+  active_uuid: v.optional(v.string()),
+  // When the active account last changed on that machine. A usage snapshot
+  // of the active account counts as evidence only if fetched after this;
+  // a limit park stamped before it belongs to the previous login.
+  active_since: v.optional(v.number()),
+  // When the active login's access token runs out (Codex: its exp claim).
+  // Codecast only reads that login, so past this the machine cannot drive
+  // Codex Cloud until someone signs in again (signInExpired).
+  active_expires_at: v.optional(v.number()),
+  // The saved profile this machine's sessions LAUNCH on when it differs from
+  // the keychain login: set by a token switch (the target's saved login is
+  // dead, its minted setup-token is live, so the daemon moves sessions onto
+  // the token and leaves the keychain alone). Cleared by any keychain switch
+  // or a fresh sign-in. Every "which account do sessions run on" read goes
+  // through fleetAccount() so the pin, auto-continue and auto-switch agree.
+  launch_profile: v.optional(v.string()),
+  // Sessions on that machine run on the fleet store, which carries
+  // launch_profile. A switch rewrites the store and every running session
+  // follows it without a restart (cli/ccAccounts.ts "Fleet store"), so no
+  // session is pinned and a switch restarts nothing that follows the store.
+  fleet_store: v.optional(v.boolean()),
+  profiles: v.array(
+    v.object({
+      name: v.string(),
+      email: v.optional(v.string()),
+      tier: v.optional(v.string()),
+      subscription: v.optional(v.string()),
+      usage: v.optional(ccUsageValidator),
+      // The profile's per-session launch credential (its own Claude Code
+      // credential store, see cli/ccAccounts.ts "Per-profile credential
+      // stores"): when it was provisioned and how long its grant lasts.
+      // Metadata only — never a token. Absent when the profile cannot carry
+      // a session (no store yet, or a login the endpoint refused).
+      token: v.optional(v.object({ stored_at: v.number(), expires_at: v.number() })),
+      // A `claude setup-token` minted for this profile on request (Settings,
+      // "mint a token"): a fixed one-year credential that outranks the store
+      // at launch. Metadata only — never the token.
+      setup_token: v.optional(v.object({ stored_at: v.number(), expires_at: v.number() })),
+      // The daemon's token refresh was refused for this saved login
+      // (invalid_grant): dead until the account signs in again. Never a
+      // switch target (fallbackProfiles); the UI says "login expired".
+      login_expired_at: v.optional(v.number()),
+    }),
+  ),
+});
+
+// The setup-token mint round trip (Settings "mint a token" → daemon runs
+// `claude setup-token`, opens the sign-in in the browser, proves the token
+// belongs to the profile, stores it → outcome). Same state-channel contract as
+// cc_login_flow: the web watches this field reactively.
+export const ccMintFlowValidator = v.object({
+  status: v.union(v.literal("pending"), v.literal("confirmed"), v.literal("rejected"), v.literal("cancelled")),
+  profile: v.optional(v.string()), // the profile the token is for
+  // pending: the sign-in page the daemon opened, so the web can offer it
+  // again when the browser tab was closed or never appeared.
+  url: v.optional(v.string()),
+  email: v.optional(v.string()),
+  reason: v.optional(v.string()), // rejected: why
+  started_at: v.number(),
+  finished_at: v.optional(v.number()),
+});
+// A pending mint older than this means the daemon died mid-flow (its own
+// watcher gives up at 5 min) — treat as no-flow, same as LOGIN_FLOW_STALE_MS.
+export const MINT_FLOW_STALE_MS = 6 * 60 * 1000;
+
+/** A profile's minted setup-token is live when one is on file and its
+ *  one-year lifetime is not up. */
+export function profileHasSetupToken(
+  profile: { setup_token?: { expires_at: number } } | undefined | null,
+  now: number,
+): boolean {
+  return !!profile?.setup_token && profile.setup_token.expires_at > now;
+}
+
+/** A profile can carry sessions when a launch credential is on file and not
+ *  past its lifetime: its own credential store, or a minted setup-token (which
+ *  also covers a saved login that has expired). */
+export function profileHasToken(
+  profile: { token?: { expires_at: number }; setup_token?: { expires_at: number } } | undefined | null,
+  now: number,
+): boolean {
+  return (!!profile?.token && profile.token.expires_at > now) || profileHasSetupToken(profile, now);
+}
+
+/** The device-local profile name a session should be PINNED to (its
+ * `cc_account`): the account resolved on that device, only when that profile
+ * has a launch credential there. Undefined = don't pin; the session follows
+ * the machine's keychain login. */
+export function tokenBackedProfile(
+  accounts: { profiles: Array<{ name: string; email?: string; token?: { expires_at: number }; setup_token?: { expires_at: number } }> } | undefined | null,
+  target: { profile?: string; email?: string },
+  now: number,
+): string | undefined {
+  const name = resolveDeviceProfile(accounts, target);
+  if (!name) return undefined;
+  return profileHasToken(accounts?.profiles.find((p) => p.name === name), now) ? name : undefined;
+}
+
+type FleetAccounts = {
+  active_email?: string;
+  launch_profile?: string;
+  fleet_store?: boolean;
+  profiles: Array<{ name: string; email?: string; token?: { expires_at: number }; setup_token?: { expires_at: number }; usage?: CcUsage | null }>;
+};
+
+/** The account this machine's sessions run on. Normally the keychain login.
+ * After a token switch it is the launch profile: its saved login is dead and
+ * its minted setup-token carries every new and resumed session, so the
+ * keychain still names the old account while the fleet runs elsewhere. A
+ * launch profile counts only while the inventory still shows it with a live
+ * setup-token (the daemon drops the record when the token goes, but a stale
+ * heartbeat must not pin sessions to a token nobody can source). On the fleet
+ * store the launch profile is simply the account the store carries, and
+ * nothing about it needs a restart (viaToken false). */
+export function fleetAccount(
+  accounts: FleetAccounts | undefined | null,
+  now: number,
+): { email?: string; profile?: string; viaToken: boolean } {
+  if (!accounts) return { viaToken: false };
+  if (accounts.fleet_store && accounts.launch_profile) {
+    const fleet = accounts.profiles.find((p) => p.name === accounts.launch_profile);
+    if (fleet) return { email: fleet.email, profile: fleet.name, viaToken: false };
+  }
+  if (accounts.launch_profile) {
+    const launch = accounts.profiles.find((p) => p.name === accounts.launch_profile);
+    if (profileHasSetupToken(launch, now)) return { email: launch!.email, profile: launch!.name, viaToken: true };
+  }
+  return { email: accounts.active_email, viaToken: false };
+}
+
+/** The pin for a NEW session: the profile covering the account the fleet
+ * runs on (fleetAccount), if it has a launch credential. */
+export function activeTokenProfile(accounts: FleetAccounts | undefined | null, now: number): string | undefined {
+  // On the fleet store no session is pinned: the store is the account.
+  if (accounts?.fleet_store) return undefined;
+  const fleet = fleetAccount(accounts, now);
+  if (fleet.profile) return fleet.profile;
+  return fleet.email ? tokenBackedProfile(accounts, { email: fleet.email }, now) : undefined;
+}
+
+type ContinueDevice = {
+  is_remote?: boolean;
+  cc_accounts?: Parameters<typeof activeTokenProfile>[0];
+};
+
+/** The pin a session continued "on this account" (no switch) must carry on
+ * this device: the profile covering the machine's current login when it has a
+ * launch credential, otherwise none (the session follows the keychain).
+ * Remotes run a pushed credential and never pin. */
+export function continueTargetPin(device: ContinueDevice | undefined, now: number): string | undefined {
+  if (!device || device.is_remote === true) return undefined;
+  return activeTokenProfile(device.cc_accounts, now);
+}
+
+/** Whether a plain "continue" can reach a blocked session, or the session
+ * must be killed and resumed first. A message retries the process as it is;
+ * it cannot change the account that process is bound to. Two bindings are
+ * fixed at launch: an expired login (auth banner) and a per-session account
+ * (`cc_account`: the profile's credential store, read from the env at process
+ * start). A session pinned to any account other than the one this device pins
+ * to now would re-source the wrong store on a plain continue, and again on
+ * every resume until the pin is corrected. */
+export function continueNeedsRestart(
+  conv: { pending_api_error_kind?: string | null; cc_account?: string | null },
+  device: ContinueDevice | undefined,
+  now: number,
+): boolean {
+  if (conv.pending_api_error_kind === "auth") return true;
+  if (device?.is_remote === true) return false;
+  // An unpinned process runs on the keychain login. That is the fleet account
+  // unless a token switch moved the fleet elsewhere, in which case a plain
+  // continue would retry the same spent (or dead) login.
+  if (!conv.cc_account) return fleetAccount(device?.cc_accounts, now).viaToken;
+  return conv.cc_account !== continueTargetPin(device, now);
+}
+
+/** Whether a parked session's banner says anything about the device's ACTIVE
+ * login. A session pinned to a profile with another identity ran on THAT
+ * account's credential store: its limit is that account's limit. The active
+ * login may have all the headroom in the world and the recovery loop must
+ * not wait on its windows for a park it never caused — the restart that
+ * corrects the pin (continueNeedsRestart) un-parks the session at once. A
+ * pin the device's inventory cannot resolve, or one with no recorded
+ * identity, is treated the same way: it is not the active account, and the
+ * restart replaces it with a pin that is. Unpinned sessions and remotes (a
+ * pushed credential, never a pin) run on the active login. */
+export function parkedOnActiveAccount(
+  conv: { cc_account?: string | null },
+  device: { is_remote?: boolean; cc_accounts?: FleetAccounts } | undefined,
+  now: number,
+): boolean {
+  if (device?.is_remote === true) return true;
+  const fleet = fleetAccount(device?.cc_accounts, now);
+  // Unpinned = the keychain login, which is the fleet account unless a token
+  // switch moved the fleet: then its park says nothing about the token account.
+  if (!conv.cc_account) return !fleet.viaToken;
+  const pinned = device?.cc_accounts?.profiles.find((p) => p.name === conv.cc_account);
+  return !!pinned?.email && !!fleet.email && pinned.email === fleet.email;
+}
+
+// Codex logins are per machine and are never pushed to a remote, so a remote
+// device answers for its own panes exactly like a local one — no is_remote
+// exemption here, unlike the Claude pin.
+type CodexDevice = {
+  codex_accounts?: { active_email?: string; profiles: Array<{ name: string; email?: string }> } | null;
+};
+
+/** The Codex profile covering a device's CURRENT ~/.codex login — the account a
+ * pane launched on that machine right now would record. Undefined when the
+ * device reports no Codex inventory, or none of its profiles matches the login:
+ * a switch nobody can name orders no restarts. */
+export function activeCodexProfile(device: CodexDevice | undefined): string | undefined {
+  const accounts = device?.codex_accounts;
+  const activeEmail = accounts?.active_email;
+  if (!activeEmail) return undefined;
+  return accounts?.profiles.find((p) => p.email === activeEmail)?.name;
+}
+
+/** Whether this Codex session is still running the account it launched under.
+ *
+ * The Claude twin of this question is about a PIN the next launch would source
+ * (continueNeedsRestart). Codex has no pin: the process read auth.json at start
+ * and holds that grant until it dies, so the only fix for a machine that signed
+ * into another account is a restart. Unattributed sessions and devices whose
+ * login we cannot name are left alone — naming the wrong pane costs a user
+ * their session for nothing. */
+export function codexAccountNeedsRestart(
+  conv: { codex_account?: string | null },
+  device: CodexDevice | undefined,
+): boolean {
+  if (!conv.codex_account) return false;
+  const active = activeCodexProfile(device);
+  return !!active && conv.codex_account !== active;
+}
+
+/** The pin a RESUME of this conversation must source. The daemon reads the
+ * row's `cc_account` at every resume, so a pin that cannot serve the session
+ * would be re-sourced forever unless it is corrected on the row. A resume of
+ * a session parked on a limit or auth banner IS a continue — whoever caused
+ * it (a hand-typed message, the delivery rail's repair ladder, the recovery
+ * loop) — so it carries the same rule the banner's continue applies:
+ * restart-worthy pins are rewritten to the device's continue target. So is a
+ * pin to an account whose own meter shows it spent, parked or not: the stamp
+ * can be missing or cleared (a session waiting on Claude Code's own "continue
+ * at 12:30am" menu, or a park read as a throttle), and a resume onto that pin
+ * lands straight back on the limit (2026-09-23: jx744vh restarted onto
+ * apetrosian's full 5 hour window while the fleet ran on an account with
+ * room). Legacy unpinned sessions adopt the current token on their next local
+ * resume; other resumes keep the pin as recorded. */
+export function resumePinFor(
+  conv: {
+    pending_api_error?: boolean | null;
+    pending_api_error_kind?: string | null;
+    cc_account?: string | null;
+    cc_account_auto?: boolean | null;
+    model?: string | null;
+  },
+  device: ContinueDevice | undefined,
+  now: number,
+): string | undefined {
+  // A pin the machine chose follows the machine: after a switch (keychain or
+  // token) the next resume lands on the account the fleet runs on now. A
+  // pin a person chose (`--account`) is left alone below.
+  if (conv.cc_account_auto === true && device?.is_remote !== true) return continueTargetPin(device, now);
+  const parked =
+    conv.pending_api_error === true &&
+    (conv.pending_api_error_kind === "limit" || conv.pending_api_error_kind === "auth");
+  const pinnedSpent =
+    !!conv.cc_account &&
+    isUsageExhausted(
+      device?.cc_accounts?.profiles.find((p) => p.name === conv.cc_account)?.usage,
+      now,
+      conv.model ? [conv.model] : undefined,
+    );
+  if ((parked || pinnedSpent) && continueNeedsRestart(conv, device, now)) return continueTargetPin(device, now);
+  if (!conv.cc_account && device?.is_remote !== true) return continueTargetPin(device, now);
+  return conv.cc_account ?? undefined;
+}
+
+// Auto-switch bookkeeping, stored on the primary device row. `attempts` is the
+// per-incident memory that stops the loop from re-trying an account that
+// already parked sessions this window; `exhausted_at` is the UI's "every
+// account is spent" signal; `next_check_at` dedupes scheduled re-checks.
+export const ccAutoSwitchStateValidator = v.object({
+  last_action_at: v.optional(v.number()),
+  last_action: v.optional(v.string()), // "switch:<profile>" | "continue"
+  attempts: v.optional(v.array(v.object({ profile: v.string(), at: v.number() }))),
+  exhausted_at: v.optional(v.number()),
+  next_check_at: v.optional(v.number()),
+  // A booked throttleContinueCheck (see accountSwitch.ts): a fresh throttle
+  // park books one only when none is already booked for the future.
+  throttle_check_at: v.optional(v.number()),
+  // A staged limit release in flight (see limitProbeStep). The loop's
+  // "continue" after a reset sends ONE session first, the probe; the paced
+  // throttle tick then reads the account from that session's fate: a fresh
+  // park of the same kind after `at` means the account is still spent and
+  // nothing else is sent; otherwise the rest go out in batches while this
+  // stays set, and it clears when the last batch has gone.
+  limit_probe: v.optional(
+    v.object({
+      conversation_id: v.string(),
+      at: v.number(),
+      kind: v.string(),
+      // The client-id bucket the probe's continue was minted with; the
+      // batches reuse it so a repeated tick cannot queue a second continue.
+      bucket: v.number(),
+    }),
+  ),
+  // The recovery decision most recently taken or proposed, so the park card
+  // and the notification can EXPLAIN what happened instead of the account
+  // silently changing. Written by autoSwitchCheck on every switch, continue,
+  // proposal (ask-first mode) and exhaustion. `target_percent` is the chosen
+  // account's standing (usageStanding.percent); absent means stale/unknown,
+  // the same "no confident number" the meters show.
+  last_decision: v.optional(
+    v.object({
+      kind: v.union(
+        v.literal("switch"),
+        v.literal("propose"),
+        v.literal("continue"),
+        v.literal("exhausted"),
+      ),
+      at: v.number(),
+      target_email: v.optional(v.string()),
+      target_name: v.optional(v.string()),
+      target_percent: v.optional(v.number()),
+      from_email: v.optional(v.string()),
+      parked_count: v.optional(v.number()),
+      // The window whose limit pegged on the account being left, e.g.
+      // "Fable (7d)" — what the human sees on the meter that closed.
+      pegged_window: v.optional(v.string()),
+    }),
+  ),
+});
+
+// Paced plain-continue recovery. Two park kinds (see apiErrorBanner.ts) are
+// healed by a plain "continue" after a short wait and never by an account
+// switch: "throttle" (the provider's per-minute cap, tripped by many sessions
+// resuming at once — every account trips it under the same burst) and
+// "connection" (the connection itself dropped mid-turn; the account is not
+// spent, the dead turn just needs retrying). Neither is what the account
+// switch loop reads (it acts on limit and auth parks), so without this pass a
+// dropped-connection park sat in the fleet banner until a human clicked
+// Continue. Both the wait and the pacing keep the retry from being the same
+// burst again.
+export const PACED_CONTINUE_KINDS: ReadonlySet<string> = new Set(["throttle", "connection"]);
+export const THROTTLE_CONTINUE_DELAY_MS = 60 * 1000;
+export const THROTTLE_CONTINUE_BATCH = RESUME_BURST_BATCH;
+export const THROTTLE_CONTINUE_SPACING_MS = RESUME_BURST_SPACING_MS;
+// A session that 429s again after our continue is not a new burst: wait longer
+// each time, capped, so a misread usage limit cannot be retried every minute.
+export const THROTTLE_CONTINUE_BACKOFF_CAP_MS = 15 * 60 * 1000;
+export const THROTTLE_CONTINUE_ATTEMPT_PREFIX = "throttle-continue:";
+
+export function throttleContinueAttemptKey(conversationId: string): string {
+  return `${THROTTLE_CONTINUE_ATTEMPT_PREFIX}${conversationId}`;
+}
+
+/** When this paced-continue row is due. First try: THROTTLE_CONTINUE_DELAY_MS
+ * after the park. Each later try in the same 5h window doubles that delay
+ * from the last continue, capped at THROTTLE_CONTINUE_BACKOFF_CAP_MS. */
+export function throttleContinueDueAt(
+  parkedAt: number,
+  conversationId: string | undefined,
+  attempts: Array<{ profile: string; at: number }>,
+  now: number,
+): number {
+  if (!conversationId) return parkedAt + THROTTLE_CONTINUE_DELAY_MS;
+  const key = throttleContinueAttemptKey(conversationId);
+  const recent = attempts.filter((a) => a.profile === key && now - a.at < AUTO_SWITCH_SESSION_WINDOW_MS);
+  if (recent.length === 0) return parkedAt + THROTTLE_CONTINUE_DELAY_MS;
+  const last = Math.max(...recent.map((a) => a.at));
+  const delay = Math.min(
+    THROTTLE_CONTINUE_DELAY_MS * 2 ** recent.length,
+    THROTTLE_CONTINUE_BACKOFF_CAP_MS,
+  );
+  return last + delay;
+}
+
+/** The paced-continue sessions (PACED_CONTINUE_KINDS) to continue on this
+ * tick: those whose due time has arrived, oldest park first, capped at the
+ * batch. `waiting` counts the ones still inside the delay or backoff — a
+ * caller with nothing to send now but some waiting books the next tick for
+ * the soonest of them. */
+export function pickThrottleContinueBatch<
+  T extends { _id?: string; pending_api_error_kind?: string | null; pending_api_error_at?: number | null; updated_at?: number },
+>(
+  blocked: T[],
+  now: number,
+  attempts: Array<{ profile: string; at: number }> = [],
+  // Which park kinds this pass releases and when each is due. The throttle
+  // pass (default) waits out the delay and backoff per row; a staged limit
+  // release (pickLimitReleaseBatch) has already waited for the reset and the
+  // probe, so every row is due at once and only the batch size paces it.
+  opts: { kinds?: ReadonlySet<string>; dueAt?: (c: T) => number } = {},
+): { batch: T[]; remaining: number; waiting: number; nextDueAt: number | null } {
+  const parkedAt = blockedAt;
+  const dueAt = opts.dueAt ?? ((c: T): number => throttleContinueDueAt(parkedAt(c), c._id, attempts, now));
+  const kinds = opts.kinds ?? PACED_CONTINUE_KINDS;
+  const throttled = blocked
+    .filter((c) => kinds.has(c.pending_api_error_kind ?? ""))
+    .sort((a, b) => parkedAt(a) - parkedAt(b));
+  const due = throttled.filter((c) => now >= dueAt(c));
+  const waitingRows = throttled.filter((c) => now < dueAt(c));
+  const batch = due.slice(0, THROTTLE_CONTINUE_BATCH);
+  const nextDueAt = waitingRows.length > 0 ? Math.min(...waitingRows.map(dueAt)) : null;
+  return { batch, remaining: due.length - batch.length, waiting: waitingRows.length, nextDueAt };
+}
+
+// Staged release after a usage-limit reset. The meter says the window rolled,
+// but the meter is a snapshot of one window on one account and a fleet of 30
+// continues into a still-spent week is 30 refused turns and 30 fresh parks.
+// So the loop's "continue" sends one session first and reads the account from
+// what happens to it, then releases the rest at the throttle pace.
+//
+// The probe is the MOST RECENTLY PARKED session: its park is the freshest
+// fact about the account, so its continue is the cleanest test of whether
+// that fact has changed, and a session that stopped last has the warmest
+// context to resume. Heartbeat freshness says who is alive, not who was
+// refused, and liveness is already a precondition of being in `blocked`.
+export type LimitProbe = { conversation_id: string; at: number; kind: string; bucket: number };
+
+export function pickLimitProbe<
+  T extends { _id: string; pending_api_error_kind?: string | null; pending_api_error_at?: number | null; updated_at?: number },
+>(blocked: T[], now: number): LimitProbe | null {
+  if (blocked.length === 0) return null;
+  const parkedAt = blockedAt;
+  const probe = blocked.reduce((best, c) => (parkedAt(c) > parkedAt(best) ? c : best));
+  return { conversation_id: probe._id, at: now, kind: probe.pending_api_error_kind ?? "limit", bucket: Math.floor(now / 60_000) };
+}
+
+// How long the probe's continue may take to be delivered and answered before
+// the tick stops waiting on it. An undelivered continue (daemon busy, laptop
+// asleep) leaves the probe row parked on its ORIGINAL stamp; that is neither
+// a refusal nor a success, so the tick looks again, up to this long.
+export const LIMIT_PROBE_SETTLE_MAX_MS = 5 * 60 * 1000;
+
+/** What the paced tick should do about a limit probe in flight.
+ *  - reparked: a park of the probe's kind stamped after the probe went out
+ *    (on the probe row or any other row on the account): the account is still
+ *    spent, send nothing, hand back to the account loop.
+ *  - settling: the probe row still carries its pre-probe park (the continue
+ *    has not been answered yet) and the settle window is open: look again.
+ *  - release: the probe cleared (or settling timed out): the rows to send now
+ *    and how many are left for the next tick. */
+export function limitProbeStep<
+  T extends { _id?: string; pending_api_error_kind?: string | null; pending_api_error_at?: number | null; updated_at?: number },
+>(
+  blocked: T[],
+  probe: LimitProbe,
+  now: number,
+): { step: "reparked" } | { step: "settling" } | { step: "release"; batch: T[]; remaining: number } {
+  const parkedAt = blockedAt;
+  const sameKind = blocked.filter((c) => (c.pending_api_error_kind ?? "") === probe.kind);
+  if (sameKind.some((c) => parkedAt(c) > probe.at)) return { step: "reparked" };
+  const probeRow = sameKind.find((c) => c._id === probe.conversation_id);
+  if (probeRow && now - probe.at < LIMIT_PROBE_SETTLE_MAX_MS) return { step: "settling" };
+  const rest = sameKind.filter((c) => c._id !== probe.conversation_id);
+  const { batch, remaining } = pickThrottleContinueBatch(rest, now, [], { kinds: new Set([probe.kind]), dueAt: () => 0 });
+  return { step: "release", batch, remaining };
+}
+
+// The browser sign-in round trip, stored on the device row that runs it. The
+// web writes "pending" (requestLoginFlow) when the user clicks the sign-in
+// CTA; the daemon runs `claude auth login`, watches the keychain, and reports
+// the outcome (completeLoginFlow). The web watches this field reactively via
+// listAccountProfiles — it is the whole UI state channel for the flow.
+export const ccLoginFlowValidator = v.object({
+  status: v.union(v.literal("pending"), v.literal("confirmed"), v.literal("rejected")),
+  // pending: the account we asked the user to sign into (pre-filled in the
+  // browser). confirmed: the account that actually signed in.
+  email: v.optional(v.string()),
+  // Set when the sign-in repairs one saved profile's own credential store
+  // (Settings "sign in again"); absent for the machine-login sign-in.
+  profile: v.optional(v.string()),
+  reason: v.optional(v.string()), // rejected: why (timeout, CLI error tail)
+  // pending: the code-paste sign-in URL, which finishes on any device; the
+  // code it ends on goes back through submitLoginCode.
+  url: v.optional(v.string()),
+  started_at: v.number(),
+  finished_at: v.optional(v.number()),
+  // confirmed: how many auth-blocked sessions the server kicked off.
+  revived: v.optional(v.number()),
+});
+
+// A pending flow older than this is dead weight — the daemon's own watcher
+// times out well before (5 min), so a pending row this stale means the daemon
+// died mid-flow. Both the web (render the CTA again) and requestLoginFlow
+// (allow a fresh start) treat it as no-flow.
+export const LOGIN_FLOW_STALE_MS = 6 * 60 * 1000;
+
+// ---------------------------------------------------------------------------
+// Auto-switch decision — pure; accountSwitch.autoSwitchCheck supplies inputs
+// and executes the outcome
+// ---------------------------------------------------------------------------
+
+// An account that parked sessions is spent for its rolling 5h window; after
+// that it becomes a candidate again even without fresh usage data.
+export const AUTO_SWITCH_SESSION_WINDOW_MS = 5 * 60 * 60 * 1000;
+// A usage snapshot can overrule an attempt's blackout only if it was fetched
+// this long after the attempt: by then the switch has settled (kill + resume
+// + continue takes a couple of minutes) and a limit the fleet hit right away
+// would already show in the probe. In practice the override waits for the
+// ~5-min usage refresh cadence on top of this.
+export const AUTO_SWITCH_ATTEMPT_EVIDENCE_MS = 5 * 60 * 1000;
+
+// After the active account changes, its usage snapshot is unreadable until
+// re-probed (the daemon probes right after a switch; a `claude /login` waits
+// for the next 5-minute tick). The loop waits this long for that probe before
+// falling back to whatever snapshot it has, re-checking at the retry cadence.
+export const AUTO_SWITCH_PROBE_GRACE_MS = 6 * 60 * 1000;
+export const AUTO_SWITCH_PROBE_RETRY_MS = 60 * 1000;
+// The attempt-history key for a same-account "continue" (no profile involved).
+export const AUTO_SWITCH_CONTINUE_KEY = "__continue__";
+// The same key for the CODEX decision. The attempt history is one list on the
+// device, and the free-continue guard is "have I already continued for this
+// park" — so the two providers must not share a key: a Claude continue would
+// otherwise count as having continued the Codex parks, and neither provider
+// would ever get its own free continue while the other was recovering.
+export const AUTO_SWITCH_CODEX_CONTINUE_KEY = "__continue_codex__";
+export const AUTO_SWITCH_AUTH_RESTART_KEY = "__auth_restart__";
+
+export function authRestartAttemptKey(conversationId: string): string {
+  return `${AUTO_SWITCH_AUTH_RESTART_KEY}:${conversationId}`;
+}
+
+export function splitAuthParks<T extends { _id: string; updated_at?: number; pending_api_error_at?: number | null }>(
+  parks: T[],
+  device:
+    | {
+        cc_accounts?: {
+          active_email?: string;
+          active_since?: number;
+          launch_profile?: string;
+          profiles: Array<{
+            name: string;
+            email?: string;
+            login_expired_at?: number;
+            usage?: { fetched_at: number };
+            token?: { expires_at: number };
+            setup_token?: { expires_at: number };
+          }>;
+        };
+      }
+    | undefined,
+  attempts: Array<{ profile: string; at: number }>,
+  now: number,
+): { restart: T[]; dead: T[] } {
+  const accounts = device?.cc_accounts;
+  const activeSince = accounts?.active_since ?? 0;
+  const fleetEmail = fleetAccount(accounts, now).email;
+  const active = accounts?.profiles.find((p) => !!p.email && p.email === fleetEmail);
+  if (active?.login_expired_at && active.login_expired_at >= activeSince) return { restart: [], dead: parks };
+  if (!active?.usage || active.usage.fetched_at < activeSince) return { restart: [], dead: [] };
+  const parkedAt = blockedAt;
+  const lastRestart = (c: T): number => attempts.reduce(
+    (latest, a) => a.profile === authRestartAttemptKey(c._id) && a.at >= activeSince ? Math.max(latest, a.at) : latest,
+    0,
+  );
+  if (parks.some((c) => lastRestart(c) > 0 && c.pending_api_error_at != null && c.pending_api_error_at > lastRestart(c))) {
+    return { restart: [], dead: parks };
+  }
+  return { restart: parks.filter((c) => lastRestart(c) === 0 && parkedAt(c) > 0), dead: [] };
+}
+// Continue-only mode (auto-switch off) acts on limit parks no older than this:
+// a full session window plus slack for the reset-plus-settle wake-up. Older
+// parks sat through a reset already — abandoned, not waiting.
+export const AUTO_CONTINUE_WINDOW_MS = 6 * 60 * 60 * 1000;
+
+/** Auto-continue — resume limit-parked sessions on the SAME account once its
+ * window resets, no switch — runs only when the user turned it on. Codecast
+ * types into a person's session only after they chose a recovery mode that
+ * does (recoveryModeOf). */
+export function isAutoContinueEnabled(device: { cc_auto_continue?: boolean | null }): boolean {
+  return device.cc_auto_continue === true;
+}
+
+/** Whether codecast may send a "continue" on the person's behalf at all: a
+ * limit resume, an account switch, an error retry, a crash revive. Any mode
+ * but "off" on the primary device row (see loadPrimaryForToggle); no primary
+ * online means no one chose, so nothing is sent. */
+export function autoRecoveryEnabled(
+  primary: { cc_auto_switch?: boolean | null; cc_recovery_ask?: boolean | null; cc_auto_continue?: boolean | null } | undefined | null,
+): boolean {
+  return !!primary && recoveryModeOf(primary) !== "off";
+}
+
+
+/** Does the "every account is spent" stamp still describe NOW? Only a re-check
+ * clears it, and that re-check may never run — auto-switch turned off, a lost
+ * scheduler wake-up, a machine that went away. So past the rolling session
+ * window the stamp stands only while some account still shows a pegged window
+ * that hasn't rolled. Inside the window it stands on its own: a single-account
+ * machine can be spent with no usage snapshot to prove it. */
+export function isExhaustionCurrent(
+  exhaustedAt: number | undefined | null,
+  profiles: { usage?: CcUsage | null }[],
+  now: number,
+): boolean {
+  if (!exhaustedAt) return false;
+  if (now - exhaustedAt < AUTO_SWITCH_SESSION_WINDOW_MS) return true;
+  return profiles.some((p) => isUsageExhausted(p.usage, now));
+}
+
+/** The words for a current exhaustion stamp. "ALL accounts are at their
+ * limits" is only supportable when every account's own meter shows a pegged
+ * window — the stamp also stands on attempt evidence alone (every switch or
+ * continue re-parked while meters show headroom: enforcement leads the probe,
+ * and a stale snapshot lags a burst). This banner renders next to those live
+ * meters, so a claim any meter contradicts reads as a bug: make the strong
+ * claim only when every meter backs it, otherwise say what actually
+ * happened. */
+export function exhaustionBannerCopy(
+  profiles: { usage?: CcUsage | null }[],
+  now: number,
+): string {
+  const allPegged =
+    profiles.length > 0 && profiles.every((p) => isUsageExhausted(p.usage, now));
+  return allPegged
+    ? "All accounts are at their limits — auto-switch will retry at the next window reset."
+    : "Auto-switch tried every account and sessions still hit limits — it will retry at the next window reset.";
+}
+
+export interface AutoSwitchProfile {
+  name: string;
+  email?: string;
+  usage?: CcUsage;
+  login_expired_at?: number;
+  // A live minted token makes a dead saved login a switch target again
+  // (fallbackProfiles): the switch lands on the token, not the login.
+  setup_token?: { stored_at: number; expires_at: number };
+}
+
+// ---------------------------------------------------------------------------
+// Per-device account resolution
+// ---------------------------------------------------------------------------
+
+// A profile NAME is a machine-local alias (a keychain snapshot saved under
+// whatever name that machine chose); the account's EMAIL is its identity.
+// Accounts are device-specific: an account exists on a device only if that
+// device's reported inventory carries it. A cross-device switch therefore
+// carries the identity and each executing device resolves its own alias —
+// sending machine A's profile name to machine B's daemon fails there with
+// "No saved profile", after the UI already claimed success.
+
+/** The device's own name for the target account: email match first (the
+ * identity), exact name as fallback (old daemons report no emails). Returns
+ * undefined when the device does not have the account — the caller must treat
+ * that device as unable to switch, not send the foreign name anyway. */
+export function resolveDeviceProfile(
+  accounts: { profiles: Array<{ name: string; email?: string }> } | undefined | null,
+  target: { profile?: string; email?: string },
+): string | undefined {
+  const profiles = accounts?.profiles ?? [];
+  if (target.email) {
+    const byEmail = profiles.find((p) => p.email && p.email === target.email);
+    if (byEmail) return byEmail.name;
+  }
+  if (target.profile) {
+    const byName = profiles.find((p) => p.name === target.profile);
+    if (byName) return byName.name;
+  }
+  return undefined;
+}
+
+/** The identity behind a caller-supplied target: an explicit email wins;
+ * otherwise the email the resolving device's inventory records for the named
+ * profile (the Settings page and auto-switch pass names local to the pinned /
+ * primary device). Undefined when the name is unknown there too — resolution
+ * then degrades to exact-name matching everywhere. */
+export function targetAccountEmail(
+  accounts: { profiles: Array<{ name: string; email?: string }> } | undefined | null,
+  target: { profile?: string; email?: string },
+): string | undefined {
+  if (target.email) return target.email;
+  if (!target.profile) return undefined;
+  return (accounts?.profiles ?? []).find((p) => p.name === target.profile)?.email;
+}
+
+export type AutoSwitchDecision =
+  | { action: "continue" } // active account's window rolled — plain continue un-parks for free
+  // Spend one of the Codex account's rate-limit reset credits instead of moving
+  // the machine to another account. `profile` is the machine-local Codex
+  // profile name; the daemon resolves it to that account's CODEX_HOME.
+  | { action: "redeem_reset_credit"; profile: string }
+  | { action: "switch"; profile: string }
+  | { action: "wait"; retry_at: number } // active account just changed; its meter hasn't been read since
+  | { action: "exhausted"; retry_at: number }; // every account spent — when to look again
+
+// Attempt-history key for a redeem, so one park can't trigger a second one
+// while the first is still settling. Same shape as AUTO_SWITCH_CONTINUE_KEY.
+export function resetCreditAttemptKey(profile: string): string {
+  return `reset-credit:${profile}`;
+}
+
+/**
+ * Pick the cheapest recovery for limit-parked sessions:
+ *  1. no switch — the active account has headroom again and a continue is still
+ *     worth sending. Two proofs, either suffices:
+ *     (a) its 5h session window reset AFTER the newest park (resets_at is an
+ *         absolute timestamp, so even a stale snapshot stays truthful);
+ *     (b) a usage snapshot fetched after the park SETTLED (the same margin the
+ *         attempt blackout uses — a probe seconds after the park can still be
+ *         mid-burn) shows no pegged window. Needed because a rolled session
+ *         window is re-probed as `{percent: 0}` with NO resets_at, so proof (a)
+ *         only holds while the snapshot is still pre-roll; once the daemon's
+ *         5-minute probe refreshes it, (b) is the only evidence left.
+ *  2. switch — the saved profile with the most usage headroom, skipping the
+ *     active account, accounts with a pegged un-reset window, and accounts
+ *     already tried this window (an attempt OLDER than the newest park means
+ *     sessions parked again after we switched to it — it's spent until its
+ *     window rolls). A usage snapshot fetched after the attempt settled and
+ *     showing headroom overrules that blackout: attempts are inferred from
+ *     park timestamps, and parks stamped by sessions still mid-recovery from
+ *     the switch are indistinguishable from a real limit on the new account,
+ *     so the account's own probe is the stronger signal. Unknown usage ranks
+ *     after known headroom: eligible, just unproven. Skipped entirely when
+ *     `allowSwitch` is false (auto-switch off, auto-continue on): only the
+ *     active account's own recovery counts.
+ *  3. exhausted — retry at the earliest known window reset (hourly fallback).
+ *     With switching off only the active account's windows are consulted —
+ *     another account's reset can't help a session that will never move.
+ *
+ * All of that reads parks and snapshots as facts about the ACTIVE account.
+ * Parks on sessions pinned to ANOTHER account's setup-token are not
+ * (parkedOnActiveAccount): the caller passes the newest park that does
+ * implicate the active login as `activeParkedAt`, null when none does. With
+ * no such park there is nothing to wait out — those sessions un-park the
+ * moment they are restarted on the active login (the continue rewrites their
+ * pin), so the free continue needs only an active account that is not
+ * itself known to be spent. (2026-09-03: a workflow session pinned to an
+ * account whose weekly window was pegged sat "waiting" on the active
+ * account's session reset, hours away, while that account had 40% headroom —
+ * and every hand-typed continue re-sourced the same pegged token.)
+ *
+ * The active-account reading holds only while the account hasn't changed hands. `activeSince`
+ * (the device's activation stamp) corrects for a change: a snapshot fetched
+ * before it says nothing about the current login, so the loop WAITS for the
+ * post-switch probe rather than switching away on stale meters; and parks
+ * stamped before it belong to the previous login, so the "settled" bar for
+ * proof (b) becomes "fetched since the activation" instead of "5 minutes
+ * after someone else's park". (2026-09-02: both rules together pushed a
+ * 2%-used account off the machine twice, minutes after the user chose it.)
+ */
+export function decideAutoSwitch(input: {
+  now: number;
+  parkedAt: number; // newest limit-park among the blocked conversations
+  // Newest park among the sessions that ran on the ACTIVE account (unpinned,
+  // or pinned to its own token). null = every park belongs to another
+  // account's pin; omitted = every park is the active account's (parkedAt).
+  activeParkedAt?: number | null;
+  activeEmail?: string;
+  activeSince?: number; // when the active account last changed on the device
+  profiles: AutoSwitchProfile[];
+  attempts: Array<{ profile: string; at: number }>;
+  allowSwitch?: boolean; // default true
+  // An auth park proves the active login is DEAD (refresh token revoked, not a
+  // spent window), so "continue" can never un-park — a switch is the only cure.
+  activeDead?: boolean;
+  // An unspent rate-limit reset credit on the Codex account this machine is
+  // currently running. Present ONLY when the human turned redemption on for
+  // that device (it spends something they earned), so this function never has
+  // to know about the flag: absent means "not on the table".
+  resetCredit?: { profile: string; available: number } | null;
+  // Which attempt-history key records this decision's "continue". Defaults to
+  // the Claude one; the Codex pass passes its own so the two providers' free
+  // continues are independent (see AUTO_SWITCH_CODEX_CONTINUE_KEY).
+  continueKey?: string;
+  // The models the parked sessions run. An account's model-scoped week
+  // ("Fable") is spent only for sessions on that model (limitWindows).
+  models?: readonly string[];
+}): AutoSwitchDecision {
+  const { now, parkedAt, activeEmail, activeSince, profiles, attempts, models } = input;
+  const allowSwitch = input.allowSwitch !== false;
+  const lastAttemptAt = (profile: string): number | null =>
+    attempts.reduce<number | null>(
+      (max, a) => (a.profile === profile && a.at > (max ?? 0) ? a.at : max),
+      null,
+    );
+
+  const active = profiles.find((p) => p.email && p.email === activeEmail);
+  const activeFetchedAt = active?.usage?.fetched_at ?? 0;
+  if (
+    !input.activeDead &&
+    active &&
+    activeSince !== undefined &&
+    activeFetchedAt < activeSince &&
+    now - activeSince < AUTO_SWITCH_PROBE_GRACE_MS
+  ) {
+    return { action: "wait", retry_at: now + AUTO_SWITCH_PROBE_RETRY_MS };
+  }
+  const sessionResetAt = active?.usage?.session?.resets_at;
+  const lastContinue = lastAttemptAt(input.continueKey ?? AUTO_SWITCH_CONTINUE_KEY);
+  const activeParkedAt = input.activeParkedAt === undefined ? parkedAt : input.activeParkedAt;
+  // No park implicates the active account: its meters are the only evidence
+  // needed, and a pegged one is caught by isUsageExhausted below.
+  const noParkOnActive = activeParkedAt === null;
+  const windowRolledSincePark =
+    !noParkOnActive && !!sessionResetAt && sessionResetAt > activeParkedAt && sessionResetAt <= now;
+  const parksPredateActivation = !noParkOnActive && activeSince !== undefined && activeSince > activeParkedAt;
+  const settledProbeShowsHeadroom =
+    !noParkOnActive &&
+    activeFetchedAt >= (parksPredateActivation ? activeSince : activeParkedAt + AUTO_SWITCH_ATTEMPT_EVIDENCE_MS);
+  // A continue already sent is spent until something NEW happens after it: the
+  // window rolls, or a probe fetched after the continue settled shows headroom.
+  // A refused continue stamps a fresh park, so `lastContinue < parkedAt` used
+  // to look like a new incident and retried every cooldown while the quota
+  // was still spent (jx7dnat: hundreds of continues into a usage limit).
+  const continueHasNewEvidence =
+    !lastContinue ||
+    (activeSince !== undefined && activeSince > lastContinue && activeFetchedAt >= activeSince) ||
+    (!!sessionResetAt && sessionResetAt > lastContinue && sessionResetAt <= now) ||
+    activeFetchedAt >= lastContinue + AUTO_SWITCH_ATTEMPT_EVIDENCE_MS;
+  if (
+    !input.activeDead &&
+    (noParkOnActive || windowRolledSincePark || settledProbeShowsHeadroom) &&
+    !isUsageExhausted(active?.usage, now, models) &&
+    continueHasNewEvidence
+  ) {
+    return { action: "continue" };
+  }
+
+  if (
+    !input.activeDead &&
+    lastContinue &&
+    (noParkOnActive || activeParkedAt <= lastContinue) &&
+    !isUsageExhausted(active?.usage, now, models)
+  ) {
+    return { action: "wait", retry_at: now + AUTO_SWITCH_PROBE_RETRY_MS };
+  }
+
+  // A reset credit beats a switch outright: it clears the windows on the
+  // account the sessions are already pinned to, so nothing moves and no other
+  // account's week is spent. It is offered only when the human opted in, and
+  // only once per park — a redeem whose effect hasn't landed yet must not
+  // trigger a second one, and if it did not un-park the sessions the next pass
+  // falls through to the switch below.
+  // A dead login is excluded: a credit clears rate-limit windows, and a revoked
+  // refresh token is not one — spending a credit there would burn it and leave
+  // every session exactly as parked.
+  const resetCredit = input.activeDead ? null : input.resetCredit;
+  if (resetCredit && resetCredit.available > 0) {
+    const lastRedeem = lastAttemptAt(resetCreditAttemptKey(resetCredit.profile));
+    if (!lastRedeem || lastRedeem < parkedAt) {
+      return { action: "redeem_reset_credit", profile: resetCredit.profile };
+    }
+  }
+
+  if (allowSwitch) {
+    const candidates = fallbackProfiles(profiles, activeEmail, now, models).filter((p) => {
+      const att = lastAttemptAt(p.name);
+      if (att && att >= parkedAt) return false; // switch in flight — wait
+      if (att && now - att < AUTO_SWITCH_SESSION_WINDOW_MS) {
+        // Spent this window — unless a usage snapshot fetched after the attempt
+        // settled proves otherwise (isUsageExhausted already cleared it above).
+        // Each failed retry records a fresh attempt, pushing the required
+        // evidence forward, so this can't flap faster than the probe cadence.
+        const evidenceAt = p.usage?.fetched_at ?? 0;
+        if (evidenceAt < att + AUTO_SWITCH_ATTEMPT_EVIDENCE_MS) return false;
+      }
+      return true;
+    });
+    if (candidates[0]) return { action: "switch", profile: candidates[0].name };
+  }
+
+  const earliestReset = earliestUsageResetAt(allowSwitch ? profiles : active ? [active] : [], now);
+  const retryAt = (earliestReset ?? now + 60 * 60 * 1000) + 2 * 60 * 1000;
+  return { action: "exhausted", retry_at: retryAt };
+}
+
+// Profile names live in keychain service names and shell commands — keep them
+// boring. Mirrors the CLI-side validation in cli/src/ccAccounts.ts.
+export const PROFILE_NAME_RE = /^[a-z0-9][a-z0-9._-]{0,40}$/i;
+
+export function isValidProfileName(name: string): boolean {
+  return PROFILE_NAME_RE.test(name);
+}
+
+// A device is live if it heartbeated within this window (daemon beats ~30s).
+export const DEVICE_ONLINE_MS = 2 * 60 * 1000;
+
+export function isDeviceOnline(device: { last_seen: number }, now: number): boolean {
+  return now - device.last_seen < DEVICE_ONLINE_MS;
+}
+
+// The freshest online NON-remote device: it holds the keychain profiles and is
+// the canonical credential source remotes are pushed from.
+export async function listOnlineDevices(
+  ctx: { db: any },
+  userId: string,
+  now: number,
+): Promise<{ online: Doc<"devices">[]; primary: Doc<"devices"> | undefined }> {
+  const devices: Doc<"devices">[] = await ctx.db
+    .query("devices")
+    .withIndex("by_user_id", (q: any) => q.eq("user_id", userId))
+    .collect();
+  const online = devices.filter((d) => isDeviceOnline(d, now));
+  const primary = online
+    .filter((d) => !d.is_remote)
+    .sort((a, b) => b.last_seen - a.last_seen)[0];
+  return { online, primary };
+}
+
+// The named device, if its daemon can still take a sign-in or mint flow. Both
+// start as queued daemon_commands rows, so a daemon whose beats run late (a busy
+// one lands them 60-100s apart, past DEVICE_ONLINE_MS) still runs them. The
+// horizon is the flows' own: a daemon unseen for LOGIN_FLOW_STALE_MS (equal to
+// MINT_FLOW_STALE_MS) could not finish one.
+export async function findFlowDevice(
+  ctx: { db: any },
+  userId: string,
+  deviceId: string,
+  now: number,
+): Promise<Doc<"devices"> | undefined> {
+  const device: Doc<"devices"> | null = await ctx.db
+    .query("devices")
+    .withIndex("by_user_device", (q: any) => q.eq("user_id", userId).eq("device_id", deviceId))
+    .first();
+  return device && now - device.last_seen < LOGIN_FLOW_STALE_MS ? device : undefined;
+}
+
+// The earliest future reset among the given accounts' limit windows, or
+// undefined when no window reports one. What "wait for the window to roll"
+// means in wall-clock terms, for the auto-switch loop's retry and for a
+// scheduled run parked at a limit.
+export function earliestUsageResetAt(
+  profiles: Array<{ usage?: CcUsage | null }>,
+  now: number,
+): number | undefined {
+  const resets: number[] = [];
+  for (const p of profiles) {
+    for (const w of [p.usage?.session, p.usage?.weekly, p.usage?.weekly_scoped]) {
+      if (w?.resets_at && w.resets_at > now) resets.push(w.resets_at);
+    }
+  }
+  return resets.length ? Math.min(...resets) : undefined;
+}
+
+/** When a session parked at a limit can expect room on the account it ran:
+ *  the pin on its row, else the device's fleet account. That account's
+ *  longest pegged window names the wait (a rolled 5h session inside a spent
+ *  week reopens nothing); with no meter pegged, its earliest future reset.
+ *  Only when the account is unknown to the device does this fall back to the
+ *  earliest reset across every account, which can wake on the wrong window.
+ *  A booked recovery check (`next_check_at`, the account loop's own next
+ *  look) is a floor: the loop knows at least as much as this does. */
+export function parkedAccountResetAt(
+  device: { cc_accounts?: FleetAccounts | null; cc_auto_switch_state?: { next_check_at?: number } | null } | undefined,
+  conv: { cc_account?: string | null },
+  now: number,
+): number | undefined {
+  const profiles = device?.cc_accounts?.profiles ?? [];
+  const fleet = fleetAccount(device?.cc_accounts, now);
+  const own = profiles.find((p) =>
+    conv.cc_account ? p.name === conv.cc_account : fleet.profile ? p.name === fleet.profile : !!p.email && p.email === fleet.email,
+  );
+  const pegged = own ? peggedWindow(own.usage, now)?.resets_at : undefined;
+  const resetAt = pegged && pegged > now ? pegged : earliestUsageResetAt(own ? [own] : profiles, now);
+  const booked = device?.cc_auto_switch_state?.next_check_at;
+  if (booked && booked > now && (resetAt === undefined || booked > resetAt)) return booked;
+  return resetAt;
+}
+
+// Selection predicate for the revive actions: a conversation parked on a
+// banner its own agent's recovery chain can act on. Which kinds those are per
+// agent is blockedKindsForAgent (apiErrorBanner.ts) — for Claude Code every
+// blocked kind, for Codex the ones needing no Claude credential. kind "error"
+// (a marked opencode/pi client error) is OUT of the blocked set for everyone.
+// A statusful 5xx banner is kind "fatal": Claude Code writes it only after its
+// own retries are spent. Dismissed is an explicit user "go away" — never
+// auto-revive.
+export function isBlockedConversation(conv: {
+  pending_api_error?: boolean;
+  pending_api_error_kind?: string | null;
+  agent_type?: string;
+  inbox_dismissed_at?: number | null;
+}): boolean {
+  return (
+    conv.pending_api_error === true &&
+    blockedKindsForAgent(conv.agent_type).has(conv.pending_api_error_kind ?? "") &&
+    !conv.inbox_dismissed_at
+  );
+}
+
+// The revive window: a park older than this is the graveyard, not the current
+// incident. Measured from when the block landed (the banner's own timestamp),
+// never from updated_at: a transcript synced again weeks later bumps
+// updated_at and re-flags the row with its old banner, and an updated_at
+// window let 47-day-old parks back into the banner and the auto-continue.
+// Eight days: a weekly limit can hold a session parked for up to seven before
+// its reset, plus a day of slack for the wake-up after it.
+export const BLOCKED_WINDOW_MS = 8 * 24 * 60 * 60 * 1000;
+
+export function blockedAt(conv: { pending_api_error_at?: number | null; updated_at?: number }): number {
+  return conv.pending_api_error_at ?? conv.updated_at ?? 0;
+}
+
+export function isCurrentBlock(conv: { pending_api_error_at?: number | null; updated_at?: number }, now: number): boolean {
+  return blockedAt(conv) > now - BLOCKED_WINDOW_MS;
+}
+
+/** Target of the post-credential-push recovery nudge: an auth-parked
+ * conversation owned by a remote device (remotes run a pushed COPY of the
+ * primary's credential — a fresh push is what makes their recovery possible,
+ * so limit-kind and local owners are out of scope). Callers pre-filter with
+ * isBlockedConversation, which carries the dismissed/agent-type gates. */
+export function isRemoteAuthBlocked(
+  conv: { pending_api_error_kind?: string | null; owner_device_id?: string | null },
+  remoteDeviceIds: ReadonlySet<string>,
+): boolean {
+  return (
+    conv.pending_api_error_kind === "auth" &&
+    !!conv.owner_device_id &&
+    remoteDeviceIds.has(conv.owner_device_id)
+  );
+}
+
+// A subagent for REVIVE purposes: spawned by/for another session. These are
+// excluded from the default revive — a worker whose parent moved on is work
+// nobody is waiting for, and resuming it burns the fresh account's window.
+// The narrow REVIVE predicate. The inbox's isSub (waiting chime) is this OR
+// isAgentSpawnedConversation below; worktree_name never marks a subagent — a
+// worktree session is a first-class task of its own.
+// Shared verbatim by the server selection and the web banner so the counts
+// shown always match what the actions touch.
+export function isSubagentConversation(conv: {
+  is_subagent?: boolean;
+  parent_conversation_id?: string | null;
+}): boolean {
+  return conv.is_subagent === true || !!conv.parent_conversation_id;
+}
+
+// The rows a fleet revive acts on, top-level first. Subagent workers join
+// ONLY on an explicit opt-in — never because they happen to be all that is
+// blocked. A worker runs inside its parent's process, so a "continue" cannot
+// reach it; the delivery rail resumes it as a standalone copy that runs its
+// brief again with nobody collecting the result. Shared by the server
+// selection and the web banner so the acted count is one number.
+export function actedBlockedConversations<T extends {
+  pending_api_error_kind?: string | null;
+  is_subagent?: boolean;
+  parent_conversation_id?: string | null;
+}>(blocked: T[], includeSubagents: boolean): T[] {
+  const recoverable = blocked.filter((c) => !UNREVIVABLE_BANNER_KINDS.has(c.pending_api_error_kind ?? ""));
+  const topLevel = recoverable.filter((c) => !isSubagentConversation(c));
+  return includeSubagents ? [...topLevel, ...recoverable.filter(isSubagentConversation)] : topLevel;
+}
+
+// The complement of the acted set: the workers a revive leaves out when the
+// caller did not opt them in. Leaving a worker out is a DECISION, not a
+// deferral — nobody comes back for it — so the revive dismisses these from
+// the blocked set in the same gesture and the count drops to what was acted
+// on. Safety stops and full context windows never appear here: they wait for
+// a review or a /compact, not a revive.
+// Shared by the server (which clears the flag) and the web banner (which
+// paints the clear and names the count on the button), so both agree on
+// exactly which rows go.
+export function skippedBlockedWorkers<T extends {
+  pending_api_error_kind?: string | null;
+  is_subagent?: boolean;
+  parent_conversation_id?: string | null;
+}>(blocked: T[], includeSubagents: boolean): T[] {
+  if (includeSubagents) return [];
+  return blocked.filter((c) => !UNREVIVABLE_BANNER_KINDS.has(c.pending_api_error_kind ?? "") && isSubagentConversation(c));
+}
+
+// The one-line cause a blocked FLEET is reported on — the banner headline and
+// the blocked-notification title both read it here, so a push and the banner
+// can never name different causes for the same incident.
+//
+// Two rules earn their own definition. It is computed over the WHOLE blocked
+// set, the same set whose size the headline states: deriving it from the
+// ACTED set (subagent workers are held out by default) named a cause nothing
+// was in — 44 workers parked on a usage limit left every acted count at zero,
+// and the label fell through to the first entry, "safety review". And the
+// order breaks ties toward the ordinary cause, so "safety review" leads only
+// when it is strictly the largest slice.
+export function blockedHeadlineCause<T extends { pending_api_error_kind?: string | null }>(blocked: T[]): string {
+  const of = (kind: string) => blocked.filter((c) => c.pending_api_error_kind === kind).length;
+  const auth = of("auth");
+  const conn = of("connection");
+  const fatal = of("fatal");
+  const throttle = of("throttle");
+  const safety = of("safety");
+  const context = of("context");
+  // A park with no kind recorded is a usage limit — the original park shape.
+  const limit = blocked.length - auth - conn - fatal - throttle - safety - context;
+  return ([
+    [limit, "usage limits"],
+    [auth, "login"],
+    [throttle, "rate-limit bursts"],
+    [conn, "dropped connections"],
+    [fatal, "api errors"],
+    [context, "full context windows"],
+    [safety, "safety review"],
+  ] as const).reduce((best, cur) => (cur[0] > best[0] ? cur : best))[1];
+}
+
+// The parent-link fields every inbox session row MUST carry so the client can
+// tell a subagent from a top-level session and nest it under its parent. The
+// client reads exactly these via isSubagentConversation; without them a row
+// looks top-level. Both inbox emission paths spread this — the top-level scan
+// (enrichInboxSessionRow) and the parent's child enumeration — so a subagent
+// self-identifies no matter which path emitted it (the client dedups duplicate
+// _id rows last-wins, and the child enumeration is capped, so the top-level row
+// is sometimes the ONLY emission of a given subagent). Omitting it on the
+// top-level path was the "subagent renders as a flat card" bug (ct-37439).
+// Convex Ids stringify via toString(); a string passes through unchanged.
+export function subagentLinkFields(conv: {
+  is_subagent?: boolean;
+  parent_conversation_id?: { toString(): string } | string | null;
+}): { is_subagent: boolean; parent_conversation_id: string | null } {
+  return {
+    is_subagent: conv.is_subagent === true,
+    parent_conversation_id: conv.parent_conversation_id?.toString() || null,
+  };
+}
+
+// An agent-team worker (reviewer, scout, …), not the team's lead. The lead is
+// a first-class inbox card; workers nest under it. Used both with a resolved
+// lead pointer (nestParentIdOf) and without one (an unlinked worker must not
+// become a loose ↳ card just because the lead stamp never landed).
+export function isAgentTeamWorker(conv: {
+  agent_team_name?: string | null;
+  agent_name?: string | null;
+}): boolean {
+  return !!conv.agent_team_name && conv.agent_name !== "team-lead";
+}
+
+// Which parent a session NESTS under in session lists — the single definition
+// every nesting computation must share (inbox categorizer, hidden buckets,
+// card styling, wake signature). Two sources, in priority order:
+// - parent_conversation_id: a Task-tool subagent. Full subagent semantics —
+//   hidden when its parent is absent, excluded from revive.
+// - spawned_by_conversation_id + agent_team_name: an agent-team teammate. It
+//   nests under its lead for DISPLAY. When the lead is absent from a list it
+//   is hidden, not promoted to a top-level card (same as a Task subagent). A
+//   pin on the worker itself is the viewer's act to keep it visible. The
+//   agent_team_name gate is what keeps this to teammates: forks (forked_from)
+//   and cast-spawn sessions never nest.
+export function nestParentIdOf(conv: {
+  parent_conversation_id?: { toString(): string } | string | null;
+  spawned_by_conversation_id?: { toString(): string } | string | null;
+  agent_team_name?: string | null;
+  agent_name?: string | null;
+}): string | null {
+  if (conv.parent_conversation_id) return conv.parent_conversation_id.toString();
+  if (isAgentTeamWorker(conv) && conv.spawned_by_conversation_id) {
+    return conv.spawned_by_conversation_id.toString();
+  }
+  return null;
+}
+
+// Whether a conversation was spawned by an agent rather than started by a
+// human. Gates the teammate "started coding" notification: agent fan-out
+// (Task-tool subagents, workflow subs, agent-team teammates) must never ping
+// the team. Broader than isSubagentConversation on purpose — spawned_by and
+// agent identity mark sessions that stay first-class in the inbox but are
+// still machine-initiated. The one session with agent identity a human DID
+// start is the team lead (stamped agent_name "team-lead" by linkSpawnedBy).
+// Forks and plan handoffs (parent link WITH parent_message_uuid) stay
+// notifiable — those are human actions.
+export function isAgentSpawnedConversation(conv: {
+  is_subagent?: boolean;
+  is_workflow_sub?: boolean;
+  parent_conversation_id?: { toString(): string } | string | null;
+  parent_message_uuid?: string | null;
+  spawned_by_conversation_id?: { toString(): string } | string | null;
+  agent_name?: string | null;
+}): boolean {
+  if (conv.is_subagent === true || conv.is_workflow_sub === true) return true;
+  if (conv.spawned_by_conversation_id) return true;
+  if (conv.agent_name && conv.agent_name !== "team-lead") return true;
+  if (conv.parent_conversation_id && !conv.parent_message_uuid) return true;
+  return false;
+}
+
+// Stale-flag sweep: past the revive window the flag stops meaning "current
+// incident" and just pollutes badges/selection — clear it.
+export function shouldSweepStaleFlag(
+  conv: { pending_api_error?: boolean; pending_api_error_at?: number | null; updated_at?: number },
+  now: number,
+): boolean {
+  return conv.pending_api_error === true && !isCurrentBlock(conv, now);
+}

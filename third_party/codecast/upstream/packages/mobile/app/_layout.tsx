@@ -1,0 +1,424 @@
+import '@/lib/polyfills';
+import { ComposeHost } from '@/components/session/NewSessionSheet';
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+import { useFonts } from 'expo-font';
+import { Stack, useRouter, useSegments, usePathname } from 'expo-router';
+import * as SplashScreen from 'expo-splash-screen';
+import * as SecureStore from 'expo-secure-store';
+import { AppState } from 'react-native';
+import { StatusBar } from 'expo-status-bar';
+import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, lazy, Suspense, type ReactNode } from 'react';
+import 'react-native-reanimated';
+import { GestureHandlerRootView } from '@/lib/gestureHandler';
+import { ConvexProvider } from 'convex/react';
+import { ConvexAuthProvider } from '@convex-dev/auth/react';
+
+import { paletteFor, setActiveLook, setActiveScheme, useActiveLook, useActiveScheme, type ColorScheme, type Look } from '@/constants/Theme';
+import { useColorScheme } from '@/components/useColorScheme';
+import { Mono, markFamilyFacesLoaded, markLateFacesLoaded, uiFace, useFacesVersion, useLateFacesLoaded } from '@/constants/fonts';
+import { useHostedMode } from '@codecast/web/lib/surfaces';
+import { convex, CONVEX_URL } from '@/lib/convex';
+import { AuthProvider, useAuth } from '@/lib/auth';
+import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { useLiveActivity } from '@/hooks/useLiveActivity';
+import { useViewerIdentity } from '@codecast/web/hooks/useTeamRoster';
+import { initAnalytics, identifyUser, resetUser, trackScreen, wrapRoot } from '@/lib/analytics';
+import { startCallKitBridge, republishVoipToken, notifyCallKitAuth } from '@/lib/calls/callKit';
+import { STORE_SHOTS } from '@/lib/storeShots/flag';
+import { bootMark } from '@/lib/bootProfile';
+import { BOOT_FONTS } from '@/lib/bootFonts';
+import { PERF_PROBE, probeTouchEnd, setProbeRoute } from '@/lib/perfProbe';
+import * as Font from 'expo-font';
+import { Alert } from 'react-native';
+import { setTaskErrorReporter } from '@codecast/web/lib/taskActions';
+import { StoreSyncBridge } from '@/components/StoreSyncBridge';
+
+// A task write the server refuses (createTaskAndAdopt drops its stub) says so,
+// as web's toast does.
+setTaskErrorReporter((msg) => Alert.alert('Task', msg));
+
+const CallOverlay = lazy(() => import('@/components/calls/CallOverlay').then((m) => ({ default: m.CallOverlay })));
+
+class OverlayErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  render() { return this.state.failed ? null : this.props.children; }
+}
+
+
+// Keychain failures must degrade to "signed out", never hang auth: a rejected
+// getItem propagates into @convex-dev/auth's boot read, which is fired as
+// `void readStateFromStorage()` — the rejection is swallowed, isLoading stays
+// true forever, and the user is soft-locked on the skeleton inbox with no way
+// to reach the login screen.
+const secureStorage = {
+  getItem: async (key: string) => {
+    try {
+      return await SecureStore.getItemAsync(key);
+    } catch {
+      return null;
+    }
+  },
+  setItem: async (key: string, value: string) => {
+    try {
+      await SecureStore.setItemAsync(key, value);
+    } catch {}
+  },
+  removeItem: async (key: string) => {
+    try {
+      await SecureStore.deleteItemAsync(key);
+    } catch {}
+  },
+};
+
+// Dev-only auth injection for simulator e2e harnesses (driven over the Hermes
+// inspector): writes a minted token pair into the SAME storage the auth
+// provider reads, using its exact key derivation (`<key>_<escaped CONVEX_URL>`).
+// Reload after calling; the provider boots signed in. Never bundled in release.
+if (__DEV__) {
+  const ns = CONVEX_URL.replace(/[^a-zA-Z0-9]/g, "");
+  (global as any).__devAuth = async (jwt: string, refresh: string) => {
+    await secureStorage.setItem(`__convexAuthJWT_${ns}`, jwt);
+    await secureStorage.setItem(`__convexAuthRefreshToken_${ns}`, refresh);
+    return "ok";
+  };
+}
+
+export {
+  ErrorBoundary,
+} from 'expo-router';
+
+export const unstable_settings = {
+  initialRouteName: '(tabs)',
+};
+
+SplashScreen.preventAutoHideAsync();
+
+function RootLayout() {
+  // Already loading since index.ts (lib/bootFonts).
+  const [loaded, error] = useFonts(BOOT_FONTS);
+
+  // Initialize analytics AFTER the first mount, never at module-eval. On the
+  // Feb App Store binary the Sentry/PostHog native modules are absent; running
+  // this before render risks throwing during initial JS evaluation — before
+  // expo-updates can mark the OTA "launched" — which silently auto-rolls-back
+  // the update (the "stuck on the old version" symptom). Post-mount the app has
+  // already rendered, so even a failure here cannot trigger a rollback.
+  useEffect(() => {
+    initAnalytics();
+  }, []);
+
+  useEffect(() => {
+    if (error) throw error;
+  }, [error]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    bootMark("fonts-ready");
+    void Font.loadAsync({
+      'JetBrainsMono-Medium': require('../assets/fonts/JetBrainsMono-Medium.ttf'),
+      'JetBrainsMono-Bold': require('../assets/fonts/JetBrainsMono-Bold.ttf'),
+      'JetBrainsMono-Italic': require('../assets/fonts/JetBrainsMono-Italic.ttf'),
+    }).then(markLateFacesLoaded, () => {});
+  }, [loaded]);
+
+  // CallKit + PushKit bridge — mounts once, before any call surface. Safe on
+
+  // binaries without the native module (guarded require → no-op).
+
+  useEffect(() => { if (!STORE_SHOTS) startCallKitBridge(); }, []);
+
+  // Splash stays up past fonts. AuthProvider releases it once the SQLite
+  // cache has hydrated (clientStateInitialized) and local boot trust is
+  // ready to render — otherwise kill-and-reopen paints the inbox skeleton
+  // on an empty store. preventAutoHideAsync above is the hold.
+
+  // Publish the resolved appearance (Settings choice, else the OS setting)
+  // into the live palette before paint. Every screen subscribes through
+  // useTheme(), so a change here repaints the whole tree.
+  const scheme = useColorScheme();
+  useLayoutEffect(() => {
+    setActiveScheme(scheme);
+  }, [scheme]);
+
+  useEffect(() => {
+    if (!loaded) return;
+
+    // Fetch OTA updates in the background, but DON'T reloadAsync() mid-session —
+    // that yanks the user out of whatever they're typing/scrolling, and an eager
+    // unconditional reload maximizes blast radius if an update is bad (see the
+    // OTA dep-skew brick-on-launch history). Instead apply the fetched update the
+    // next time the app goes to the background, the standard expo-updates pattern.
+    let updatePending = false;
+    let cancelled = false;
+
+    async function checkForUpdates() {
+      if (__DEV__) return;
+      try {
+        // require, not import(): dynamic import() rejects in production
+        // bundles on Hermes (chunk-URL resolution needs web "location"),
+        // which silently killed the in-session OTA fetch loop.
+        const Updates = require('expo-updates') as typeof import('expo-updates');
+        const update = await Updates.checkForUpdateAsync();
+        if (cancelled || !update.isAvailable) return;
+        await Updates.fetchUpdateAsync();
+        if (!cancelled) updatePending = true;
+      } catch (e) {
+        console.log('OTA update check failed:', e);
+      }
+    }
+
+    const sub = AppState.addEventListener('change', (state) => {
+      if (updatePending && (state === 'background' || state === 'inactive')) {
+        updatePending = false;
+        Promise.resolve()
+          .then(() => (require('expo-updates') as typeof import('expo-updates')).reloadAsync())
+          .catch(() => {});
+      }
+    });
+
+    checkForUpdates();
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, [loaded]);
+
+  if (!loaded) {
+    return null;
+  }
+
+  return (
+    <>
+      <RouteTracker />
+      <RootLayoutNav />
+    </>
+  );
+}
+
+// Screen views for every route change, in a leaf of its own: a pathname read
+// in RootLayout re-rendered the whole app shell on every navigation. A screen
+// tracked before initAnalytics runs is queued until it does.
+function RouteTracker() {
+  const pathname = usePathname();
+  useEffect(() => {
+    if (pathname) trackScreen(pathname);
+    if (PERF_PROBE) setProbeRoute(pathname);
+  }, [pathname]);
+  return null;
+}
+
+export default wrapRoot(RootLayout);
+
+// Navigation chrome (stack headers, back buttons, tab bar) renders outside
+// our StyleSheets, so parity with web has to come through the nav theme:
+// Solarized surfaces + JetBrains Mono faces. fontWeight stays 'normal' in
+// every entry — the face carries the weight (see constants/fonts.ts).
+function solarizedNavTheme(scheme: ColorScheme, look: Look, late: boolean) {
+  const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
+  const palette = paletteFor(scheme, look);
+  return {
+    ...base,
+    colors: {
+      ...base.colors,
+      primary: palette.blue,
+      background: palette.bg,
+      card: palette.bgAlt,
+      text: palette.text,
+      border: palette.borderLight,
+      notification: palette.red,
+    },
+    fonts: {
+      regular: { fontFamily: uiFace(Mono.regular, late, look), fontWeight: 'normal' },
+      medium: { fontFamily: uiFace(Mono.medium, late, look), fontWeight: 'normal' },
+      bold: { fontFamily: uiFace(Mono.semiBold, late, look), fontWeight: 'normal' },
+      heavy: { fontFamily: uiFace(Mono.bold, late, look), fontWeight: 'normal' },
+    },
+  } as const;
+}
+
+// Hosted mode wears the family look (paper, ink, Instrument Sans and
+// Newsreader), as the web's hosted mode does; its faces load the first time
+// the look turns on, and text sets in the system face until they land.
+function useLookFromMode(): Look {
+  const look: Look = useHostedMode() ? 'family' : 'classic';
+  useLayoutEffect(() => {
+    setActiveLook(look);
+  }, [look]);
+  useEffect(() => {
+    if (look !== 'family') return;
+    void Font.loadAsync({
+      'InstrumentSans-Regular': require('../assets/fonts/InstrumentSans-Regular.ttf'),
+      'InstrumentSans-Medium': require('../assets/fonts/InstrumentSans-Medium.ttf'),
+      'InstrumentSans-SemiBold': require('../assets/fonts/InstrumentSans-SemiBold.ttf'),
+      'InstrumentSans-Bold': require('../assets/fonts/InstrumentSans-Bold.ttf'),
+      'Newsreader-Regular': require('../assets/fonts/Newsreader-Regular.ttf'),
+      'Newsreader-Medium': require('../assets/fonts/Newsreader-Medium.ttf'),
+      'Newsreader-SemiBold': require('../assets/fonts/Newsreader-SemiBold.ttf'),
+      'Newsreader-Italic': require('../assets/fonts/Newsreader-Italic.ttf'),
+    }).then(markFamilyFacesLoaded, () => {});
+  }, [look]);
+  return look;
+}
+
+function RootLayoutNav() {
+  useLookFromMode();
+  const scheme = useActiveScheme();
+  const look = useActiveLook();
+  const lateFaces = useLateFacesLoaded();
+  const faces = useFacesVersion();
+  const navTheme = useMemo(() => solarizedNavTheme(scheme, look, lateFaces), [scheme, look, lateFaces, faces]);
+  const [calls, setCalls] = useState(false);
+  useEffect(() => { setCalls(true); }, []);
+  return (
+    <GestureHandlerRootView style={{ flex: 1 }} onTouchEndCapture={PERF_PROBE ? probeTouchEnd : undefined}>
+      <ConvexProvider client={convex}>
+        <ConvexAuthProvider client={convex} storage={secureStorage}>
+          <AuthProvider>
+            <ThemeProvider value={navTheme}>
+              <StatusBar style={scheme === 'dark' ? 'light' : 'dark'} />
+              {STORE_SHOTS ? null : <AnalyticsIdentify />}
+              <AuthGate>
+                {/* Back is a bare chevron: the tab group has no title, so a labeled
+                    back button read "(tabs)" on every pushed screen. */}
+                <Stack screenOptions={{ headerBackButtonDisplayMode: 'minimal' }}>
+                  <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+                  <Stack.Screen name="auth/login" options={{ title: 'Login', headerShown: false }} />
+                  <Stack.Screen name="auth/signup" options={{ title: 'Sign Up', headerShown: false }} />
+                  {/* The session screen draws its own title bar, so the nav
+                      header is off from the first frame. reveal=1 is a session
+                      the new session sheet just started: pushed with no
+                      transition under the sheet, so it is already there when
+                      the sheet slides away. */}
+                  <Stack.Screen
+                    name="session/[id]"
+                    options={({ route }) => ({
+                      title: 'Conversation',
+                      headerShown: false,
+                      animation: (() => {
+                        const p = route.params as { reveal?: string } | undefined;
+                        return p?.reveal ? 'none' : 'default';
+                      })(),
+                      // A rightward drag on a conversation uncovers the inbox
+                      // behind it (components/inbox/ConversationSlideOut), so
+                      // the edge swipe is that panel's, not a pop.
+                      gestureEnabled: false,
+                    })}
+                  />
+                  <Stack.Screen name="task/[id]" options={{ title: 'Task' }} />
+                  <Stack.Screen name="plan/[id]" options={{ title: 'Plan' }} />
+                  <Stack.Screen name="doc/[id]" options={{ title: 'Doc' }} />
+                  <Stack.Screen name="org/index" options={{ title: 'Org' }} />
+                  {/* A role's page is the session screen on its standing
+                      conversation, which draws its own header. */}
+                  <Stack.Screen name="org/[id]/index" options={{ headerShown: false }} />
+                  <Stack.Screen name="org/[id]/board" options={{ title: 'Board' }} />
+                  {/* Both draw their own header (a back chevron and a title),
+                      so the nav header would be a second one stacked on top. */}
+                  <Stack.Screen name="record" options={{ headerShown: false }} />
+                  <Stack.Screen name="calls" options={{ headerShown: false }} />
+                  <Stack.Screen name="recording/[id]" options={{ headerShown: false }} />
+                  <Stack.Screen name="modal" options={{ presentation: 'modal' }} />
+                  <Stack.Screen
+                    name="call"
+                    options={{ presentation: 'fullScreenModal', headerShown: false, animation: 'slide_from_bottom' }}
+                  />
+                </Stack>
+                <ComposeHost />
+                {calls ? (
+                  <OverlayErrorBoundary>
+                    <Suspense fallback={null}>
+                      <CallOverlay />
+                    </Suspense>
+                  </OverlayErrorBoundary>
+                ) : null}
+              </AuthGate>
+            </ThemeProvider>
+          </AuthProvider>
+        </ConvexAuthProvider>
+      </ConvexProvider>
+    </GestureHandlerRootView>
+  );
+}
+
+function AnalyticsIdentify() {
+  // The persisted viewer, projected to identity fields so daemon heartbeats on
+  // the user doc never re-run this.
+  const user = useViewerIdentity();
+  const lastId = useRef<string | null>(null);
+  const id = user?._id ?? null;
+  useEffect(() => {
+    if (id && id !== lastId.current) {
+      lastId.current = id;
+      identifyUser(id, {
+        ...(user!.email && { email: user!.email }),
+        ...(user!.name && { name: user!.name }),
+        ...(user!.github_username && { github_username: user!.github_username }),
+      });
+    } else if (!id && lastId.current) {
+      lastId.current = null;
+      resetUser();
+    }
+  }, [id]);
+  return null;
+}
+
+function RealAuthGate({ children }: { children: React.ReactNode }) {
+  const { isAuthenticated, isLoading } = useAuth();
+  const segments = useSegments();
+  const router = useRouter();
+
+  usePushNotifications();
+  useLiveActivity();
+
+  // The PushKit token often arrives before sign-in on a cold start; publish
+  // it once auth is up so invites route through APNs VoIP.
+  useEffect(() => {
+    notifyCallKitAuth(isAuthenticated);
+    if (isAuthenticated) republishVoipToken();
+  }, [isAuthenticated]);
+
+  // Deep links route through expo-router itself (app/+native-intent.tsx maps
+  // web URL shapes onto screens), so by the time this gate runs, a link-opened
+  // app is already ON its destination. All that is left to handle is auth:
+  // when a signed-out launch lands on a deep screen, remember it, bounce
+  // through login, and restore it on top of the inbox afterwards.
+  const pathname = usePathname();
+  const pendingDeepLink = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === 'auth';
+
+    if (!isAuthenticated && !inAuthGroup) {
+      if (pathname && pathname !== '/') pendingDeepLink.current = pathname;
+      router.replace('/auth/login');
+    } else if (isAuthenticated && inAuthGroup) {
+      const target = pendingDeepLink.current;
+      pendingDeepLink.current = null;
+      router.replace('/');
+      if (target) router.push(target as never);
+    }
+  }, [isAuthenticated, isLoading, segments, pathname]);
+
+  // The store's server feeders, once for the whole app, so every screen
+  // reads the same replica. They run from boot
+  // (a cached, still-verifying sign-in) and stop only once signed out.
+  return (
+    <>
+      {isAuthenticated || isLoading ? <StoreSyncBridge /> : null}
+      {children}
+    </>
+  );
+}
+
+// Store shots mode (lib/storeShots/flag): the store already holds the fixture
+// world, so no feeder, push registration or CallKit runs; the Live Activity
+// still follows the store, for the Lock Screen shot.
+function StoreShotsGate({ children }: { children: React.ReactNode }) {
+  useLiveActivity();
+  return <>{children}</>;
+}
+
+const AuthGate = STORE_SHOTS ? StoreShotsGate : RealAuthGate;

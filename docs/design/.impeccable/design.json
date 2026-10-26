@@ -1,0 +1,425 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-26T07:18:52.876762+00:00",
+  "title": "Design System: ColloSys A/B Workbench Preview",
+  "extensions": {
+    "colorMeta": {
+      "canvas": {
+        "role": "neutral",
+        "displayName": "Cool canvas",
+        "tonalRamp": [
+          "oklch(15% 0.0029 264.54)",
+          "oklch(26% 0.0029 264.54)",
+          "oklch(38% 0.0029 264.54)",
+          "oklch(49% 0.0029 264.54)",
+          "oklch(61% 0.0029 264.54)",
+          "oklch(72% 0.0029 264.54)",
+          "oklch(84% 0.0029 264.54)",
+          "oklch(95% 0.0029 264.54)"
+        ]
+      },
+      "surface": {
+        "role": "neutral",
+        "displayName": "Paper",
+        "tonalRamp": [
+          "oklch(15% 0.0000 0.00)",
+          "oklch(26% 0.0000 0.00)",
+          "oklch(38% 0.0000 0.00)",
+          "oklch(49% 0.0000 0.00)",
+          "oklch(61% 0.0000 0.00)",
+          "oklch(72% 0.0000 0.00)",
+          "oklch(84% 0.0000 0.00)",
+          "oklch(95% 0.0000 0.00)"
+        ]
+      },
+      "surface-subtle": {
+        "role": "neutral",
+        "displayName": "Supporting paper",
+        "tonalRamp": [
+          "oklch(15% 0.0029 264.54)",
+          "oklch(26% 0.0029 264.54)",
+          "oklch(38% 0.0029 264.54)",
+          "oklch(49% 0.0029 264.54)",
+          "oklch(61% 0.0029 264.54)",
+          "oklch(72% 0.0029 264.54)",
+          "oklch(84% 0.0029 264.54)",
+          "oklch(95% 0.0029 264.54)"
+        ]
+      },
+      "surface-hover": {
+        "role": "neutral",
+        "displayName": "Hover surface",
+        "tonalRamp": [
+          "oklch(15% 0.0074 260.73)",
+          "oklch(26% 0.0074 260.73)",
+          "oklch(38% 0.0074 260.73)",
+          "oklch(49% 0.0074 260.73)",
+          "oklch(61% 0.0074 260.73)",
+          "oklch(72% 0.0074 260.73)",
+          "oklch(84% 0.0074 260.73)",
+          "oklch(95% 0.0074 260.73)"
+        ]
+      },
+      "ink": {
+        "role": "primary",
+        "displayName": "Action ink",
+        "tonalRamp": [
+          "oklch(15% 0.0206 260.59)",
+          "oklch(26% 0.0206 260.59)",
+          "oklch(38% 0.0206 260.59)",
+          "oklch(49% 0.0206 260.59)",
+          "oklch(61% 0.0206 260.59)",
+          "oklch(72% 0.0206 260.59)",
+          "oklch(84% 0.0206 260.59)",
+          "oklch(95% 0.0206 260.59)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Secondary ink",
+        "tonalRamp": [
+          "oklch(15% 0.0295 255.66)",
+          "oklch(26% 0.0295 255.66)",
+          "oklch(38% 0.0295 255.66)",
+          "oklch(49% 0.0295 255.66)",
+          "oklch(61% 0.0295 255.66)",
+          "oklch(72% 0.0295 255.66)",
+          "oklch(84% 0.0295 255.66)",
+          "oklch(95% 0.0295 255.66)"
+        ]
+      },
+      "line": {
+        "role": "neutral",
+        "displayName": "Divider",
+        "tonalRamp": [
+          "oklch(15% 0.0110 256.70)",
+          "oklch(26% 0.0110 256.70)",
+          "oklch(38% 0.0110 256.70)",
+          "oklch(49% 0.0110 256.70)",
+          "oklch(61% 0.0110 256.70)",
+          "oklch(72% 0.0110 256.70)",
+          "oklch(84% 0.0110 256.70)",
+          "oklch(95% 0.0110 256.70)"
+        ]
+      },
+      "line-strong": {
+        "role": "neutral",
+        "displayName": "Control boundary",
+        "tonalRamp": [
+          "oklch(15% 0.0231 256.75)",
+          "oklch(26% 0.0231 256.75)",
+          "oklch(38% 0.0231 256.75)",
+          "oklch(49% 0.0231 256.75)",
+          "oklch(61% 0.0231 256.75)",
+          "oklch(72% 0.0231 256.75)",
+          "oklch(84% 0.0231 256.75)",
+          "oklch(95% 0.0231 256.75)"
+        ]
+      },
+      "selected": {
+        "role": "primary",
+        "displayName": "Selection blue",
+        "tonalRamp": [
+          "oklch(15% 0.1949 265.54)",
+          "oklch(26% 0.1949 265.54)",
+          "oklch(38% 0.1949 265.54)",
+          "oklch(49% 0.1949 265.54)",
+          "oklch(61% 0.1949 265.54)",
+          "oklch(72% 0.1949 265.54)",
+          "oklch(84% 0.1949 265.54)",
+          "oklch(95% 0.1949 265.54)"
+        ]
+      },
+      "selected-soft": {
+        "role": "primary",
+        "displayName": "Selection wash",
+        "tonalRamp": [
+          "oklch(15% 0.0169 267.79)",
+          "oklch(26% 0.0169 267.79)",
+          "oklch(38% 0.0169 267.79)",
+          "oklch(49% 0.0169 267.79)",
+          "oklch(61% 0.0169 267.79)",
+          "oklch(72% 0.0169 267.79)",
+          "oklch(84% 0.0169 267.79)",
+          "oklch(95% 0.0169 267.79)"
+        ]
+      },
+      "positive": {
+        "role": "secondary",
+        "displayName": "Positive green",
+        "tonalRamp": [
+          "oklch(15% 0.0894 154.88)",
+          "oklch(26% 0.0894 154.88)",
+          "oklch(38% 0.0894 154.88)",
+          "oklch(49% 0.0894 154.88)",
+          "oklch(61% 0.0894 154.88)",
+          "oklch(72% 0.0894 154.88)",
+          "oklch(84% 0.0894 154.88)",
+          "oklch(95% 0.0894 154.88)"
+        ]
+      },
+      "positive-soft": {
+        "role": "secondary",
+        "displayName": "Addition wash",
+        "tonalRamp": [
+          "oklch(15% 0.0140 155.59)",
+          "oklch(26% 0.0140 155.59)",
+          "oklch(38% 0.0140 155.59)",
+          "oklch(49% 0.0140 155.59)",
+          "oklch(61% 0.0140 155.59)",
+          "oklch(72% 0.0140 155.59)",
+          "oklch(84% 0.0140 155.59)",
+          "oklch(95% 0.0140 155.59)"
+        ]
+      },
+      "danger": {
+        "role": "secondary",
+        "displayName": "Problem red",
+        "tonalRamp": [
+          "oklch(15% 0.1481 20.66)",
+          "oklch(26% 0.1481 20.66)",
+          "oklch(38% 0.1481 20.66)",
+          "oklch(49% 0.1481 20.66)",
+          "oklch(61% 0.1481 20.66)",
+          "oklch(72% 0.1481 20.66)",
+          "oklch(84% 0.1481 20.66)",
+          "oklch(95% 0.1481 20.66)"
+        ]
+      },
+      "danger-soft": {
+        "role": "secondary",
+        "displayName": "Removal wash",
+        "tonalRamp": [
+          "oklch(15% 0.0162 17.44)",
+          "oklch(26% 0.0162 17.44)",
+          "oklch(38% 0.0162 17.44)",
+          "oklch(49% 0.0162 17.44)",
+          "oklch(61% 0.0162 17.44)",
+          "oklch(72% 0.0162 17.44)",
+          "oklch(84% 0.0162 17.44)",
+          "oklch(95% 0.0162 17.44)"
+        ]
+      },
+      "attention": {
+        "role": "secondary",
+        "displayName": "Attention amber",
+        "tonalRamp": [
+          "oklch(15% 0.1016 68.95)",
+          "oklch(26% 0.1016 68.95)",
+          "oklch(38% 0.1016 68.95)",
+          "oklch(49% 0.1016 68.95)",
+          "oklch(61% 0.1016 68.95)",
+          "oklch(72% 0.1016 68.95)",
+          "oklch(84% 0.1016 68.95)",
+          "oklch(95% 0.1016 68.95)"
+        ]
+      },
+      "attention-soft": {
+        "role": "secondary",
+        "displayName": "Attention wash",
+        "tonalRamp": [
+          "oklch(15% 0.0208 79.10)",
+          "oklch(26% 0.0208 79.10)",
+          "oklch(38% 0.0208 79.10)",
+          "oklch(49% 0.0208 79.10)",
+          "oklch(61% 0.0208 79.10)",
+          "oklch(72% 0.0208 79.10)",
+          "oklch(84% 0.0208 79.10)",
+          "oklch(95% 0.0208 79.10)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Page headline",
+        "purpose": "A desktop page title; B and compact viewports use the source overrides."
+      },
+      "title": {
+        "displayName": "Task title",
+        "purpose": "Queue work titles and reader section headings."
+      },
+      "body": {
+        "displayName": "UI body",
+        "purpose": "Base interface text; messages use relaxed source leading."
+      },
+      "label": {
+        "displayName": "Control label",
+        "purpose": "Standard action controls."
+      },
+      "code": {
+        "displayName": "File difference",
+        "purpose": "Preserved whitespace and line-oriented file evidence."
+      }
+    },
+    "shadows": [
+      {
+        "name": "menu",
+        "value": "0 6px 24px rgb(28 38 57 / 13%), 0 1px 4px rgb(28 38 57 / 8%)",
+        "purpose": "Menus, toasts and the new-record prompt."
+      },
+      {
+        "name": "dialog",
+        "value": "0 24px 80px rgb(16 28 48 / 24%)",
+        "purpose": "Modal separation over a translucent scrim."
+      }
+    ],
+    "motion": [
+      {
+        "name": "fast",
+        "value": "120ms",
+        "purpose": "Control color, background and border feedback."
+      },
+      {
+        "name": "enter",
+        "value": "200ms",
+        "purpose": "Menu, dialog, toast and record arrival."
+      },
+      {
+        "name": "exit",
+        "value": "140ms",
+        "purpose": "Menu and dialog removal."
+      },
+      {
+        "name": "panel",
+        "value": "240ms",
+        "purpose": "A selected-detail appearance; B disables this animation."
+      },
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Shared transition and appearance easing."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "animation: none; transition: none; scroll-behavior: auto",
+        "purpose": "Applied under prefers-reduced-motion: reduce."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "wide-min",
+        "value": "1700px"
+      },
+      {
+        "name": "compact-max",
+        "value": "1200px"
+      },
+      {
+        "name": "single-panel-max",
+        "value": "1050px"
+      },
+      {
+        "name": "narrow-max",
+        "value": "800px"
+      },
+      {
+        "name": "phone-max",
+        "value": "600px"
+      }
+    ],
+    "layers": {
+      "tooltip": 40,
+      "menu": 60,
+      "overlay": 80,
+      "dialog": 90,
+      "toast": 100
+    },
+    "rampNote": "Tonal ramps are synthesized panel swatches, not additional preview CSS tokens or approved product palette steps."
+  },
+  "components": [
+    {
+      "name": "Primary action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Preview primary action; dark fill and visible keyboard focus.",
+      "html": "<button class=\"ds-primary\">生成预览草稿</button>",
+      "css": ".ds-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:34px;padding:6px 12px;border:1px solid var(--line,#dce1e8);border-radius:var(--radius-md,7px);background:var(--surface,#fff);color:var(--ink,#202630);font:550 12px/20px var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);cursor:pointer;transition:background-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),border-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1))}.ds-primary{background:var(--ink,#202630);color:var(--surface,#fff);border-color:var(--ink,#202630)}.ds-primary:hover:not(:disabled){background:#384456;border-color:#384456}.ds-primary:disabled{color:#697482;background:#e4e8ed;border-color:#e4e8ed;cursor:not-allowed}.ds-primary:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-primary{transition:none;animation:none}}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Bordered supporting action using the same control density.",
+      "html": "<button class=\"ds-secondary\">取消</button>",
+      "css": ".ds-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:34px;padding:6px 12px;border:1px solid var(--line,#dce1e8);border-radius:var(--radius-md,7px);background:var(--surface,#fff);color:var(--ink,#202630);font:550 12px/20px var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);cursor:pointer;transition:background-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),border-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1))}.ds-secondary:hover:not(:disabled){background:var(--surface-hover,#edf0f5);border-color:var(--line-strong,#a3adbb)}.ds-secondary:active:not(:disabled){background:var(--surface-hover,#edf0f5)}.ds-secondary:disabled{color:#79818c;background:#eceff3;cursor:not-allowed}.ds-secondary:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-secondary{transition:none;animation:none}}"
+    },
+    {
+      "name": "Labeled field",
+      "kind": "input",
+      "refersTo": "field",
+      "description": "A task-name field with visible label and source focus treatment.",
+      "html": "<label class=\"ds-field\">任务名称<input class=\"ds-input\" placeholder=\"这项工作要完成什么？\" /></label>",
+      "css": ".ds-field{display:flex;flex-direction:column;gap:7px;font:550 12px/1.55 var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);color:var(--ink,#202630)}.ds-input{border:1px solid var(--line-strong,#a3adbb);border-radius:var(--radius-md,7px);padding:9px 11px;background:var(--surface,#fff);color:var(--ink,#202630);font:400 13px/21px var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);min-width:0}.ds-input::placeholder{color:var(--muted,#596575)}.ds-input:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}"
+    },
+    {
+      "name": "Reader navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "Active reader tab indicated by ink text and an underline.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\" aria-label=\"工作记录\"><button class=\"ds-tab\" role=\"tab\" aria-selected=\"true\">对话</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">执行记录</button><button class=\"ds-tab\" role=\"tab\" aria-selected=\"false\">来源与保存</button></div>",
+      "css": ".ds-tabs{display:flex;gap:24px;min-height:43px;padding:0 24px;border-bottom:1px solid var(--line,#dce1e8);background:var(--surface,#fff)}.ds-tab{position:relative;border:0;background:none;color:var(--muted,#596575);font:400 12px/1.55 var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);padding:0;cursor:pointer;white-space:nowrap;transition:background-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),border-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1))}.ds-tab[aria-selected=true]{color:var(--ink,#202630);font-weight:600}.ds-tab[aria-selected=true]::after{content:'';position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--ink,#202630)}.ds-tab:active{background:var(--surface-hover,#edf0f5)}.ds-tab:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-tab{transition:none;animation:none}}"
+    },
+    {
+      "name": "Selected work row",
+      "kind": "custom",
+      "refersTo": "work-selected",
+      "description": "Compact excerpt of the queue selection treatment; full queue column layout remains in the preview source.",
+      "html": "<button class=\"ds-work\" aria-pressed=\"true\"><strong>修复来源归属</strong><span>林舟 · Codex · 等你审查</span></button>",
+      "css": ".ds-work{display:block;width:100%;text-align:left;min-height:64px;padding:8px 16px 11px;border:0;border-top:1px solid #b3c4ef;border-bottom:1px solid #c7d3ee;background:var(--selected-soft,#eef3ff);color:var(--ink,#202630);box-shadow:inset 1px 0 #b3c4ef,inset -1px 0 #b3c4ef;font-family:var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);cursor:pointer;transition:background-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),border-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1))}.ds-work strong{display:block;font-size:14px;line-height:22px;font-weight:600;overflow-wrap:anywhere}.ds-work span{display:block;margin-top:3px;font-size:11px;line-height:18px;color:var(--muted,#596575)}.ds-work:active{background:var(--surface-hover,#edf0f5)}.ds-work:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-work{transition:none;animation:none}}"
+    },
+    {
+      "name": "Context block",
+      "kind": "card",
+      "refersTo": "context-container",
+      "description": "Flat supporting context used inside handoff and project dialogs.",
+      "html": "<div class=\"ds-context\"><div><strong>协作工作台</strong><p>产品开发小组 · 3 位成员</p></div></div>",
+      "css": ".ds-context{display:flex;align-items:center;gap:12px;background:var(--surface-subtle,#f8f9fb);color:var(--ink,#202630);padding:15px;border-radius:var(--radius-md,7px);font:400 13px/1.55 var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif)}.ds-context p{display:block;margin:3px 0 0;font-size:11px;color:var(--muted,#596575)}"
+    },
+    {
+      "name": "Horizontal work option",
+      "kind": "custom",
+      "description": "B candidate chooser excerpt; selected paper surface and blue underline.",
+      "html": "<button class=\"ds-work-option\" aria-pressed=\"true\"><span>林舟 · Codex</span><strong>修复来源归属</strong></button>",
+      "css": ".ds-work-option{position:relative;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;gap:8px;min-width:0;width:270px;min-height:86px;padding:12px 20px;border:0;border-left:1px solid var(--line,#dce1e8);border-right:1px solid var(--line,#dce1e8);background:var(--surface,#fff);color:var(--ink,#202630);font-family:var(--font-ui, 'Collo Google Sans', 'Microsoft YaHei UI', 'PingFang SC', sans-serif);text-align:left;cursor:pointer;transition:background-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1)),border-color var(--motion-fast,120ms) var(--ease,cubic-bezier(.2,.8,.2,1))}.ds-work-option::after{content:'';position:absolute;left:20px;right:20px;bottom:0;height:2px;background:var(--selected,#315bd6)}.ds-work-option span{font-size:11px}.ds-work-option strong{font-size:13px;font-weight:550;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.ds-work-option:active{background:var(--surface-hover,#edf0f5)}.ds-work-option:focus-visible{outline:2px solid var(--selected,#315bd6);outline-offset:3px}@media(prefers-reduced-motion:reduce){.ds-work-option{transition:none;animation:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Work and its evidence",
+    "overview": "This is a descriptive record of the finished isolated A/B browser fixture in `design-explorations/workbench-20261026`, awaiting the user's visual selection. The phrase above summarizes the implemented contract; it is not a user-approved brand metaphor. These tokens govern this preview only. Neither candidate is an approved global style or a production migration.\n\nNeutral work surfaces, dark action controls and blue selection organize tasks and their supporting records. A exposes the complete filtered queue above the selected reader and diff. B puts a horizontal work chooser above a reader and evidence panel that fill the remaining height. They deliberately share visual primitives so the comparison concerns how work is organized.\n\nGoogle Sans, the supplied peanut graphic and one consistent icon family remain confirmed commitments. The preview uses Phosphor. Its synthetic data, comments, drafts and state simulations are not evidence of native-window behavior, backend integration or real restoration. The independent desktop product requirement remains intact.",
+    "keyCharacteristics": [
+      "Shared typography and state language across two different spatial candidates.",
+      "Reading surfaces and contextual evidence with restrained boundaries.",
+      "Visible selection, labeled statuses and explicit preview-only actions."
+    ],
+    "rules": [
+      {
+        "name": "The Labeled State Rule",
+        "body": "A state color accompanies an icon, label or diff symbol; color alone does not establish task progress, delivery or backup status.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reading Priority Rule",
+        "body": "Preserve the message and title hierarchy when adapting density. The preview's tiny ancillary labels are not a target body-text size.",
+        "section": "typography"
+      },
+      {
+        "name": "The Contextual Depth Rule",
+        "body": "Elevation identifies transient layers; it does not separate every task or message into a raised card.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep Google Sans, the supplied peanut graphic and Phosphor consistent within this preview.",
+      "**Do** compare A and B using the same synthetic information and action meanings.",
+      "**Do** show selection, keyboard focus and state through more than a color change.",
+      "**Do** keep task progress, attribution, delivery and storage facts distinguishable in visual hierarchy.",
+      "**Do** treat this document as provisional until the user selects a visual direction."
+    ],
+    "donts": [
+      "**Don't** promote these tokens or layouts into production routes before the selection gate.",
+      "**Don't** use the previously rejected warm reading-desk sample as an approved visual foundation.",
+      "**Don't** present a browser fixture as native desktop, connected collaboration or real recovery verification.",
+      "**Don't** infer Agent attribution or backup completion from proximity, color or a completed task."
+    ]
+  }
+}

@@ -1,0 +1,134 @@
+// Cross-runtime contract enums: pure 'as const' arrays + derived types that are
+// the single source of truth shared by the Convex backend, the Node daemon, and
+// the browser. PURE isomorphic data only — no Node or DOM APIs — so the Convex
+// runtime can import them.
+export * from "./agentStatus";
+export * from "./liveness";
+export * from "./hibernation";
+export * from "./openTasks";
+export * from "./pendingStatus";
+export * from "./daemonCommands";
+export * from "./sshAttach";
+export * from "./agentClients";
+export * from "./executionBinding";
+export * from "./modelOptions";
+export * from "./agentDefinitions";
+export * from "./workState";
+// The needs-input digest: the window, the wording and the row grouping, shared
+// by the Convex fold-up and the web bell so both name the same set.
+export * from "./idleDigest";
+// The Lock Screen Live Activity wire contract and the merge that produces it,
+// shared by Convex (the pusher) and the app (the local starter).
+export * from "./liveActivity";
+// Session unread: one predicate over (acknowledged_at, conversations.updated_at)
+// so web, mobile and the CLI light the same cards.
+export * from "./sessionRead";
+export * from "./loopState";
+export * from "./taskStats";
+export * from "./threadState";
+export * from "./subagentFleet";
+export * from "./apiErrorBanner";
+// Cloud placement: the one predicate the web composer and the Convex start
+// chokepoint share for "does this launch need a laptop to prepare the host".
+export * from "./cloudPlacement";
+export * from "./cloudPlacementProgress";
+// Cloud workspace mode (isolated worktree vs the host's shared checkout) and
+// the ONE occupancy rule Convex, the CLI and `cast hosts ls` apply to it.
+export * from "./cloudWorkspace";
+export * from "./localMirror";
+export * from "./cloudHostReport";
+export * from "./worktrees";
+export * from "./deviceName";
+export * from "./providerKeys";
+export * from "./cloudSessionSync";
+export * from "./cloudAgents";
+export * from "./providerKeyCrypto";
+export * from "./oauthCodePaste";
+export * from "./orgTemplateBind";
+export * from "./snippets";
+export * from "./featureExplainers";
+export * from "./castPlayer";
+export * from "./pageEdge";
+export * from "./pageAnchor";
+export * from "./pageAgent";
+export * from "./castMotion";
+export * from "./harnessHooks";
+export * from "./agentSwitch";
+export * from "./machineSwitch";
+export * from "./forkSeed";
+export * from "./teamFeatures";
+export * from "./stableContext";
+export * from "./vaultProtocol";
+export * from "./vaultMirror";
+export * from "./terminalStream";
+export * from "./callRoomKeys";
+export * from "./recordingAudio";
+export * from "./transcribeLanguage";
+export * from "./callPush";
+export * from "./transcriptChunk";
+export * from "./callLinks";
+// A call's recordings (LiveKit Egress files) and the one rule that finds the
+// file and offset showing a moment of the call; and guests, the people who
+// join from a link without an account. Shared by Convex, web, mobile and the
+// CLI's frame grab.
+export * from "./callRecordings";
+export * from "./callGuests";
+// The row a finished huddle leaves in its chat room or session: one formatter
+// for the digest markdown and the <huddle-summary> wire tag, one parser back.
+export * from "./huddleDigest";
+export * from "./convexErrors";
+// Without these two lines every consumer reinvents the capability vocabulary:
+// convex copied the constants, the web store reached in by relative path, and
+// the web UI and the CLI each declared their own scope and kind unions. Four
+// workarounds for one missing export.
+export * from "./capabilities";
+export * from "./capabilityResolver";
+// The fleet comparison — one row per capability, one cell per machine. Here for
+// the same reason: the CLI, the browser and Convex all render this grid, and
+// while it lived in the CLI the other two could only reimplement it.
+export * from "./fleetDiff";
+export * from "./capabilityScopes";
+export * from "./sanitizeText";
+// Machine-delivered message detection: web/mobile previews and the convex
+// send classifier must agree on what a human-typed message is.
+export * from "./machineMessages";
+export * from "./mcpRegistry";
+export * from "./usageLimits";
+// The connectable-apps catalog (the /capabilities Apps tab): Convex answers
+// connection state in this vocabulary and the web renders it, so both need the
+// one definition. Deep paths do not resolve past the exports map — barrel only.
+export * from "./appDescriptors";
+export * from "./githubAppInstallState";
+// The cross-entity review queue row — one shape for "what is waiting on a
+// human", fed by comment threads, page comments, and workflow gates alike.
+// The inbox projection: the bucket alphabet, the ONE placement function the
+// Convex overlay and the CLI inbox both call, the time-flip stamps and the
+// order-independent digest every client compares against (sync-convergence C3, C8).
+export * from "./inboxProjection";
+export * from "./appSurfaces";
+// How a pull request is named: one parser for the reference forms people type
+// and one builder for the codecast page link, shared by the CLI, Convex and web.
+export * from "./conversationFields";
+export * from "./prRefs";
+// The `--on <event>` vocabulary: which events a trigger can wait for, the
+// filter each name arms, and the labels the web renders. Shared because the
+// CLI and the two web trigger pages each held a copy, and they had drifted.
+export * from "./triggerEvents";
+export * from "./fence";
+export * from "./triggerPrecheck";
+export * from "./triggerLifecycle";
+// Not re-exported here, imported by path: orgProposal (the fenced block
+// `cast org init` decisions carry) and browserPaneOffer (an agent offering a
+// page as a pane). Both sit off the CLI boot graph on purpose
+// (bench/bootGraph.guard.test.ts): the barrel is on every entry's static
+// graph, so a re-export here is paid by `cast --help`.
+
+export { SESSION_SNOOZE_CHOICES, sessionSnoozeUntil, type SessionSnoozeKey } from "./sessionSnooze";
+export * from "./unattended";
+export * from "./handoffPrompt";
+export * from "./browserExtension";
+export * from "./agentToolSetup";
+export type { AskResult } from "./sessionAsk";
+export * from "./systemResources";
+export * from "./resourceOffloadPolicy";
+export * from "./testArtifacts";

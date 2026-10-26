@@ -1,0 +1,415 @@
+// The writer of the org log (docs/architecture/org-staffing.md S21). Every
+// change to the organization goes through a few cores, and each core reports
+// what it wrote here, inside its own transaction, so a change and its log row
+// land together or not at all.
+//
+// One gesture is one row however many cores it ran through: the outermost
+// core opens the row (`withOrgChange`), and what a nested core reports
+// (`noteOrgChange`) folds into it (contracts/orgChange `mergeFact`). A core
+// called on its own, with no row open, writes a row of its own, so no door
+// can forget the log. The open row and the open batch ride the mutation's
+// ctx under a symbol.
+
+import type { Id } from "../_generated/dataModel";
+import {
+  canonical,
+  mergeFact,
+  movedFields,
+  rowChangedSomething,
+  rowRoleIds,
+  type OrgChangeFact,
+  type OrgLandedRow,
+  type OrgLogDoor,
+  type OrgLogFields,
+  type OrgLogGesture,
+  type OrgLogKind,
+  type OrgLogSubject,
+  type OrgOpenRow,
+  type OrgPartyRef,
+  type OrgSessionParent,
+} from "@codecast/shared/contracts/orgChange";
+import { personName } from "../sessionOwnership";
+import { computeWorkspaceKey } from "./access";
+import { capsFor, trustOf } from "./orgCaps";
+import { listSessionOwnerIds, ownerRowsOf, ownerSetOf, type OwnerRowSnapshot } from "../sessionOwners";
+
+type Ctx = { db: any };
+
+/** ACCESS and ROUTING of a log row, written once (CLAUDE.md "Workspace access
+ *  vs routing"): `workspace` is the key readers are matched against, `team_id`
+ *  only says which team's surfaces the entry flows to. */
+export type OrgLogWhere = { workspace: string; team_id?: Id<"teams"> };
+
+export type OrgBatchHead = {
+  door: OrgLogDoor;
+  gesture: OrgLogGesture;
+  proposal?: { id: Id<"org_proposals">; short_id: string; title?: string };
+  ask?: { index: number; title: string };
+  /** Names a gesture that spans transactions (an accept all), so each finds the same batch. */
+  key?: string;
+  undoes?: Id<"org_change_batches">;
+};
+
+type State = {
+  head?: OrgBatchHead;
+  batchId?: Id<"org_change_batches">;
+  open?: OrgOpenRow & { undoes?: Id<"org_changes">; where?: OrgLogWhere };
+  seq: Map<string, number>;
+  writes?: Map<string, OrgWrite>;
+  records?: Map<string, any>;
+  /** Each touched session's owners before this row's first owner write. */
+  owners?: Map<string, { set: string[]; rows: OwnerRowSnapshot[] }>;
+  /** The rows written since `takeOrgRows` last read them; absent until a door asks. */
+  landed?: OrgLandedRow[];
+};
+
+export type OrgWrite = { table: string; id: string; before: Record<string, any>; after: Record<string, any> };
+
+const FIELDS: Record<string, string[]> = {
+  org_roles: ["status", "name", "handle", "avatar", "charter", "tenure", "review_backend", "reports_to", "scope", "caps", "trust", "anchor_id", "authority"],
+  conversations: ["org_role_id", "standing_role_id", "anchor_id", "acting_user_id", "title", "title_is_custom", "seat_previous", "persistent", "status", "inbox_pinned_at"],
+  anchors: ["org_role_id", "status"],
+  users: ["bot_kind"],
+  // A routine's status (a seat starts it, a retire stops it), and what a role tunes about its own check (org-staffing.md S38).
+  agent_tasks: ["status", "interval_ms", "precheck", "role_focus", "tune_why", "tuned_at"],
+  tasks: ["status", "status_id", "assignee", "project_id", "closed_at", "review_verdict", "execution_status"],
+  plans: ["status", "project_id", "owner_role_id"],
+  projects: ["status", "description", "owner_role_id", "goal", "success_metrics", "priority", "non_goals", "risks", "budget"],
+  docs: ["project_id"],
+  // A goal (I1, revised): its status (a create reads from nothing to proposed; an undone create is cancelled, never erased), who drives it, the projects that carry it, the goal it feeds, its metrics with the values a dropped metric took with it, and its intent record (I5).
+  initiatives: ["status", "owner", "project_ids", "parent_initiative_id", "metrics", "scoreboard", "score_history", "why", "done_when", "milestones", "questions", "decisions", "sources"],
+  // An accepted upgrade waits on the instance row for the host step (org-hire.md H9); until then the acceptance is the one thing an undo can withdraw.
+  org_template_instances: ["pending_upgrade"],
+};
+
+// `keys` names fields outside FIELDS that a caller records itself (a session's owners).
+function recordWrite(s: State, table: string, id: string, before: any, after: any, keys?: string[]) {
+  if (!s.writes || !FIELDS[table]) return;
+  const prior = s.writes.get(id) ?? { table, id, before: {}, after: {} };
+  // An insert reads from the tombstone the undo will leave: a retired role, a done project, a cancelled goal (with nobody driving it and no projects), never an erasure.
+  keys ??= before ? FIELDS[table] : table === "anchors" ? ["status", "org_role_id"] : table === "conversations" ? ["org_role_id", "standing_role_id", "anchor_id", "acting_user_id"] : table === "org_roles" || table === "projects" || table === "agent_tasks" ? ["status"] : table === "initiatives" ? ["status", "owner", "project_ids"] : [];
+  for (const key of keys) {
+    const was = before ? before[key] ?? null : table === "org_roles" ? "retired" : table === "projects" ? "done" : table === "anchors" ? key === "status" ? "decommissioned" : null : table === "conversations" ? null : table === "initiatives" ? key === "status" ? "cancelled" : key === "project_ids" ? [] : null : "cancelled";
+    const now = after?.[key] ?? null;
+    if (canonical(was) === canonical(now)) continue;
+    if (!(key in prior.before)) prior.before[key] = was;
+    prior.after[key] = now;
+  }
+  if (Object.keys(prior.after).length) s.writes.set(id, prior);
+}
+
+// A session's owners live in session_owners rows, not on the conversation, so
+// the conversation's write carries them as `owner_user_ids`: the set before
+// this row's first owner write, and the set when the row is written. The rows
+// as they were ride along in `before.owner_rows`, never compared, so an undo
+// puts each back as it was (who added it, and whether it was acknowledged).
+async function noteOwnersBefore(db: any, s: State, conversationId: any) {
+  if (!s.owners || !conversationId || s.owners.has(String(conversationId))) return;
+  s.owners.set(String(conversationId), { set: await ownerSetOf({ db }, conversationId), rows: await ownerRowsOf({ db }, conversationId) });
+}
+
+async function recordOwners(db: any, s: State) {
+  for (const [id, before] of s.owners ?? []) {
+    recordWrite(s, "conversations", id, { owner_user_ids: before.set }, { owner_user_ids: await ownerSetOf({ db }, id as Id<"conversations">) }, ["owner_user_ids"]);
+    const write = s.writes!.get(id);
+    if (write && "owner_user_ids" in write.after) write.before.owner_rows ??= before.rows;
+  }
+}
+
+function recordingDb(db: any, s: State): any {
+  const cache = s.records = new Map<string, any>();
+  const tableOf = (id: string) => Object.keys(FIELDS).find((table) => db.normalizeId(table, id));
+  return new Proxy(db, { get(target, prop) {
+    if (prop === "delete") return async (...args: any[]) => {
+      const id = args.at(-1);
+      if (target.normalizeId("session_owners", id)) await noteOwnersBefore(target, s, (await target.get(id))?.conversation_id);
+      return target.delete(...args);
+    };
+    if (prop === "get") return async (id: string) => {
+      const doc = await target.get(id);
+      cache.set(id, doc);
+      return doc;
+    };
+    if (prop === "insert") return async (table: string, doc: any) => {
+      if (table === "session_owners") await noteOwnersBefore(target, s, doc.conversation_id);
+      const id = await target.insert(table, doc);
+      cache.set(id, { ...doc, _id: id });
+      recordWrite(s, table, id, null, doc);
+      return id;
+    };
+    if (prop === "patch" || prop === "replace") return async (id: string, value: any) => {
+      const table = tableOf(id);
+      if (table === "conversations" && "owner_user_id" in value) await noteOwnersBefore(target, s, id);
+      const tracked = table && (prop === "replace" || FIELDS[table].some((key) => key in value));
+      const before = tracked ? cache.get(id) ?? await target.get(id) : null;
+      await target[prop](id, value);
+      const after = prop === "patch" ? { ...(before ?? cache.get(id)), ...value } : value;
+      if (before || cache.has(id)) cache.set(id, after);
+      if (table && tracked) recordWrite(s, table, id, before, after);
+    };
+    return typeof target[prop] === "function" ? target[prop].bind(target) : target[prop];
+  }});
+}
+
+const LOG = Symbol.for("codecast.orgChangeLog");
+const stateOf = (ctx: any): State => (ctx[LOG] ??= { seq: new Map() });
+
+/** A role's boundary is its access key: a team role is the team's, a personal role its owner's. */
+export function whereOfRole(role: { team_id?: any; scope_user_id?: any; host_user_id?: any }): OrgLogWhere {
+  return role.team_id ? { workspace: `team:${role.team_id}`, team_id: role.team_id } : { workspace: `user:${role.scope_user_id ?? role.host_user_id}` };
+}
+/** A boundary the apply core carries (orgInit `Boundary`). */
+export function whereOfBoundary(boundary: { team_id?: any; scope_user_id?: any }, userId: Id<"users">): OrgLogWhere {
+  return boundary.team_id ? { workspace: `team:${boundary.team_id}`, team_id: boundary.team_id } : { workspace: `user:${boundary.scope_user_id ?? userId}` };
+}
+/** A session's log rows are readable where the session is: the team when it
+ *  is visible to its team, else its owner alone (the one writer of that rule). */
+export function whereOfSession(conversation: { user_id: any; team_id?: any; is_private?: boolean; auto_shared?: boolean; team_visibility?: string }): OrgLogWhere {
+  const workspace = computeWorkspaceKey(conversation, conversation);
+  return { workspace, team_id: workspace.startsWith("team:") ? conversation.team_id : undefined };
+}
+/** A row that stores its own key (a project, a plan, a task, an initiative). */
+export function whereOfRecord(record: { workspace?: string; team_id?: any; user_id?: any }): OrgLogWhere {
+  return { workspace: record.workspace ?? (record.team_id ? `team:${record.team_id}` : `user:${record.user_id}`), team_id: record.team_id ?? undefined };
+}
+
+// ── Subjects and labels ──────────────────────────────────────────────────────
+
+export const roleSubject = (role: any): OrgLogSubject => ({ type: "role", id: String(role._id), short_id: role.short_id, label: `@${role.handle}` });
+export const sessionSubject = (c: any): OrgLogSubject => { const short = c.short_id ?? String(c._id).slice(0, 7); return { type: "session", id: String(c._id), short_id: short, label: short }; };
+export const recordSubject = (type: "project" | "plan" | "task" | "initiative", r: any): OrgLogSubject => ({ type, id: String(r._id), short_id: r.short_id, label: r.title ?? r.short_id ?? String(r._id) });
+
+export const partyRef = (p: any): OrgPartyRef | undefined => !p ? undefined : p.kind === "role" ? { kind: "role", role_id: String(p.role_id) } : { kind: "user", user_id: String(p.user_id) };
+export const scopeRef = (scope: any) => ({ project_ids: (scope?.project_ids ?? []).map(String), plan_ids: (scope?.plan_ids ?? []).map(String) });
+
+/** The name of each id as the product shows it now. A row keeps these so its
+ *  sentence still reads after the thing is renamed or gone. */
+export async function labelsOf(ctx: Ctx, ids: Array<string | null | undefined | false>, read: (id: any) => Promise<any> = (id) => ctx.db.get(id)): Promise<Record<string, string>> {
+  const out: Record<string, string> = {};
+  for (const id of new Set(ids.filter(Boolean) as string[])) {
+    let doc: any = null;
+    try { doc = await read(id); } catch { doc = null; }
+    if (!doc) continue;
+    out[id] = doc.handle && doc.reports_to ? `@${doc.handle}`
+      : doc.email !== undefined || doc.github_username !== undefined ? personName(doc)
+      : doc.goal !== undefined && doc.short_id ? doc.short_id
+      : doc.title ?? doc.short_id ?? doc.name ?? id;
+  }
+  return out;
+}
+
+/** Who a session reports to, as the log stores it. */
+export async function sessionParent(ctx: Ctx, conversation: { _id: any; org_role_id?: any }): Promise<OrgSessionParent> {
+  const owners = (await listSessionOwnerIds(ctx as any, conversation._id)).map(String);
+  return { owner_user_ids: owners, ...(conversation.org_role_id ? { org_role_id: String(conversation.org_role_id) } : {}) };
+}
+
+// ── The batch: what a person did in one gesture ──────────────────────────────
+
+/** A door names its gesture before it calls a core. Rows written in this
+ *  transaction then land in one entry. The batch row is created with its
+ *  first row, so a gesture that changed nothing leaves no entry. */
+export function openOrgBatch(ctx: any, head: OrgBatchHead): void {
+  const s = stateOf(ctx);
+  s.head = head;
+  s.batchId = undefined;
+}
+
+/** The batch this transaction is writing into, when a row has landed. */
+export const orgBatchHead = (ctx: any): OrgBatchHead | undefined => stateOf(ctx).head;
+
+export const openBatchId = (ctx: any): Id<"org_change_batches"> | undefined => stateOf(ctx).batchId;
+
+async function batchFor(ctx: any, userId: Id<"users">, where: OrgLogWhere, fallback: { door: OrgLogDoor; gesture: OrgLogGesture }, now: number): Promise<Id<"org_change_batches">> {
+  const s = stateOf(ctx);
+  if (s.batchId) {
+    const batch = await ctx.db.get(s.batchId);
+    if (batch?.undone_by) throw new Error("This organization gesture has already been undone");
+    if (batch?.workspace === where.workspace) return s.batchId;
+    s.batchId = undefined;
+  }
+  const head: OrgBatchHead = s.head ?? fallback;
+  if (head.key) {
+    const found = await ctx.db.query("org_change_batches").withIndex("by_key", (q: any) => q.eq("workspace", where.workspace).eq("key", head.key)).first();
+    if (found?.undone_by) throw new Error("This organization gesture has already been undone");
+    if (found) return (s.batchId = found._id);
+  }
+  s.batchId = await ctx.db.insert("org_change_batches", {
+    user_id: userId,
+    team_id: where.team_id,
+    workspace: where.workspace,
+    door: head.door,
+    gesture: head.gesture,
+    proposal: head.proposal,
+    ask: head.ask,
+    key: head.key,
+    seq: 0,
+    row_count: 0,
+    kinds: {},
+    role_ids: [],
+    undoes: head.undoes,
+    created_at: now,
+    updated_at: now,
+  });
+  return s.batchId!;
+}
+
+async function nextSeq(ctx: any, workspace: string): Promise<number> {
+  const s = stateOf(ctx);
+  let last = s.seq.get(workspace);
+  if (last === undefined) {
+    const newest = await ctx.db.query("org_changes").withIndex("by_workspace_seq", (q: any) => q.eq("workspace", workspace)).order("desc").first();
+    last = newest?.seq ?? 0;
+  }
+  s.seq.set(workspace, last! + 1);
+  return last! + 1;
+}
+
+async function writeRow(ctx: any, userId: Id<"users">, where: OrgLogWhere, row: OrgOpenRow & { undoes?: Id<"org_changes"> }, fallback: { door: OrgLogDoor; gesture: OrgLogGesture }): Promise<Id<"org_changes"> | null> {
+  if (!row.subject || !row.kind || !rowChangedSomething(row)) return null;
+  const now = Date.now();
+  const batch = await batchFor(ctx, userId, where, fallback, now);
+  const seq = await nextSeq(ctx, where.workspace);
+  const role_ids = rowRoleIds(row);
+  const id: Id<"org_changes"> = await ctx.db.insert("org_changes", {
+    batch,
+    user_id: userId,
+    team_id: where.team_id,
+    workspace: where.workspace,
+    seq,
+    kind: row.kind,
+    subject: row.subject,
+    before: row.before,
+    after: row.after,
+    effects: row.effects,
+    labels: row.labels,
+    role_ids,
+    undoes: row.undoes,
+    writes: [...(stateOf(ctx).writes?.values() ?? [])].filter((w) => canonical(w.before) !== canonical(w.after)),
+    created_at: now,
+  });
+  stateOf(ctx).landed?.push({ kind: row.kind, subject: row.subject, before: row.before, after: row.after, labels: row.labels, batch: String(batch) });
+  if (row.undoes) await ctx.db.patch(row.undoes, { undone_by: id });
+  const head = await ctx.db.get(batch);
+  await ctx.db.patch(batch, {
+    seq,
+    row_count: (head?.row_count ?? 0) + 1,
+    kinds: { ...(head?.kinds ?? {}), [row.kind]: (head?.kinds?.[row.kind] ?? 0) + 1 },
+    role_ids: [...new Set([...(head?.role_ids ?? []), ...role_ids])],
+    lead_row_id: head?.lead_row_id ?? id,
+    updated_at: now,
+  });
+  return id;
+}
+
+/** The rows this transaction wrote since the last call, as the log stored
+ *  them. The first call arms the list. A door that stamps its own record with
+ *  what an apply moved (a proposal's accept) reads them here, so it never
+ *  reads the log back or guesses which rows of a shared batch are its own. */
+export function takeOrgRows(ctx: any): OrgLandedRow[] {
+  const s = stateOf(ctx);
+  const rows = s.landed ?? [];
+  s.landed = [];
+  return rows;
+}
+
+// ── What a core calls ────────────────────────────────────────────────────────
+
+export type OrgChangeHead = {
+  /** Absent when the core learns it from what moved (a role update). */
+  kind?: OrgLogKind;
+  /** Absent for a hire: the role does not exist yet, and the first fact names it. */
+  subject?: OrgLogSubject;
+  /** The door and gesture when no door opened a batch first. */
+  door?: OrgLogDoor;
+  gesture?: OrgLogGesture;
+  /** The logged row this change is the inverse of (undo, redo). */
+  undoes?: Id<"org_changes">;
+};
+
+const fallbackOf = (h: { door?: OrgLogDoor; gesture?: OrgLogGesture }) => ({ door: h.door ?? "settings" as const, gesture: h.gesture ?? "save" as const });
+
+/**
+ * Run a change as ONE row. The outermost call opens the row and writes it
+ * when `run` returns; a call made while a row is open only runs, and what its
+ * cores report folds into the open row. A throw writes nothing (the
+ * transaction is discarded with it) and closes the row.
+ */
+export async function withOrgChange<T>(ctx: any, userId: Id<"users">, head: OrgChangeHead, run: () => Promise<T>): Promise<T> {
+  const s = stateOf(ctx);
+  if (s.open) return run();
+  const db = ctx.db;
+  s.writes = new Map();
+  s.owners = new Map();
+  ctx.db = recordingDb(db, s);
+  s.open = { kind: head.kind, subject: head.subject, before: {}, after: {}, effects: {}, labels: {}, undoes: head.undoes };
+  try {
+    const result = await run();
+    await recordOwners(db, s);
+    // The row lands where its first fact said: the boundary of what changed.
+    if (s.open.where) await writeRow(ctx, userId, s.open.where, s.open, fallbackOf(head));
+    return result;
+  } finally {
+    ctx.db = db;
+    s.writes = undefined;
+    s.owners = undefined;
+    s.records = undefined;
+    s.open = undefined;
+  }
+}
+
+/** A core reports what it just wrote: folded into the open row, or a row of its own. */
+export async function noteOrgChange(ctx: any, userId: Id<"users">, where: OrgLogWhere, fact: OrgChangeFact & { door?: OrgLogDoor; gesture?: OrgLogGesture }): Promise<void> {
+  const s = stateOf(ctx);
+  const { door, gesture, ...rest } = fact;
+  if (s.open) { s.open = { ...mergeFact(s.open, rest), undoes: s.open.undoes, where: s.open.where ?? where }; return; }
+  await writeRow(ctx, userId, where, mergeFact({ kind: fact.kind, before: {}, after: {}, effects: {}, labels: {} }, rest), fallbackOf({ door, gesture }));
+}
+
+/** True while a row is open, so a core can tell it runs inside another core's gesture. */
+export function rememberOrgRecord(ctx: any, row: any): void {
+  const records = stateOf(ctx).records;
+  if (row && records && !records.has(String(row._id))) records.set(String(row._id), row);
+}
+
+export const orgChangeIsOpen = (ctx: any): boolean => !!stateOf(ctx).open;
+
+// ── A role as the log reads it ───────────────────────────────────────────────
+
+/** Every field of a role a change can move, in the log's shape. A core reads
+ *  it before and after its write and reports `movedFields` of the two; the
+ *  undo reads it to see whether a row's fields still stand. */
+export function roleLogFields(role: any): OrgLogFields {
+  return {
+    status: role.status ?? null,
+    name: role.name,
+    handle: role.handle,
+    avatar: role.avatar ?? null,
+    charter: role.charter ?? null,
+    tenure: role.tenure ?? null,
+    review_backend: role.review_backend ?? null,
+    reports_to: partyRef(role.reports_to),
+    scope: scopeRef(role.scope),
+    caps: capsFor(role),
+    trust: trustOf(role),
+    authority: role.authority ?? null,
+  };
+}
+
+/** The ids a role's fields mention, for `labelsOf`. */
+export function roleFieldIds(f: OrgLogFields): string[] {
+  return [...(f.scope?.project_ids ?? []), ...(f.scope?.plan_ids ?? []), ...(f.reports_to ? [f.reports_to.kind === "role" ? f.reports_to.role_id : f.reports_to.user_id] : [])];
+}
+
+/** A role core reports its write: the role as it was (null for a hire) and as it is. */
+export async function noteRoleChange(ctx: any, userId: Id<"users">, kind: OrgLogKind, was: any | null, now: any, extra: Pick<OrgChangeFact, "effects"> & { door?: OrgLogDoor; gesture?: OrgLogGesture; label_ids?: string[] } = {}): Promise<void> {
+  const { label_ids = [], ...rest } = extra;
+  const moved = movedFields(was ? roleLogFields(was) : { status: null }, roleLogFields(now));
+  await noteOrgChange(ctx, userId, whereOfRole(now), {
+    kind,
+    subject: roleSubject(now),
+    ...moved,
+    labels: await labelsOf(ctx, [String(now._id), ...roleFieldIds(moved.before), ...roleFieldIds(moved.after), ...label_ids]),
+    ...rest,
+  });
+}

@@ -1,0 +1,98 @@
+import { useEffect, useState } from 'react';
+import { AppState } from 'react-native';
+import { useSyncCore } from '@codecast/web/hooks/useSyncCore';
+import { usePendingMessageCoverage } from '@codecast/web/hooks/usePendingMessageCoverage';
+import { useAdoptTimezone } from '@codecast/web/hooks/useAdoptTimezone';
+import { useSessionCommandResults } from '@codecast/web/hooks/useSessionCommands';
+import { useSyncDevices } from '@codecast/web/hooks/useSyncDevices';
+import { useRecentProjectsFeed } from '@codecast/web/hooks/useRecentProjectsFeed';
+import { useSyncTriggers } from '@codecast/web/hooks/useSyncTriggers';
+import { useSyncTeams } from '@codecast/web/hooks/useSyncTeams';
+import { useSyncTeamMembers } from '@codecast/web/hooks/useSyncTeamMembers';
+import { useChatChannelsSync } from '@codecast/web/hooks/useChatSync';
+import { useCallBaseFeeds } from '@codecast/web/hooks/useCallBaseFeeds';
+import { useInboxStore } from '@codecast/web/store/inboxStore';
+import { activeTeamIdOf } from '@codecast/web/lib/activeTeam';
+import { useSyncWorkspaceData } from '@/hooks/useSyncWorkspaceData';
+import { emitSyncWake } from '@codecast/web/hooks/syncWake';
+import { flushPersistence, loadSplitRows, persistSplitRows } from '@codecast/web/store/idbCache';
+import { setSplitPersistence } from '@codecast/web/hooks/useSplitQuery';
+import { bootMark } from '@/lib/bootProfile';
+
+// The split inbox queries keep their rows in the SQLite cache across launches
+// (hooks/useSplitQuery), so a cold start rebuilds the inbox from disk instead
+// of downloading and hashing the whole list again.
+setSplitPersistence({ load: loadSplitRows, save: persistSplitRows });
+
+// Hosts the inbox store's server-sync hooks OUTSIDE any screen. The live
+// listInboxSessions subscription re-renders whichever component holds it on
+// every server push, and message streaming across a busy team makes those
+// pushes near-continuous. Parked inside InboxScreen (its old home) each push
+// re-rendered the entire session list — a full core burned on an idle phone.
+// Here a push re-renders only this null component; screens read the store
+// through wake signatures and wake only on structural change.
+//
+// The mount set is useSyncCore — the SAME feeder profile web's DashboardLayout
+// mounts (sync-convergence C5, feeder parity), so the phone's replica is fed
+// by every channel the desktop's is: live window, liveness overlay, recovery
+// probes, team feeders, the sync-log applier, session decisions, labels.
+// Screens must never host sync hooks (syncCoreParity guard).
+//
+// AppState is this platform's wake source: backgrounding pauses every sync
+// timer for free (RN freezes them), and the "active" transition emits ONE
+// catch-up pass on the syncWake bus — the reconcile nonce and the recovery
+// controllers listen there. This replaces the document-gated listener that
+// never re-ticked on iOS (no DOM visibility events).
+export function StoreSyncBridge() {
+  // Feeders must not run on the first frame: useSyncCore mounts every live
+  // query at once and would steal the JS thread from painting the cached
+  // inbox. Arm after commit so first content paint wins.
+  const [armed, setArmed] = useState(false);
+  useEffect(() => { setArmed(true); }, []);
+  if (!armed) return null;
+  return <StoreSyncBridgeInner />;
+}
+
+function StoreSyncBridgeInner() {
+  useSyncCore('mobile');
+  // Settles the sends the server holds and fails the ones it refused, every
+  // minute and on wake, as web's DashboardSyncEffects does for each window.
+  // A send the server consumes without a transcript row (an approval's answer
+  // in a hosted conversation) has no echo to retire its bubble, so without
+  // this pass its conversation would read as working for good.
+  usePendingMessageCoverage();
+  // A profile with no time zone takes this phone's, as web's DashboardLayout
+  // does for a browser: the assistant reads it to place "8am" on the
+  // person's clock, so a phone-only account must not be left on UTC.
+  useAdoptTimezone();
+  // Settles the daemon commands this phone asked for (restart, device move),
+  // as web's DashboardLayout does for each window.
+  useSessionCommandResults();
+  // What the inbox and the New Session sheet draw beyond sessions: the machine
+  // roster, my recent folders and my triggers. Fed here, ahead of any screen,
+  // so the sheet opens with its machines and folders already in the store.
+  useSyncDevices();
+  useRecentProjectsFeed();
+  useSyncTriggers();
+  // Chat and calls draw from these, so they are fed here, ahead of any
+  // screen: the Chat tab, a channel and a huddle open on the team's rooms,
+  // people and unread already in the store (the same feeders web mounts).
+  useSyncTeams();
+  useSyncTeamMembers(useInboxStore(activeTeamIdOf));
+  useChatChannelsSync();
+  useCallBaseFeeds();
+  // Teams, roster, notifications, tasks, plans, docs, projects and org roles.
+  useSyncWorkspaceData();
+  useEffect(() => { bootMark("sync-armed"); }, []);
+  // eslint-disable-next-line no-restricted-syntax -- platform wake-source wiring
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') emitSyncWake();
+      // Scheduled cache writes (idbCache.native) ride a short delay; iOS may
+      // suspend or kill a backgrounded app at any moment, so land them now.
+      else void flushPersistence();
+    });
+    return () => sub.remove();
+  }, []);
+  return null;
+}

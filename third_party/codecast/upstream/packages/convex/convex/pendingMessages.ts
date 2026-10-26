@@ -1,0 +1,2451 @@
+import { formatIdle, formatShare, formatTokens, wakeCost, wakeFieldsOf } from "./wakeCost";
+import { noteWriteCause } from "./lifecycleEvents";
+import type { RegisteredMutation } from "convex/server";
+import { mutation, query, internalMutation, internalQuery } from "./functions";
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { verifyApiToken } from "./apiTokens";
+import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { HOSTED_IMAGE_REFUSAL, HOSTED_INPUT_MAX_CHARS, type WakeCause } from "@codecast/shared/contracts/assistant";
+import { findConversationByAnyRef, findConversationByAnyRefWhere } from "./conversationSessionLookup";
+import { checkConversationAccess } from "./privacy";
+import { hasGrantedSendAccess } from "./collab";
+import { ackAssignmentOnEngage, addSessionOwnerRow, conversationHasHumanStarter, listSessionOwnerIds, syncPrimaryOwnerCache } from "./sessionOwners";
+import { requireUser } from "./lib/auth";
+import { runLocalCommand } from "./localFirstCommands";
+import { insertEnqueuedPendingMessage, releaseQueuedRows, reviveConversationOnDelivery } from "./pendingMessageWrites";
+import { clearedThreadStateFields, formatUserMessage, hasThreadState, HEARTBEAT_ALIVE_MS, isHostedAgentType, isReviveClientId, isStashHidden, SETTLE_VERDICT_STATUSES, formatSessionMessage } from "@codecast/shared/contracts";
+import { autoRecoveryEnabled, listOnlineDevices } from "./ccAccountsShared";
+import { resolveOwnerDeviceView } from "./devices";
+import {
+  messagesCommandCoverageTarget,
+} from "./messageViewContracts";
+import {
+  allocateFencedDeliveryMetadata,
+  cancelFencedDeliveriesOnKill,
+  isFencedPendingMessage,
+  legacyConversationAcceptsDaemonWork,
+} from "./executionBindings";
+import { requestRemoteWake } from "./cloud";
+import { hostedInputWaits } from "./assistant/input";
+import { isConversationSafetyBlocked, type ConversationSafetyState } from "./conversationSafety";
+import { workspaceHasFeature } from "./lib/teamFeatureGuard";
+import { countersFor } from "./lib/orgCaps";
+import { liveRolesByHandle } from "./lib/orgAccess";
+import { byQueueOrder, isWaitingInQueue, queueAtBefore, queueOrder } from "./lib/sessionQueue";
+import { formatJointMessage, jointPartsOf, parseJointMessage } from "@codecast/shared/contracts/jointMessage";
+
+export {
+  MESSAGES_VIEW_CONTRACT_ID,
+  messagesCommandCoverageTarget,
+  messagesGrantKey,
+  messagesViewKey,
+} from "./messageViewContracts";
+
+/** One authorization rule for runner, assigned/team collaborators, and grants. */
+export async function canSendProductMessage(
+  ctx: { db: any },
+  userId: Id<"users">,
+  conversation: any,
+): Promise<boolean> {
+  const access = await checkConversationAccess(ctx, userId, conversation);
+  // A hosted conversation runs its owner's connectors and spends its owner's
+  // wallet on every turn, so only its owner may give it input, whoever can
+  // read it.
+  if (isHostedAgentType(conversation.agent_type)) return access === "owner";
+  if (access === "owner" || access === "team") return true;
+  return access === "shared"
+    && await hasGrantedSendAccess(ctx, conversation._id, userId);
+}
+
+function sameOptionalIds(left: unknown[] | undefined, right: unknown[] | undefined): boolean {
+  if (left === undefined || right === undefined) return left === right;
+  return left.length === right.length
+    && left.every((value, index) => String(value) === String(right[index]));
+}
+
+/** Exact intent comparison before legacy client-id dedupe may be trusted. */
+export function pendingMessageMatchesProductIntent(
+  message: any,
+  conversation: any,
+  userId: Id<"users">,
+  intent: {
+    content: string;
+    imageStorageIds?: Id<"_storage">[];
+    clientId: string;
+  },
+): boolean {
+  return String(message.conversation_id) === String(conversation._id)
+    && String(message.from_user_id) === String(userId)
+    && String(message.owner_user_id) === String(conversation.user_id)
+    && message.content === intent.content
+    && message.client_id === intent.clientId
+    && message.image_storage_id === undefined
+    && sameOptionalIds(message.image_storage_ids, intent.imageStorageIds)
+    && message.from_conversation_id === undefined
+    && message.origin === undefined
+    && message.resend_of_delivery_id === undefined;
+}
+
+export async function getAuthenticatedUserId(
+  ctx: { db: any },
+  apiToken?: string
+): Promise<Id<"users"> | null> {
+  const sessionUserId = await getAuthUserId(ctx as any);
+  if (sessionUserId) {
+    return sessionUserId;
+  }
+
+  if (apiToken) {
+    const result = await verifyApiToken(ctx, apiToken);
+    if (result) {
+      return result.userId;
+    }
+  }
+
+  return null;
+}
+
+// Interactive-prompt / poll answers (tagged __cc_poll, mirrors the daemon's parsePollMessage):
+// keystroke selections (keys/steps) and free-text answers that decline the menu and type at
+// the prompt (text). These are fire-and-forget — a successful inject IS their delivery, so the
+// content-matched ack in addMessages is bypassed and re-injecting them on the stale-injected
+// reset is suppressed. Re-injecting a keystroke poll re-sends menu keys and mis-navigates the
+// agent's prompts; re-injecting a text poll re-declines and re-types a duplicate answer. (A
+// text poll's typed answer DOES echo to the JSONL, unlike a keystroke poll, but the ack still
+// can't match it — the stored content is the JSON envelope, not the typed prose.)
+export function isControlMessage(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content);
+    return parsed?.__cc_poll === true && (Array.isArray(parsed.keys) || Array.isArray(parsed.steps) || typeof parsed.text === "string");
+  } catch {
+    return false;
+  }
+}
+
+type WakeScheduler = { runAfter: (delayMs: number, fn: any, args: any) => Promise<unknown> };
+
+/** The one wake rule for a hosted conversation: a row became pending, so the
+ *  turn engine runs (assistant/entry.ts wake). A safety stop never starts a
+ *  turn. Returns false for any other conversation, which a daemon serves. */
+export async function wakeHostedConversation(
+  ctx: { scheduler?: WakeScheduler },
+  conversation: any,
+  cause: WakeCause,
+): Promise<boolean> {
+  if (!isHostedAgentType(conversation?.agent_type)) return false;
+  if (isConversationSafetyBlocked(conversation)) return true;
+  if (!ctx.scheduler) throw new Error("A hosted conversation needs a scheduler to wake");
+  await ctx.scheduler.runAfter(0, internal.assistant.entry.wake, { conversation_id: conversation._id, cause });
+  return true;
+}
+
+type PendingStatus = "pending" | "injected" | "delivered" | "failed" | "undeliverable" | "cancelled" | "held";
+const TERMINAL_STATUSES = new Set<PendingStatus>(["delivered", "cancelled"]);
+
+export function isTerminalPendingStatus(status: string): boolean {
+  return TERMINAL_STATUSES.has(status as PendingStatus);
+}
+
+// Enough for the bottom of a 220-column pane (the dialog and the composer
+// under it); the rest is scrollback nobody needs to decide.
+const HOLD_SCREEN_MAX_CHARS = 6000;
+
+async function rependPendingMessage(
+  ctx: { db: any },
+  message: { _id: Id<"pending_messages">; conversation_id: Id<"conversations">; status: string; retry_count: number },
+  retryCount: number,
+  hold?: { reason: string; screen?: string },
+  force?: boolean,
+): Promise<boolean> {
+  if (isFencedPendingMessage(message)) return false;
+  if (isTerminalPendingStatus(message.status)) return false;
+  const conversation = await ctx.db.get(message.conversation_id);
+  if (conversation && isConversationSafetyBlocked(conversation)) return false;
+  await ctx.db.patch(message._id, {
+    status: "pending" as const,
+    retry_count: retryCount,
+    delivered_at: undefined,
+    paste_verified_at: undefined,
+    delivery_disposition_reason: hold?.reason,
+    delivery_hold_screen: hold?.screen,
+    ...(force ? { delivery_force: true } : {}),
+  });
+  return true;
+}
+
+async function patchPendingMessageStatus(
+  ctx: { db: any },
+  message: { _id: Id<"pending_messages">; conversation_id: Id<"conversations">; status: string },
+  patch: { status: PendingStatus; delivered_at?: number; paste_verified_at?: number }
+): Promise<boolean> {
+  if (isFencedPendingMessage(message)) return false;
+  if (isTerminalPendingStatus(message.status)) return false;
+  await ctx.db.patch(message._id, patch);
+  if (patch.status === "delivered" || patch.status === "cancelled") {
+    await clearHasPendingIfQuiet(ctx, message.conversation_id);
+  }
+  return true;
+}
+
+// The owner of a pending message is whoever owns the target conversation — that's the daemon
+// responsible for delivering it. For a self-send owner == sender; for a team send they differ.
+// owner_user_id is denormalized onto the row (backfilled on legacy rows); fall back to the
+// conversation's user_id so an un-backfilled row still routes correctly.
+export function pendingMessageOwnerId(
+  message: { owner_user_id?: Id<"users"> },
+  conversation: { user_id: Id<"users"> }
+): string {
+  return (message.owner_user_id ?? conversation.user_id).toString();
+}
+
+export function canDaemonSeePendingMessage(
+  message: {
+    from_user_id: Id<"users">;
+    owner_user_id?: Id<"users">;
+    status: string;
+    delivery_protocol_version?: number;
+  },
+  conversation: ConversationSafetyState & {
+    user_id: Id<"users">;
+    owner_device_id?: string;
+    execution_protocol_state?: string;
+  },
+  userId: Id<"users">,
+  deviceId: string,
+): boolean {
+  if (isConversationSafetyBlocked(conversation)) return false;
+  // Absence is the only legacy marker. Quiescing and fenced conversations are
+  // never permissive fallbacks, and a stamped row can never leak back into the
+  // legacy poll even if a conversation projection is stale.
+  if (isFencedPendingMessage(message) || !legacyConversationAcceptsDaemonWork(conversation)) {
+    return false;
+  }
+  // A row the web parked on the cloud host is nobody's to deliver until a local
+  // daemon has prepared the host and placed it (cloud.placeConversation). The
+  // message waits as pending and rides the real start.
+  if ((conversation as any).cloud_placement === "pending") return false;
+  // A bulk migration is moving the row between machines (sessionMigrations):
+  // the source is being quiesced and its transcript transferred, and the
+  // destination does not own it yet. Nobody delivers; the message waits as
+  // pending and rides the resume on the destination once the fence clears.
+  if ((conversation as any).migration) return false;
+  // A hosted conversation (agent_type "codecast") is run by this backend's
+  // turn engine, which consumes its pending rows itself (assistant/entry.ts).
+  // No daemon delivers into it, resumes it or launches it.
+  if (isHostedAgentType((conversation as any).agent_type)) return false;
+  // Delivery is the TARGET owner's job, not the sender's — a teammate's message is delivered by
+  // the owner's daemon. (For a self-send these are the same user.)
+  if (pendingMessageOwnerId(message, conversation) !== userId.toString()) return false;
+  if (message.status !== "pending") return false;
+  // DPM-02: the owning device is the ONLY device that delivers, however long it
+  // has been offline. Delivery to another machine happens when a person moves
+  // the conversation (reassignToDevice / moveToRemote restamp owner_device_id,
+  // so the target owns the row before it acts), never by a daemon adopting it:
+  // an adopter without the checkout runs the session in its $HOME. An unowned
+  // conversation is first-claim among the owner user's local daemons.
+  return !conversation.owner_device_id || conversation.owner_device_id === deviceId;
+}
+
+export async function claimPendingMessageForDaemon(
+  ctx: { db: any },
+  messageId: Id<"pending_messages">,
+  userId: Id<"users">,
+  deviceId: string,
+  targetConversationId?: Id<"conversations">,
+): Promise<any | null> {
+  const message = await ctx.db.get(messageId);
+  if (!message) return null;
+  const conversation = await ctx.db.get(message.conversation_id);
+  if (!conversation) return null;
+  if (!canDaemonSeePendingMessage(message, conversation, userId, deviceId)) return null;
+  if (targetConversationId && targetConversationId !== message.conversation_id) {
+    const target = await ctx.db.get(targetConversationId);
+    if (!target || target.user_id !== userId || isConversationSafetyBlocked(target)) return null;
+  }
+  if (!conversation.owner_device_id) {
+    await ctx.db.patch(message.conversation_id, { owner_device_id: deviceId });
+  }
+  return message;
+}
+
+async function daemonCanMutatePendingMessage(
+  ctx: { db: any },
+  message: { conversation_id: Id<"conversations">; from_user_id: Id<"users">; owner_user_id?: Id<"users"> },
+  userId: Id<"users">,
+  deviceId?: string
+): Promise<boolean> {
+  // The mutating daemon must own the TARGET conversation (it's the one delivering the message),
+  // not be the sender — a teammate's send is delivered & status-updated by the owner's daemon.
+  const conversation = await ctx.db.get(message.conversation_id);
+  if (isFencedPendingMessage(message)) return false;
+  if (!conversation || pendingMessageOwnerId(message, conversation) !== userId.toString()) return false;
+  if (!legacyConversationAcceptsDaemonWork(conversation)) return false;
+  if (!deviceId) return true;
+  const owner = conversation.owner_device_id as string | undefined;
+  if (owner && owner !== deviceId) return false;
+  if (!owner) {
+    await ctx.db.patch(message.conversation_id, { owner_device_id: deviceId });
+  }
+  return true;
+}
+
+async function daemonCanMutateConversation(
+  ctx: { db: any },
+  conversationId: Id<"conversations">,
+  userId: Id<"users">,
+  deviceId?: string
+): Promise<boolean> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || conversation.user_id.toString() !== userId.toString()) return false;
+  if (!legacyConversationAcceptsDaemonWork(conversation)) return false;
+  if (!deviceId) return true;
+  const owner = conversation.owner_device_id as string | undefined;
+  if (owner && owner !== deviceId) return false;
+  if (!owner) {
+    await ctx.db.patch(conversationId, { owner_device_id: deviceId });
+  }
+  return true;
+}
+
+// A pending message has two parties with rights over it: the SENDER (from_user_id — can cancel,
+// retry, and read status of their own outgoing message) and the OWNER (whose daemon delivers it
+// and writes its status). For a self-send they're the same user; for a team send they differ.
+// Every non-delivery mutation funnels through this so a teammate's daemon and the original sender
+// can both act, but no unrelated user can.
+async function senderOrOwnerCanAct(
+  ctx: { db: any },
+  message: { conversation_id: Id<"conversations">; from_user_id: Id<"users">; owner_user_id?: Id<"users"> },
+  authUserId: Id<"users">
+): Promise<boolean> {
+  if (message.from_user_id.toString() === authUserId.toString()) return true;
+  const conversation = await ctx.db.get(message.conversation_id);
+  return !!conversation && pendingMessageOwnerId(message, conversation) === authUserId.toString();
+}
+
+export async function updatePendingMessageStatusForDaemon(
+  ctx: { db: any },
+  messageId: Id<"pending_messages">,
+  userId: Id<"users">,
+  deviceId: string,
+  patch: { status: PendingStatus; delivered_at?: number; paste_verified_at?: number }
+): Promise<{ updated: boolean; skipped?: boolean }> {
+  const message = await ctx.db.get(messageId);
+  if (!message) return { updated: false, skipped: true };
+  if (isTerminalPendingStatus(message.status)) return { updated: false, skipped: true };
+  if (isFencedPendingMessage(message)) return { updated: false, skipped: true };
+  if (!(await daemonCanMutatePendingMessage(ctx, message, userId, deviceId))) {
+    return { updated: false, skipped: true };
+  }
+  const updated = await patchPendingMessageStatus(ctx, message, patch);
+  // DELIVERY wakes the conversation — but ONLY here, behind the daemon gate.
+  // This must NOT live in patchPendingMessageStatus: the public
+  // updateMessageStatus mutation calls that helper directly when device_id is
+  // omitted, and its authorization (senderOrOwnerCanAct) passes on
+  // message.from_user_id alone — no conversation ownership. A teammate who sent
+  // into my session (or a replay of their client) could then post
+  // status:"injected" and un-retire a session I killed, with nothing delivered.
+  // "injected" is self-reported and reversible (the healer re-pends it), so it
+  // is only evidence of a landing when the DAEMON that owns the session says so.
+  if (updated && (patch.status === "injected" || patch.status === "delivered")) {
+    await reviveConversationOnDelivery(ctx, message.conversation_id);
+  }
+  return { updated, skipped: !updated };
+}
+
+// Shared insert path for queueing a message to a conversation's daemon: dedups on
+// client_id, inserts the pending row, and wakes the conversation (un-dismisses,
+// flips completed→active). Both human sends (sendMessageToSession) and session→
+// session sends (sendSessionMessage) funnel through here so the wake-up rules
+// stay in one place.
+export async function enqueuePendingMessage(
+  // `scheduler` is required for a hosted conversation, whose turn engine is
+  // woken from here; tests driving a daemon conversation may pass `{ db }`.
+  ctx: { db: any; scheduler?: { runAfter: (delayMs: number, fn: any, args: any) => Promise<unknown> } },
+  conversation: any,
+  fromUserId: Id<"users">,
+  fields: {
+    content: string;
+    image_storage_id?: Id<"_storage">;
+    image_storage_ids?: Id<"_storage">[];
+    client_id?: string;
+    // The sender's own conversation, so the cron can notify the sending session if this message
+    // can't be delivered. Only meaningful for cross-user (team) sends; omitted for self-sends.
+    from_conversation_id?: Id<"conversations">;
+    // "scheduler" = machine-initiated (the daemon's task scheduler firing a
+    // `cast trigger` injection). Every human send — web composer, cast send,
+    // team send — leaves this unset.
+    origin?: "scheduler";
+    // A PERSON wrote this to the session: the web/mobile composer, the receipt
+    // path, a doc review, a link collaborator's composer, `cast send` from a
+    // plain terminal. Positive and caller-declared, so a path nobody marked
+    // keeps today's behaviour. A session relaying to another session and a
+    // trigger firing are not people, and neither are the machine notices
+    // (account-switch "continue", undeliverable receipts, model/effort slash
+    // commands) that leave `origin` unset.
+    human?: boolean;
+    // A note the session reads on its NEXT turn, never a turn of its own: the
+    // row is parked as "held" (the daemon and the retry cron read "pending"
+    // only) and nothing about the conversation moves, so a session whose
+    // prompt cache is gone is not woken, resurfaced or resurrected to read one
+    // sentence. The next ordinary message into the session releases it, and
+    // it delivers first because it is older.
+    defer?: boolean;
+    // A note for the session's own record, never a turn of its own, on ANY
+    // session: parked as "held" like `defer`. For a line the session itself
+    // caused, such as a role's own escalation divider, so the role is not
+    // woken to read what it just wrote.
+    hold?: boolean;
+    // The composer's "Queue for later": held for the end of the agent's
+    // turn in the session's shared queue (schema pending_messages.queued).
+    queue?: boolean;
+    // Why a hosted conversation wakes for this row, when the caller knows
+    // better than the origin says (an answered approval). Ignored for every
+    // other conversation.
+    wake_cause?: WakeCause;
+  }
+): Promise<Id<"pending_messages">> {
+  // Every producer reaches this point, not only the ones that check
+  // canSendProductMessage (session-to-session sends, role messages), so the
+  // owner-only rule for hosted input is enforced here as well.
+  if (isHostedAgentType(conversation.agent_type) && String(fromUserId) !== String(conversation.user_id)) {
+    throw new Error("Only the owner can send to a hosted conversation");
+  }
+  // Machine frames (a routine firing, a run outcome) are built by server code
+  // and bounded by their writers; what a person sends is bounded here. The
+  // public sendMessageToSession refuses `origin` for a hosted target, so on
+  // these conversations "scheduler" is a server-only signal.
+  if (isHostedAgentType(conversation.agent_type) && fields.origin !== "scheduler" && fields.content.length > HOSTED_INPUT_MAX_CHARS) {
+    throw new Error(`A message to the assistant can be at most ${HOSTED_INPUT_MAX_CHARS.toLocaleString("en-US")} characters`);
+  }
+  // The turn engine sends the model text only, so an image here would be
+  // dropped without a word; refuse it so the composer can say so.
+  if (isHostedAgentType(conversation.agent_type) && (fields.image_storage_id || fields.image_storage_ids?.length)) {
+    throw new Error(HOSTED_IMAGE_REFUSAL);
+  }
+  if (fields.client_id) {
+    const existing = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_client_id", (q: any) =>
+        q.eq("conversation_id", conversation._id).eq("client_id", fields.client_id)
+      )
+      .first();
+    if (existing) return existing._id;
+  }
+
+  if (fields.origin === "scheduler" && !fields.client_id
+    && !conversation.execution_protocol_state && !fields.image_storage_id && !fields.image_storage_ids?.length) {
+    for (const status of ["pending", "injected", "failed", "undeliverable", "held"]) {
+      const queued = await ctx.db.query("pending_messages")
+        .withIndex("by_conversation_status", (q: any) => q.eq("conversation_id", conversation._id).eq("status", status))
+        .collect();
+      const existing = queued.find((row: any) => row.origin === "scheduler"
+        && row.from_user_id === fromUserId && row.content === fields.content
+        && !row.image_storage_id && !row.image_storage_ids?.length
+        && !isFencedPendingMessage(row)
+        && (row.kill_generation ?? 0) === (conversation.pending_kill_generation ?? 0));
+      if (existing) return existing._id;
+    }
+  }
+
+  if (fields.queue) {
+    return await insertEnqueuedPendingMessage(ctx, {
+      conversationId: conversation._id,
+      fromUserId,
+      ownerUserId: conversation.user_id,
+      content: fields.content,
+      clientId: fields.client_id,
+      human: fields.human,
+      createdAt: Date.now(),
+      queued: true,
+    });
+  }
+
+  if (fields.hold || (fields.defer && !conversation.standing_role_id)) {
+    return await insertEnqueuedPendingMessage(ctx, {
+      conversationId: conversation._id,
+      fromUserId,
+      ownerUserId: conversation.user_id,
+      content: fields.content,
+      clientId: fields.client_id,
+      human: fields.human,
+      createdAt: Date.now(),
+      held: true,
+    });
+  }
+
+  // Sending into a thread you were HANDED is the acknowledgment — retire the
+  // sender's unacked "assigned to you" ping so it can't outlive their reply.
+  // Machine-initiated injections (the trigger scheduler) don't count: nobody
+  // saw anything.
+  if (fields.origin !== "scheduler") {
+    await ackAssignmentOnEngage(ctx, conversation._id, fromUserId);
+  }
+
+  // This is the sole insertion choke point for every producer. Legacy rows are
+  // unchanged. Fenced rows require a caller-stable client_id, receive their
+  // server sequence/epoch here, and use that same id as delivery_id end-to-end.
+  const fenced = await allocateFencedDeliveryMetadata(ctx, conversation, fields.client_id);
+
+  const messageId = await insertEnqueuedPendingMessage(ctx, {
+    conversationId: conversation._id,
+    fromUserId,
+    // The daemon polls by owner; for a self-send this is the sender, for a team send the teammate.
+    ownerUserId: conversation.user_id,
+    fromConversationId: fields.from_conversation_id,
+    content: fields.content,
+    imageStorageId: fields.image_storage_id,
+    imageStorageIds: fields.image_storage_ids,
+    clientId: fields.client_id,
+    origin: fields.origin,
+    human: fields.human,
+    createdAt: Date.now(),
+    delivery: fenced ?? undefined,
+  });
+
+  // Deferred notes ride this turn (see `defer`). Rows queued for the end of
+  // the turn wait for it (releaseQueuedForUser), whoever sends meanwhile.
+  const deferred: any[] = await ctx.db.query("pending_messages")
+    .withIndex("by_conversation_status", (q: any) => q.eq("conversation_id", conversation._id).eq("status", "held")).collect();
+  for (const row of deferred) if (!row.queued) await ctx.db.patch(row._id, { status: "pending" });
+
+  // Work for a cloud host that is asleep: ask a local daemon to boot it.
+  if (!isConversationSafetyBlocked(conversation)) await requestRemoteWake(ctx, conversation);
+
+  // A hosted conversation has no daemon to poll for this row: wake its turn
+  // engine, which consumes the pending rows itself. A turn already running
+  // picks the row up before it stops (assistant/entry.ts wake).
+  await wakeHostedConversation(ctx, conversation,
+    fields.wake_cause ?? (fields.origin === "scheduler" ? "routine" : "message"));
+
+  // Wake-up rules. A human send resurfaces the session everywhere: dismissed,
+  // stashed, and killed flags all clear ("I messaged it, show it to me").
+  // A scheduler injection (a trigger firing) inherits all of that, with one
+  // exception: a stash the user marked HIDDEN (`cast stash --hide`, "Stash and
+  // hide") survives machine wakes — that is the state a user puts a looping
+  // session into when they want it working out of sight. A plain stash pops
+  // back on the wake: something happened to the session, show it. Dismissed
+  // and killed always clear, so a scheduled follow-up on a session the user
+  // closed out does come back (and a killed one is resurrected for delivery) —
+  // that revival is deliberate and is surfaced by the schedule strip in the
+  // conversation header. Predicate shared with the risk-resend twin
+  // (executionBindings) and the web: isStashHidden.
+  const machineWake = fields.origin === "scheduler";
+  // The pinned thread state (`cast state`) is the agent's declaration of who
+  // acts next. A message from a person IS that person acting, so the
+  // declaration has been answered and comes down with the send: a "Complete"
+  // or "Needs input" pin standing over a thread the human just wrote into
+  // would be the stale claim the whole feature exists to avoid. The agent
+  // declares again when it ends the turn. A session's relay and a trigger's
+  // wake leave it standing — nobody answered anything. The web store clears
+  // the same four fields on its draft so the panel drops before this lands.
+  const answersThreadState = fields.human === true && hasThreadState(conversation);
+  await ctx.db.patch(conversation._id, {
+    updated_at: Date.now(),
+    has_pending_messages: true,
+    ...(conversation.status === "completed" ? { status: "active" } : {}),
+    ...(conversation.inbox_dismissed_at ? { inbox_dismissed_at: undefined } : {}),
+    ...(conversation.inbox_stashed_at && !(machineWake && isStashHidden(conversation)) ? { inbox_stashed_at: undefined } : {}),
+    ...(conversation.inbox_killed_at ? { inbox_killed_at: undefined } : {}),
+    ...(!machineWake && conversation.inbox_snoozed_until ? { inbox_snoozed_until: undefined } : {}),
+    ...(answersThreadState ? clearedThreadStateFields() : {}),
+    // New input opens a new turn, which owes its own report (workerSettle.ts).
+    ...(conversation.reported_to_parent_at ? { reported_to_parent_at: undefined } : {}),
+  });
+
+  // A line into a standing session is one of the role's wakes today (the
+  // number `cast brief` and org.health show against its cap).
+  if (conversation.standing_role_id) {
+    const role = await ctx.db.get(conversation.standing_role_id);
+    if (role) {
+      const counters = countersFor(role, Date.now());
+      await ctx.db.patch(role._id, { counters: { ...counters, wakes: counters.wakes + 1 } });
+    }
+  }
+
+  return messageId;
+}
+
+// A role and the standing session that hears for it, or null when the role
+// cannot be reached: retired, no live session, or its workspace has the org
+// feature off (nothing shows the role, so nothing runs under its name).
+export async function reachableRole(ctx: any, roleId: Id<"org_roles">): Promise<{ role: any; standing: any } | null> {
+  const role = await ctx.db.get(roleId);
+  if (!role || role.status === "retired" || !role.anchor_id) return null;
+  if (!(await workspaceHasFeature(ctx, { team_id: role.team_id, user_id: role.scope_user_id }, "org"))) return null;
+  const anchor = await ctx.db.get(role.anchor_id);
+  const standing = anchor?.conversation_id && anchor.status !== "decommissioned" ? await ctx.db.get(anchor.conversation_id) : null;
+  return standing ? { role, standing } : null;
+}
+
+// A line into a role's standing session (docs/architecture/org-staffing.md
+// S25): a role hears about its world the way any session does, as a plain
+// message. Null when the role cannot be reached (reachableRole). The sender
+// defaults to the session's host. A bare line always goes out in the envelope
+// `cast send` uses, from the session that caused it or else from codecast:
+// bare, the thread would paint it as the host's own typed words.
+export async function tellRole(
+  ctx: any,
+  roleId: Id<"org_roles">,
+  fields: { content: string; client_id?: string; from_user_id?: Id<"users">; from_conversation_id?: Id<"conversations">; human?: boolean },
+): Promise<Id<"pending_messages"> | null> {
+  const conversation = (await reachableRole(ctx, roleId))?.standing;
+  if (!conversation) return null;
+  const { from_user_id, ...rest } = fields;
+  if (!fields.content.startsWith("<")) {
+    const from = fields.from_conversation_id ? await ctx.db.get(fields.from_conversation_id) : null;
+    rest.content = from
+      ? formatSessionMessage(from.short_id ?? String(from._id).slice(0, 7), fields.content)
+      : formatSessionMessage("unknown", fields.content, { name: "codecast" });
+  }
+  return await enqueuePendingMessage(ctx, conversation, from_user_id ?? conversation.user_id, rest);
+}
+
+export const sendMessageToSession = mutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    content: v.string(),
+    image_storage_id: v.optional(v.id("_storage")),
+    image_storage_ids: v.optional(v.array(v.id("_storage"))),
+    client_id: v.optional(v.string()),
+    // See enqueuePendingMessage: only the daemon's task scheduler passes
+    // "scheduler". Self-declared, but the only effect is LESS resurfacing
+    // (a hidden stash survives), so a spoofed value can't grab attention.
+    origin: v.optional(v.literal("scheduler")),
+    // A person wrote this (see enqueuePendingMessage.human). The daemon's own
+    // calls (account-switch revives, scheduler injections) leave it unset.
+    human: v.optional(v.boolean()),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation) {
+      throw new Error("Conversation not found");
+    }
+
+    if (conversation.user_id.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized: can only send messages to your own conversations");
+    }
+    // On a hosted conversation `origin` lifts the input cap and wakes a turn
+    // as a routine, so only server code may set it there (routine firings and
+    // run outcomes call enqueuePendingMessage directly).
+    if (args.origin && isHostedAgentType(conversation.agent_type)) {
+      throw new Error("Only the server sends machine input to a hosted conversation");
+    }
+    // A daemon's crash revive is an automatic continue like the server's own,
+    // held to the recovery mode the person chose. Checked here so every daemon
+    // version obeys it.
+    if (isReviveClientId(args.client_id)) {
+      const { primary } = await listOnlineDevices(ctx, authUserId, Date.now());
+      if (!autoRecoveryEnabled(primary)) return null;
+    }
+
+    return await enqueuePendingMessage(ctx, conversation, authUserId, {
+      content: args.content,
+      image_storage_id: args.image_storage_id,
+      image_storage_ids: args.image_storage_ids,
+      client_id: args.client_id,
+      origin: args.origin,
+      human: args.human === true && args.origin !== "scheduler",
+    });
+  },
+});
+
+/**
+ * Durable product send intent. Unlike the legacy mutation this is session-auth
+ * only, desired exactly once by command/client id, and returns a payload-free
+ * receipt whose coverage is later proven by the conversation message view.
+ */
+export const sendMessageV2 = mutation({
+  args: {
+    command_id: v.string(),
+    conversation_id: v.id("conversations"),
+    content: v.string(),
+    image_storage_ids: v.optional(v.array(v.id("_storage"))),
+    client_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    const imageStorageIds = args.image_storage_ids?.length
+      ? args.image_storage_ids
+      : undefined;
+    return runLocalCommand(ctx, {
+      principalId: userId,
+      commandId: args.command_id,
+      commandName: "messages.send/v2",
+      arguments: {
+        conversationId: args.conversation_id,
+        content: args.content,
+        imageStorageIds,
+        clientId: args.client_id,
+      },
+    }, async () => {
+      if (args.command_id !== args.client_id) {
+        return {
+          status: "rejected" as const,
+          code: "INVALID_ARGUMENT",
+          message: "command_id and client_id must be the same canonical id",
+        };
+      }
+
+      const conversation = await ctx.db.get(args.conversation_id);
+      if (!conversation) {
+        return {
+          status: "rejected" as const,
+          code: "MISSING",
+          message: "Conversation not found",
+        };
+      }
+      if (!(await canSendProductMessage(ctx, userId, conversation))) {
+        return {
+          status: "rejected" as const,
+          code: "FORBIDDEN",
+          message: "Conversation send access was revoked",
+        };
+      }
+
+      const existingRows = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_conversation_client_id", (q) =>
+          q.eq("conversation_id", conversation._id).eq("client_id", args.client_id))
+        .collect();
+      if (existingRows.length > 1) {
+        return {
+          status: "rejected" as const,
+          code: "CLIENT_ID_INVARIANT",
+          message: "Conversation contains duplicate rows for this client id",
+        };
+      }
+      const existing = existingRows[0];
+      if (existing && !pendingMessageMatchesProductIntent(
+        existing,
+        conversation,
+        userId,
+        {
+          content: args.content,
+          imageStorageIds,
+          clientId: args.client_id,
+        },
+      )) {
+        return {
+          status: "rejected" as const,
+          code: "CLIENT_ID_REUSED",
+          message: "This client id is already bound to different message intent",
+        };
+      }
+
+      // Coverage is proven by this same id on the authoritative transcript.
+      // An old transcript row without our exact pending intent must therefore
+      // block admission; otherwise a fresh command could appear covered before
+      // its newly enqueued message was ever delivered.
+      const existingTranscriptMessage = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_client_id", (q) =>
+          q.eq("conversation_id", conversation._id).eq("client_id", args.client_id))
+        .first();
+      if (!existing && existingTranscriptMessage) {
+        return {
+          status: "rejected" as const,
+          code: "CLIENT_ID_REUSED",
+          message: "This client id is already present in the conversation transcript",
+        };
+      }
+
+      if (!existing) {
+        await enqueuePendingMessage(ctx, conversation, userId, {
+          content: args.content,
+          image_storage_ids: imageStorageIds,
+          client_id: args.client_id,
+          human: true,
+        });
+      }
+      return {
+        status: "acknowledged" as const,
+        coverageViews: [],
+        coverageCommandIds: [messagesCommandCoverageTarget(conversation._id)],
+      };
+    });
+  },
+});
+
+// The wire format for a session→session message lives with its parsers in
+// the shared contract (machineMessages.formatSessionMessage); re-exported
+// here for the callers that write it.
+export { formatSessionMessage };
+
+// True if the conversation has at least one managed session that has beaten its heartbeat
+// recently — i.e. a daemon is alive and could deliver right now. Used to give the sender an
+// immediate "looks offline" hint and to decide whether a stuck cross-user send has truly failed.
+export async function conversationHasLiveSession(
+  ctx: { db: any },
+  conversationId: Id<"conversations">,
+  now: number
+): Promise<boolean> {
+  const sessions = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conversationId))
+    .collect();
+  return sessions.some((s: any) => now - (s.last_heartbeat ?? 0) < HEARTBEAT_ALIVE_MS);
+}
+
+// Send a message from one of the user's sessions to another — your own OR a teammate's. The
+// target must be a session you can already see (own it, or it's shared to a team you're in); the
+// access rule is exactly the feed-visibility rule (checkConversationAccess). The text is injected
+// into the target session as a normal user turn (via the existing pending_messages rail), wrapped
+// so both the agent and the UI can attribute it to the sender.
+// The send itself, factored out of the mutation so it can be driven in tests without the auth
+// wrapper. Resolves the target (own-or-team), attributes the sender, queues the message, and
+// reports whether the target currently has a live daemon.
+//
+// `direct` = a person typed this into the session from the dashboard (the web
+// CollabComposer). There is no sender session to attribute, and it must not
+// read as one: the agent attributes an unknown-session wrapper to a relay it
+// cannot verify. The text is wrapped as <user-message from="Name"> instead,
+// so the agent knows a human wrote it and who, and every surface renders it
+// as that person's own words.
+export async function performSessionSend(
+  ctx: { db: any },
+  authUserId: Id<"users">,
+  // `target`: a session the caller already resolved and checked (a role's
+  // standing session behind `cast role wake`); it skips the `to` lookup.
+  args: { to: string; from?: string; body: string; client_id?: string; raw?: boolean; direct?: boolean; wake?: boolean; queue?: boolean; image_storage_ids?: Id<"_storage">[]; target?: any }
+): Promise<{
+  message_id: Id<"pending_messages">;
+  to_short_id: string;
+  from_short_id: string;
+  cross_user: boolean;
+  target_live: boolean;
+  auto_owned: boolean;
+}> {
+  const body = args.body ?? "";
+  if (!body.trim()) throw new Error("Message body is empty");
+
+  // `--raw` exists so a live session can receive `/model opus` as its own
+  // user's slash command. A report body sent `--raw` is injected without
+  // <session-message> tags and the receiving thread paints it as something
+  // the human typed. Refuse that; the sender should drop --raw (or pass
+  // --wake) so the wrapper stays on.
+  if (args.raw && !/^\/[a-zA-Z]/.test(body.trim())) {
+    throw new Error("--raw is only for slash commands (/model, /effort). Drop --raw so the message is attributed to the sending session.");
+  }
+
+  // Own-or-team: you can message any session the feed would let you see. A merely share-linked
+  // session is read-only by default — injecting a turn is a stronger right than reading — UNLESS
+  // its owner has granted this user explicit send access for it (collab_grants), the one approved
+  // path for a link recipient to run commands in someone else's session.
+  // `cast send @handle` addresses a role's standing session (org-roles-standing.md
+  // T3): the handle resolves in the caller's boundaries, then the row below
+  // is the session; the same access rule applies to it.
+  const roleTarget = args.target ?? await standingSessionForHandle(ctx, authUserId, args.to);
+  const target = args.target
+    ? args.target
+    : roleTarget
+    ? ((await canSendProductMessage(ctx, authUserId, roleTarget)) ? roleTarget : null)
+    : await findConversationByAnyRefWhere(ctx, args.to, async (conversation) => {
+      return await canSendProductMessage(ctx, authUserId, conversation);
+    });
+  if (!target) {
+    throw new Error(`No session found for "${args.to}" (you can only message your own sessions, sessions shared with your team, or sessions whose owner granted you send access)`);
+  }
+
+  const isCrossUser = target.user_id.toString() !== authUserId.toString();
+  const senderUser = isCrossUser || args.direct ? await ctx.db.get(authUserId) : null;
+
+  // A raw send is the text as typed — the rail the web's model/effort picker
+  // rides for `/model <alias>` — so it reads to the agent as its own user's
+  // input. Own sessions only: unwrapped text in a teammate's session would be
+  // indistinguishable from something they typed.
+  if (args.raw && isCrossUser) {
+    throw new Error("--raw sends only into your own sessions (a teammate's session always gets the attributed wrapper)");
+  }
+
+  // A message never claims a session a person started. The runner (user_id),
+  // or the original author if the session later moved machines, already owns
+  // the outcome; putting the sender on the owner set would move the thread
+  // into their inbox. Auto-claim remains only for bot-run threads with an
+  // empty owner set — a shared-machine session no human has taken yet.
+  // Reassignment of a person's session stays explicit (cast own / the owners
+  // menu). Bot senders never own: nobody reads their inbox, and a bot
+  // claiming a bot-run thread would block the first human engager.
+  //
+  // "Unowned" means the canonical owner SET is empty. The owner_user_id cache
+  // is ALSO checked as a safety net: a legacy row written before the
+  // session_owners backfill has a cached owner but no join row, and must never
+  // be auto-claimed out from under them. Claiming writes through both.
+  let autoOwned = false;
+  // A role's own session is owned by whom the role reports to, and has no
+  // owner when it reports to a role (sessionOwners.stampSeatOwners): writing to
+  // it never claims it.
+  if (isCrossUser && !senderUser?.is_bot && !target.standing_role_id) {
+    const existingOwners = await listSessionOwnerIds(ctx, target._id);
+    if (
+      existingOwners.length === 0 &&
+      !target.owner_user_id &&
+      !(await conversationHasHumanStarter(ctx, target))
+    ) {
+      await addSessionOwnerRow(ctx, target._id, authUserId, authUserId);
+      await syncPrimaryOwnerCache(ctx, target._id);
+      autoOwned = true;
+    }
+  }
+
+  // Resolve the sender to its short_id for attribution. The CLI passes whatever
+  // detectCurrentSessionId found (a Claude session_id) or an explicit --from ref;
+  // an unresolvable/missing sender still delivers, just without a clickable pill.
+  let fromShortId = "unknown";
+  let fromConversationId: Id<"conversations"> | undefined;
+  let senderConversation: any = null;
+  const fromRef = args.from?.trim();
+  if (fromRef) {
+    const sender = await findConversationByAnyRef(ctx, fromRef, authUserId);
+    senderConversation = sender;
+    if (sender) {
+      fromShortId = sender.short_id ?? sender._id.toString().slice(0, 7);
+      fromConversationId = sender._id;
+    } else if (/^jx[a-z0-9]{5,}$/i.test(fromRef)) {
+      fromShortId = fromRef.slice(0, 7);
+    } else {
+      // A sender that names itself but resolves to nothing is an agent whose
+      // identity is wrong (a Codex thread id, a session that never synced).
+      // Never deliver that as "unknown": the recipient cannot reply to it, and
+      // a human's instruction laundered through it reads as an unverifiable
+      // relay. Only a send with NO sender at all (browser, system relays,
+      // `direct`) takes the unattributed path.
+      throw new Error(`Sender session "${fromRef}" not found — pass --from <your session short id>`);
+    }
+  }
+
+  // Waking a stale session is the expensive send: past the prompt cache
+  // lifetime the recipient rebuilds its whole context before it reads a word,
+  // and a killed one is restarted for it. A session to session send says so
+  // and stops, unless the sender chose to wake it. Two recipients expect a wake
+  // however long they waited: the session that started the sender (a worker
+  // reporting back) and one that declared itself dormant. Only callers that
+  // ask for the check get it (wake: false); older CLIs and relays send as before.
+  if (args.wake === false && senderConversation && !args.raw && !args.direct && !roleTarget) {
+    const cost = wakeCost({ ...target, ...wakeFieldsOf(target) }, Date.now());
+    const reportingBack = [senderConversation.spawned_by_conversation_id, senderConversation.parent_conversation_id]
+      .some((id) => id != null && String(id) === String(target._id));
+    const expectsWake = reportingBack || target.thread_state_status === "dormant";
+    if (cost.killed || (cost.cacheCold && !expectsWake)) {
+      throw new Error(staleSendMessage(target.short_id ?? String(target._id).slice(0, 7), cost));
+    }
+  }
+
+  // Display name for the sender: the direct wrapper always carries it, and a
+  // session wrapper carries it when `from` has no clickable session (the common
+  // case for a link collaborator). A self-send from a session is already
+  // attributed by its own session pill.
+  const senderName = senderUser?.name || senderUser?.github_username || senderUser?.email?.split("@")[0] || undefined;
+  const fromName = isCrossUser ? senderName : undefined;
+
+  const messageId = await enqueuePendingMessage(ctx, target, authUserId, {
+    content: args.raw
+      ? body
+      : args.direct
+      ? (await jointTurnVouched(ctx, target._id, senderName, body) ? body : formatUserMessage(senderName ?? "a teammate", body))
+      : formatSessionMessage(fromShortId, body, { name: fromName }),
+    image_storage_ids: args.image_storage_ids?.length ? args.image_storage_ids : undefined,
+    client_id: args.client_id,
+    // The failure-feedback channel: the stuck-message cron tells this session when the send sits
+    // undelivered (planStuckSendNotify decides which waits are worth saying).
+    from_conversation_id: fromConversationId,
+    // No sender session means a person typed this (a link collaborator's
+    // composer, a detached `cast send`). A raw send is the model/effort
+    // picker's slash command, a gesture rather than a message.
+    human: !fromRef && !args.raw,
+    queue: !!args.queue && !!args.direct,
+  });
+  if (senderConversation && !args.raw && !args.direct && String(senderConversation.parent_conversation_id) === String(target._id)) {
+    await ctx.db.patch(senderConversation._id, { reported_to_parent_at: Date.now() });
+  }
+
+  // Immediate liveness signal so the CLI can warn "the session looks offline" right away,
+  // rather than the sender only finding out via the cron's delayed notice. The
+  // daemon that owns the session delivers it, and an idle session's own
+  // heartbeat goes quiet while that daemon is still online and resumes it.
+  const now = Date.now();
+  const targetLive =
+    (await conversationHasLiveSession(ctx, target._id, now)) ||
+    (await resolveOwnerDeviceView(ctx, target as any, now)).owner_online;
+
+  return {
+    message_id: messageId,
+    to_short_id: target.short_id ?? target._id.toString().slice(0, 7),
+    from_short_id: fromShortId,
+    cross_user: isCrossUser,
+    target_live: targetLive,
+    auto_owned: autoOwned,
+  };
+}
+
+/**
+ * A direct send may carry a joint turn ("send together"): the sender's words
+ * and the live drafts of others in the session's composer, each part named.
+ * The wrapper is the attribution, so it goes out as written only when every
+ * part someone else is named on matches that person's draft in the shared
+ * composer right now; otherwise the whole body is the sender's, wrapped in
+ * their name like any direct send.
+ */
+async function jointTurnVouched(ctx: { db: any }, conversationId: Id<"conversations">, senderName: string | undefined, body: string): Promise<boolean> {
+  const parts = parseJointMessage(body);
+  if (!parts) return false;
+  const drafts = await ctx.db
+    .query("doc_presence")
+    .withIndex("by_doc", (q: any) => q.eq("doc_id", `compose:${conversationId}`))
+    .collect();
+  const fresh = drafts.filter((p: any) => p.updated_at > Date.now() - 30_000);
+  return parts.every((part) => part.from === senderName
+    || fresh.some((p: any) => p.user_name === part.from && (p.draft_text ?? "").trim() === part.body));
+}
+
+export function staleSendMessage(shortId: string, cost: ReturnType<typeof wakeCost>): string {
+  // The share says how heavy that context is without the reader having to know
+  // which model the session runs: 480k means one thing on a 200k model and
+  // another on a million.
+  const share = formatShare(cost.contextShare);
+  const size = cost.contextTokens
+    ? ` (about ${formatTokens(cost.contextTokens)} tokens${share ? `, ${share} of its context window` : ""})`
+    : "";
+  const why = cost.killed
+    ? `${shortId} was killed. Sending would restart it and load its whole context${size} before it reads your message.`
+    : `${shortId} has not run for ${formatIdle(cost.idleMs)}, so its prompt cache has expired. Your message would make it rebuild its whole context${size} before it reads a word, and sessions idle this long rarely have anything to add.`;
+  return `Not sent. ${why} To learn what it did, read it instead: cast read ${shortId}, cast diff ${shortId}. If it has to act on this and nobody else can, send again with --wake.`;
+}
+
+// "@handle" → the standing session of the live role with that handle in the
+// caller's personal space or any of their teams; null for any other ref.
+async function standingSessionForHandle(ctx: { db: any }, userId: Id<"users">, ref: string): Promise<any | null> {
+  if (!ref.startsWith("@")) return null;
+  const handle = ref.slice(1).trim().toLowerCase();
+  if (!handle) return null;
+  const candidates: any[] = await liveRolesByHandle(ctx, { scope_user_id: userId }, handle);
+  const memberships = await ctx.db.query("team_memberships").withIndex("by_user_id", (q: any) => q.eq("user_id", userId)).collect();
+  for (const m of memberships) candidates.push(...await liveRolesByHandle(ctx, { team_id: m.team_id }, handle));
+  const role = candidates.find((r) => r.anchor_id);
+  if (!role) return null;
+  const anchor = await ctx.db.get(role.anchor_id);
+  return anchor?.conversation_id ? await ctx.db.get(anchor.conversation_id) : null;
+}
+
+export const sendSessionMessage = mutation({
+  args: {
+    to: v.string(),
+    from: v.optional(v.string()),
+    body: v.string(),
+    client_id: v.optional(v.string()),
+    api_token: v.optional(v.string()),
+    raw: v.optional(v.boolean()),
+    direct: v.optional(v.boolean()),
+    // false = hold the send when the target is killed or idle past the prompt
+    // cache lifetime (the CLI's default); true or absent = deliver regardless.
+    wake: v.optional(v.boolean()),
+    // A person's "Queue for later": held for the end of the agent's turn in
+    // the session's shared queue (enqueuePendingMessage.queue). Direct sends only.
+    queue: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+    return await performSessionSend(ctx, authUserId, args);
+  },
+});
+
+export const updateMessageStatus = mutation({
+  args: {
+    message_id: v.id("pending_messages"),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("injected"),
+      v.literal("delivered"),
+      v.literal("failed"),
+      v.literal("undeliverable")
+    ),
+    delivered_at: v.optional(v.number()),
+    // The daemon saw its paste in the composer and the Enter accepted. Only a
+    // row stamped this way may be terminalized by an observed working status.
+    paste_verified: v.optional(v.boolean()),
+    api_token: v.optional(v.string()),
+    device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    noteWriteCause(ctx, "daemon:updateMessageStatus");
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const message = await ctx.db.get(args.message_id);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (!(await senderOrOwnerCanAct(ctx, message, authUserId))) {
+      throw new Error("Unauthorized: can only update messages you sent or own");
+    }
+    // A hosted conversation's queue is settled by its turn engine
+    // (markPendingDelivered) and the owner's retry and cancel paths. A local
+    // agent holding the owner's token must not mark queued input delivered or
+    // failed before the engine reads it.
+    const conversation = await ctx.db.get(message.conversation_id);
+    if (conversation && isHostedAgentType(conversation.agent_type)) {
+      throw new Error("A hosted conversation's queued input is settled by its turn engine");
+    }
+
+    const patch = {
+      status: args.status,
+      delivered_at: args.delivered_at,
+      ...(args.status === "injected" && args.paste_verified ? { paste_verified_at: Date.now() } : {}),
+    };
+    if (args.device_id) {
+      const result = await updatePendingMessageStatusForDaemon(ctx, args.message_id, authUserId, args.device_id, patch);
+      return { success: true, skipped: result.skipped };
+    }
+
+    const updated = await patchPendingMessageStatus(ctx, message, patch);
+
+    return { success: true, skipped: !updated };
+  },
+});
+
+export async function retryPendingMessageForUser(
+  ctx: { db: any; scheduler?: WakeScheduler },
+  userId: Id<"users">,
+  conversationId: Id<"conversations">,
+  // force: the person read the held screen and chose "Send anyway".
+  ref: { messageId?: string; clientId?: string; force?: boolean },
+): Promise<string> {
+  if (!ref.messageId && !ref.clientId) throw new Error("Message identity required");
+  const message = ref.messageId
+    ? await ctx.db.get(ref.messageId)
+    : await ctx.db.query("pending_messages")
+      .withIndex("by_conversation_client_id", (q: any) => q.eq("conversation_id", conversationId).eq("client_id", ref.clientId))
+      .first();
+  if (!message) return "not_found";
+  if (message.conversation_id !== conversationId) throw new Error("Message belongs to another conversation");
+  if (!(await senderOrOwnerCanAct(ctx, message, userId))) throw new Error("Unauthorized: can only retry messages you sent or own");
+  if (isTerminalPendingStatus(message.status) || message.status === "injected") return message.status;
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) throw new Error("conversation_deleted");
+  if (isConversationSafetyBlocked(conversation)) throw new Error("Delivery is blocked by the session's safety stop");
+  if (isFencedPendingMessage(message) || !legacyConversationAcceptsDaemonWork(conversation)) {
+    throw new Error("Delivery is managed by the session transfer; retry is not available yet");
+  }
+  if ((message.kill_generation ?? 0) < (conversation.pending_kill_generation ?? 0)) {
+    throw new Error("This message was stopped when the session was killed");
+  }
+  if (await rependPendingMessage(ctx, message, 0, undefined, ref.force)) await wakeHostedConversation(ctx, conversation, "message");
+  await ctx.db.patch(conversationId, { has_pending_messages: true });
+  return "pending";
+}
+
+// User-initiated stop of one queued message, looked up the same way as retry
+// (server id or the send's client id). Terminal: the healer never revives
+// cancelled. A fenced row that has not started delivery is cancelled the same
+// way a kill would; one already in the pane is left alone so we do not strand
+// the delivery slot.
+export async function cancelPendingMessageForUser(
+  ctx: { db: any },
+  userId: Id<"users">,
+  conversationId: Id<"conversations">,
+  ref: { messageId?: string; clientId?: string },
+): Promise<string> {
+  if (!ref.messageId && !ref.clientId) throw new Error("Message identity required");
+  const message = ref.messageId
+    ? await ctx.db.get(ref.messageId)
+    : await ctx.db.query("pending_messages")
+      .withIndex("by_conversation_client_id", (q: any) => q.eq("conversation_id", conversationId).eq("client_id", ref.clientId))
+      .first();
+  if (!message) return "not_found";
+  if (message.conversation_id !== conversationId) throw new Error("Message belongs to another conversation");
+  if (!(await senderOrOwnerCanAct(ctx, message, userId))) {
+    throw new Error("Unauthorized: can only cancel messages you sent or own");
+  }
+  if (message.status === "delivered") return "delivered";
+  if (message.status === "cancelled") return "cancelled";
+  if (isFencedPendingMessage(message)) {
+    if (
+      message.delivery_status === "delivery-started" ||
+      message.delivery_status === "ambiguous" ||
+      message.delivery_status === "claimed"
+    ) {
+      throw new Error("This message is already being delivered to the session");
+    }
+    await ctx.db.patch(message._id, {
+      delivery_status: "cancelled-by-supersession" as const,
+      active_delivery_attempt_id: undefined,
+      status: "cancelled" as const,
+    });
+    await clearHasPendingIfQuiet(ctx, message.conversation_id);
+    return "cancelled";
+  }
+  const updated = await patchPendingMessageStatus(ctx, message, { status: "cancelled" as const });
+  return updated ? "cancelled" : message.status;
+}
+
+/**
+ * Move a waiting message in its session's queue: directly before `beforeId`,
+ * or to the end when it is null. Anyone who may send into the session may
+ * reorder its queue; only waiting rows move, and nothing jumps ahead of a
+ * message the session is already taking.
+ */
+export async function reorderQueuedForUser(
+  ctx: { db: any },
+  userId: Id<"users">,
+  conversationId: Id<"conversations">,
+  ref: { messageId: string; beforeId: string | null },
+): Promise<string> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) return "not_found";
+  if (!(await canSendProductMessage(ctx, userId, conversation))) throw new Error("Only people who can send into this session can reorder its queue");
+  const rows = (await ctx.db.query("pending_messages")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conversationId))
+    .collect())
+    .filter((m: any) => SHOWN_PENDING_STATUSES.has(m.status) || (m.status === "held" && m.queued))
+    .sort(byQueueOrder);
+  const moving = rows.find((m: any) => String(m._id) === ref.messageId);
+  if (!moving || !isWaitingInQueue(moving)) return "not_waiting";
+  const at = queueAtBefore(rows.filter((m: any) => m !== moving), ref.beforeId);
+  if (at === null) return "not_waiting";
+  await ctx.db.patch(moving._id, { queue_at: at });
+  return "moved";
+}
+
+/**
+ * Fold two waiting messages into one turn whose parts name each author
+ * (shared/contracts/jointMessage). The earlier row keeps its place and takes
+ * the joint text and both rows' images; the later one is cancelled with
+ * merged_into pointing at it.
+ */
+export async function mergeQueuedForUser(
+  ctx: { db: any },
+  userId: Id<"users">,
+  conversationId: Id<"conversations">,
+  ref: { messageId: string; intoId: string },
+): Promise<string> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation) return "not_found";
+  if (!(await canSendProductMessage(ctx, userId, conversation))) throw new Error("Only people who can send into this session can merge its queue");
+  const pair = [await ctx.db.get(ref.messageId as Id<"pending_messages">), await ctx.db.get(ref.intoId as Id<"pending_messages">)];
+  if (pair.some((m: any) => !m || String(m.conversation_id) !== String(conversationId) || !isWaitingInQueue(m)) || ref.messageId === ref.intoId) return "not_waiting";
+  const [keep, absorb] = [...pair].sort(byQueueOrder) as any[];
+  const nameOf = async (m: any) => {
+    const u: any = await ctx.db.get(m.from_user_id);
+    return u?.name || u?.github_username || u?.email?.split("@")[0] || "Someone";
+  };
+  const parts = [
+    ...jointPartsOf(keep.content, await nameOf(keep)),
+    ...jointPartsOf(absorb.content, await nameOf(absorb)),
+  ];
+  const images = [keep, absorb].flatMap((m: any) => m.image_storage_ids ?? (m.image_storage_id ? [m.image_storage_id] : []));
+  await ctx.db.patch(keep._id, {
+    content: formatJointMessage(parts),
+    ...(images.length ? { image_storage_ids: images, image_storage_id: undefined } : {}),
+  });
+  await ctx.db.patch(absorb._id, { status: "cancelled" as const, merged_into: keep._id });
+  return "merged";
+}
+
+/** Release the session's queue now, for anyone who may send into it (releaseQueuedRows). */
+export async function releaseQueuedForUser(ctx: { db: any; scheduler?: any }, userId: Id<"users">, conversationId: Id<"conversations">): Promise<number> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || !(await canSendProductMessage(ctx, userId, conversation))) return 0;
+  const released = await releaseQueuedRows(ctx, conversationId);
+  if (released) {
+    if (!isConversationSafetyBlocked(conversation)) await requestRemoteWake(ctx, conversation);
+    await wakeHostedConversation(ctx, conversation, "message");
+  }
+  return released;
+}
+
+export const reorderQueued = mutation({
+  args: { conversation_id: v.id("conversations"), message_id: v.string(), before_id: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    return await reorderQueuedForUser(ctx, userId, args.conversation_id, { messageId: args.message_id, beforeId: args.before_id });
+  },
+});
+
+export const mergeQueued = mutation({
+  args: { conversation_id: v.id("conversations"), message_id: v.string(), into_id: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireUser(ctx);
+    return await mergeQueuedForUser(ctx, userId, args.conversation_id, { messageId: args.message_id, intoId: args.into_id });
+  },
+});
+
+export const retryMessage = mutation({
+  args: {
+    message_id: v.id("pending_messages"),
+    // A hold, not a failure: the daemon could not paste because the terminal
+    // was waiting for a human (a menu, a confirmation). The row goes back to
+    // "pending" so the next scan retries it, but retry_count stays where it is
+    // and the reason is stamped for the sender's card. Counting holds as
+    // attempts spent the whole budget in seven minutes and stranded a message
+    // for 49 minutes on 2026-09-08.
+    hold_reason: v.optional(v.string()),
+    // The terminal rows the hold was decided on, shown to the person behind
+    // the held message (delivery_hold_screen).
+    hold_screen: v.optional(v.string()),
+    api_token: v.optional(v.string()),
+    device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const message = await ctx.db.get(args.message_id);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (!(await senderOrOwnerCanAct(ctx, message, authUserId))) {
+      throw new Error("Unauthorized: can only retry messages you sent or own");
+    }
+
+    if (isTerminalPendingStatus(message.status)) {
+      return { success: true };
+    }
+
+    if (!(await daemonCanMutatePendingMessage(ctx, message, authUserId, args.device_id))) {
+      return { success: true, skipped: true };
+    }
+
+    const updated = args.hold_reason
+      ? await rependPendingMessage(ctx, message, message.retry_count, { reason: args.hold_reason, screen: args.hold_screen?.slice(-HOLD_SCREEN_MAX_CHARS) })
+      : await rependPendingMessage(ctx, message, message.retry_count + 1);
+
+    return { success: true, skipped: !updated };
+  },
+});
+
+// User-initiated stop. The retry loop is otherwise indefinite (the healer always revives a
+// stranded message), so this is the escape hatch for a message that genuinely can't land —
+// e.g. a conversation whose session is gone for good. Terminal: never revived.
+export const cancelPendingMessage = mutation({
+  args: {
+    message_id: v.id("pending_messages"),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    noteWriteCause(ctx, "cancelPendingMessage");
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const message = await ctx.db.get(args.message_id);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+    // Either party can stop it: the sender retracts their outgoing message, or the target owner
+    // clears an unwanted incoming one from a teammate.
+    if (!(await senderOrOwnerCanAct(ctx, message, authUserId))) {
+      throw new Error("Unauthorized: can only cancel messages you sent or own");
+    }
+
+    const updated = await patchPendingMessageStatus(ctx, message, { status: "cancelled" as const });
+
+    return { success: true, skipped: !updated };
+  },
+});
+
+export async function resetConversationPendingMessages(
+  ctx: { db: any },
+  conversationId: Id<"conversations">
+) {
+  const messages = await ctx.db
+    .query("pending_messages")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conversationId))
+    .collect();
+
+  let resetCount = 0;
+  for (const msg of messages) {
+    if (msg.status === "failed" || msg.status === "undeliverable" || msg.status === "injected") {
+      if (await rependPendingMessage(ctx, msg, 0)) resetCount++;
+    }
+  }
+
+  if (resetCount > 0) {
+    await ctx.db.patch(conversationId, { has_pending_messages: true });
+  }
+
+  return resetCount;
+}
+
+// Kill is TERMINAL for messages already queued. The retry loop is otherwise indefinite, so a
+// message queued before a kill kept retrying afterwards and could still land — reviving a
+// conversation that carries kill metadata (observed live: a killed session woke up and ran 193
+// more messages while still stamped inbox_killed_at), or, once its retries were exhausted,
+// stranding the row as status "completed" + has_pending_messages true forever.
+//
+// This does NOT violate the cardinal rule (the system never drops a user message on its own):
+// killing a session is the user's own explicit stop gesture, and `cancelled` is exactly the
+// terminal state the per-message cancel button writes. Only messages queued BEFORE the kill are
+// touched — a LATER send re-enqueues and revives the session normally, because enqueue clears the
+// dismissed/stashed/killed flags (see the wake-up rules above).
+//
+// Fenced (delivery-protocol v2) rows can't be patched to "cancelled" from here — that would
+// strand their delivery_attempts row and the execution head's active slot — so they go through
+// the epoch machinery's sanctioned cancel (cancelFencedDeliveriesOnKill), which terminalizes
+// everything that hasn't started and leaves a delivery-started/ambiguous effect for the delivery
+// machinery to resolve. Those few stay counted in has_pending_messages, which is the honest
+// answer; classifyWorkState keeps the killed row out of the Working bucket regardless.
+//
+// BUDGETED, because kill must never be the gesture that fails on exactly the sessions it exists
+// for. A runaway session can hold thousands of rows; an unbounded sweep would blow the mutation's
+// write limit and throw. So one transaction cancels at most KILL_CANCEL_BUDGET rows and hands any
+// remainder to a scheduled continuation — the kill itself always lands fast, and the queue still
+// drains to empty. Callers without a scheduler (tests, non-mutation ctx) simply stop at the budget.
+const KILL_CANCEL_BUDGET = 300;
+const KILL_CANCEL_PAGE = 100;
+
+export async function cancelQueuedMessagesOnKill(
+  ctx: { db: any; scheduler?: any },
+  conversationId: Id<"conversations">,
+  options: { continuation?: boolean; cutoffGeneration?: number } = {},
+): Promise<number> {
+  if (options.continuation && options.cutoffGeneration === undefined) return 0;
+  const conversation = await ctx.db.get(conversationId);
+  const cutoff = options.continuation
+    ? options.cutoffGeneration!
+    : conversation?.pending_kill_generation ?? 0;
+  if (!options.continuation && conversation) {
+    await ctx.db.patch(conversationId, { pending_kill_generation: cutoff + 1 });
+  }
+  let budget = KILL_CANCEL_BUDGET;
+  let cancelled = 0;
+  // Only a FENCED conversation can hold fenced rows, and that sweep is the
+  // expensive one — gate it on the conversation's own marker rather than paying
+  // a scan on every ordinary kill.
+  if (conversation?.execution_protocol_state) {
+    const fenced = await cancelFencedDeliveriesOnKill(ctx, conversationId, Date.now(), budget, cutoff);
+    cancelled += fenced.cancelled;
+    budget -= fenced.cancelled;
+  }
+  for (const status of NON_TERMINAL_PENDING_STATUSES) {
+    // DRAIN, don't sample: a queue deeper than one page must not survive a kill.
+    // Each pass re-queries the same status because a cancel moves the row out of
+    // it; stop as soon as a page cancels nothing, so a row this path may not
+    // touch (an in-flight fenced delivery) can't spin the loop forever.
+    while (budget > 0) {
+      const rows = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_conversation_status_kill_generation", (q: any) =>
+          q.eq("conversation_id", conversationId).eq("status", status).lte("kill_generation", cutoff)
+        )
+        .take(Math.min(KILL_CANCEL_PAGE, budget));
+      if (rows.length === 0) break;
+      let progressed = 0;
+      for (const row of rows) {
+        if (await patchPendingMessageStatus(ctx, row, { status: "cancelled" as const })) progressed++;
+      }
+      if (progressed === 0) break;
+      cancelled += progressed;
+      budget -= progressed;
+    }
+  }
+  // Also the repair for an ALREADY-stranded row: a kill whose queue has since gone terminal
+  // (undeliverable → cancelled here, or nothing left at all) still clears the stale flag.
+  await clearHasPendingIfQuiet(ctx, conversationId);
+  // Spent the whole budget → there may be more. Finish it in its own transaction;
+  // a continuation that finds nothing left simply stops.
+  if (budget <= 0 && ctx.scheduler) {
+    await ctx.scheduler.runAfter(0, internal.pendingMessages.continueKillCancellation, {
+      conversation_id: conversationId,
+      cutoff_generation: cutoff,
+    });
+  }
+  return cancelled;
+}
+
+// Overflow continuation for cancelQueuedMessagesOnKill — one budgeted pass per run,
+// re-scheduling itself (from inside the same helper) while rows remain.
+export const continueKillCancellation = internalMutation({
+  args: { conversation_id: v.id("conversations"), cutoff_generation: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const cancelled = await cancelQueuedMessagesOnKill(ctx as any, args.conversation_id, {
+      continuation: true,
+      cutoffGeneration: args.cutoff_generation,
+    });
+    return { cancelled };
+  },
+});
+
+// Clear a conversation's has_pending_messages flag once nothing is still in flight — no
+// `pending` and no `injected` message remains. Every terminal transition (delivered, cancelled)
+// funnels through here so the flag, and therefore the inbox "Working" bucket, can never drift
+// from the actual message state.
+export async function clearHasPendingIfQuiet(
+  ctx: { db: any },
+  conversationId: Id<"conversations">
+): Promise<void> {
+  const remainingPending = await ctx.db
+    .query("pending_messages")
+    .withIndex("by_conversation_status", (q: any) =>
+      q.eq("conversation_id", conversationId).eq("status", "pending")
+    )
+    .first();
+  if (remainingPending) return;
+  const remainingInjected = await ctx.db
+    .query("pending_messages")
+    .withIndex("by_conversation_status", (q: any) =>
+      q.eq("conversation_id", conversationId).eq("status", "injected")
+    )
+    .first();
+  if (!remainingInjected) {
+    // Legacy cleanup can encounter a pending row whose conversation was
+    // already removed. The terminal message transition is still valid; there
+    // is simply no denormalized conversation flag left to clear.
+    const conversation = await ctx.db.get(conversationId);
+    if (!conversation) return;
+    await ctx.db.patch(conversationId, { has_pending_messages: false });
+  }
+}
+
+// Mark a single pending message delivered (terminal) and clear the conversation's
+// has_pending_messages flag when nothing else is in flight. Shared by the content-matched
+// ack inside addMessages (the reliable path — fires whenever the agent echoes the message,
+// on any sync path) and available to other callers.
+export async function markPendingDelivered(
+  ctx: { db: any },
+  message: { _id: Id<"pending_messages">; conversation_id: Id<"conversations">; status: string }
+): Promise<boolean> {
+  return await patchPendingMessageStatus(ctx, message, { status: "delivered" as const, delivered_at: Date.now() });
+}
+
+export const getPendingMessages = query({
+  args: {
+    user_id: v.optional(v.id("users")),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const targetUserId = args.user_id || authUserId;
+
+    if (targetUserId.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized: can only get your own pending messages");
+    }
+
+    const messages = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_user_status", (q) =>
+        q.eq("from_user_id", targetUserId).eq("status", "pending")
+      )
+      .collect();
+
+    return messages.filter((message) => !isFencedPendingMessage(message));
+  },
+});
+
+// The set of pending messages THIS daemon should deliver: every still-pending row whose target
+// conversation this user owns and this device may serve.
+//
+// We union two index scans rather than trusting owner_user_id to be set on every row:
+//   - by_owner_status (owner_user_id) — finds teammate sends, where owner != sender.
+//   - by_user_status (from_user_id)   — finds the user's OWN sends even if owner_user_id was never
+//                                        stamped (a self-send's owner is always its sender).
+// An index eq() can't match an unset optional field, so a self-send written by a path that forgot
+// owner_user_id would be invisible to the owner scan alone — silently undeliverable. The legacy
+// from_user_id scan is the safety net that makes delivery independent of that denormalization.
+// canDaemonSeePendingMessage (which falls back owner_user_id ?? conversation.user_id) is the final
+// gate on every candidate, so the union never delivers anything the owner shouldn't see.
+export async function collectDeliverableForOwner(
+  ctx: { db: any },
+  ownerUserId: Id<"users">,
+  deviceId: string,
+): Promise<any[]> {
+  // Bounded scans, oldest first. Unbounded collects made this query's cost track
+  // the pending BACKLOG, so the exact moment delivery fell behind (backend
+  // brownout) was the moment the query grew heavy enough to time out — killing
+  // the subscription that would have drained the backlog. Delivering the oldest
+  // slice re-fires the reactive query as rows leave "pending", so a deep backlog
+  // drains in waves instead of wedging.
+  const DELIVERABLE_SCAN_CAP = 500;
+  const [byOwner, bySender] = await Promise.all([
+    ctx.db
+      .query("pending_messages")
+      .withIndex("by_owner_status", (q: any) =>
+        q.eq("owner_user_id", ownerUserId).eq("status", "pending")
+      )
+      .take(DELIVERABLE_SCAN_CAP),
+    ctx.db
+      .query("pending_messages")
+      .withIndex("by_user_status", (q: any) =>
+        q.eq("from_user_id", ownerUserId).eq("status", "pending")
+      )
+      .take(DELIVERABLE_SCAN_CAP),
+  ]);
+
+  // DPM-02: this query reads pending rows and their conversations only. Owner
+  // mismatch is decided from the conversation row alone (canDaemonSeePendingMessage),
+  // so the subscription takes no dependency on the devices table and never
+  // refires on fleet heartbeats.
+  const owned = [];
+  const seen = new Set<string>();
+  for (const message of [...byOwner, ...bySender]) {
+    const key = message._id.toString();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const conversation = await ctx.db.get(message.conversation_id);
+    if (!conversation) continue;
+    if (canDaemonSeePendingMessage(message, conversation, ownerUserId, deviceId)) {
+      // Stamped here so delivery can refuse a leftover Codex app-server thread
+      // after an in-place switch. The conversation row is already loaded.
+      owned.push({ ...message, conversation_agent_type: conversation.agent_type ?? null });
+    }
+  }
+  return headOfEachQueue(owned);
+}
+
+// Only the oldest deliverable row of each conversation. A conversation takes
+// one message at a time, in queue order (the daemon serializes per
+// conversation, and the launch prompt and the web's in-flight card both read
+// the oldest row), so the rows behind the head are nothing the daemon can act
+// on yet: it claimed each one on every push only to skip it. A session that
+// stays down queues dozens (52 worker reports on one conversation, 3.5 days
+// old, on 2026-10-05), and claiming those on every push was 44 mutations a
+// second, a tenth of all backend time (ct-56547). The next row arrives the
+// moment the head leaves "pending", the same reactive turn as before.
+export function headOfEachQueue<T extends { conversation_id: unknown; created_at?: number; queue_at?: number; _creationTime?: number }>(rows: T[]): T[] {
+  const head = new Map<string, T>();
+  const at = (r: T) => queueOrder(r);
+  for (const row of rows) {
+    const key = String(row.conversation_id);
+    const held = head.get(key);
+    if (!held || at(row) < at(held)) head.set(key, row);
+  }
+  return rows.filter((r) => head.get(String(r.conversation_id)) === r);
+}
+
+export const getPendingMessagesForDaemon = query({
+  args: {
+    api_token: v.optional(v.string()),
+    device_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+    return await collectDeliverableForOwner(ctx, authUserId, args.device_id);
+  },
+});
+
+export const claimPendingMessageForDelivery = mutation({
+  args: {
+    message_id: v.id("pending_messages"),
+    conversation_id: v.optional(v.id("conversations")),
+    api_token: v.optional(v.string()),
+    device_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+    return await claimPendingMessageForDaemon(ctx, args.message_id, authUserId, args.device_id, args.conversation_id);
+  },
+});
+
+const SHOWN_PENDING_STATUSES = new Set<string>(["pending", "injected", "failed", "undeliverable"]);
+// The delivered rows getConversationPendingMessage reports: those that went in
+// within an hour of the newest delivery, at most this many. Measured from the
+// data, not the clock, so the answer changes only when a row does.
+const RECENT_DELIVERY_MS = 60 * 60_000;
+const RECENT_DELIVERY_ROWS = 10;
+
+export const getConversationPendingMessage = query({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthUserId(ctx);
+    if (!authUserId) return null;
+
+    const msgs = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_id", (q) => q.eq("conversation_id", args.conversation_id))
+      .collect();
+
+    // The owner of this conversation sees the "delivering…" indicator for ANY in-flight message
+    // on it (including one a teammate sent them); the sender also sees their own outgoing one.
+    const conversation = await ctx.db.get(args.conversation_id);
+    const isOwner = conversation?.user_id?.toString() === authUserId.toString();
+    const visible = msgs.filter(
+      (m) => isOwner || m.from_user_id.toString() === authUserId.toString()
+    );
+    // The queue is everyone's: anyone who can read the session sees every
+    // message waiting to go into it, whoever sent it, with their face. Each
+    // is about to land in the transcript they already read, and a shared
+    // session's people steer it together (reorder, merge).
+    const sharedQueue = isOwner || (!!conversation && (await checkConversationAccess(ctx, authUserId, conversation)) !== "denied");
+    // The oldest undelivered message, whatever its current status. Every
+    // delivery attempt flips a row to "injected" and a hold flips it back, so
+    // preferring "pending" hopped the card between queued messages on each
+    // retry (2026-09-14). Queue order is the order the session will take them.
+    // With nothing in flight, report the newest settled row instead of null. A
+    // viewer whose transcript tail lags the server (minutes under load) keeps
+    // a delivered message on screen until its echo arrives, instead of
+    // watching it vanish; a cancelled row tells the viewer to drop it.
+    // `inflight` lists EVERY undelivered row in queue order: each one is a
+    // message the transcript does not hold yet, and each must render. A
+    // session that stays down queues several; showing only the oldest hid
+    // the rest for 33 hours on 2026-09-30.
+    const authors = new Map<string, { name: string; image?: string }>();
+    for (const m of msgs) {
+      const key = m.from_user_id.toString();
+      if (authors.has(key)) continue;
+      const u: any = await ctx.db.get(m.from_user_id);
+      authors.set(key, { name: u?.name || u?.github_username || u?.email?.split("@")[0] || "Someone", image: u?.image || u?.github_avatar_url || undefined });
+    }
+    const shown = (m: (typeof msgs)[number]) => ({
+      message_id: m._id, client_id: m.client_id, created_at: m.created_at, delivered_at: m.delivered_at, queue_at: m.queue_at, retry_count: m.retry_count,
+      status: m.status as string, content: m.content, hold_reason: m.delivery_disposition_reason, hold_screen: m.delivery_hold_screen,
+      delivery_status: m.delivery_status, queued: m.queued,
+      from_user_id: m.from_user_id, from_name: authors.get(m.from_user_id.toString())?.name, from_image: authors.get(m.from_user_id.toString())?.image,
+    });
+    const inflight = (sharedQueue ? msgs : visible)
+      .filter((m) => SHOWN_PENDING_STATUSES.has(m.status) || (m.status === "held" && m.queued))
+      .sort(byQueueOrder);
+    // The primary is what the viewer's delivery tracker watches: never a row
+    // held on purpose (queued for the end of the turn), which is not late.
+    const msg = inflight.find((m) => visible.includes(m) && m.status !== "held")
+      ?? visible
+        .filter((m) => TERMINAL_STATUSES.has(m.status as PendingStatus))
+        .sort((a, b) => b.created_at - a.created_at)[0]
+      ?? null;
+    // `delivered` lists the rows that went in lately, newest first, whatever
+    // else is in flight. A viewer's tail can lag the server by minutes, and
+    // until a row's echo reaches it the row is the only copy of that message
+    // on screen; two sends delivered together each need theirs.
+    const delivered = (sharedQueue ? msgs : visible)
+      .filter((m) => m.status === "delivered")
+      .sort((a, b) => (b.delivered_at ?? b.created_at) - (a.delivered_at ?? a.created_at));
+    const newestDelivery = delivered[0] ? (delivered[0].delivered_at ?? delivered[0].created_at) : 0;
+    const recent = delivered
+      .filter((m) => (m.delivered_at ?? m.created_at) >= newestDelivery - RECENT_DELIVERY_MS)
+      .slice(0, RECENT_DELIVERY_ROWS)
+      .map(shown);
+    // Others' queued messages with none of the viewer's own: the queue alone,
+    // with no primary row for the viewer's delivery tracker to act on.
+    if (!msg) return inflight.length || recent.length ? { inflight: inflight.map(shown), delivered: recent } : null;
+    return { ...shown(msg), inflight: inflight.map(shown), delivered: recent };
+  },
+});
+
+export const getMessageStatus = query({
+  args: {
+    message_id: v.id("pending_messages"),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed: invalid token or session");
+    }
+
+    const message = await ctx.db.get(args.message_id);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    if (!(await senderOrOwnerCanAct(ctx, message, authUserId))) {
+      throw new Error("Unauthorized: can only check status of messages you sent or own");
+    }
+
+    return {
+      status: message.status,
+      created_at: message.created_at,
+      delivered_at: message.delivered_at,
+      retry_count: message.retry_count,
+    };
+  },
+});
+
+// A user message is never dropped, and there is no age ceiling: a stranded message stays alive
+// until it is delivered. What the cron gates on is not age but session READINESS (see
+// retryStuckMessages / readyConversationIds) — it only re-pends a stray when the session is live
+// and idle, so a busy/blocked/offline session just waits instead of thrashing. planStuckMessageHeal
+// is the pure per-message decision once the session is known ready.
+// Give the JSONL-echo ack a chance to land before re-pending an "injected" message as failed.
+const INJECT_ACK_GRACE_MS = 120_000;
+
+export type HealAction =
+  | { kind: "skip" }
+  | { kind: "deliver_control" }
+  | { kind: "repend" };
+
+// Pure decision for the cron healer. The invariant: `retry_count` counts REAL failed delivery
+// attempts only — never elapsed wait time. So the healer never bumps it (and resets it to 0 on
+// revival, handing the daemon a fresh budget). This is the fix for messages dying on daemon
+// reconnect: the old cron bumped retry_count every 30s as a liveness poke, exhausting the
+// undeliverable budget while nothing was actually being delivered.
+export function planStuckMessageHeal(
+  msg: { status: string; content: string; created_at: number },
+  now: number
+): HealAction {
+  const age = now - msg.created_at;
+
+  if (msg.status === "injected") {
+    if (age < INJECT_ACK_GRACE_MS) return { kind: "skip" };
+    // Control messages have no JSONL echo to ack against; a stale "injected" one was already
+    // successfully injected, so promote it to terminal "delivered" rather than re-injecting.
+    if (isControlMessage(msg.content)) return { kind: "deliver_control" };
+    return { kind: "repend" };
+  }
+  // "undeliverable" is NOT a dead-end: the daemon raises it after its gentle-retry budget is
+  // spent (a useful "escalate" signal), but it is revived (once the session is idle — see the
+  // cron's readiness gate) so delivery keeps moving forward with no client present. "failed" is
+  // the transient sync-failure sibling.
+  if (msg.status === "failed" || msg.status === "undeliverable") return { kind: "repend" };
+
+  // "pending" is normally the daemon's live subscription to drive — but only WHILE delivery is
+  // actually in flight (the first ~seconds). The retry-forever design had a single point of
+  // failure here: the daemon's pending->injected write (markInjectedBestEffort) races an 8s
+  // timeout and swallows failure, and this deployment drops writes under OCC load. When that
+  // write is lost the row is stuck "pending" forever — the cron skipped pending entirely, and
+  // getPendingMessages only re-fires the reactive subscription when the pending SET changes,
+  // which a dropped write never does. So a message whose Enter was lost AND whose status write
+  // dropped had no backstop at all. Revive it once it is older than any legitimate in-flight
+  // delivery (and, via the cron's readiness gate, only when the session is idle and ready). This
+  // can never duplicate a delivered message: anything that actually reached the agent is promoted
+  // to terminal "delivered" by the content-matched ack in addMessages, so a row still "pending"
+  // at this age provably never landed. We don't bump retry_count (repend resets it), so this
+  // never conflates elapsed wait time with the real-attempt budget — the original "don't touch
+  // pending" bug is structurally avoided.
+  if (msg.status === "pending") {
+    if (age < INJECT_ACK_GRACE_MS) return { kind: "skip" };
+    // Leave poll-keystroke control messages to the normal flow: re-pending a keystroke risks
+    // double-selecting a poll option, and they aren't the stranded-text case this backstop targets.
+    if (isControlMessage(msg.content)) return { kind: "skip" };
+    return { kind: "repend" };
+  }
+  return { kind: "skip" };
+}
+
+// A session with no live process never becomes ready on its own. The daemon resumes a dead
+// session only for a `pending` row, so a row left `injected` when its session died before the
+// text was submitted waited for a readiness that could not come (jx71gjy, 2026-10-05: a card
+// sent to a reaped session sat for a day until the human sent it again). Re-pending it lets the
+// daemon resume the session exactly as it would for a new send. Three bounds keep the backlog of
+// weeks-old rows from becoming a resume storm: only recent rows, each row once, and a few
+// sessions per pass. `undeliverable` is left alone: the daemon already spent its budget on it.
+export const DEAD_SESSION_REVIVE_WINDOW_MS = 6 * 60 * 60_000;
+export const DEAD_SESSION_REVIVES_PER_PASS = 3;
+
+export function planDeadSessionRevive(
+  msg: { status: string; content: string; created_at: number; dead_session_revived_at?: number },
+  now: number
+): boolean {
+  if (msg.dead_session_revived_at !== undefined) return false;
+  if (msg.status !== "injected" && msg.status !== "failed") return false;
+  if (now - msg.created_at >= DEAD_SESSION_REVIVE_WINDOW_MS) return false;
+  return planStuckMessageHeal(msg, now).kind === "repend";
+}
+
+// The cron only revives a stranded message when its session is live AND settled — i.e. ready to
+// receive it right now. A user message is NEVER dropped: if the session is busy, blocked, stopped,
+// resuming, or gone, the message is left untouched and revived on a later tick once the session
+// recovers (becomes idle). This readiness gate is what keeps a backlog from stampeding the daemon
+// into mass resumes (storm) or re-injecting into a busy agent (thrash) — when blocked we simply
+// wait; the second the session is idle, every queued message for it goes.
+// Returns two sets keyed by conversation id: `live` (a daemon for it beat its heartbeat recently,
+// regardless of what the agent is doing) and `ready` (live AND the agent is idle, so it can take a
+// message right now). The cross-user notifier needs `live` to tell "busy" (alive but not idle)
+// apart from "offline" (no live daemon); both keep the message queued.
+async function liveAndReadyConversationIds(
+  ctx: { db: any },
+  now: number
+): Promise<{ ready: Set<string>; live: Set<string> }> {
+  const sessions = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_heartbeat", (q: any) => q.gt("last_heartbeat", now - HEARTBEAT_ALIVE_MS))
+    .collect();
+  const ready = new Set<string>();
+  const live = new Set<string>();
+  for (const s of sessions) {
+    if (!s.conversation_id) continue;
+    live.add(s.conversation_id.toString());
+    const transitionAt = s.agent_status_updated_at ?? s.agent_started_at ?? s._creationTime;
+    const stalledTransition = ["starting", "resuming", "connected"].includes(s.agent_status)
+      && typeof transitionAt === "number" && now - transitionAt >= 5 * 60_000;
+    if (s.agent_status === "idle" || SETTLE_VERDICT_STATUSES.has(s.agent_status) || stalledTransition) {
+      ready.add(s.conversation_id.toString());
+    }
+  }
+  return { ready, live };
+}
+
+// How long a session's message may sit undelivered before we tell the sending session.
+// Comfortably past the heartbeat window (90s) so a brief daemon reconnect doesn't read as "offline".
+export const STUCK_SEND_NOTIFY_DEADLINE_MS = 3 * 60_000;
+
+// busy: live and mid-turn. stuck: live and idle, yet the message is still not in.
+export type TargetReach = "busy" | "stuck" | "offline" | "gone";
+export type StuckSendNotify = { kind: "skip" } | { kind: "notify"; reach: TargetReach };
+
+// Pure decision: should the sending session be told its message is stuck? Fires at most once
+// (gated on sender_notified_at). The message itself is kept unless its target session no longer
+// exists: a busy session takes it when idle, and an offline one (its machine asleep or its daemon
+// down) takes it when that daemon returns. Waiting on a busy session of the sender's own is the
+// ordinary case and is not said; a teammate's sender hears every reason. Rows with no sender
+// session are never notified.
+export function planStuckSendNotify(
+  msg: {
+    status: string;
+    created_at: number;
+    sender_notified_at?: number;
+    from_conversation_id?: Id<"conversations">;
+    from_user_id: Id<"users">;
+    owner_user_id?: Id<"users">;
+  },
+  reach: TargetReach,
+  now: number
+): StuckSendNotify {
+  if (msg.status === "delivered" || msg.status === "cancelled") return { kind: "skip" };
+  if (!msg.from_conversation_id) return { kind: "skip" }; // no sender session to notify
+  if (msg.sender_notified_at) return { kind: "skip" }; // already told them once
+  if (!msg.owner_user_id) return { kind: "skip" }; // legacy/unknown owner
+  if (now - msg.created_at < STUCK_SEND_NOTIFY_DEADLINE_MS) return { kind: "skip" };
+  if (reach === "busy" && msg.from_user_id.toString() === msg.owner_user_id.toString()) return { kind: "skip" };
+  return { kind: "notify", reach };
+}
+
+// Deliver a delay receipt back into the sender's own session and mark the original so we don't
+// notify again. Only a target that no longer exists cancels the original.
+async function notifyStuckSend(
+  ctx: { db: any },
+  msg: any,
+  reach: TargetReach
+): Promise<void> {
+  const giveUp = reach === "gone";
+  const senderConv = await ctx.db.get(msg.from_conversation_id);
+  if (!senderConv) {
+    // Sender's session is gone — nowhere to report; just stop re-evaluating this row.
+    await ctx.db.patch(msg._id, { sender_notified_at: Date.now() });
+    if (giveUp) await patchPendingMessageStatus(ctx, msg, { status: "cancelled" as const });
+    return;
+  }
+  const targetConv = await ctx.db.get(msg.conversation_id);
+  const targetLabel = targetConv?.short_id ?? msg.conversation_id.toString().slice(0, 7);
+  const preview = (msg.content ?? "").replace(/<\/?session-message[^>]*>/g, "").trim().slice(0, 140);
+  const body = reach === "gone"
+    ? `Your message to session ${targetLabel} could not be delivered — that session no longer exists, so the message was dropped.\n\n> ${preview}`
+    : reach === "offline"
+    ? `Your message to session ${targetLabel} hasn't been delivered yet — it has no live daemon right now (its machine may be asleep or offline). It stays queued and is delivered when that daemon comes back; no action needed unless it is urgent.\n\n> ${preview}`
+    : reach === "stuck"
+    ? `Your message to session ${targetLabel} hasn't been delivered yet. The session is idle, but its machine has not managed to put the message in front of it, and it keeps retrying. If it is urgent, check that machine's load or its daemon.\n\n> ${preview}`
+    : `Your message to session ${targetLabel} hasn't been delivered yet — the session is busy. It stays queued and will be delivered automatically the moment the session goes idle; no action needed.\n\n> ${preview}`;
+
+  // The receipt goes into the sender's OWN conversation, so from_user == owner == the sender:
+  // it's a normal self-scoped message (never itself a cross-user send), and enqueue wakes the
+  // sender's session so the agent notices the outcome.
+  await enqueuePendingMessage(ctx, senderConv, msg.from_user_id, {
+    content: formatSessionMessage("codecast", body),
+  });
+  await ctx.db.patch(msg._id, { sender_notified_at: Date.now() });
+  if (giveUp) await patchPendingMessageStatus(ctx, msg, { status: "cancelled" as const });
+}
+
+export const retryStuckMessages: RegisteredMutation<"internal", Record<string, never>, Promise<void>> = internalMutation({
+  handler: async (ctx) => {
+    noteWriteCause(ctx, "cron:retryStuckMessages");
+    await healAndNotifyStuckMessages(ctx, Date.now());
+  },
+});
+
+// The cron's work, extracted so it can be driven deterministically in tests with a fixed `now`.
+// Two jobs: (1) revive stranded messages once their session is idle (the never-drop backstop),
+// and (2) tell the sending session when a cross-user message is stuck past the deadline.
+export async function healAndNotifyStuckMessages(ctx: { db: any; scheduler?: WakeScheduler }, now: number): Promise<{
+  revived: number;
+  controlsAcked: number;
+  notified: number;
+  waiting: number;
+  rewoken: number;
+}> {
+  {
+    // Scan every non-terminal state. `delivered`/`cancelled` are terminal so they're skipped.
+    // `pending` is included because a dropped daemon status-write (markInjectedBestEffort) can
+    // strand a never-delivered message there with no other backstop; planStuckMessageHeal only
+    // revives a pending row once it's older than any legitimate in-flight delivery, so fresh
+    // pending (the daemon's live work) is left untouched.
+    // Read ONLY non-terminal rows via the by_status index. The previous
+    // `.filter().collect()` scanned the entire pending_messages table (every
+    // delivered/cancelled row in history) on every 30s run, holding a read
+    // dependency on the whole table that OCC-conflicted with every addMessages
+    // pending-write — a self-amplifying stampede that timed out syncs and let the
+    // backlog (and thus the scan cost) grow without bound.
+    const candidates: any[] = [];
+    for (const status of ["pending", "injected", "failed", "undeliverable"] as const) {
+      const rows = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_status", (q: any) => q.eq("status", status))
+        .collect();
+      candidates.push(...rows);
+    }
+
+    const { ready, live } = await liveAndReadyConversationIds(ctx, now);
+
+    let revived = 0;
+    let controlsAcked = 0;
+    let waiting = 0;
+    let notified = 0;
+    const reflag = new Set<Id<"conversations">>();
+    const safetyBlocked = new Map<string, boolean>();
+    const gone = new Set<string>();
+    const deadRevived = new Set<string>();
+    // Hosted conversations are served by their turn engine, not a daemon: a
+    // stale row there means a wake was lost, so the backstop wakes the
+    // conversation again (once per pass) instead of re-pending for a daemon.
+    const hosted = new Map<string, any>();
+    const rewoken = new Set<string>();
+    const hostedChecked = new Set<string>();
+    for (const msg of candidates) {
+      // Fenced rows use delivery attempts and permits; legacy elapsed-time
+      // healing must never reinterpret their state or synthesize a retry.
+      if (isFencedPendingMessage(msg)) continue;
+      const conversationId = String(msg.conversation_id);
+      if (!safetyBlocked.has(conversationId)) {
+        const conversation = await ctx.db.get(msg.conversation_id);
+        safetyBlocked.set(conversationId, !!conversation && isConversationSafetyBlocked(conversation));
+        if (conversation && isHostedAgentType(conversation.agent_type)) hosted.set(conversationId, conversation);
+        if (!conversation) {
+          gone.add(conversationId);
+          ready.delete(conversationId);
+          live.delete(conversationId);
+        }
+      }
+      if (safetyBlocked.get(conversationId)) {
+        waiting++;
+        continue;
+      }
+      const hostedConversation = hosted.get(conversationId);
+      if (hostedConversation) {
+        if (planStuckMessageHeal(msg, now).kind !== "skip" && !hostedChecked.has(conversationId)) {
+          hostedChecked.add(conversationId);
+          // Input waiting on an open approval card stays pending on purpose,
+          // for as long as the card is open: the answer, a dismissal or the
+          // person's next message wakes it, so the sweep does not.
+          if (await hostedInputWaits(ctx, msg.conversation_id)) {
+            waiting++;
+          } else {
+            rewoken.add(conversationId);
+            await wakeHostedConversation(ctx, hostedConversation, "continue");
+          }
+        }
+        continue;
+      }
+      // Sender feedback runs regardless of the target's readiness: a message stuck past the
+      // deadline tells its sending session why. planStuckSendNotify no-ops on already-notified
+      // rows and on the sender's own busy session.
+      const reach: TargetReach = gone.has(conversationId) ? "gone"
+        : live.has(conversationId) ? (ready.has(conversationId) ? "stuck" : "busy")
+        : "offline";
+      const senderNotify = planStuckSendNotify(msg, reach, now);
+      if (senderNotify.kind === "notify") {
+        await notifyStuckSend(ctx, msg, senderNotify.reach);
+        notified++;
+        if (senderNotify.reach === "gone") continue; // cancelled — nothing more to do with this row
+      }
+      // A dialog hold describes a pane: the screen the daemon read on it. Once no daemon is
+      // serving the session there is no pane, and the card would go on saying "waiting for a
+      // human answer" about a terminal that is gone (jx78gaw, three days, 2026-10-13). Drop
+      // the hold so the row reads as what it is: queued for a session that is offline.
+      if (msg.delivery_hold_screen && !live.has(conversationId)) {
+        await ctx.db.patch(msg._id, { delivery_disposition_reason: undefined, delivery_hold_screen: undefined });
+      }
+      // Session not ready to receive (busy / blocked / stopped / gone): leave the message
+      // exactly as-is — preserved, never dropped — and revive it once the session is idle.
+      // A session with no live process is the exception: see planDeadSessionRevive.
+      if (!ready.has(conversationId)) {
+        const revivable = !live.has(conversationId) && !gone.has(conversationId)
+          && planDeadSessionRevive(msg, now)
+          && (deadRevived.has(conversationId) || deadRevived.size < DEAD_SESSION_REVIVES_PER_PASS);
+        if (!revivable) {
+          waiting++;
+          continue;
+        }
+        deadRevived.add(conversationId);
+        if (await rependPendingMessage(ctx, msg, 0)) {
+          await ctx.db.patch(msg._id, { dead_session_revived_at: now });
+          reflag.add(msg.conversation_id);
+          revived++;
+        }
+        continue;
+      }
+      const action = planStuckMessageHeal(msg, now);
+      if (action.kind === "skip") continue;
+      if (action.kind === "deliver_control") {
+        await markPendingDelivered(ctx, msg);
+        controlsAcked++;
+        continue;
+      }
+      if (await rependPendingMessage(ctx, msg, 0)) {
+        reflag.add(msg.conversation_id);
+        revived++;
+      }
+    }
+    for (const convId of reflag) {
+      await ctx.db.patch(convId, { has_pending_messages: true });
+    }
+
+    if (revived > 0 || controlsAcked > 0 || notified > 0 || rewoken.size > 0) {
+      console.log(`retryStuckMessages: revived ${revived} for idle sessions, acked ${controlsAcked} control msg(s), notified ${notified} stuck cross-user send(s), rewoke ${rewoken.size} hosted conversation(s), ${waiting} waiting on a busy/offline session`);
+    }
+    return { revived, controlsAcked, notified, waiting, rewoken: rewoken.size };
+  }
+}
+
+// Non-terminal states: a message in any of these is still "in flight" and keeps the
+// conversation's has_pending_messages flag true (and the inbox card in "Working").
+const NON_TERMINAL_STATUSES = ["pending", "injected", "failed", "undeliverable"] as const;
+
+// One-time: stamp owner_user_id on rows created before the field existed, so the daemon's
+// by_owner_status poll finds them. Only non-terminal rows matter (terminal ones never deliver).
+// For every legacy row owner == from_user (sends were self-only then), but we read the real
+// conversation owner to be exact. Idempotent — skips rows that already have owner_user_id.
+export const backfillPendingOwnerUserId = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let stamped = 0;
+    for (const status of NON_TERMINAL_STATUSES) {
+      const rows = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_status", (q: any) => q.eq("status", status))
+        .collect();
+      for (const row of rows) {
+        if (isFencedPendingMessage(row)) continue;
+        if (row.owner_user_id) continue;
+        const conversation = await ctx.db.get(row.conversation_id);
+        const ownerId = conversation?.user_id ?? row.from_user_id;
+        await ctx.db.patch(row._id, { owner_user_id: ownerId });
+        stamped++;
+      }
+    }
+    return { stamped };
+  },
+});
+
+// One-time audit: bucket every non-terminal (still-in-flight) pending message by age, so we can
+// see the backlog of strays before flipping on always-deliver. Read-only.
+export const auditStrandedMessages = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const HOUR = 60 * 60_000;
+    const buckets = { under_1h: 0, h1_to_6h: 0, h6_to_24h: 0, d1_to_7d: 0, over_7d: 0 };
+    const byStatus: Record<string, number> = {};
+    let total = 0;
+    let oldestAgeMs = 0;
+    for (const status of NON_TERMINAL_STATUSES) {
+      const rows = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_status", (q) => q.eq("status", status))
+        .collect();
+      byStatus[status] = rows.length;
+      for (const r of rows) {
+        total++;
+        const age = now - r.created_at;
+        if (age > oldestAgeMs) oldestAgeMs = age;
+        if (age < HOUR) buckets.under_1h++;
+        else if (age < 6 * HOUR) buckets.h1_to_6h++;
+        else if (age < 24 * HOUR) buckets.h6_to_24h++;
+        else if (age < 7 * 24 * HOUR) buckets.d1_to_7d++;
+        else buckets.over_7d++;
+      }
+    }
+    return { total, byStatus, buckets, oldestAgeHours: Math.round((oldestAgeMs / HOUR) * 10) / 10 };
+  },
+});
+
+
+// Per-message diagnostic for "the cron keeps logging revived N / M waiting but nothing clears".
+// Read-only. For every non-terminal message it reproduces the cron's readiness gate verdict and
+// joins the consuming session(s) so we can see WHY a row won't reach terminal `delivered`:
+//   - ready_per_gate true  -> the cron revives it every tick; if it never clears, the bound session
+//     reads idle+live but isn't actually consuming the re-pend (false-idle / split-brain / wrong owner).
+//   - ready_per_gate false -> parked by design on a busy/blocked/offline session (the "waiting" bucket).
+export const diagnoseStuckMessages = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const candidates: any[] = [];
+    for (const status of NON_TERMINAL_STATUSES) {
+      const r = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_status", (q: any) => q.eq("status", status))
+        .collect();
+      candidates.push(...r);
+    }
+    const out = [];
+    for (const m of candidates) {
+      const conv: any = await ctx.db.get(m.conversation_id);
+      const sessions = await ctx.db
+        .query("managed_sessions")
+        .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", m.conversation_id))
+        .collect();
+      const sess = sessions.map((s: any) => ({
+        session_id: s.session_id,
+        agent_status: s.agent_status ?? null,
+        heartbeat_age_s: Math.round((now - s.last_heartbeat) / 1000),
+        live: now - s.last_heartbeat < HEARTBEAT_ALIVE_MS,
+        pid: s.pid,
+      }));
+      const ready = sess.some((s) => s.live && (s.agent_status === "idle" || SETTLE_VERDICT_STATUSES.has(s.agent_status)));
+      out.push({
+        msg_id: m._id,
+        status: m.status,
+        age_min: Math.round((now - m.created_at) / 60000),
+        retry_count: m.retry_count,
+        is_control: isControlMessage(m.content),
+        preview: m.content.slice(0, 60),
+        conversation_id: m.conversation_id,
+        conv_title: conv?.title ?? null,
+        conv_has_pending_flag: conv?.has_pending_messages ?? null,
+        conv_owner_device_id: conv?.owner_device_id ?? null,
+        conv_project_path: conv?.project_path ?? null,
+        ready_per_gate: ready,
+        session_count: sess.length,
+        sessions: sess,
+      });
+    }
+    out.sort((a, b) => Number(b.ready_per_gate) - Number(a.ready_per_gate) || b.age_min - a.age_min);
+    return {
+      count: out.length,
+      revived_bucket: out.filter((m) => m.ready_per_gate).length,
+      waiting_bucket: out.filter((m) => !m.ready_per_gate).length,
+      messages: out,
+    };
+  },
+});
+
+// Kept for old operator tooling, but cancelled is now terminal and must not be revived.
+export const restoreCancelledMessages = internalMutation({
+  args: { min_age_ms: v.number(), dry_run: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    return { restored: 0, conversations: 0, dry_run: !!args.dry_run };
+  },
+});
+
+const NON_TERMINAL_PENDING_STATUSES = [
+  "pending",
+  "injected",
+  "failed",
+  "undeliverable",
+  "held",
+] as const;
+
+/**
+ * Read only the indexed non-terminal queue before applying the operator's age
+ * cutoff. The pending_messages table is dominated by terminal delivered rows;
+ * a table-level filter scans that entire history and makes even a small manual
+ * cleanup time out before it can report a dry run.
+ */
+export async function collectOldLegacyPendingMessages(
+  ctx: { db: any },
+  cutoff: number,
+  perStatusLimit = 500,
+): Promise<any[]> {
+  const matches: any[] = [];
+  for (const status of NON_TERMINAL_PENDING_STATUSES) {
+    const rows = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_status", (q: any) => q.eq("status", status))
+      .order("asc")
+      .take(perStatusLimit);
+    for (const row of rows) {
+      if (row.created_at < cutoff && !isFencedPendingMessage(row)) {
+        matches.push(row);
+      }
+    }
+  }
+  return matches;
+}
+
+// EXPLICIT, USER-INITIATED bulk cancel. The cardinal rule forbids the system from EVER dropping a
+// user message on its own — but the user can choose to stop messages, and this is the bulk form of
+// that (cancel = the same terminal state as the per-message cancelPendingMessage button). It is
+// only ever invoked by hand on explicit request (e.g. "kill the really old pending messages"),
+// never wired into a cron. Cancels non-terminal messages older than `older_than_ms` and clears the
+// conversation flag. dry_run reports the count without mutating.
+export const cancelOldPendingMessages = internalMutation({
+  args: {
+    older_than_ms: v.number(),
+    dry_run: v.optional(v.boolean()),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const cutoff = Date.now() - args.older_than_ms;
+    const limit = Math.max(1, Math.min(Math.floor(args.limit ?? 200), 500));
+    const matches = await collectOldLegacyPendingMessages(ctx, cutoff, limit);
+    matches.sort((a, b) => a.created_at - b.created_at);
+    const selected = matches.slice(0, limit);
+    const affectedConvs = new Set<Id<"conversations">>();
+    for (const row of selected) {
+      affectedConvs.add(row.conversation_id);
+      if (!args.dry_run) {
+        await ctx.db.patch(row._id, { status: "cancelled" as const });
+      }
+    }
+    if (!args.dry_run) {
+      for (const convId of affectedConvs) {
+        await clearHasPendingIfQuiet(ctx, convId);
+      }
+    }
+    return {
+      cancelled: selected.length,
+      matched: matches.length,
+      conversations: affectedConvs.size,
+      has_more: matches.length > selected.length,
+      dry_run: !!args.dry_run,
+    };
+  },
+});
+
+// Ack injected messages for a conversation as "delivered". Called by the daemon
+// when a user message appears in the synced JSONL. When the daemon supplies
+// `pastedMessageIds` (the rows IT pasted into a live pane this process), only
+// those rows are acked; rows it cannot vouch for stay `injected` for the heal
+// cron to re-pend and re-deliver. Without the list (old daemon) the legacy
+// blanket behavior applies.
+export async function ackInjectedForDaemon(
+  ctx: { db: any },
+  conversationId: Id<"conversations">,
+  pastedMessageIds?: Id<"pending_messages">[],
+  deliveryAcks?: Array<{
+    pendingMessageId: Id<"pending_messages">;
+    transcriptMessageId: Id<"messages">;
+  }>,
+): Promise<number> {
+  const injected = await ctx.db
+    .query("pending_messages")
+    .withIndex("by_conversation_status", (q: any) =>
+      q.eq("conversation_id", conversationId).eq("status", "injected")
+    )
+    .collect();
+
+  const pasted = pastedMessageIds ? new Set(pastedMessageIds.map(String)) : null;
+  const transcriptByPending = new Map(
+    (deliveryAcks ?? []).map((ack) => [
+      String(ack.pendingMessageId),
+      ack.transcriptMessageId,
+    ]),
+  );
+  let acked = 0;
+  for (const msg of injected) {
+    if (pasted && !pasted.has(String(msg._id))) continue;
+    const transcriptMessageId = transcriptByPending.get(String(msg._id));
+    if (transcriptMessageId && msg.client_id) {
+      const transcript = await ctx.db.get(transcriptMessageId);
+      // DWB-03: the daemon-vouched ack is the only proof path for truncated or
+      // duplicate-suppressed echoes. Stamp the exact client id on its best-
+      // effort transcript relation before terminalizing the pending row.
+      if (
+        transcript &&
+        String(transcript.conversation_id) === String(conversationId) &&
+        transcript.role === "user" &&
+        (!transcript.client_id || transcript.client_id === msg.client_id)
+      ) {
+        await ctx.db.patch(transcriptMessageId, { client_id: msg.client_id });
+        // The row now HAS its transcript relation — record it, or the
+        // delivered-tier match in findEchoedPendingMessage stays open and a
+        // later content-matched echo adopts the same client_id onto a SECOND
+        // message (two rows sharing a client id garbles the web timeline).
+        if (!msg.echo_message_id) {
+          await ctx.db.patch(msg._id, { echo_message_id: transcriptMessageId });
+        }
+      }
+    }
+    if (await markPendingDelivered(ctx, msg)) acked++;
+  }
+  return acked;
+}
+
+export const ackInjectedMessages = mutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    api_token: v.optional(v.string()),
+    device_id: v.optional(v.string()),
+    // Rows the daemon itself pasted into a live pane (delivery resolved
+    // successfully in this process). Optional for old-daemon back-compat.
+    message_ids: v.optional(v.array(v.id("pending_messages"))),
+    delivery_acks: v.optional(v.array(v.object({
+      pending_message_id: v.id("pending_messages"),
+      transcript_message_id: v.id("messages"),
+    }))),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed");
+    }
+
+    if (!(await daemonCanMutateConversation(ctx, args.conversation_id, authUserId, args.device_id))) {
+      return { acked: 0, skipped: true };
+    }
+
+    const acked = await ackInjectedForDaemon(
+      ctx,
+      args.conversation_id,
+      args.message_ids,
+      args.delivery_acks?.map((ack) => ({
+        pendingMessageId: ack.pending_message_id,
+        transcriptMessageId: ack.transcript_message_id,
+      })),
+    );
+    return { acked };
+  },
+});
+
+// Reset: move "injected" messages back to "pending" (e.g. after session kill)
+export const resetInjectedMessages = mutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    api_token: v.optional(v.string()),
+    device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication failed");
+    }
+
+    if (!(await daemonCanMutateConversation(ctx, args.conversation_id, authUserId, args.device_id))) {
+      return { reset: 0, skipped: true };
+    }
+
+    const injected = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_status", (q) =>
+        q.eq("conversation_id", args.conversation_id).eq("status", "injected")
+      )
+      .collect();
+
+    let reset = 0;
+    for (const msg of injected) {
+      if (await rependPendingMessage(ctx, msg, msg.retry_count + 1)) reset++;
+    }
+
+    if (reset > 0) {
+      await ctx.db.patch(args.conversation_id, { has_pending_messages: true });
+    }
+
+    return { reset };
+  },
+});

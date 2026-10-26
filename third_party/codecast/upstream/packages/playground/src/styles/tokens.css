@@ -1,0 +1,89 @@
+/* Clayground tokens (DESIGN.md section 4). Components never use a raw hex. */
+:root {
+  /* neutrals: warm paper, never pure white or neutral gray */
+  --paper: #f7f3ec;
+  --surface: #fffdf9;
+  --sunk: #efe9df;
+  --line: #e5ddd0;
+  --line-2: #d4c9b8;
+  --ink: #2b2520;
+  --ink-2: #665c53;
+  --ink-3: #776b60;
+
+  /* persimmon: Clay, and the actions that start Clay's work */
+  --accent: #c4491f;
+  --accent-hover: #ad3f1a;
+  --accent-soft: #f7e2d6;
+  --clay-eyes: #2b1a12;
+
+  /* live: used small, as a dot, a label, a tick or a 2px line; never a fill */
+  --live: #277548;
+  --live-soft: #e3f0e6;
+  --live-line: #bfdcc8;
+  --live-fold: #a8cdb4;
+
+  /* overlays */
+  --scrim: rgba(43, 37, 32, .32);
+  --glass: rgba(255, 253, 249, .94);
+  --hover-row: rgba(239, 233, 223, .55);
+  --past-frame: rgba(255, 253, 249, .85);
+  --shadow-tint: 70, 45, 20;
+  --edge: rgba(var(--shadow-tint), .08);
+
+  /* type (4.2, fonts.css) */
+  --ui: "Commissioner", system-ui, sans-serif;
+  --mono: "Recursive Mono", ui-monospace, monospace;
+
+  --t-hero: 700 46px/1.05 var(--ui);
+  --t-h1: 700 24px/1.1 var(--ui);
+  --t-h2: 700 20px/1.1 var(--ui);
+  --t-h3: 700 18px/1.2 var(--ui);
+  --t-card: 650 14.5px/1.2 var(--ui);
+  --t-input-lg: 500 21px/1.3 var(--ui);
+  --t-lede: 400 18px/1.5 var(--ui);
+  --t-body: 400 14px/1.45 var(--ui);
+  --t-name: 650 13.5px/1.3 var(--ui);
+  --t-label: 600 13px/1.2 var(--ui);
+  --t-meta: 400 12px/1.35 var(--ui);
+  --t-mono: 500 11.5px/1.4 var(--mono);
+
+  /* space, radius, line, elevation (4.3) */
+  --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 20px;
+  --s6: 24px; --s8: 32px; --s12: 48px; --s16: 64px;
+
+  --r-xs: 5px;
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-xl: 18px;
+  --r-pill: 999px;
+
+  --hair: 1px solid var(--line);
+  --hair-2: 1px solid var(--line-2);
+  --ring-line: inset 0 0 0 1px var(--line);
+  --ring-line-2: inset 0 0 0 1px var(--line-2);
+
+  --shadow-sm: 0 1px 2px rgba(var(--shadow-tint), .06), 0 0 0 1px rgba(var(--shadow-tint), .02);
+  --shadow-md: 0 8px 24px -10px rgba(var(--shadow-tint), .22), 0 2px 5px rgba(var(--shadow-tint), .06);
+  --shadow-lg: 0 24px 60px -18px rgba(var(--shadow-tint), .35), 0 4px 10px rgba(var(--shadow-tint), .08);
+  --focus: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink-2);
+
+  /* motion (4.4) */
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-pop: cubic-bezier(.3, 1.35, .6, 1);
+  --t-press: 120ms;
+  --t-quick: 150ms;
+  --t-move: 250ms;
+  --t-arrive: 320ms;
+
+  /* layers (4.5) */
+  --z-frame: 0;
+  --z-outline: 10;
+  --z-picking: 15;
+  --z-dock: 20;
+  --z-room: 30;
+  --z-capsule: 40;
+  --z-popover: 50;
+  --z-modal: 60;
+  --z-toast: 70;
+}

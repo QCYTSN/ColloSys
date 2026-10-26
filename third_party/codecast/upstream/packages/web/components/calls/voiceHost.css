@@ -1,0 +1,48 @@
+/* The float as the whole contents of the voice window.
+ *
+ * The window is see-through and exactly the size of the row plus its card;
+ * the shell keeps it that size off the row's own measure (FloatingFaceRow),
+ * anchored to the corner the person tucked it into. Nothing here is a
+ * placement: the window IS the placement. The row hangs from the window's
+ * top left, and the shell's anchor decides which way the window grows.
+ */
+.voice-float-window {
+  position: fixed;
+  inset: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+/* No toasts on the glass. The app-wide Toaster mounts in every window, but
+   the float lets clicks through, and a toast here is an unreachable card
+   hovering over somebody's editor. Errors this window produces surface where
+   the action lands (the main window's DM, the refusal line), or, for a press
+   made here, as a system banner (lib/calls/sayRefusal reads this class).
+   Scoped to the html class the host sets, since the toaster is a sibling of
+   the route's subtree, not a child. */
+.faces-overlay-window [data-sonner-toaster] {
+  display: none;
+}
+
+/* A ring arriving while the stage is up: the row's ring card over the stage,
+ * where the person is, so a call during a call is answered without the
+ * float and the stage fighting for the window. */
+.voice-stage-ring {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+}
+
+/* The wall as the whole contents of the voice window: the buddy list in a
+ * card with its own edge, because the window is see-through and frameless
+ * and the card is the only surface there is. The panel already fills the
+ * viewport and never scrolls itself (people.css). */
+.voice-wall-window {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--sol-text) 14%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--sol-text) 5%, transparent);
+}

@@ -1,0 +1,147 @@
+import { useCallback, useRef } from "react";
+import { useQueryNoThrow } from "./useQueryNoThrow";
+import { useConvex } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { Id } from "@codecast/convex/convex/_generated/dataModel";
+import { useInboxStore, InboxSession, isConvexId } from "../store/inboxStore";
+import { useConvexSync } from "./useConvexSync";
+import { INBOX_RECOVERY_STALE_MS, useRecoveryPoll } from "./useRecoveryPoll";
+import { queryWithSignal } from "../lib/queryWithSignal";
+import { warmVisibleSessions } from "./inboxWarm";
+
+import { useWatchEffect } from "./useWatchEffect";
+// Record the team-mode active id set, change-guarded so an identical payload
+// doesn't allocate a new Set and re-render every subscriber. The panel gates the
+// visible list on this while inbox_scope is "team" (see filterInboxScope). Mirror
+// of applyLiveInboxIds for the team board — including the persistence rule: the
+// write goes through the sync() action (never raw setState) so the team-keyed
+// IDB snapshot stays current and the next boot's first frame can seed from it.
+export function applyTeamInboxIds(sessions: any[], teamId: string | null) {
+  const ids = sessions.map((x: any) => x._id.toString());
+  const next = new Set<string>(ids);
+  const prev = useInboxStore.getState().teamInboxIds;
+  if (prev.size === next.size && ids.every((id) => prev.has(id))) return;
+  useInboxStore.getState().setTeamInboxIds(ids, teamId);
+}
+
+// One listTeamInboxSessions payload into the store: the rows through the same
+// never-prune syncTable as the personal inbox, then the team's active id set.
+// The subscription, the recovery probe and the simulator's host apply through
+// it. False when the payload held no row list.
+export function applyTeamListPayload(data: any, teamId: string | null): boolean {
+  const sessions = data?.sessions ?? [];
+  if (!Array.isArray(sessions)) return false;
+  useInboxStore.getState().syncTable("sessions", sessions as unknown as InboxSession[]);
+  applyTeamInboxIds(sessions, teamId);
+  return true;
+}
+
+// The team list's args, shared by the subscription and the recovery probe.
+export function teamInboxArgs(teamId: string | undefined) {
+  return { activeTeamId: teamId as Id<"teams"> | undefined, include_liveness: false, fast_fields_in_overlay: true };
+}
+
+// Facts merge onto rows; stamps + the projection envelope land in the TEAM
+// slot of sessionsProjection, keyed by team id, so the personal overlay and
+// the team overlay never write the same slot (sync-convergence C1). Team
+// stamps ship but are not compared (the replica lacks team visibility
+// inputs); they exist for freshness scheduling. False when the payload held
+// no liveness map and nothing was applied.
+export function applyTeamLivenessPayload(teamId: string | undefined, data: any): boolean {
+  const liveness = data?.liveness ?? data;
+  if (!liveness || typeof liveness !== "object") return false;
+  useInboxStore.getState().applyInboxLivenessPayload(`team:${teamId ?? ""}`, data);
+  return true;
+}
+
+/**
+ * Inbox "team mode" sync. When the user's scope is "team", subscribe to the
+ * team-scoped inbox (every team-visible session across the active team) and
+ * merge those rows into the SAME never-prune `sessions` cache the personal inbox
+ * uses — they're schema-identical (both come from enrichInboxSessionRow), so the
+ * card, bucketing, and sort all just work. The reported id set becomes
+ * `teamInboxIds`, the active set the panel gates on in team scope.
+ *
+ * Mirrors the personal inbox's liveness split: the list subscription opts out of
+ * heartbeat-derived liveness (include_liveness:false) and a tiny
+ * teamSessionsLiveness overlay carries the per-second live status, so team mode
+ * is as heartbeat-cheap as the personal inbox.
+ *
+ * All subscriptions pass "skip" when scope isn't "team", so nothing runs (and no
+ * team rows are fetched) until the user actually opens the team board.
+ */
+export function useSyncTeamInboxSessions() {
+  const convex = useConvex();
+  const scope = useInboxStore((s) => s.clientState.ui?.inbox_scope ?? "mine");
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id);
+  // A freshly created team holds an optimistic stub id until the server
+  // echoes; a stub is not an Id<"teams">, so skip rather than throw.
+  const active = scope === "team" && (!activeTeamId || isConvexId(String(activeTeamId)));
+  const teamArgs = active ? teamInboxArgs(activeTeamId) : "skip";
+
+  const teamSessions = useQueryNoThrow(api.conversations.listTeamInboxSessions, teamArgs as any).data;
+  const teamLiveness = useQueryNoThrow(
+    api.conversations.teamSessionsLiveness,
+    active ? { activeTeamId: activeTeamId as Id<"teams"> | undefined } : "skip",
+  ).data;
+
+  const lastSyncRef = useRef(Date.now());
+  const lastLivenessRef = useRef(Date.now());
+
+  useConvexSync(teamSessions, useCallback((data: any) => {
+    if (!applyTeamListPayload(data, (activeTeamId as string | undefined) ?? null)) return;
+    // Team rows warm through the same rendered-order loop as the personal
+    // inbox — the board's cards are the rows on screen in team scope.
+    warmVisibleSessions(convex);
+    lastSyncRef.current = Date.now();
+  }, [activeTeamId, convex]), { coalesceMs: 300 });
+
+  // Liveness overlay into the team projection slot (applyTeamLivenessPayload).
+  useConvexSync(teamLiveness, useCallback((data: any) => {
+    if (!applyTeamLivenessPayload(activeTeamId, data)) return;
+    lastLivenessRef.current = Date.now();
+  }, [activeTeamId]), { coalesceMs: 300 });
+
+  // Leaving team mode clears the active set (the teammate rows stay in the
+  // never-prune cache; the "mine" scope filter is what hides them). This is
+  // hygiene, not correctness — filterInboxScope only reads teamInboxIds in team
+  // scope — but it keeps the set honest so a later switch back to team can't
+  // briefly render another team's stale membership after an active-team change.
+  useWatchEffect(() => {
+    if (active) return;
+    if (useInboxStore.getState().teamInboxIds.size === 0) return;
+    useInboxStore.setState({ teamInboxIds: new Set<string>() });
+  }, [active]);
+
+  // Recovery: a Convex subscription can silently stall after sleep/reconnect. When
+  // team mode is active, probe a novel-token round-trip to re-sync the list and
+  // active set (same pattern as the personal inbox recovery poll). The `_probe`
+  // arg dodges the stalled live cache. No-op when not in team mode.
+  useRecoveryPoll(lastSyncRef, useCallback(async (signal: AbortSignal) => {
+    if (!active) return;
+    const fresh: any = await queryWithSignal(convex, api.conversations.listTeamInboxSessions, {
+      ...teamInboxArgs(activeTeamId),
+      _probe: Date.now(),
+    }, signal);
+    if (signal.aborted) return;
+    if (!applyTeamListPayload(fresh, (activeTeamId as string | undefined) ?? null)) return;
+    warmVisibleSessions(convex);
+    lastSyncRef.current = Date.now();
+  }, [convex, active, activeTeamId]), INBOX_RECOVERY_STALE_MS);
+
+  useRecoveryPoll(lastLivenessRef, useCallback(async (signal: AbortSignal) => {
+    if (!active) return;
+    const fresh: any = await queryWithSignal(convex, api.conversations.teamSessionsLiveness, {
+      activeTeamId: activeTeamId as Id<"teams"> | undefined,
+      _probe: Date.now(),
+    }, signal);
+    if (signal.aborted) return;
+    const liveness = fresh?.liveness;
+    if (!liveness) return;
+    // Same applier as the subscription: a recovery pass must not fork shapes.
+    if (!applyTeamLivenessPayload(activeTeamId, fresh)) return;
+    lastLivenessRef.current = Date.now();
+  }, [convex, active, activeTeamId]), INBOX_RECOVERY_STALE_MS);
+
+  return teamSessions;
+}

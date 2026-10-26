@@ -1,0 +1,532 @@
+import { useCallback, useMemo, useState } from "react";
+import { toast } from "sonner";
+import { useConvex } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import {
+  ACTIVE_AGENT_STATUSES,
+  formatTranscriptChunk,
+  huddleFeedBriefing,
+  isRecRoomKey,
+  humanizeConvexError,
+  transcriptChunkHeader,
+} from "@codecast/shared/contracts";
+import { AVATAR_KEYS } from "@codecast/shared/contracts/orgAvatars";
+import { characterNameFor, defaultCharacterFor, type Character } from "@codecast/shared/contracts/sessionCharacter";
+import { SessionCreatePendingError, defaultNewSessionPath, useInboxStore, useTrackedStore } from "../../store/inboxStore";
+import { withoutUndo } from "../../store/undoStack";
+import { getRoom, ringInto, startTranscribing } from "../../lib/calls/callManager";
+import { useRecentProjectsFeed } from "../../hooks/useRecentProjectsFeed";
+import { useCoarseNow } from "../../hooks/useCoarseNow";
+import { agentStatusAt } from "../../lib/liveness";
+import { describeRoomLive } from "../../lib/calls/roomLabels";
+import { agentRoomName, findSessionRow } from "../../lib/calls/findSessionRow";
+import { teamHasFeature } from "../../lib/teamFeatures";
+import { characterFor, identitySig } from "../../lib/sessionIdentity";
+import type { PalettePick, PalettePickTarget, PalettePickResult } from "../../lib/palettePick";
+
+// The two gestures that connect a huddle's words to the rest of the product:
+//
+//  - a LIVE FEED (route): the transcript keeps flowing to a session or doc on
+//    every silence gap. Adding one auto-starts transcription when nobody is
+//    scribing yet — feeding an agent must never require a separate
+//    "transcribe" step first.
+//  - a ONE-SHOT SEND: all or a section of an existing transcript handed to an
+//    agent session once, over the same local-first rails the composer uses
+//    (optimistic bubble, side panel opens immediately, agent replies inline).
+//
+// "New agent session" is the quick default target for both.
+
+export type FeedTarget =
+  | { kind: "new-session" }
+  | { kind: "session"; id: string; label: string }
+  | { kind: "new-doc" }
+  | { kind: "doc"; id: string; label: string }
+  | { kind: "slack"; id: string };
+
+// Choosing a target is the command palette in pick mode (lib/palettePick.ts):
+// title, optional instruction, the promoted "new" rows, then every session /
+// doc the palette can already find. One vocabulary for both gestures.
+export function openFeedTargetPicker(opts: {
+  title: string;
+  // "feed" (live) or "send" (one-shot) — picks the promoted rows' wording.
+  gesture: "feed" | "send";
+  // Offer an instruction to lead the excerpt with.
+  withNote?: boolean;
+  // Offer a Slack channel id typed into the search box.
+  showSlack?: boolean;
+  // Also offer teammates and roles (the call's one "add" list): a role joins
+  // as its standing agent's session, a teammate goes to `onPerson`.
+  who?: { exclude: string[]; onPerson: (id: string) => void };
+  toggle?: PalettePick["toggle"];
+  onPick: (t: FeedTarget, note?: string) => void;
+}) {
+  const feed = opts.gesture === "feed";
+  useInboxStore.getState().openPalette({
+    pick: {
+      title: opts.title,
+      kinds: opts.who ? ["person", "role", "session", "doc"] : ["session", "doc"],
+      exclude: opts.who?.exclude,
+      notePlaceholder: opts.withNote ? "Tell the agent what to do with it (optional)" : undefined,
+      confirmLabel: feed ? "Add" : "Send",
+      toggle: opts.toggle,
+      extras: [
+        {
+          key: "new-session",
+          label: feed ? "A new agent session" : "Send to a new agent session",
+          description: feed
+            ? "Hears the room and answers here"
+            : "Spawns an agent that reads along and replies here",
+          icon: "sparkles",
+          primary: true,
+        },
+        ...(feed
+          ? []
+          : [{ key: "new-doc", label: "Save as a new doc", icon: "doc" as const }]),
+        ...(opts.showSlack
+          ? [{ key: "slack", label: "The Slack channel id typed above", icon: "slack" as const, needsQuery: true }]
+          : []),
+      ],
+      onPick: (t: PalettePickTarget, r: PalettePickResult) => {
+        if (t.kind === "person") return opts.who?.onPerson(t.id);
+        const target: FeedTarget | null =
+          t.kind === "role"
+            ? { kind: "session", id: t.id, label: t.label }
+            : t.kind === "session" || t.kind === "doc"
+            ? { kind: t.kind, id: t.id, label: t.label }
+            : t.kind === "extra" && t.key === "slack"
+              ? r.query ? { kind: "slack", id: r.query } : null
+              : t.kind === "extra"
+                ? ({ kind: t.key } as FeedTarget)
+                : null;
+        if (target) opts.onPick(target, r.note);
+      },
+    },
+  });
+}
+
+export type TranscriptExcerpt = {
+  segments: Array<{ speaker_name: string; text: string; seq?: number }>;
+  /** The call it came from: a send to a session records the link
+   *  (call_session_links), so each side can reach the other. */
+  transcriptId?: string;
+  title?: string | null;
+  startedAt: number;
+  live: boolean;
+  partial: boolean;
+};
+
+// Local-first "new session seeded with a message": stub + optimistic bubble +
+// side panel now, durable create + send resolve behind it. Same lifecycle as
+// ContextChatInput. Returns a promise of the real conversation id.
+//
+// `body` may be written for the stub (a huddle briefing names the character
+// the session will wear, decided from the stub id), and `onReady` runs with
+// the real id before the message is sent, so a write the briefing promises
+// (that character) lands before the agent reads it.
+/** Told to a session spawned for a room when no words will reach it. */
+const DISREGARD_BRIEFING =
+  "The huddle feed could not be attached, so no transcript will arrive. Disregard the briefing above.";
+
+// The store gives up on a create after its own window (a 30 s race and a 15 s
+// poll) with SessionCreatePendingError, but the durable outbox still owns the
+// create and the session lands later. A feed spawned for a room must wait for
+// that landing, or the session that lands holds a briefing promising words
+// and hears nothing: keep asking while the create is merely parked and the
+// stub still stands, up to five minutes.
+const SPAWN_WAIT_MS = 5 * 60_000;
+async function awaitSpawn(stubId: string): Promise<string> {
+  const store = useInboxStore.getState() as any;
+  const deadline = Date.now() + SPAWN_WAIT_MS;
+  for (;;) {
+    try {
+      return await store.awaitConvexId(stubId);
+    } catch (e) {
+      const parked = e instanceof SessionCreatePendingError && (store.sessions[stubId] || store.conversations[stubId]);
+      if (!parked || Date.now() >= deadline) throw e;
+    }
+  }
+}
+
+function spawnSessionWithMessage(
+  body: string | ((stubId: string) => string),
+  onReady?: (convexId: string) => void,
+  teamId?: string | null,
+): Promise<string> {
+  const store = useInboxStore.getState() as any;
+  const projectPath = defaultNewSessionPath(store, teamId);
+  const gitRoot = projectPath;
+  const { stubId } = store.beginOptimisticSession({
+    agentType: "claude_code",
+    projectPath,
+    gitRoot,
+    create: (sid: string) =>
+      store.createSession({
+        agent_type: "claude_code",
+        project_path: projectPath,
+        git_root: gitRoot,
+        session_id: sid,
+      }),
+  });
+  const text = typeof body === "function" ? body(stubId) : body;
+  const clientId = store.addOptimisticMessage(stubId, text);
+  store.openSidePanel(stubId);
+  return awaitSpawn(stubId).then((convexId: string) => {
+    onReady?.(convexId);
+    store.sendMessage(convexId, text, undefined, clientId);
+    return convexId;
+  });
+}
+
+/** The character a session spawned FOR a huddle wears (session-characters.md
+ *  S1): the hash default for `seed`, unless an agent already in the room
+ *  wears that face or that name, in which case the next free face and its
+ *  name. Two agents called Ember in one room would answer each other's asks.
+ *  Written as a CHOSEN character (the seed is the stub, not the row's final
+ *  id), so the room's name for it holds on every surface. */
+export function characterForRoom(seed: string, taken: Character[]): Character {
+  const clash = (c: { avatar: string; name: string }) =>
+    taken.some((t) => t.avatar === c.avatar || t.name.toLowerCase() === c.name.toLowerCase());
+  const own = defaultCharacterFor(seed);
+  if (!clash(own)) return { ...own, chosen: true };
+  const start = AVATAR_KEYS.indexOf(own.avatar);
+  for (let i = 1; i < AVATAR_KEYS.length; i++) {
+    const avatar = AVATAR_KEYS[(start + i) % AVATAR_KEYS.length];
+    const c = { avatar, name: characterNameFor(seed, avatar) };
+    if (!clash(c)) return { ...c, chosen: true };
+  }
+  return { ...own, chosen: true };
+}
+
+/** The characters of the agents a live transcript already feeds, read from
+ *  the store, so a newcomer can avoid their faces and names. */
+function charactersInRoom(routes: Array<{ kind: string; target: string }>): Character[] {
+  const st = useInboxStore.getState() as any;
+  return routes
+    .filter((r) => r.kind === "session")
+    .map((r) => findSessionRow(st, r.target))
+    .filter(Boolean)
+    .map((row) => characterFor(row));
+}
+
+export function excerptBody(excerpt: TranscriptExcerpt, note?: string): string {
+  const header = transcriptChunkHeader({
+    title: excerpt.title,
+    startedAt: excerpt.startedAt,
+    live: excerpt.live,
+    partial: excerpt.partial,
+  });
+  const chunk = formatTranscriptChunk(excerpt.segments);
+  const lead = (note ?? "").trim();
+  return `${lead ? lead + "\n\n" : ""}${header}\n\n${chunk}`;
+}
+
+const DEFAULT_ASK =
+  "Read this and help with what it implies — answer the open questions, pick up the action items, or continue the thinking.";
+
+// One-shot: hand an excerpt to a target. Returns the conversation id for
+// session targets (so callers can follow up), null otherwise.
+export function useSendExcerpt() {
+  const convex = useConvex();
+  return useCallback(async (target: FeedTarget, excerpt: TranscriptExcerpt, note?: string) => {
+    const store = useInboxStore.getState() as any;
+    const link = (conversation: string) => {
+      const seqs = excerpt.segments.map((s) => s.seq).filter((n): n is number => typeof n === "number");
+      if (!excerpt.transcriptId || seqs.length === 0) return;
+      void convex
+        .mutation(api.transcripts.linkExcerpt, {
+          transcript_id: excerpt.transcriptId as any,
+          conversation,
+          from_seq: Math.min(...seqs),
+          to_seq: Math.max(...seqs),
+        })
+        .catch(() => {});
+    };
+    if (target.kind === "session") {
+      store.sendMessage(target.id, excerptBody(excerpt, note));
+      store.openSidePanel(target.id);
+      link(target.id);
+      return target.id;
+    }
+    if (target.kind === "new-session") {
+      const body = excerptBody(excerpt, note) + ((note ?? "").trim() ? "" : `\n\n${DEFAULT_ASK}`);
+      const convexId = await spawnSessionWithMessage(body);
+      link(convexId);
+      return convexId;
+    }
+    if (target.kind === "new-doc") {
+      const when = new Date(excerpt.startedAt).toLocaleDateString([], {
+        month: "short",
+        day: "numeric",
+      });
+      await store.createDoc({
+        title: excerpt.title ? `${excerpt.title} · huddle notes` : `Huddle notes · ${when}`,
+        content: excerptBody(excerpt, note),
+      });
+      return null;
+    }
+    return null;
+  }, [convex]);
+}
+
+// Live feed: point the flowing words at a target. If nobody is scribing yet,
+// the caller becomes the scribe — one gesture, no separate transcribe toggle.
+export function useAddLiveFeed(opts: {
+  roomKey: string | null;
+  liveTranscriptId: string | null;
+  /** The live transcript's routes, so a session spawned for the room takes a
+   *  character no agent already in it wears. */
+  routes?: Array<{ kind: string; target: string }>;
+  /** The room's team, so a session spawned for it starts in that team's most
+   *  used repo. Before anyone transcribes it is unknown, and the viewer's
+   *  active team stands in. */
+  teamId?: string | null;
+  getRoom: () => any;
+}) {
+  const convex = useConvex();
+  const { roomKey, liveTranscriptId, routes, teamId, getRoom } = opts;
+
+  return useCallback(
+    async (target: FeedTarget, opts?: { face?: boolean }) => {
+      if (!roomKey) return;
+      let route: { kind: "session" | "doc" | "slack"; target: string } | null = null;
+      const face = opts?.face === false ? { face: false } : {};
+      if (target.kind === "session") route = { kind: "session", target: target.id };
+      else if (target.kind === "doc") route = { kind: "doc", target: target.id };
+      else if (target.kind === "slack") route = { kind: "slack", target: target.id };
+      else if (target.kind === "new-session") {
+        const st = useInboxStore.getState() as any;
+        const label = st.call?.roomKey === roomKey ? "this huddle" : "a huddle";
+        // The session's character is the name the room says to address it
+        // and the name beside its lines in the chat, so it is chosen the
+        // moment the id exists and named in the briefing the agent reads
+        // first. The stub's bubble shows the stub's own default; the sent
+        // message names the real one.
+        let character: Character | null = null;
+        let stub: string | null = null;
+        let convexId: string;
+        try {
+          convexId = await spawnSessionWithMessage(
+            (stubId) => {
+              stub = stubId;
+              character = characterForRoom(stubId, charactersInRoom(routes ?? []));
+              return huddleFeedBriefing({ name: character.name, label });
+            },
+            (id) => {
+              // The feed names its own session; that is not the user's change.
+              if (character) withoutUndo(() => st.setSessionCharacter(id, { avatar: character!.avatar, name: character!.name }));
+            },
+            teamId ?? (st.clientState?.ui?.active_team_id as string | undefined),
+          );
+        } catch (err) {
+          // Given up on the wait, but the session may have landed by now
+          // (the create parked, then rekeyed): tell it no words are coming,
+          // so no session is left waiting on a briefing.
+          const landed = stub ? st.getConvexId(stub) : undefined;
+          if (landed) st.sendMessage(landed, DISREGARD_BRIEFING);
+          throw err;
+        }
+        route = { kind: "session", target: convexId };
+      }
+      if (!route) return;
+
+      // Attach the route; if the transcript ended between paint and click but
+      // the room is still up, fall back to becoming the scribe with the same
+      // route (same gesture, fresh transcript).
+      const attach = async () => {
+        if (liveTranscriptId) {
+          try {
+            await convex.mutation(api.transcripts.addRoute, {
+              transcript_id: liveTranscriptId as any,
+              kind: route.kind,
+              target: route.target,
+              mode: "live",
+              ...face,
+            });
+            return;
+          } catch (err) {
+            if (!String(err).includes("ended")) throw err;
+          }
+        }
+        const room = getRoom();
+        if (!room) {
+          // A recording has no room to fall back into: its transcript IS the
+          // run, so when that ended there is nothing left to point words at.
+          // A viewer on the huddle's stage whose media room is not connected
+          // yet (or failed) is already in the huddle: "join" is not the ask.
+          const here = useInboxStore.getState().call?.roomKey === roomKey;
+          throw new Error(
+            isRecRoomKey(roomKey)
+              ? "That recording has ended. Its words are already saved."
+              : here
+                ? "The huddle's audio is still connecting. Try again in a moment."
+                : "Join the huddle to start its transcription",
+          );
+        }
+        if (!(await startTranscribing(roomKey, [{ ...route, mode: "live", ...face }]))) {
+          throw new Error("Could not start transcribing. Somebody else may be the scribe already; pick the feed again once their words show here.");
+        }
+      };
+      try {
+        await attach();
+      } catch (err) {
+        // The new-session path spawns the agent BEFORE the route attaches; a
+        // refusal must not leave that session waiting forever for words that
+        // will never come.
+        if (target.kind === "new-session") {
+          (useInboxStore.getState() as any).sendMessage(route.target, DISREGARD_BRIEFING);
+        }
+        throw err;
+      }
+    },
+    [convex, roomKey, liveTranscriptId, teamId, getRoom],
+  );
+}
+
+export function useRemoveLiveFeed(liveTranscriptId: string | null) {
+  const convex = useConvex();
+  return useCallback(
+    async (kind: string, target: string) => {
+      if (!liveTranscriptId) return;
+      await convex.mutation(api.transcripts.removeRoute, {
+        transcript_id: liveTranscriptId as any,
+        kind,
+        target,
+      });
+    },
+    [convex, liveTranscriptId],
+  );
+}
+
+// ── The agents in the room ─────────────────────────────────────────────────
+
+export type AgentInRoom = {
+  id: string;
+  target: string;
+  addedBy: string;
+  /** What the room calls it: its character (agentRoomName). */
+  name: string;
+  agentType: string;
+  working: boolean;
+  /** The store row, for its face; null until the row lands. */
+  row: any | null;
+};
+
+/** The sessions the live transcript feeds, as participants: name, kind, and
+ *  whether one is mid-turn. Read from the store's session rows, subscribed
+ *  through a signature of the fields shown so the thread's header and the
+ *  stage's button do not re-render on every heartbeat of every session. */
+export function useAgentsInRoom(routes: Array<{ kind: string; target: string; added_by: string }>): AgentInRoom[] {
+  const targets = routes.filter((r) => r.kind === "session");
+  const sig = targets.map((r) => r.target).join("|");
+  const now = useCoarseNow(30_000);
+  const s = useTrackedStore([
+    (st: any) =>
+      targets
+        .map((r) => {
+          const row = findSessionRow(st, r.target);
+          return row ? `${identitySig(row)}:${row.title ?? ""}:${row.agent_type ?? ""}:${agentStatusAt(row, now) ?? ""}` : r.target;
+        })
+        .join("|"),
+  ]);
+  return useMemo(
+    () =>
+      targets.map((r) => {
+        const row = findSessionRow(s, r.target);
+        return {
+          id: String(row?._id ?? r.target),
+          target: r.target,
+          addedBy: r.added_by,
+          name: (row ? agentRoomName(row) : "new agent").slice(0, 40),
+          agentType: row?.agent_type ?? "claude_code",
+          working: !!row && ACTIVE_AGENT_STATUSES.has(agentStatusAt(row, now) ?? ""),
+          row,
+        };
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sig stands in for the routes list
+    [sig, s, now],
+  );
+}
+
+// The call's one "add" list: teammates, roles and agents in the palette's
+// pick mode. A teammate is rung into THIS room (the ring is their grant, so
+// someone outside the room's anchor can answer while the huddle runs); a
+// role joins as its standing agent; a session, a new agent or a Slack
+// channel joins as a live feed of the room's words. Whoever is already in
+// the room, already ringing, or already routed is left out of the list.
+const AGENT_FACE_PREF = "codecast:call-agent-face";
+function readAgentFacePref(): boolean {
+  try {
+    return localStorage.getItem(AGENT_FACE_PREF) !== "off";
+  } catch {
+    return true;
+  }
+}
+function writeAgentFacePref(on: boolean) {
+  try {
+    localStorage.setItem(AGENT_FACE_PREF, on ? "on" : "off");
+  } catch {}
+}
+
+export function useAddToCall(opts: {
+  roomKey: string;
+  liveTranscriptId: string | null;
+  routes: Array<{ kind: string; target: string }>;
+  teamId?: string | null;
+}) {
+  const { roomKey, liveTranscriptId, routes, teamId } = opts;
+  // A new agent starts in the room team's most used repo, read off this list.
+  useRecentProjectsFeed();
+  const addFeed = useAddLiveFeed({ roomKey, liveTranscriptId, routes, teamId, getRoom });
+  // From the pick to the route landing there is a wait (a new session's
+  // create can park for minutes on a slow link): the caller shows the agent
+  // on its way and rests its button, so a second click cannot spawn a
+  // second session.
+  const [adding, setAdding] = useState<FeedTarget | null>(null);
+
+  const ring = (id: string) => {
+    // describeRoomLive, not describeRoom: a caller sitting in a redacted
+    // session room may not read its name, so they must not be the one to
+    // publish it. Outcome toasts live in ringInto.
+    const { anchorTitle } = describeRoomLive(roomKey, useInboxStore.getState() as any);
+    void ringInto(roomKey, [id], anchorTitle);
+  };
+  const feed = (t: FeedTarget, face?: boolean) => {
+    setAdding(t);
+    // addRoute/startScribe can refuse (room authorization, ended transcript);
+    // a silent close-and-nothing is the one wrong outcome.
+    void addFeed(t, { face })
+      .catch((err: any) =>
+        toast.error(
+          err instanceof SessionCreatePendingError
+            ? "The agent's session is still starting. It joins the room when it lands."
+            : humanizeConvexError(err, "Could not add the agent"),
+        ),
+      )
+      .finally(() => setAdding(null));
+  };
+  const open = () => {
+    const st = useInboxStore.getState() as any;
+    const exclude = [
+      ...(st.callOccupancy[roomKey] ?? []).map((m: any) => String(m.user_id)),
+      ...st.myCalls.outgoing
+        .filter((o: any) => o.room_key === roomKey && o.status === "ringing")
+        .map((o: any) => String(o.to_user)),
+      ...routes.map((r) => r.target),
+    ];
+    // Where the team has agent faces, the agent may come with its video
+    // avatar or as itself in the chat; the last choice is the next default.
+    let face = readAgentFacePref();
+    const facesOn = teamHasFeature(st.teams, teamId ?? st.clientState?.ui?.active_team_id, "agent_faces");
+    openFeedTargetPicker({
+      title: "Add to the call",
+      gesture: "feed",
+      showSlack: true,
+      who: { exclude, onPerson: ring },
+      toggle: facesOn
+        ? { label: "Video avatar", value: face, onChange: (v) => { face = v; writeAgentFacePref(v); } }
+        : undefined,
+      onPick: (t) => feed(t, facesOn ? face : undefined),
+    });
+  };
+  return { open, adding };
+}

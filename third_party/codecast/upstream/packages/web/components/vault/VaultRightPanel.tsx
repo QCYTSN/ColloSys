@@ -1,0 +1,512 @@
+// Vault right panel: Backlinks | Outgoing | Outline | Tags | Bookmarks.
+// Everything here is a render-time query against the vault index singleton,
+// re-run when the index version bumps — except Bookmarks, which is a stored
+// list and lives in VaultBookmarksPane.
+
+import { memo, useMemo, useState } from "react";
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { ArrowUpRight, Bookmark, ChevronRight, Hash, Link2, List } from "lucide-react";
+import { vaultIndex, useVaultIndexVersion } from "../../lib/vault/indexHost";
+import type { TagTreeNode, VaultEntityRef } from "../../lib/vault/vaultIndex";
+import { EntityRefPill } from "./VaultMarkdown";
+import { headingSlugs } from "../../lib/vault/parseNote";
+import { useVaultStore, type VaultRightPanelTab } from "../../store/vaultStore";
+import { noteDisplayName } from "./VaultExplorer";
+import { BookmarkToggle, VaultBookmarksPane } from "./VaultBookmarksPane";
+import { useVaultBookmarks } from "../../lib/vault/bookmarksHost";
+import { isBookmarked } from "../../lib/vault/bookmarks";
+
+/** The line a backlink sits on, trimmed for display, with the raw link text
+ *  emphasized by the caller via simple splitting. */
+function contextLine(content: string | undefined, line: number): string {
+  if (!content) return "";
+  const text = content.split("\n")[line - 1] ?? "";
+  return text.trim().slice(0, 200);
+}
+
+/** Files whose prose mentions this note's title (or an alias) as plain text
+ *  without linking to it — Obsidian's "unlinked mentions". */
+function findUnlinkedMentions(
+  path: string,
+  linkedSources: Set<string>,
+): { source: string; needle: string }[] {
+  const note = vaultIndex.note(path);
+  if (!note) return [];
+  const needles = [note.basename, ...(note.parsed?.aliases ?? [])]
+    .filter((n) => n.length >= 3)
+    .map((n) => n.toLowerCase());
+  if (!needles.length) return [];
+  const out: { source: string; needle: string }[] = [];
+  for (const p of vaultIndex.paths()) {
+    if (p === path || linkedSources.has(p)) continue;
+    const text = vaultIndex.note(p)?.parsed?.plainText?.toLowerCase();
+    if (!text) continue;
+    const hit = needles.find((n) => text.includes(n));
+    if (hit) out.push({ source: p, needle: hit });
+  }
+  return out.sort((a, b) => a.source.localeCompare(b.source));
+}
+
+/** The distinct codecast objects a note references, in document order. Read off
+ *  the vault index, which recorded them when the file was parsed — no server
+ *  call, and none per note. */
+function distinctEntityRefs(path: string): VaultEntityRef[] {
+  const seen = new Map<string, VaultEntityRef>();
+  for (const occurrence of vaultIndex.entityRefs(path)) {
+    if (!seen.has(occurrence.ref.key)) seen.set(occurrence.ref.key, occurrence.ref);
+  }
+  return [...seen.values()];
+}
+
+const BacklinksPane = memo(function BacklinksPane({
+  path,
+  onNavigate,
+}: {
+  path: string;
+  onNavigate: (path: string) => void;
+}) {
+  const version = useVaultIndexVersion();
+  const bodies = useVaultStore((s) => s.bodies);
+  const backlinks = vaultIndex.backlinks(path);
+  const [showUnlinked, setShowUnlinked] = useState(false);
+
+  const grouped = useMemo(() => {
+    const bySource = new Map<string, typeof backlinks>();
+    for (const bl of backlinks) {
+      const arr = bySource.get(bl.source) ?? [];
+      arr.push(bl);
+      bySource.set(bl.source, arr);
+    }
+    return [...bySource.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  }, [backlinks]);
+
+  const unlinked = useMemo(
+    () => (showUnlinked ? findUnlinkedMentions(path, new Set(backlinks.map((b) => b.source))) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [showUnlinked, path, version],
+  );
+
+  // Notes reached through a shared codecast object: this note links task ct-X,
+  // and so do these others. The vault's own index answers it, so it costs
+  // nothing. The other direction — a task whose description links THIS note —
+  // is server data the vault does not hold, and is deliberately not guessed at.
+  const throughObjects = useMemo(
+    () =>
+      distinctEntityRefs(path)
+        .map((ref) => ({
+          ref,
+          notes: vaultIndex.notesReferencingEntity(ref.key).filter((p) => p !== path),
+        }))
+        .filter((entry) => entry.notes.length > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [path, version],
+  );
+
+  return (
+    <div className="py-1">
+      {grouped.length === 0 ? (
+        <div className="px-3 py-4 text-xs text-sol-text-dim text-center">
+          No backlinks found. Notes that link here with{" "}
+          <code className="text-sol-text-muted">[[{noteDisplayName(path.split("/").pop()!)}]]</code>{" "}
+          will appear in this list.
+        </div>
+      ) : (
+        <>
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-sol-text-dim">
+            {backlinks.length} linked mention{backlinks.length === 1 ? "" : "s"}
+          </div>
+          {grouped.map(([source, links]) => (
+            <div key={source} className="mb-1">
+              <button
+                type="button"
+                onClick={() => onNavigate(source)}
+                className="w-full text-left px-3 py-1 text-[12px] font-medium text-sol-text hover:bg-sol-bg-alt truncate"
+                title={source}
+              >
+                {noteDisplayName(source.split("/").pop()!)}
+                <span className="ml-1.5 text-[10px] text-sol-text-dim tabular-nums">{links.length}</span>
+              </button>
+              {links.map((bl, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => onNavigate(source)}
+                  className="w-full text-left px-3 py-1 text-[11px] leading-4 text-sol-text-muted hover:bg-sol-bg-alt"
+                >
+                  <span className="line-clamp-2">{contextLine(bodies[source]?.content, bl.link.line)}</span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </>
+      )}
+
+      {throughObjects.length > 0 && (
+        <div className="mt-1 border-t border-sol-border/20 pt-1">
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-sol-text-dim">
+            Through shared objects
+          </div>
+          {throughObjects.map(({ ref, notes }) => (
+            <div key={ref.key} className="mb-1">
+              <div className="px-3 py-1">
+                <EntityRefPill refr={ref} />
+              </div>
+              {notes.map((source) => (
+                <button
+                  key={source}
+                  type="button"
+                  onClick={() => onNavigate(source)}
+                  className="w-full text-left px-3 py-1 pl-6 text-[12px] text-sol-text-muted hover:bg-sol-bg-alt hover:text-sol-text truncate"
+                  title={source}
+                >
+                  {noteDisplayName(source.split("/").pop()!)}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setShowUnlinked((v) => !v)}
+        className="w-full flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase tracking-wide text-sol-text-dim hover:text-sol-text-muted border-t border-sol-border/20 mt-1"
+      >
+        <ChevronRight className={`w-3 h-3 transition-transform ${showUnlinked ? "rotate-90" : ""}`} />
+        Unlinked mentions
+        {showUnlinked && <span className="tabular-nums normal-case">({unlinked.length})</span>}
+      </button>
+      {showUnlinked &&
+        (unlinked.length === 0 ? (
+          <div className="px-3 py-3 text-[11px] text-sol-text-dim text-center">
+            No unlinked mentions.
+          </div>
+        ) : (
+          unlinked.map(({ source }) => (
+            <button
+              key={source}
+              type="button"
+              onClick={() => onNavigate(source)}
+              className="w-full text-left px-3 py-1 text-[12px] text-sol-text-muted hover:bg-sol-bg-alt hover:text-sol-text truncate"
+              title={source}
+            >
+              {noteDisplayName(source.split("/").pop()!)}
+            </button>
+          ))
+        ))}
+    </div>
+  );
+});
+
+const OutlinePane = memo(function OutlinePane({ path }: { path: string }) {
+  const version = useVaultIndexVersion();
+  const headings = vaultIndex.note(path)?.parsed?.headings ?? [];
+  const [currentSlug, setCurrentSlug] = useState<string | null>(null);
+  const bookmarks = useVaultBookmarks();
+
+  // Scroll-sync: the section whose heading is the last one above the fold is
+  // "current". A rAF-throttled scroll listener beats IntersectionObserver here
+  // because we want exactly one active section, not visibility ratios.
+  useWatchEffect(() => {
+    const container = document.querySelector("[data-vault-note-scroll]");
+    if (!container) return;
+    const slugs = headingSlugs(headings).map((s) => `vh-${s}`);
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const cutoff = container.getBoundingClientRect().top + 90;
+      let current: string | null = null;
+      for (const slug of slugs) {
+        const el = document.getElementById(slug);
+        if (el && el.getBoundingClientRect().top <= cutoff) current = slug;
+      }
+      setCurrentSlug(current ?? slugs[0] ?? null);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      container.removeEventListener("scroll", onScroll);
+      if (raf) cancelAnimationFrame(raf);
+    };
+     
+  }, [path, version]);
+
+  if (headings.length === 0) {
+    return (
+      <div className="px-3 py-6 text-xs leading-5 text-sol-text-dim text-center">
+        No headings in this note.
+        <div className="mt-1">
+          Start a line with <code className="text-sol-text-muted">##</code> and its sections show up
+          here.
+        </div>
+      </div>
+    );
+  }
+  const minLevel = Math.min(...headings.map((h) => h.level));
+  const slugList = headingSlugs(headings);
+  return (
+    <div className="py-1">
+      {headings.map((h, i) => {
+        const slug = `vh-${slugList[i]}`;
+        const isCurrent = slug === currentSlug;
+        const target = { kind: "heading" as const, path, headingText: h.text, slug: slugList[i] };
+        const pinned = isBookmarked(bookmarks, target);
+        return (
+          <div
+            key={i}
+            className={`group flex items-center gap-1 pr-2 border-l-2 transition-colors ${
+              isCurrent
+                ? "border-sol-cyan text-sol-text bg-sol-bg-alt/60"
+                : "border-transparent text-sol-text-muted hover:text-sol-text hover:bg-sol-bg-alt"
+            }`}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                document.getElementById(slug)?.scrollIntoView({ block: "start", behavior: "smooth" });
+              }}
+              className="flex-1 min-w-0 text-left py-[3px] text-[12px] truncate"
+              style={{ paddingLeft: 10 + (h.level - minLevel) * 14 }}
+              title={h.text}
+            >
+              {h.text}
+            </button>
+            <BookmarkToggle
+              target={target}
+              label="Bookmark this heading"
+              size="w-3 h-3"
+              className={`flex-shrink-0 ${pinned ? "" : "opacity-0 group-hover:opacity-100"}`}
+            />
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+function TagNode({
+  node,
+  depth,
+  onSelect,
+  selected,
+}: {
+  node: TagTreeNode;
+  depth: number;
+  onSelect: (tag: string) => void;
+  selected: string | null;
+}) {
+  const [open, setOpen] = useState(depth < 1);
+  const hasChildren = node.children.length > 0;
+  return (
+    <>
+      <div
+        className={`flex items-center gap-1 px-3 py-[3px] text-[12px] cursor-pointer hover:bg-sol-bg-alt ${
+          selected === node.tag ? "bg-sol-bg-highlight text-sol-text" : "text-sol-text-muted"
+        }`}
+        style={{ paddingLeft: 12 + depth * 14 }}
+        onClick={() => onSelect(node.tag)}
+      >
+        {hasChildren ? (
+          <ChevronRight
+            className={`w-3 h-3 flex-shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen((v) => !v);
+            }}
+          />
+        ) : (
+          <span className="w-3 flex-shrink-0" />
+        )}
+        <Hash className="w-3 h-3 flex-shrink-0 opacity-50" />
+        <span className="truncate">{node.name}</span>
+        <span className="ml-auto text-[10px] text-sol-text-dim tabular-nums">{node.total}</span>
+      </div>
+      {open &&
+        node.children.map((c) => (
+          <TagNode key={c.tag} node={c} depth={depth + 1} onSelect={onSelect} selected={selected} />
+        ))}
+    </>
+  );
+}
+
+const TagsPane = memo(function TagsPane({ onNavigate }: { onNavigate: (path: string) => void }) {
+  useVaultIndexVersion();
+  const selected = useVaultStore((s) => s.selectedTag);
+  const setSelected = useVaultStore((s) => s.setSelectedTag);
+  const tree = vaultIndex.tagTree();
+  const files = selected ? vaultIndex.filesWithTag(selected) : [];
+
+  if (tree.length === 0) {
+    return (
+      <div className="px-3 py-6 text-xs text-sol-text-dim text-center">
+        No tags yet. Add <code className="text-sol-text-muted">#tags</code> inline or in frontmatter.
+      </div>
+    );
+  }
+  return (
+    <div className="py-1 flex flex-col min-h-0 h-full">
+      <div className="flex-1 overflow-y-auto min-h-0">
+        {tree.map((n) => (
+          <TagNode key={n.tag} node={n} depth={0} onSelect={(t) => setSelected(t === selected ? null : t)} selected={selected} />
+        ))}
+      </div>
+      {selected && (
+        <div className="border-t border-sol-border/30 max-h-[45%] overflow-y-auto">
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-sol-text-dim sticky top-0 bg-sol-bg">
+            #{selected} — {files.length} note{files.length === 1 ? "" : "s"}
+          </div>
+          {files.map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => onNavigate(f)}
+              className="w-full text-left px-3 py-1 text-[12px] text-sol-text-muted hover:bg-sol-bg-alt hover:text-sol-text truncate"
+              title={f}
+            >
+              {noteDisplayName(f.split("/").pop()!)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/** The mirror of backlinks: this note's own links, resolved and unresolved
+ *  split — Obsidian's outgoing links pane. */
+const OutgoingPane = memo(function OutgoingPane({
+  path,
+  onNavigate,
+}: {
+  path: string;
+  onNavigate: (path: string) => void;
+}) {
+  useVaultIndexVersion();
+  const outgoing = vaultIndex.outgoing(path);
+  const resolved = outgoing.filter((l) => l.resolved);
+  const unresolved = outgoing.filter((l) => !l.resolved);
+  const objects = distinctEntityRefs(path);
+
+  if (outgoing.length === 0 && objects.length === 0) {
+    return (
+      <div className="px-3 py-6 text-xs text-sol-text-dim text-center">
+        No links in this note yet. Write <code className="text-sol-text-muted">[[wiki links]]</code>{" "}
+        to connect it.
+      </div>
+    );
+  }
+  return (
+    <div className="py-1">
+      {resolved.length > 0 && (
+        <>
+          <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-sol-text-dim">
+            {resolved.length} link{resolved.length === 1 ? "" : "s"}
+          </div>
+          {resolved.map((l, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onNavigate(l.resolved!)}
+              className="w-full text-left px-3 py-1 text-[12px] text-sol-text-muted hover:bg-sol-bg-alt hover:text-sol-text truncate"
+              title={l.resolved!}
+            >
+              {noteDisplayName(l.resolved!.split("/").pop()!)}
+              {l.link.subpath && <span className="text-sol-text-dim"> › {l.link.subpath}</span>}
+              {l.isAmbiguous && <span className="ml-1 text-[10px] text-sol-yellow">ambiguous</span>}
+            </button>
+          ))}
+        </>
+      )}
+      {unresolved.length > 0 && (
+        <>
+          <div className="px-3 py-1 mt-1 text-[10px] uppercase tracking-wide text-sol-text-dim border-t border-sol-border/20">
+            {unresolved.length} unresolved
+          </div>
+          {unresolved.map((l, i) => (
+            <div key={i} className="px-3 py-1 text-[12px]">
+              <span className="wiki-link wiki-link-unresolved">{l.link.target || l.link.raw}</span>
+            </div>
+          ))}
+        </>
+      )}
+      {objects.length > 0 && (
+        <>
+          <div className="px-3 py-1 mt-1 text-[10px] uppercase tracking-wide text-sol-text-dim border-t border-sol-border/20">
+            {objects.length} codecast object{objects.length === 1 ? "" : "s"}
+          </div>
+          <div className="px-3 py-1 flex flex-wrap gap-1.5">
+            {objects.map((ref) => (
+              <EntityRefPill key={ref.key} refr={ref} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+});
+
+const TABS: { id: VaultRightPanelTab; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "backlinks", label: "Backlinks", icon: Link2 },
+  { id: "outgoing", label: "Outgoing", icon: ArrowUpRight },
+  { id: "outline", label: "Outline", icon: List },
+  { id: "tags", label: "Tags", icon: Hash },
+  { id: "bookmarks", label: "Bookmarks", icon: Bookmark },
+];
+
+export const VaultRightPanel = memo(function VaultRightPanel({
+  activePath,
+  onNavigate,
+}: {
+  activePath: string | null;
+  onNavigate: (path: string) => void;
+}) {
+  const tab = useVaultStore((s) => s.rightPanelTab);
+  const setTab = useVaultStore((s) => s.setRightPanelTab);
+  return (
+    <div className="h-full flex flex-col bg-sol-bg-alt/40 vault-panel-cq">
+      <div className="flex items-center border-b border-sol-border/30">
+        {TABS.map(({ id, label, icon: Icon }) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setTab(id)}
+            title={label}
+            className={`flex-1 flex items-center justify-center gap-1.5 px-2 py-2 text-[11px] transition-colors border-b-2 -mb-px ${
+              tab === id
+                ? "border-sol-cyan text-sol-text"
+                : "border-transparent text-sol-text-dim hover:text-sol-text-muted"
+            }`}
+          >
+            <Icon className="w-3.5 h-3.5" />
+            <span className="vault-tab-label">{label}</span>
+          </button>
+        ))}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        {tab === "tags" ? (
+          <TagsPane onNavigate={onNavigate} />
+        ) : tab === "bookmarks" ? (
+          <VaultBookmarksPane activePath={activePath} onNavigate={onNavigate} />
+        ) : activePath ? (
+          tab === "backlinks" ? (
+            <BacklinksPane path={activePath} onNavigate={onNavigate} />
+          ) : tab === "outgoing" ? (
+            <OutgoingPane path={activePath} onNavigate={onNavigate} />
+          ) : (
+            <OutlinePane path={activePath} />
+          )
+        ) : (
+          <div className="px-3 py-6 text-xs leading-5 text-sol-text-dim text-center">
+            Open a note first.
+            <div className="mt-1">
+              Backlinks, outgoing links and the outline all describe the note you&apos;re reading.
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+});

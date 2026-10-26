@@ -1,0 +1,521 @@
+// Pure view logic for the pull request page.
+//
+// Two jobs. First, fold a PR's live state (checks, merge state, review
+// decision) into the few words and colors the header shows. Second, fold the
+// PR's code comments and its external events into the lists the tabs render.
+// Both are plain functions over plain rows, so the page's arithmetic is
+// testable without a DOM and the components stay layout only.
+
+import { isQuietExternalEvent, type ExternalEventAccent } from "./externalEvents";
+import { checkLabel } from "@codecast/shared/contracts";
+import type { CodeAnchorText } from "@codecast/shared/comments";
+import {
+  diffLineKey,
+  normalizeDiffSide,
+  type DiffLineAnchor,
+  type DiffSide,
+} from "./patchParser";
+import { prPageHref, type RepoRouteFamily } from "./repoView";
+
+// -- Checks -------------------------------------------------------------------
+
+export type PrCheck = {
+  name: string;
+  status: string;
+  conclusion?: string;
+  url?: string;
+  updated_at: number;
+  external_id?: string;
+  suite_id?: string;
+  event?: string;
+};
+
+export type CheckOutcome = "passed" | "failed" | "pending" | "skipped";
+
+/** A check run reports `status` while it runs and `conclusion` once it ends.
+ *  GitHub also reports commit statuses, whose state lands in `status`. */
+export function checkOutcome(check: Pick<PrCheck, "status" | "conclusion">): CheckOutcome {
+  const conclusion = (check.conclusion ?? "").toLowerCase();
+  const status = (check.status ?? "").toLowerCase();
+  if (conclusion) {
+    if (conclusion === "success" || conclusion === "neutral") return "passed";
+    if (conclusion === "skipped" || conclusion === "stale") return "skipped";
+    return "failed";
+  }
+  if (status === "success") return "passed";
+  if (status === "failure" || status === "error") return "failed";
+  return "pending";
+}
+
+export const CHECK_OUTCOME_ACCENT: Record<CheckOutcome, ExternalEventAccent> = {
+  passed: "green",
+  failed: "red",
+  pending: "yellow",
+  skipped: "muted",
+};
+
+export type ChecksFold = {
+  passed: number;
+  failed: number;
+  pending: number;
+  skipped: number;
+  total: number;
+};
+
+export function foldChecks(checks: PrCheck[] | undefined): ChecksFold {
+  const fold: ChecksFold = { passed: 0, failed: 0, pending: 0, skipped: 0, total: 0 };
+  for (const check of checks ?? []) {
+    fold[checkOutcome(check)] += 1;
+    fold.total += 1;
+  }
+  return fold;
+}
+
+const CHECK_SORT_RANK: Record<CheckOutcome, number> = { failed: 0, pending: 1, passed: 2, skipped: 3 };
+
+/** Failed checks first, then still running, then the quiet ones. */
+export function compareChecks(a: PrCheck, b: PrCheck): number {
+  const rank = CHECK_SORT_RANK[checkOutcome(a)] - CHECK_SORT_RANK[checkOutcome(b)];
+  return rank !== 0 ? rank : checkLabel(a).localeCompare(checkLabel(b));
+}
+
+// -- PR state, merge state, review decision -----------------------------------
+
+export type PrStateKey = "open" | "draft" | "merged" | "closed";
+
+export type PrStateRow = {
+  state?: "open" | "closed" | "merged";
+  draft?: boolean;
+  mergeable_state?: string;
+  behind_by?: number;
+  review_decision?: string;
+  checks?: PrCheck[];
+};
+
+export function prStateKey(pr: PrStateRow): PrStateKey {
+  if (pr.state === "merged") return "merged";
+  if (pr.state === "closed") return "closed";
+  return pr.draft ? "draft" : "open";
+}
+
+export const PR_STATE_META: Record<PrStateKey, { label: string; accent: ExternalEventAccent }> = {
+  open: { label: "Open", accent: "green" },
+  draft: { label: "Draft", accent: "muted" },
+  merged: { label: "Merged", accent: "violet" },
+  closed: { label: "Closed", accent: "red" },
+};
+
+/** The one sentence about whether this PR can land: conflicts, behind, blocked,
+ *  or ready. Null when GitHub has told us nothing yet. */
+export function mergeStateMeta(pr: PrStateRow): { label: string; accent: ExternalEventAccent } | null {
+  if (pr.state === "merged" || pr.state === "closed") return null;
+  const state = (pr.mergeable_state ?? "").toLowerCase();
+  if (state === "dirty") return { label: "Conflicts", accent: "red" };
+  if ((pr.behind_by ?? 0) > 0) return { label: `Behind by ${pr.behind_by}`, accent: "yellow" };
+  if (state === "behind") return { label: "Behind base", accent: "yellow" };
+  if (state === "blocked") return { label: "Blocked", accent: "yellow" };
+  if (state === "unstable") return { label: "Checks failing", accent: "red" };
+  if (state === "clean") return { label: "Ready to merge", accent: "green" };
+  return null;
+}
+
+export function reviewDecisionMeta(
+  decision: string | undefined,
+): { label: string; accent: ExternalEventAccent } | null {
+  switch ((decision ?? "").toLowerCase()) {
+    case "approved":
+      return { label: "Approved", accent: "green" };
+    case "changes_requested":
+      return { label: "Changes requested", accent: "red" };
+    case "review_required":
+      return { label: "Review required", accent: "yellow" };
+    default:
+      return null;
+  }
+}
+
+export const REVIEW_STATE_ACCENT: Record<string, ExternalEventAccent> = {
+  approved: "green",
+  changes_requested: "red",
+  commented: "blue",
+  pending: "yellow",
+  dismissed: "muted",
+};
+
+// -- Code comments ------------------------------------------------------------
+
+export type CodeCommentRow = {
+  _id: string;
+  content: string;
+  // Where the comment is anchored when it was written outside a pull request:
+  // the repository, and the commit sha or branch tip it points at. A commit
+  // page and a source file both read these.
+  repository?: string;
+  ref?: string;
+  file_path?: string;
+  line_number?: number;
+  line_end?: number;
+  side?: string;
+  /** The commented lines' text and context (shared/comments/codeAnchor.ts). */
+  anchor_lines?: CodeAnchorText;
+  resolved?: boolean;
+  resolved_at?: number;
+  parent_id?: string;
+  created_at: number;
+  html_url?: string;
+  author_kind?: "user" | "agent" | "github";
+  author_github_username?: string;
+  author_user_id?: string;
+  author_avatar_url?: string;
+  /** A note in a review the author has not submitted yet: theirs alone. */
+  pending_review?: boolean;
+  /** The GitHub review this comment was submitted in, when it was. */
+  github_review_id?: number;
+  updated_at?: number;
+  /** The session the note was handed to, and the agent reply that answers it
+   *  (convex lib/reviewAnswered). */
+  sent_to_conversation_id?: string;
+  answered_message_id?: string;
+};
+
+/** The reader's own notes waiting in an unsubmitted review. */
+export function pendingNotes(comments: CodeCommentRow[]): CodeCommentRow[] {
+  return comments.filter((c) => c.pending_review).sort(byCreatedAsc);
+}
+
+/** `file:12` or `file:12-15`, the way a reviewer names a spot. */
+export function notePlace(note: Pick<CodeCommentRow, "file_path" | "line_number" | "line_end">): string {
+  if (!note.file_path) return "the pull request";
+  const name = note.file_path.split("/").pop() ?? note.file_path;
+  if (note.line_number === undefined) return name;
+  const end = note.line_end !== undefined && note.line_end !== note.line_number ? `-${note.line_end}` : "";
+  return `${name}:${note.line_number}${end}`;
+}
+
+/** One stop in the reader's walk through the threads: a file and an anchor. */
+export type ThreadStop = { file: string; anchor: DiffLineAnchor; key: string; open: boolean; pending: boolean };
+
+/**
+ * Every thread in the order the files are listed, then by line, so `n` and `p`
+ * walk the review the way the eye does. A pending note is a stop too: it is
+ * where the reader last spoke.
+ */
+export function threadStops(files: { filename: string }[], comments: CodeCommentRow[]): ThreadStop[] {
+  const byFile = groupCommentsByFileLine(comments);
+  const order = new Map(files.map((f, i) => [f.filename, i]));
+  const stops: ThreadStop[] = [];
+  for (const [file, byLine] of byFile) {
+    for (const [key, thread] of byLine) {
+      stops.push({
+        file,
+        key,
+        anchor: commentAnchor(thread[0]),
+        open: !threadResolved(thread),
+        pending: thread.some((c) => c.pending_review),
+      });
+    }
+  }
+  return stops.sort((a, b) =>
+    (order.get(a.file) ?? Number.MAX_SAFE_INTEGER) - (order.get(b.file) ?? Number.MAX_SAFE_INTEGER)
+    || a.file.localeCompare(b.file)
+    || a.anchor.lineNumber - b.anchor.lineNumber);
+}
+
+/** Open threads and pending notes per file, for the tree's marks. */
+export function fileThreadMarks(comments: CodeCommentRow[]): Map<string, { open: number; pending: number }> {
+  const marks = new Map<string, { open: number; pending: number }>();
+  for (const [file, byLine] of groupCommentsByFileLine(comments)) {
+    let open = 0;
+    let pending = 0;
+    for (const thread of byLine.values()) {
+      if (!threadResolved(thread)) open += 1;
+      pending += thread.filter((c) => c.pending_review).length;
+    }
+    marks.set(file, { open, pending });
+  }
+  return marks;
+}
+
+// A comment posted here renders from a stub keyed by its own client_id until
+// the server row arrives and the collection's altKey swaps it in. The stub id
+// is not a Convex id, so it can never be sent back as a parent or resolved.
+const OPTIMISTIC_COMMENT_PREFIX = "cc-";
+
+export function newCommentClientId(): string {
+  return `${OPTIMISTIC_COMMENT_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function isOptimisticComment(id: string | undefined): boolean {
+  return !!id && id.startsWith(OPTIMISTIC_COMMENT_PREFIX);
+}
+
+/** The id to send the server for a comment, or undefined while it is a stub. */
+export function serverCommentId(id: string | undefined): string | undefined {
+  return isOptimisticComment(id) ? undefined : id;
+}
+
+export function commentResolved(comment: CodeCommentRow): boolean {
+  // The server writes both together; the flag is the one a local resolve or
+  // reopen paints (resolveCodeCommentThread), so it wins when present.
+  return typeof comment.resolved === "boolean" ? comment.resolved : comment.resolved_at !== undefined;
+}
+
+/** A thread is open while any comment in it is unresolved, so a reply after
+ *  resolution reopens it, the same rule the conversation rail uses. */
+export function threadResolved(thread: CodeCommentRow[]): boolean {
+  return thread.length > 0 && thread.every(commentResolved);
+}
+
+const byCreatedAsc = (a: CodeCommentRow, b: CodeCommentRow) => a.created_at - b.created_at;
+
+/** The side a comment sits on. Line 40 of the old file and line 40 of the new
+ *  file are different lines, so the side is part of a thread's identity. */
+export function commentSide(comment: CodeCommentRow): DiffSide {
+  return normalizeDiffSide(comment.side);
+}
+
+export function commentAnchor(comment: CodeCommentRow): DiffLineAnchor {
+  const anchor: DiffLineAnchor = { side: commentSide(comment), lineNumber: comment.line_number! };
+  // A run of lines is its own thread: a note on lines 10 to 13 is about the
+  // block, not about line 13, so it does not join the thread on that one line.
+  if (comment.line_end !== undefined && comment.line_end !== anchor.lineNumber) {
+    anchor.lineEnd = comment.line_end;
+  }
+  return anchor;
+}
+
+/** The side a reply belongs on: whatever the thread it answers sits on. */
+export function threadSide(thread: CodeCommentRow[]): DiffSide {
+  return thread.length > 0 ? commentSide(thread[0]) : "RIGHT";
+}
+
+/** file path → anchor key (side and line) → the thread there, oldest first.
+ *  Comments with no file (a plain PR comment) are left out; `prComments` takes
+ *  those. Keying by side as well as line keeps a comment on deleted code out of
+ *  the thread on the new line that replaced it. */
+export function groupCommentsByFileLine(
+  comments: CodeCommentRow[],
+): Map<string, Map<string, CodeCommentRow[]>> {
+  const byFile = new Map<string, Map<string, CodeCommentRow[]>>();
+  for (const comment of comments) {
+    if (!comment.file_path || comment.line_number === undefined) continue;
+    let byLine = byFile.get(comment.file_path);
+    if (!byLine) byFile.set(comment.file_path, (byLine = new Map()));
+    const key = diffLineKey(commentAnchor(comment));
+    const thread = byLine.get(key);
+    if (thread) thread.push(comment);
+    else byLine.set(key, [comment]);
+  }
+  for (const byLine of byFile.values()) for (const thread of byLine.values()) thread.sort(byCreatedAsc);
+  return byFile;
+}
+
+/** Comments on the PR itself: no file anchor, and not a reply to another one. */
+export function prComments(comments: CodeCommentRow[]): CodeCommentRow[] {
+  return comments.filter((c) => !c.file_path && !c.parent_id).sort(byCreatedAsc);
+}
+
+export function unresolvedThreadCount(comments: CodeCommentRow[]): number {
+  let open = 0;
+  for (const byLine of groupCommentsByFileLine(comments).values()) {
+    for (const thread of byLine.values()) {
+      // A thread that is only the reader's unsent notes is not open yet.
+      if (thread.every((c) => c.pending_review)) continue;
+      if (!threadResolved(thread)) open += 1;
+    }
+  }
+  return open;
+}
+
+// -- The conversation timeline ------------------------------------------------
+
+export type PrReviewRow = {
+  _id: string;
+  state: string;
+  body?: string;
+  submitted_at: number;
+  html_url?: string;
+  author_github_username?: string;
+  github_review_id?: number;
+  reviewer_user_id?: string;
+};
+
+/** The line comments submitted inside one review, oldest first. */
+export function reviewLineComments(review: PrReviewRow, comments: CodeCommentRow[]): CodeCommentRow[] {
+  if (review.github_review_id === undefined) return [];
+  return comments
+    .filter((c) => c.github_review_id === review.github_review_id && !!c.file_path && !c.parent_id)
+    .sort(byCreatedAsc);
+}
+
+export type PrCommitRow = {
+  sha: string;
+  message: string;
+  author_login?: string;
+  author_name?: string;
+  author_avatar_url?: string;
+  committed_at?: number;
+  url?: string;
+};
+
+export type PrEventRow = { _id: string; created_at: number; kind?: string };
+
+export type PrTimelineItem =
+  | { key: string; at: number; kind: "event"; event: PrEventRow }
+  | { key: string; at: number; kind: "review"; review: PrReviewRow }
+  | { key: string; at: number; kind: "comment"; comment: CodeCommentRow; replies: CodeCommentRow[] };
+
+/** Merge-state kinds say where the PR stands, not that something happened.
+ *  Two of the same in a row therefore carry one piece of news, and only the
+ *  latest of them is still true, so a run collapses to its last member. */
+const MERGE_STATE_EVENT_KINDS: ReadonlySet<string> = new Set(["pr_behind", "pr_conflict", "pr_ready"]);
+
+export function collapseMergeStateEvents(events: PrEventRow[]): PrEventRow[] {
+  const ordered = [...events].sort((a, b) => a.created_at - b.created_at);
+  const kept: PrEventRow[] = [];
+  for (const event of ordered) {
+    const previous = kept[kept.length - 1];
+    if (
+      previous &&
+      previous.kind === event.kind &&
+      MERGE_STATE_EVENT_KINDS.has(event.kind ?? "")
+    ) {
+      kept[kept.length - 1] = event;
+      continue;
+    }
+    kept.push(event);
+  }
+  return kept;
+}
+
+/** One list, oldest first: what happened to the PR outside codecast (events),
+ *  what reviewers said, and what people said here. Replies hang off their
+ *  parent instead of taking a place in the list. */
+export function buildPrTimeline(input: {
+  events: PrEventRow[];
+  reviews: PrReviewRow[];
+  comments: CodeCommentRow[];
+}): PrTimelineItem[] {
+  const repliesByParent = new Map<string, CodeCommentRow[]>();
+  for (const comment of input.comments) {
+    if (!comment.parent_id) continue;
+    const kids = repliesByParent.get(comment.parent_id);
+    if (kids) kids.push(comment);
+    else repliesByParent.set(comment.parent_id, [comment]);
+  }
+
+  const items: PrTimelineItem[] = [
+    // "Fell behind" is the header's job: it reads "Behind by N" from the live
+    // row, always current, while a row per transition only says the PR was
+    // once behind by something else. Same rule as the feed and the transcript.
+    // A review arrives twice: as GitHub's event and as the review row. The
+    // row is the one with the verdict and the notes, so once rows are in hand
+    // the event is only an echo of it.
+    ...collapseMergeStateEvents(input.events.filter((event) =>
+      !isQuietExternalEvent(event) && !(event.kind === "pr_review" && input.reviews.length > 0),
+    )).map<PrTimelineItem>((event) => ({
+      key: `e:${event._id}`,
+      at: event.created_at,
+      kind: "event",
+      event,
+    })),
+    // GitHub wraps a lone reply or a mirrored line comment in a "commented"
+    // review with no words of its own. That review is scaffolding, not a
+    // thing the reviewer said, so it stays out of the list.
+    ...input.reviews.filter((review) =>
+      review.state !== "commented" || !!review.body?.trim() || reviewLineComments(review, input.comments).length > 0,
+    ).map<PrTimelineItem>((review) => ({
+      key: `r:${review._id}`,
+      at: review.submitted_at,
+      kind: "review",
+      review,
+    })),
+    ...prComments(input.comments).filter((c) => !c.pending_review).map<PrTimelineItem>((comment) => ({
+      key: `c:${comment._id}`,
+      at: comment.created_at,
+      kind: "comment",
+      comment,
+      replies: (repliesByParent.get(comment._id) ?? []).sort(byCreatedAsc),
+    })),
+  ];
+
+  return items.sort((a, b) => a.at - b.at || a.key.localeCompare(b.key));
+}
+
+/** The sticky divider's words. Same rule as the project timeline: relative for
+ *  the two days a reader thinks of as recent, an absolute date before that. */
+export function dayLabel(ts: number, now: number = Date.now()): string {
+  const at = new Date(ts);
+  const today = new Date(now);
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const days = Math.round((startOf(today) - startOf(at)) / 86_400_000);
+  if (days === 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return at.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    ...(at.getFullYear() !== today.getFullYear() ? { year: "numeric" } : {}),
+  });
+}
+
+// -- Addresses ----------------------------------------------------------------
+//
+// Every view of a pull request is a URL, so anything a reader can see they can
+// link to: the tab is the path, and a file or a run of lines in it is the
+// fragment. The fragment is readable on purpose (`#diff-src/a.ts:R12-R20`), in
+// GitHub's letters: R is the new side of the diff, L the old one.
+
+export type PrView = "conversation" | "files" | "commits" | "checks";
+
+export const PR_VIEWS: readonly PrView[] = ["conversation", "files", "commits", "checks"];
+
+/** The view a PR page path names: its last segment, or the conversation. */
+export function prViewOf(pathname: string): PrView {
+  const last = pathname.replace(/\/+$/, "").split("/").pop() ?? "";
+  return (PR_VIEWS as readonly string[]).includes(last) && last !== "conversation" ? (last as PrView) : "conversation";
+}
+
+/** The page for one view of a pull request, with an optional fragment. */
+export function prViewHref(
+  repository: string,
+  number: number | string,
+  view: PrView,
+  family: RepoRouteFamily = "app",
+  hash = "",
+): string {
+  const base = prPageHref(repository, number, family);
+  return `${view === "conversation" ? base : `${base}/${view}`}${hash}`;
+}
+
+/** Where a fragment points: a file, and maybe a run of its lines. */
+export type DiffTarget = { file: string; anchor?: DiffLineAnchor };
+
+const SIDE_LETTER: Record<DiffSide, string> = { RIGHT: "R", LEFT: "L" };
+
+/** The fragment for a file, or a line or run of lines in it. */
+export function formatDiffHash(target: DiffTarget): string {
+  const { file, anchor } = target;
+  if (!anchor) return `#diff-${file}`;
+  const letter = SIDE_LETTER[anchor.side];
+  const end = anchor.lineEnd !== undefined && anchor.lineEnd !== anchor.lineNumber ? `-${letter}${anchor.lineEnd}` : "";
+  return `#diff-${file}:${letter}${anchor.lineNumber}${end}`;
+}
+
+/** Read a fragment back. Anything that is not a diff address is null, and a
+ *  backwards run (`R20-R12`, a shift click up the file) reads as the same run. */
+export function parseDiffHash(hash: string | null | undefined): DiffTarget | null {
+  if (!hash) return null;
+  let raw = hash.replace(/^#/, "");
+  try { raw = decodeURIComponent(raw); } catch { /* keep it as written */ }
+  if (!raw.startsWith("diff-")) return null;
+  const body = raw.slice(5);
+  if (!body) return null;
+  const match = body.match(/^(.*):([LR])(\d+)(?:-[LR]?(\d+))?$/);
+  if (!match || !match[1]) return { file: body };
+  const first = Number(match[3]);
+  const second = match[4] === undefined ? first : Number(match[4]);
+  if (first < 1 || second < 1) return { file: match[1] };
+  const anchor: DiffLineAnchor = { side: match[2] === "L" ? "LEFT" : "RIGHT", lineNumber: Math.min(first, second) };
+  if (first !== second) anchor.lineEnd = Math.max(first, second);
+  return { file: match[1], anchor };
+}

@@ -1,0 +1,377 @@
+[
+  {
+    "id": "BACKEND-01",
+    "priority_severity": "P0 / Critical",
+    "finding": "New native Apple identity can select an existing account using caller-supplied email; needs a valid Apple token for the configured app",
+    "status": "shipped",
+    "workstream": "001",
+    "verification": [
+      "Canonical auth: 97 tests pass; Slack:55 pass; cast check auth and convex pass. /tmp/ct-53052. Integrated/vendor/runtime verification pending."
+    ],
+    "review": {
+      "reviewer": "jx7c0ed",
+      "status": "pending"
+    },
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-02",
+    "priority_severity": "P0 / Critical conditional",
+    "finding": "Password signup deduplicates into existing OAuth-only user without verified email when verification is disabled; source default and current production flag are disabled; delivery key present",
+    "status": "shipped",
+    "workstream": "001",
+    "verification": [
+      "Canonical auth: 97 tests pass; Slack:55 pass; cast check auth and convex pass. /tmp/ct-53052. Integrated/vendor/runtime verification pending."
+    ],
+    "review": {
+      "reviewer": "jx7c0ed",
+      "status": "pending"
+    },
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-03",
+    "priority_severity": "P0 / Critical",
+    "finding": "Signed-in member applies a conversation/bucket field policy to their membership ID, allowing admin promotion and potentially foreign-team retargeting",
+    "status": "shipped",
+    "workstream": "002",
+    "verification": [
+      "Isolated actual Convex public-handler baseline reproduces exploit with real database IDs; /tmp/codecast-security-pl734/runtime/before-fix.json. No production data.",
+      "Root actual Convex retest passes: denied unauthorized change with original state preserved, own rename and current-runner ack pass. /tmp/codecast-security-pl734/runtime/after-fix.json. Independent broad code review and release pending."
+    ],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-04",
+    "priority_severity": "P0 / High",
+    "finding": "User knowing another conversation ID registers a fresh session against it, removes its runner registration and reads queued private prompts",
+    "status": "shipped",
+    "workstream": "002",
+    "verification": [
+      "Isolated actual Convex public-handler baseline reproduces exploit with real database IDs; /tmp/codecast-security-pl734/runtime/before-fix.json. No production data.",
+      "Root actual Convex retest passes: denied unauthorized change with original state preserved, own rename and current-runner ack pass. /tmp/codecast-security-pl734/runtime/after-fix.json. Independent broad code review and release pending."
+    ],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "CLIENT-01",
+    "priority_severity": "P0 / High",
+    "finding": "Chart generation reintroduces a script-bearing link after sanitization; victim must click the chart",
+    "status": "shipped",
+    "workstream": "003",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-05",
+    "priority_severity": "P1 / High",
+    "finding": "Any signed-in caller knowing a pending-message ID can mark another user's prompt delivered",
+    "status": "shipped",
+    "workstream": "002",
+    "verification": [
+      "Isolated actual Convex public-handler baseline reproduces exploit with real database IDs; /tmp/codecast-security-pl734/runtime/before-fix.json. No production data.",
+      "Root actual Convex retest passes: denied unauthorized change with original state preserved, own rename and current-runner ack pass. /tmp/codecast-security-pl734/runtime/after-fix.json. Independent broad code review and release pending."
+    ],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-06",
+    "priority_severity": "P1 / High",
+    "finding": "All-workspaces enumeration includes team-routed rows that are private to a different owner",
+    "status": "shipped",
+    "workstream": "002",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-07",
+    "priority_severity": "P1 / High",
+    "finding": "Unverified alternate email claims unmapped Slack identity and can retarget its mirrored DMs; requires team membership and unclaimed identity",
+    "status": "shipped",
+    "workstream": "001",
+    "verification": [
+      "Canonical auth: 97 tests pass; Slack:55 pass; cast check auth and convex pass. /tmp/ct-53052. Integrated/vendor/runtime verification pending."
+    ],
+    "review": {
+      "reviewer": "jx7c0ed",
+      "status": "pending"
+    },
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "LOCAL-01",
+    "priority_severity": "P1 / High",
+    "finding": "Directly opened vault SVG can execute at the daemon origin and read the URL's full control bearer; normal inline image rendering is inert",
+    "status": "shipped",
+    "workstream": "004",
+    "verification": [
+      "2026-09-23: CLI v1.1.153 (fd9451228): vault capability, legacy token= URLs still emitted until the web reader ships (decision 2026-09-23)"
+    ],
+    "review": null,
+    "release": "CLI v1.1.153 (fd9451228): vault capability, legacy token= URLs still emitted until the web reader ships (decision 2026-09-23)"
+  },
+  {
+    "id": "PARENT-01",
+    "priority_severity": "P1 / High",
+    "finding": "Anonymous GitHub installation callback trusts unsigned caller identities; unbound installation can be linked without proving installer access",
+    "status": "shipped",
+    "workstream": "005",
+    "verification": [
+      "2026-09-23: Convex prod (8ee6fff61). New installs fail with install_verification_unconfigured because GITHUB_APP_CLIENT_ID/SECRET are unset; decision sd-234",
+      "2026-09-23 live: callback with an unminted nonce returns unknown_intent (was install_verification_unconfigured); githubApp.install.test.ts 5 new tests red before fix, 89 related pass"
+    ],
+    "review": {
+      "decision": "human 2026-09-23 (sd-234): accept the single use intent while GitHub OAuth credentials are unset. Narrowed: intent alone binds only an installation created after the intent, or updates one already linked to the same owner."
+    },
+    "release": "Convex prod 2026-09-23 (main tree via deploy.sh, no index deletions): intent alone binds only fresh or same owner installs while OAuth credentials are unset"
+  },
+  {
+    "id": "PARENT-02",
+    "priority_severity": "P1 / High",
+    "finding": "Generic OAuth reconnect replaces an already-confirmed grant before confirmation; needs initiated connect flow and another provider authorization",
+    "status": "shipped",
+    "workstream": "005",
+    "verification": [
+      "2026-09-23: Convex prod (8ee6fff61): OAuth reconnect confirms before replacing a grant"
+    ],
+    "review": null,
+    "release": "Convex prod (8ee6fff61): OAuth reconnect confirms before replacing a grant"
+  },
+  {
+    "id": "PARENT-03",
+    "priority_severity": "P1 / High",
+    "finding": "Arbitrary published-page scripts share a document with owner/edit/comment tokens; owner opening their management URL exposes its authority to that content",
+    "status": "accepted_risk",
+    "workstream": "006",
+    "verification": [
+      "2026-09-23: Design choice queued as sd-235"
+    ],
+    "review": {
+      "decision": "human 2026-09-23 (sd-235): leave as is for now. Risk: script in a published page (e.g. added by an edit link holder) can read #o=/#ed= when the owner opens the page. Options kept on file: sandboxed iframe shell, or management in the app."
+    },
+    "release": null
+  },
+  {
+    "id": "CLIENT-02",
+    "priority_severity": "P1 / High conditional",
+    "finding": "Foreign top-level page can inherit Electron preload; several IPC handlers lack sender checks. Chart HTTPS links offer a navigation path",
+    "status": "shipped",
+    "workstream": "003",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "CLIENT-03",
+    "priority_severity": "P1 / High potential",
+    "finding": "Electron capability checks authorize containing window instead of requesting frame, including null webContents",
+    "status": "shipped",
+    "workstream": "003",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "CLIENT-04",
+    "priority_severity": "P1 / High privacy risk",
+    "finding": "Auth storage wrapper prevents sibling-window logout events; global cache/replication can retain or mix old-principal state",
+    "status": "in_progress",
+    "workstream": "007",
+    "verification": [
+      "2026-09-23: worker jx7dqzw, ct-53058"
+    ],
+    "review": null,
+    "release": null
+  },
+  {
+    "id": "PARENT-07",
+    "priority_severity": "P1 / High conditional",
+    "finding": "Updater interpolates unsigned-manifest URL into a shell; installer/updater lack independent manifest authenticity",
+    "status": "shipped_pending_release",
+    "workstream": "008",
+    "verification": [
+      "canonical ~/src/platform/packages/cli-kit/src/update: checkBinaryEntry (https, release origin, plain path, hex digest, size bound), bounded manifest fetch, fetchBounded (same-origin https redirects, 3 hops, byte cap, partial download refused), swap restores the old binary on failure; bun test 115 pass, tsc --noEmit clean (2026-09-23)",
+      "packages/cli/src/update.ts: execFileSync argv curl with --proto =https --proto-redir =https --max-redirs 3 --max-filesize, url_effective origin check, darwin codesign gate for signed clients; packages/cli/src/update.test.ts 18 pass against the canonical package (tsconfig path override; vendored mirror stale until scripts/vendor-platform.sh)",
+      "packages/web/public/install.sh reads latest.json, binary only from dl.codecast.sh, sha256 verified before install; packages/cli/src/installerTerminal.test.ts 14 pass incl. wrong digest, foreign host, missing platform",
+      "signed manifest path: cli-kit signing.ts + release/sign-manifest.ts (keygen/sign/append/verify), finalize workflow signs when RELEASE_MANIFEST_SIGNING_KEY exists, client policy RELEASE_MANIFEST_SIGNING = { keys: {}, required: false } (no behaviour change); rollout and custody in docs/architecture/release-signing.md; no key created",
+      "2026-09-23: Update path hardened (argv curl, origin/path/digest/size checks, darwin team signature gate, install.sh SHA-256), reviewed PASS against the live latest.json v1.1.153. Manifest signing key created 2026-09-23 (sd-240, repo secret + Keychain escrow, key id cli-release-2026); client pin follows the first verified signed release.",
+      "2026-09-24: live latest.json v1.1.154 signed; verified with cli-release-2026. Tree: key pinned required:false; every publisher now removes a stale latest.json.sig before writing the manifest (finalize contract test). Ships in the next CLI release."
+    ],
+    "review": null,
+    "release": null
+  },
+  {
+    "id": "PARENT-08",
+    "priority_severity": "P1 / High availability potential",
+    "finding": "Vulnerable ws parser accepts unauthenticated extension first messages up to 256 MiB; opaque Origin is admitted",
+    "status": "shipped_pending_release",
+    "workstream": "004/008",
+    "verification": [
+      "packages/cli/package.json ws 8.21.3; bun.lock root ws@8.21.3 with convex's exact 8.18.0 pin nested (client role only); resolved import asserted by packages/cli/src/browser/bridge/wsVersion.test.ts (pass after install)",
+      "pre-auth bounds (origin allow list incl. null refusal, 256 KiB hello cap, 4 concurrent handshakes, hello timeout) already in tree from plan 004 (30a74b510); host/protocol/hostState/wsVersion/installer suites 68 pass (2026-09-23)",
+      "2026-09-23: ws 8.21.3 in the CLI with a resolved import test; bridge pre auth bounds shipped in v1.1.153."
+    ],
+    "review": null,
+    "release": null
+  },
+  {
+    "id": "BACKEND-08",
+    "priority_severity": "P2 / Medium",
+    "finding": "Anonymous content predicate query checks that a share token exists, never requires possession",
+    "status": "shipped",
+    "workstream": "002",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "BACKEND-09",
+    "priority_severity": "P2 / Medium",
+    "finding": "Device-bound bearer restriction exists at HTTP wrapper but direct public Convex calls bypass it; attacker already holds valid token",
+    "status": "shipped_pending_release",
+    "workstream": "002",
+    "verification": [
+      "2026-09-23 prod read: 291 api_tokens, 49 named setup-, none live, none used as a bearer; setup tokens refused as bearers and renames across the setup- prefix blocked (platform apiTokens.deviceBinding.test.ts, 11 pass; fails without the guard)",
+      "2026-09-23 review PASS: enforcement in verifyApiToken on both doors; REQUEST_DEVICE_BOUND_TOKENS=false until the host mint (sd-242) ships",
+      "2026-09-24: enforcement and host mint live (Convex, CLI 1.1.154). Tree: REQUEST_DEVICE_BOUND_TOKENS=true with a self heal for Migration Assistant or disk clones (hooks never heal; 5s mint timeout), mac-full-setup.sh and the runbook moved to the mint path. Two fresh reviews; the second NEEDS_CHANGES hook hang is fixed and tested. Ships in the next CLI release."
+    ],
+    "review": {
+      "decision": "human 2026-09-23: no token rotation and no grace window. Existing unbound tokens keep working. Order: close the direct path for bound tokens, make the CLI send device_id, then bind newly minted tokens.",
+      "worker": "jx7fwnn"
+    },
+    "release": null
+  },
+  {
+    "id": "LOCAL-02",
+    "priority_severity": "P2 / Medium",
+    "finding": "Unauthenticated hook GET changes state; rejected status events still persist/schedule caller-selected transcript ingestion",
+    "status": "shipped",
+    "workstream": "004",
+    "verification": [
+      "2026-09-23: CLI v1.1.153 (fd9451228): hook admission; prod machine check 2026-09-23: 55 hook status events accepted, 0 refusals"
+    ],
+    "review": null,
+    "release": "CLI v1.1.153 (fd9451228): hook admission; prod machine check 2026-09-23: 55 hook status events accepted, 0 refusals"
+  },
+  {
+    "id": "LOCAL-03",
+    "priority_severity": "P2 / Medium",
+    "finding": "Repository setup-copy entries escape both worktrees in legacy remote move; requires user invoking that transfer to an authorized host",
+    "status": "shipped",
+    "workstream": "004",
+    "verification": [
+      "2026-09-23: CLI v1.1.153 (66cdfb34c): shared copyFiles collector"
+    ],
+    "review": null,
+    "release": "CLI v1.1.153 (66cdfb34c): shared copyFiles collector"
+  },
+  {
+    "id": "CLIENT-05",
+    "priority_severity": "P2 / Medium",
+    "finding": "Canvas media and escaped CSS bypass promised network isolation",
+    "status": "shipped",
+    "workstream": "003",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "CLIENT-06",
+    "priority_severity": "P2 / Medium",
+    "finding": "Untrusted canvas host CSS can escape its layout and cover trusted controls",
+    "status": "shipped",
+    "workstream": "003",
+    "verification": [],
+    "review": null,
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "PARENT-04",
+    "priority_severity": "P2 / Medium",
+    "finding": "Direct public comment mutation bypasses HTTP access/rate gate; expired/password page accepts anonymous stored comment",
+    "status": "shipped",
+    "workstream": "006",
+    "verification": [
+      "2026-09-23: Convex prod (eb57de3e0): gates inside artifacts.submitComments and recordView"
+    ],
+    "review": null,
+    "release": "Convex prod (eb57de3e0): gates inside artifacts.submitComments and recordView"
+  },
+  {
+    "id": "PARENT-05",
+    "priority_severity": "P2 / Medium",
+    "finding": "Public caching of previously authorized artifact versions/assets weakens password/delete/expiry revocation",
+    "status": "shipped",
+    "workstream": "006",
+    "verification": [
+      "2026-09-23: Convex half live (eb57de3e0). Edge worker change not yet live: 2026-09-23 probe shows ?k= responses still cached (HIT, max-age=14400). Cloudflare purge token not available, revocation bounded by TTL",
+      "2026-09-23 live: public page public max-age=60 swr=300; ?k= private, no-store; password gate page hides body. Found and fixed: the zone Browser Cache TTL rewrites every subrequest Cache-Control to max-age=14400, so the worker now always writes its own policy (worker.test.js regression, fails on the committed worker). Cloudflare purge still unavailable; bound is 6 minutes."
+    ],
+    "review": null,
+    "release": "Edge worker 06b92a9d (2026-09-23) + Convex eb57de3e0"
+  },
+  {
+    "id": "PARENT-06",
+    "priority_severity": "P2 / Medium",
+    "finding": "Auth redirect uses string prefix, allowing a different hostname with the trusted URL prefix",
+    "status": "shipped",
+    "workstream": "001",
+    "verification": [
+      "Canonical auth: 97 tests pass; Slack:55 pass; cast check auth and convex pass. /tmp/ct-53052. Integrated/vendor/runtime verification pending."
+    ],
+    "review": {
+      "reviewer": "jx7c0ed",
+      "status": "pending"
+    },
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  },
+  {
+    "id": "PARENT-09",
+    "priority_severity": "P2 / mixed, triage",
+    "finding": "Dependency audit has 96 high/critical advisory/version match rows across 25 package names; these are not 96 exploitable app bugs",
+    "status": "shipped_pending_release",
+    "workstream": "008",
+    "verification": [
+      "scripts/security/dependency-triage.ts writes plans/security-dependency-triage.{json,md} from bun audit --json + bun why: 40 packages / 195 advisories; 1 fixed (ws), 27 not reachable, 5 accepted risk, 7 fix planned (dompurify, markdown-it, linkify-it, mermaid, @tiptap/core with the content worker; @auth/core with the identity worker; react-router bump by the release owner); every row carries resolved versions, modes, evidence, owner and a review expiry; --check fails on untriaged or expired rows",
+      "raw audit kept in plans/security-dependency-audit.json (not a clean bill)",
+      "2026-09-23: Dependency triage ledger: 195 rows, each with a decision and review expiry. react-router bumped to 7.18.4 (GHSA-wrjc-x8rr-h8h6 open redirect). The remaining planned fixes are tracked under ct-53054 and ct-53052."
+    ],
+    "review": null,
+    "release": null
+  },
+  {
+    "id": "PARENT-10",
+    "priority_severity": "P2 / hardening",
+    "finding": "Main web responses lack CSP/frame-ancestors and several browser isolation headers",
+    "status": "implemented_pending_review",
+    "workstream": "003/008",
+    "verification": [
+      "2026-09-24 (ct-54096): packages/web/server/responsePolicy.ts. LIVE on the next web deploy: Strict-Transport-Security max-age=86400 (no includeSubDomains, no preload; http://codecast.sh 301s to https, checked 2026-09-23). REPORT-ONLY: the full draft document policy (DOCUMENT_POLICY; sources and reasons in plans/security-csp-draft.md), reporting to Sentry's CSP security endpoint derived from VITE_SENTRY_DSN (a Railway runtime variable), only on Railway, for 10% of HTML documents, capped at 120 reporting documents per hour per process, via report-uri plus report-to and Reporting-Endpoints. Nothing is enforced: no Content-Security-Policy header is sent.",
+      "Tests: packages/web/server/responsePolicy.test.ts 8 pass through the Hono middleware (DSN to endpoint, sampling, hourly cap, no DSN, HSTS, draft sources, no enforcing header); server shareMeta and staticAssets suites pass; cast check web clean.",
+      "Browser: the local server on the built dist (port 3977) boots and renders in Chrome with the headers; every loaded origin is in the draft. The signed-in prod app (read-only check in the founder's Chrome) loaded 12 origins, all covered: Convex img/fetch/iframe, GitHub, Slack and Gravatar avatars, Google Fonts. Not exercised with a signed-in local origin (no real accounts): calls, OAuth return, desktop windows. The header is report-only, so it cannot block them.",
+      "REVIEW on or after 2026-10-08: read the Sentry CSP reports, then fix inline scripts (hash or nonce) and decide on enforcement, and whether to raise HSTS to one year."
+    ],
+    "review": null,
+    "release": null
+  },
+  {
+    "id": "BACKEND-10",
+    "priority_severity": "P1 / High",
+    "finding": "Ordinary member can map a Slack person to self and receive mirrored DM rooms without identity proof",
+    "status": "shipped",
+    "workstream": "001",
+    "verification": [
+      "Canonical auth: 97 tests pass; Slack:55 pass; cast check auth and convex pass. /tmp/ct-53052. Integrated/vendor/runtime verification pending."
+    ],
+    "review": {
+      "reviewer": "jx7c0ed",
+      "status": "pending"
+    },
+    "release": "CLI 1.1.149, desktop 1.1.114, web+convex, both OTA channels (jx72smz, 2026-09-21)"
+  }
+]

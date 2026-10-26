@@ -1,0 +1,166 @@
+/* Selected Codecast MIT theme and panel rules. Source commit: 5dfb04f516122fe4f59a61137219b5a4e2e1f9f8.
+ * Copyright (c) 2025 Codecast. See THIRD_PARTY_NOTICES.md. */
+.minimal-style {
+  color-scheme: light;
+  --font-ui: 'SF Pro Text', 'SF Pro Display', 'Helvetica Neue', ui-sans-serif, sans-serif;
+  --sol-bg: #ffffff;
+  --sol-bg-alt: #f7f7f5;
+  --sol-bg-highlight: #ececea;
+  --sol-bg-inset: #f3f3f1;
+  --sol-card: #ffffff;
+  --sol-card-hover: #fafaf9;
+  --sol-border: #d9d9d5;
+  --sol-text: #1f1f1f;
+  --sol-text-secondary: #353535;
+  --sol-text-muted: #666663;
+  --sol-text-dim: #8a8a85;
+  --sol-text-muted0: #a4a49f;
+  --logo-c: #333333;
+  --sol-yellow: #a86f13;
+  --sol-orange: #d85d38;
+  --sol-amber: #b36b22;
+  --sol-red: #d34b4b;
+  --sol-magenta: #b44b7f;
+  --sol-violet: #7667b6;
+  --sol-blue: #3f76c4;
+  --sol-cyan: #2f7168;
+  --sol-green: #5f7f38;
+  --sol-link: #b14f2f;
+  --background: 0 0% 100%;
+  --foreground: 0 0% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 12%;
+  --popover: 60 9% 98%;
+  --popover-foreground: 0 0% 12%;
+  --primary: 0 0% 12%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 60 7% 95%;
+  --secondary-foreground: 0 0% 20%;
+  --muted: 60 7% 95%;
+  --muted-foreground: 60 2% 40%;
+  --accent: 60 7% 93%;
+  --accent-foreground: 0 0% 12%;
+  --border: 60 5% 85%;
+  --input: 60 5% 85%;
+  --ring: 0 0% 30%;
+  --conv-col-w: 43rem;
+  --cc-panel-head-h: 42px;
+  --cc-panel-rule: #e7e7e4;
+  --cc-panel-motion: 180ms cubic-bezier(0.23, 1, 0.32, 1);
+  --radius: 0.75rem;
+  /* Your own messages. ThemeProvider writes the hue (lib/bubbleColor.ts). */
+  --cc-user-bubble-hue: #2f7df6;
+}
+
+.dark.minimal-style {
+  color-scheme: dark;
+  /* Warm graphite: the light variant's stone neutrals carried into the dark.
+     The page is the deepest surface and the sidebar sits one step above it;
+     every other surface steps up from there, so rules stay hairlines and
+     text is the brightest thing on screen. */
+  --sol-bg: #161615;
+  --sol-bg-alt: #1c1c1b;
+  --sol-bg-highlight: #2a2a28;
+  --sol-bg-inset: #232321;
+  --sol-card: #252523;
+  --sol-card-hover: #2b2b29;
+  --sol-border: #393936;
+  --sol-text: #e7e5e0;
+  --sol-text-secondary: #d2d0ca;
+  --sol-text-muted: #a19f98;
+  --sol-text-dim: #7c7a74;
+  --sol-text-muted0: #6c6a65;
+  --logo-c: #d2d0ca;
+  --sol-yellow: #dcb25a;
+  --sol-orange: #e88a64;
+  --sol-amber: #d9a05e;
+  --sol-red: #e8787a;
+  --sol-magenta: #d185ad;
+  --sol-violet: #a99ce6;
+  --sol-blue: #7ea7e2;
+  --sol-cyan: #73b2a8;
+  --sol-green: #9bb873;
+  --sol-link: #e9a07c;
+  --cc-panel-rule: #2b2b29;
+  --background: 60 2% 11%;
+  --foreground: 43 12% 89%;
+  --card: 60 2% 14%;
+  --card-foreground: 43 12% 89%;
+  --popover: 60 2% 15%;
+  --popover-foreground: 43 12% 89%;
+  --primary: 43 12% 89%;
+  --primary-foreground: 60 2% 11%;
+  --secondary: 60 2% 16%;
+  --secondary-foreground: 43 8% 82%;
+  --muted: 60 2% 16%;
+  --muted-foreground: 45 4% 62%;
+  --accent: 60 2% 19%;
+  --accent-foreground: 43 12% 89%;
+  --border: 60 2% 21%;
+  --input: 60 2% 21%;
+  --ring: 45 4% 60%;
+}
+
+.cc-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--sol-bg);
+}
+
+.cc-panel__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  height: var(--cc-panel-head-h);
+  min-height: var(--cc-panel-head-h);
+  padding: 0 6px 0 10px;
+  border-bottom: 1px solid var(--cc-panel-rule);
+  background: var(--cc-panel-head-bg);
+  user-select: none;
+}
+
+.cc-panel__title {
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+.cc-panel__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  color: color-mix(in srgb, var(--sol-text-dim) 80%, transparent);
+  transition:
+    color 120ms,
+    background-color 120ms;
+  flex: 0 0 auto;
+}
+
+.cc-panel__btn:hover {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+}
+
+.minimal-style .cc-panel__head {
+  padding-inline: 14px 10px;
+  gap: 8px;
+}
+
+.minimal-style .cc-panel__title {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--sol-text-secondary);
+}
+
+.minimal-style .cc-panel__btn {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}

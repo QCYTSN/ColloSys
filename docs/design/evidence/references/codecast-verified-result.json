@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "referenceOnly": true,
+  "checks": [
+    "Original login renders",
+    "Real password registration reaches original DashboardLayout",
+    "Original create dialog writes a real task",
+    "Wrong password is rejected",
+    "A fresh browser login retrieves the persisted task and local font",
+    "Original settings and Minimal style work",
+    "Reference proxy rejects external fetches",
+    "No browser page errors or external HTTP requests"
+  ],
+  "title": "TEST full upstream UI 5a6ae0d7",
+  "errors": [],
+  "externalRequests": [],
+  "at": "2026-10-26T06:23:49.289Z"
+}

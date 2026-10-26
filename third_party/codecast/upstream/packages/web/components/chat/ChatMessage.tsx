@@ -1,0 +1,875 @@
+import { memo, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import { SmilePlus, MessageSquare, MoreHorizontal, RotateCw, AlertTriangle, Link2, Pencil, Trash2, Forward, PhoneCall, EyeOff, ExternalLink } from "lucide-react";
+import { SlackLogo } from "../SlackLogo";
+import { parseHuddleDigestContent } from "@codecast/shared/contracts";
+import { mentionRoles, mentionSessions, mentionSlack, type ChatRoleMention, type ChatSlackMention } from "@codecast/shared/chat";
+import { openForwardToChat } from "../../lib/forwardToChat";
+import { remarkSanitizeInvisibleUnicode } from "../../lib/markdownPlugins";
+import { remarkEmojiShortcodes } from "../../lib/remarkEmojiShortcodes";
+import { MESSAGE_MD_COMPONENTS, MESSAGE_MD_REHYPE, USER_MD_REMARK } from "../messageMarkdown";
+import { RevealHost } from "../ObjectReveal";
+import { CommentAvatar } from "../comments/CommentAvatar";
+import { RoleFace } from "../org/RoleFace";
+import Link from "next/link";
+import { remarkChatMentions, channelNameMap } from "../../lib/remarkChatMentions";
+import { remarkEntityCards } from "../../lib/remarkEntityCards";
+import { compactAge } from "../../lib/threadState";
+import { copyToClipboard, sharePageUrl } from "../../lib/utils";
+import { attachmentKind, type ChatAttachmentView, type ChatMessageView } from "./chatTypes";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { useStorageImageSrc, useStorageImageUrl } from "../../hooks/useStorageImageUrl";
+import { ChatVoiceBubble, VoicePlayButton } from "./ChatVoiceBubble";
+import { CallTranscriptDisclosure } from "../calls/TranscriptTurns";
+import { CallVideoStretchChip } from "../calls/CallVideoStretchChip";
+import { ImageLightbox } from "../ImageGallery";
+import { ChatBlockquote } from "./ChatQuote";
+import "./chat.css";
+import "../editor/editor.css";
+
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { useInboxStore } from "../../store/inboxStore";
+// One chat message.
+//
+// The row is a two column grid: a fixed gutter (--ch-gutter in chat.css) and the body. When a message
+// is grouped under the one above it — same author, close in time — the gutter
+// holds a hover-revealed timestamp instead of the avatar. Keeping the gutter the
+// same width in both states is what stops the text shifting sideways as messages
+// group, which is the detail that makes grouped chat feel calm rather than
+// twitchy.
+//
+// Presentational only: it takes a ChatMessageView and callbacks. That keeps it
+// renderable from a fixture and cheap to memo under a virtualizer, where rows
+// remount constantly.
+
+/** One attached image: resolves its storage URL cache-first (byte cache, so a
+ *  seen image paints locally and offline), opens the shared lightbox.
+ *  A tile that is still resolving keeps its footprint (no reflow when the URL
+ *  lands); one that failed says so instead of leaving a hole. */
+function AttachmentTile({ att, onOpen }: { att: ChatAttachmentView; onOpen: (src: string) => void }) {
+  const url = useStorageImageSrc(att.storage_id);
+  // Sent before its upload finished: the local preview, until the store
+  // delivers the message with the stored image.
+  if (!att.storage_id && att.preview_url) {
+    return (
+      <span className="ch-att ch-att-uploading" title="Uploading">
+        <img src={att.preview_url} alt={att.name || "attachment"} />
+        <span className="ch-att-spinner" aria-label="Uploading" />
+      </span>
+    );
+  }
+  if (url === null) {
+    return <span className="ch-att ch-att-missing">image unavailable</span>;
+  }
+  return (
+    <button
+      type="button"
+      className="ch-att"
+      onClick={() => url && onOpen(url)}
+      title={att.name || "View image"}
+    >
+      {url ? <img src={url} alt={att.name || "attachment"} loading="lazy" /> : <span className="ch-att-loading" />}
+    </button>
+  );
+}
+
+/** One attached video: the browser's own player, streaming from storage.
+ *  Only the URL is resolved here; the bytes stay out of the image byte cache,
+ *  so a scrolled-past video costs nothing until someone presses play. */
+function VideoTile({ att }: { att: ChatAttachmentView }) {
+  const url = useStorageImageUrl(att.storage_id);
+  if (url === null) return <span className="ch-att ch-att-missing">video unavailable</span>;
+  if (!url) return <span className="ch-att ch-att-loading" />;
+  return (
+    <video
+      className="ch-att ch-att-video"
+      src={url}
+      controls
+      playsInline
+      preload="metadata"
+      title={att.name}
+      style={att.width && att.height ? { aspectRatio: `${att.width} / ${att.height}` } : undefined}
+    />
+  );
+}
+
+export function ChatAttachments({
+  messageId,
+  attachments,
+}: {
+  messageId: string;
+  attachments: ChatAttachmentView[];
+}) {
+  const [lightbox, setLightbox] = useState<string | null>(null);
+  // A recording is not a picture. Every attachment used to go through
+  // AttachmentTile, which puts the storage id in an <img> — so a voice note
+  // that arrived beside other files rendered as a broken thumbnail with no way
+  // to hear it, which is the symptom diagnosis 7 was reported from. A row whose
+  // ONLY attachment is audio becomes a voice bubble upstream and never reaches
+  // this grid; these are the mixed rows, and they get the same play control the
+  // bubble uses rather than a second one invented here.
+  const audio = attachments.filter((a) => attachmentKind(a) === "audio");
+  const videos = attachments.filter((a) => attachmentKind(a) === "video");
+  const images = attachments.filter((a) => attachmentKind(a) === "image");
+  return (
+    <>
+      {audio.map((att) => (
+        <div className="ch-voice ch-voice-att" key={att.storage_id || att.preview_url}>
+          {/* One player is shared by the whole app, so the key has to name this
+              recording and not just its message. */}
+          <VoicePlayButton playKey={`${messageId}:${att.storage_id}`} att={att} />
+          <span className="ch-voice-text">{att.name || "recording"}</span>
+        </div>
+      ))}
+      {/* Videos never tile: a square crop hides most of a frame. */}
+      {videos.length > 0 && (
+        <div className="ch-atts">
+          {videos.map((att) => <VideoTile key={att.storage_id} att={att} />)}
+        </div>
+      )}
+      {images.length > 0 && (
+        <div className={`ch-atts ${images.length > 1 ? "ch-atts-grid" : ""}`}>
+          {images.map((att) => (
+            <AttachmentTile key={att.storage_id || att.preview_url} att={att} onOpen={setLightbox} />
+          ))}
+        </div>
+      )}
+      {lightbox && <ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />}
+    </>
+  );
+}
+
+const HOVER_TIME = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const FULL_TIME = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+let chatMdComponents: (typeof MESSAGE_MD_COMPONENTS & { blockquote: typeof ChatBlockquote }) | undefined;
+function getChatMdComponents() {
+  return chatMdComponents ??= { ...MESSAGE_MD_COMPONENTS, blockquote: ChatBlockquote };
+}
+
+function clockTime(ts: number): string {
+  return HOVER_TIME.format(new Date(ts));
+}
+
+/** "3:04 PM" for today, "Tue 3:04 PM" for older — the header timestamp carries a
+ *  weekday once the message is no longer from today, so a scrolled-back reader
+ *  is never guessing. */
+function headerTime(ts: number, now: number): string {
+  const d = new Date(ts);
+  const sameDay = new Date(now).toDateString() === d.toDateString();
+  if (sameDay) return clockTime(ts);
+  return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${clockTime(ts)}`;
+}
+
+/** "3m ago" / "2h ago", on the app's one relative clock (lib/threadState's
+ *  compactAge). Chat had its own copy that ROUNDED where every other surface
+ *  floors, so a 90 minute old thread read "2h ago" here and "1h" everywhere
+ *  else. */
+export function relativeReplyTime(ts: number, now: number): string {
+  const age = compactAge(Math.max(0, now - ts));
+  return age === "just now" ? age : `${age} ago`;
+}
+
+/** Reactions the toolbar shows directly, one tap each, no picker. */
+export const TOOLBAR_REACTIONS = ["👍", "👎", "❤️"];
+
+/** The rest of the one-tap set, behind the toolbar's picker. Small on purpose:
+ *  a full picker is a different surface. */
+export const QUICK_REACTIONS = ["🎉", "👀", "🚀", "😄"];
+
+/** "Maya" / "Maya and Sam" / "Maya, Sam and Ada" — the reaction tooltip's
+ *  who-list. */
+function reactorNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+export type ChatMessageProps = {
+  message: ChatMessageView;
+  /** Suppress the header and avatar: this message continues the one above. */
+  grouped?: boolean;
+  /** The room this message is in. The timestamp is a PERMALINK
+   *  (/chat/<channel>?m=<id>) — the one place a reader instinctively
+   *  right-clicks to copy a link to a message — so the row has to know it. */
+  channelId?: string;
+  /** Handles that resolve to real members, so unknown @words stay plain text. */
+  knownHandles?: Set<string>;
+  /** The viewer's handles, for the louder self-mention treatment. */
+  selfHandles?: Set<string>;
+  /** handle → display name for the rendered chip. */
+  handleNames?: Map<string, string>;
+  /** Passed in rather than read from Date.now() so a virtualized list re-renders
+   *  on a coarse clock instead of per row. */
+  now: number;
+  /** True when the viewer wrote this message: the only one who may edit or
+   *  delete it, and the server agrees. */
+  mine?: boolean;
+  onOpenThread?: (messageId: string) => void;
+  /** The emoji is the ARGUMENT. A pill reports its own emoji, the toolbar
+   *  reports whichever one the picker was pointed at — a control that always
+   *  posted a thumbs-up made the pill the reader pressed look broken. */
+  onReact?: (messageId: string, emoji: string) => void;
+  onEdit?: (messageId: string, content: string) => void;
+  onDelete?: (messageId: string) => void;
+  onRetryAgent?: (messageId: string) => void;
+  /** Re-drive a send that failed. Local-first means the row appears instantly;
+   *  if delivery then fails and nothing says so, the message sits there looking
+   *  sent. That is the failure that makes people stop trusting a chat product. */
+  onRetrySend?: (messageId: string) => void;
+  /** Hides the thread affordance and hover tools — used inside the thread panel,
+   *  where a nested thread would be meaningless. */
+  inThread?: boolean;
+  /** The channel mirrors a Slack channel that accepts our lines, so a line kept
+   *  local can be shared and the "not in Slack" mark means something. */
+  slackOutbound?: boolean;
+  onShareToSlack?: (messageId: string) => void;
+};
+
+export const ChatMessage = memo(function ChatMessage({
+  message,
+  grouped,
+  channelId,
+  knownHandles,
+  selfHandles,
+  handleNames,
+  now,
+  mine,
+  onOpenThread,
+  onReact,
+  onEdit,
+  onDelete,
+  onRetryAgent,
+  onRetrySend,
+  inThread,
+  slackOutbound,
+  onShareToSlack,
+}: ChatMessageProps) {
+  const { author, agentStatus } = message;
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(message.content);
+
+  // The SESSION user-message pipeline (USER_MD_REMARK: entity pills + tight
+  // newlines via remark-breaks + pasted tags shown literally), not the document
+  // pipeline — a chat message is typed text, exactly like a session prompt, and
+  // rendering the two through different codepaths is how "@x on its own airy
+  // paragraph" happened here while sessions rendered the same text tight.
+  //
+  // On top of it: the invisible-Unicode sanitizer (teammate- and agent-authored
+  // content is the last place to drop it) and the chat mention highlighter —
+  // registered as a [plugin, options] tuple, not as remarkChatMentions(opts):
+  // unified calls each array entry to OBTAIN the transformer, so handing it an
+  // already-built transformer makes it run with the options slot as the tree.
+  // (Mutable tuple: unified's Pluggable type refuses a readonly one.)
+  //
+  // remarkEntityCards is chat's own upgrade on top of that shared pipeline:
+  // a message (or line) that is nothing but object references is someone
+  // SHARING those objects, and each renders as a browsable preview card
+  // instead of an inline pill. Registered last so it sees the entity links
+  // remarkEntityIds already produced.
+  //
+  // The mention plugin runs FIRST, before the entity id plugin: a session
+  // mention is "@jx7abcd", and the id plugin would otherwise split it into a
+  // stray "@" beside the pill. The role and session vocabularies are this
+  // row's own resolved refs, so the plugin only ever pills what the server
+  // actually named; the options object is keyed on that array's identity.
+  const roleRefs = message.mentionRefs;
+  const mentionVocab = useMemo(() => {
+    const roles = new Map<string, ChatRoleMention>();
+    for (const r of mentionRoles(roleRefs)) roles.set(r.handle.toLowerCase(), r);
+    const sessions = new Set(mentionSessions(roleRefs).map((s) => s.short_id.toLowerCase()));
+    const slack = new Map<string, ChatSlackMention>();
+    for (const p of mentionSlack(roleRefs)) slack.set(p.handle.toLowerCase(), p);
+    return { roles: roles.size ? roles : undefined, sessions: sessions.size ? sessions : undefined, slack: slack.size ? slack : undefined };
+  }, [roleRefs]);
+  // `#name` links into the room, from this team's channels. Only a line that
+  // has a "#" subscribes, so the rest of the list never re-renders for it.
+  const hasHash = message.content.includes("#");
+  const channels = useInboxStore((s) => hasHash && channelId ? channelNameMap(s.chatChannels, s.chatChannels[channelId]?.team_id) : undefined);
+  const remarkPlugins = useMemo(
+    () => [
+      [
+        remarkChatMentions,
+        { known: knownHandles, self: selfHandles, names: handleNames, roles: mentionVocab.roles, sessions: mentionVocab.sessions, slack: mentionVocab.slack, channels },
+      ] as [typeof remarkChatMentions, Parameters<typeof remarkChatMentions>[0]],
+      ...USER_MD_REMARK,
+      remarkSanitizeInvisibleUnicode,
+      // After the invisible-unicode strip so a converted ZWJ sequence
+      // (a flag, a family) is not taken apart again.
+      remarkEmojiShortcodes,
+      remarkEntityCards,
+    ],
+    [knownHandles, selfHandles, handleNames, mentionVocab, channels],
+  );
+
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // One outside click closes whichever popover is open. Both are anchored to the
+  // hover toolbar, which disappears the moment the pointer leaves the row.
+  useWatchEffect(() => {
+    if (!menuOpen && !pickerOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (rowRef.current?.contains(e.target as Node)) return;
+      setMenuOpen(false);
+      setPickerOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setMenuOpen(false);
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [menuOpen, pickerOpen]);
+
+  const permalink = channelId ? `/chat/${channelId}?m=${message.id}` : undefined;
+  // A huddle digest is a system row about the call, not something its author
+  // typed: the header names the huddle instead of the person who happened to
+  // start it, and the gutter wears a call badge instead of their face. The
+  // timeline builder already refuses to group anything under it (standalone).
+  const isCall = !!message.call && !message.deletedAt;
+  const callHead = isCall ? parseHuddleDigestContent(message.content) : null;
+  // An untitled huddle's title IS "Huddle" — the kicker already says it once.
+  const callTitle = callHead && callHead.title !== "Huddle" ? callHead.title : null;
+  // A voice burst has no typed text to correct: its content is a transcript of
+  // something already said out loud, and editing it would put words in the
+  // speaker's mouth. Delete stays — you can take a voice note back.
+  // A huddle digest's content is the server's summary of what was said, not
+  // something its author typed — like a voice transcript, there is nothing of
+  // theirs to correct.
+  const canEdit = !!mine && !!onEdit && !message.deletedAt && !author.isAgent && !message.voice && !message.call;
+  const canDelete = !!mine && !!onDelete && !message.deletedAt;
+
+  const react = (emoji: string) => {
+    setPickerOpen(false);
+    onReact?.(message.id, emoji);
+  };
+
+  const saveEdit = () => {
+    const next = draft.trim();
+    setEditing(false);
+    if (next && next !== message.content) onEdit?.(message.id, next);
+  };
+
+  const rowClass = [
+    "ch-msg",
+    grouped ? "" : "ch-msg-lead",
+    message.mentionsMe ? "ch-msg-mentions-me" : "",
+    // A send in flight looks like any other message: it is already readable,
+    // and dimming (or a spinner) on every send made an ordinary action look
+    // provisional. Only the one state the reader must act on is marked.
+    message.failed ? "ch-msg-failed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const thinking = agentStatus === "thinking" || agentStatus === "streaming";
+  const errored = agentStatus === "error";
+
+  return (
+    <div className={rowClass} data-message-id={message.id} id={`chatmsg-${message.id}`} ref={rowRef}>
+      <div className="ch-msg-gutter">
+        {isCall ? (
+          <span className="ch-call-badge" aria-hidden="true">
+            <PhoneCall className="w-3 h-3" />
+          </span>
+        ) : grouped ? (
+          <span className="ch-msg-hovertime" aria-hidden="true">
+            {clockTime(message.createdAt)}
+          </span>
+        ) : author.slack && !author.avatarUrl ? (
+          // A Slack app or a bridge notice with no face of its own: the mark IS
+          // the face, so the gutter says where the line came from at a glance.
+          <span className="ch-slack-face" title={author.name}>
+            <SlackLogo className="w-3.5 h-3.5" />
+          </span>
+        ) : author.role ? (
+          <Link href={`/org/${author.role.shortId}`} className="flex" title={`${author.name} · ${author.role.title}`}>
+            <RoleFace role={author.role} size={22} title={author.name} />
+          </Link>
+        ) : (
+          <CommentAvatar
+            name={author.name}
+            image={author.avatarUrl}
+            isAgent={author.isAgent}
+            agentType={author.session?.agentType}
+            letters={2}
+          />
+        )}
+      </div>
+
+      <div className="min-w-0">
+        {isCall ? (
+          <div className="ch-msg-head ch-call-head">
+            <span className="ch-call-kicker">Huddle</span>
+            {callTitle && <span className="ch-msg-author">{callTitle}</span>}
+            {callHead?.lead && <span className="ch-call-lead">{callHead.lead}</span>}
+            {callHead?.video && message.call && (
+              <CallVideoStretchChip stretches={callHead.video} callRef={message.call.transcriptId} />
+            )}
+            <a
+              className="ch-msg-time"
+              href={permalink ?? `#chatmsg-${message.id}`}
+              title={FULL_TIME.format(new Date(message.createdAt))}
+            >
+              {headerTime(message.createdAt, now)}
+            </a>
+          </div>
+        ) : !grouped && (
+          <div className="ch-msg-head">
+            {author.session ? (
+              <a
+                className="ch-msg-author"
+                href={`/conversation/${encodeURIComponent(author.session.id)}`}
+                title="Open session"
+              >
+                {author.name}
+              </a>
+            ) : author.role ? (
+              <>
+                <Link className="ch-msg-author" href={`/org/${author.role.shortId}`} title="Open the role">
+                  {author.name}
+                </Link>
+                <span className="ch-msg-via">{author.role.title}</span>
+              </>
+            ) : (
+              <span className="ch-msg-author">{author.name}</span>
+            )}
+            {/* A session persona wears a "session" chip and credits the human
+                it ran as; the anchor keeps its plain "agent" chip. */}
+            {author.session ? (
+              <>
+                <span className="ch-agent-chip">session</span>
+                {author.session.via && <span className="ch-msg-via">via {author.session.via}</span>}
+              </>
+            ) : (
+              author.isAgent && <span className="ch-agent-chip">agent</span>
+            )}
+            {author.slack?.isBot && !author.isAgent && <span className="ch-agent-chip ch-slack-chip">app</span>}
+            <SlackMark message={message} slackOutbound={slackOutbound} />
+            <a
+              className="ch-msg-time"
+              // The permalink the server mints, not a DOM fragment: a fragment
+              // is meaningless outside this tab, and clicking one asks the
+              // browser to scroll a row the virtualizer may have unmounted.
+              href={permalink ?? `#chatmsg-${message.id}`}
+              title={FULL_TIME.format(new Date(message.createdAt))}
+            >
+              {headerTime(message.createdAt, now)}
+            </a>
+          </div>
+        )}
+
+        {/* A broadcast reply ("also send to #channel"): the only way a reply
+            reaches the channel timeline. The context line is the way back to
+            the conversation it belongs to. */}
+        {!inThread && message.threadRootId && !message.deletedAt && (
+          <button
+            type="button"
+            className="ch-msg-threadctx"
+            onClick={() => onOpenThread?.(message.threadRootId!)}
+          >
+            <MessageSquare className="w-3 h-3" />
+            replied to a thread
+          </button>
+        )}
+
+        {message.deletedAt ? (
+          <div className="ch-msg-deleted">This message was deleted</div>
+        ) : message.voice ? (
+          // Below the deleted branch on purpose: a canceled burst carries
+          // `deleted_at`, so "this was deleted" answers first and a brushed key
+          // never pulses at anybody.
+          <ChatVoiceBubble message={message} />
+        ) : thinking ? (
+          // The placeholder the server writes the moment an anchor is mentioned,
+          // so the thread exists before the agent has said anything.
+          <div className="ch-thinking">
+            <span className="ch-thinking-dots" aria-hidden="true">
+              <span className="ch-thinking-dot" />
+              <span className="ch-thinking-dot" />
+              <span className="ch-thinking-dot" />
+            </span>
+            <span>{author.name} is thinking</span>
+          </div>
+        ) : errored ? (
+          <div className="ch-agent-error">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            <span>{author.name} could not answer</span>
+            {onRetryAgent && (
+              <button type="button" className="ch-agent-retry" onClick={() => onRetryAgent(message.id)}>
+                <RotateCw className="w-3 h-3 inline-block mr-1 -mt-px" />
+                try again
+              </button>
+            )}
+          </div>
+        ) : editing ? (
+          // Editing in place, not in the composer: the message stays where it is
+          // in the transcript, so you can still see what you are answering.
+          <div className="ch-edit">
+            <textarea
+              className="ch-edit-box"
+              value={draft}
+              autoFocus
+              rows={Math.min(8, draft.split("\n").length + 1)}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  setEditing(false);
+                  setDraft(message.content);
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  saveEdit();
+                }
+              }}
+            />
+            <div className="ch-edit-foot">
+              <button type="button" className="ch-edit-save" onClick={saveEdit}>
+                Save
+              </button>
+              <button
+                type="button"
+                className="ch-edit-cancel"
+                onClick={() => {
+                  setEditing(false);
+                  setDraft(message.content);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="ch-msg-body">
+            <RevealHost persistKey={message.id}>
+              <ReactMarkdown
+                remarkPlugins={remarkPlugins}
+                rehypePlugins={MESSAGE_MD_REHYPE}
+                components={getChatMdComponents()}
+              >
+                {/* The digest's lead line moved into the header above. */}
+                {callHead ? callHead.body : message.content}
+              </ReactMarkdown>
+            </RevealHost>
+            {message.attachments && message.attachments.length > 0 && (
+              <ChatAttachments messageId={message.id} attachments={message.attachments} />
+            )}
+            {message.call && (
+              <CallTranscriptDisclosure transcriptId={message.call.transcriptId} className="mt-1.5" />
+            )}
+            {message.editedAt && (
+              <span className="ch-msg-edited" title={FULL_TIME.format(new Date(message.editedAt))}>
+                (edited)
+              </span>
+            )}
+            {/* A role or session this line named was over its hourly mention
+                cap: the party was not woken and reads the line on its next
+                ordinary wake. Small and beside the text, because the line
+                itself is fine — only the wake did not happen. */}
+            {message.mentionFolded && (
+              <TooltipProvider delayDuration={250}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="ch-msg-folded" tabIndex={0}>folded</span>
+                  </TooltipTrigger>
+                  <TooltipContent side="top">Over the hourly mention cap — not woken</TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </div>
+        )}
+
+        {message.failed && (
+          <div className="ch-send-failed">
+            <AlertTriangle className="w-3 h-3" />
+            <span>{message.failReason ? `Not sent: ${message.failReason}` : "Not sent"}</span>
+            {onRetrySend && (
+              <button type="button" className="ch-send-retry" onClick={() => onRetrySend(message.id)}>
+                Retry
+              </button>
+            )}
+          </div>
+        )}
+
+        {message.reactions && message.reactions.length > 0 && (
+          <div className="ch-reactions">
+            <TooltipProvider delayDuration={250} skipDelayDuration={200}>
+              {message.reactions.map((r) => (
+                <Tooltip key={r.emoji}>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className={`ch-reaction ${r.mine ? "ch-reaction-mine" : ""}`}
+                      onClick={() => react(r.emoji)}
+                    >
+                      <span aria-hidden="true">{r.emoji}</span>
+                      <span className="ch-reaction-count">{r.count}</span>
+                    </button>
+                  </TooltipTrigger>
+                  {r.names && r.names.length > 0 && (
+                    <TooltipContent side="top" className="ch-reaction-tip">
+                      <span className="ch-reaction-tip-emoji" aria-hidden="true">
+                        {r.emoji}
+                      </span>
+                      <span>{reactorNames(r.names)} reacted</span>
+                    </TooltipContent>
+                  )}
+                </Tooltip>
+              ))}
+            </TooltipProvider>
+          </div>
+        )}
+
+        {!inThread && !!message.replyCount && message.replyCount > 0 && (
+          <button type="button" className="ch-thread-link" onClick={() => onOpenThread?.(message.id)}>
+            <span className="ch-thread-faces">
+              {(message.replyFaces ?? []).slice(0, 4).map((f) => f.role ? (
+                <RoleFace key={f.id} role={f.role} size={16} title={f.name} className="ch-thread-face" />
+              ) : (
+                <CommentAvatar
+                  key={f.id}
+                  name={f.name}
+                  image={f.avatarUrl}
+                  isAgent={f.isAgent}
+                  size={16}
+                  letters={2}
+                  className="ch-thread-face"
+                />
+              ))}
+            </span>
+            <span className="ch-thread-count">
+              {message.threadAgentStatus === "thinking" || message.threadAgentStatus === "streaming"
+                ? "thinking…"
+                : `${message.replyCount} ${message.replyCount === 1 ? "reply" : "replies"}`}
+            </span>
+            {message.lastReplyAt && (
+              <span className="ch-thread-last">{relativeReplyTime(message.lastReplyAt, now)}</span>
+            )}
+          </button>
+        )}
+      </div>
+
+      {!message.deletedAt && !editing && (
+        <div className={`ch-tools ${menuOpen || pickerOpen ? "ch-tools-open" : ""}`}>
+          {onReact &&
+            TOOLBAR_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                className={`ch-tool ch-tool-emoji ${message.reactions?.some((r) => r.emoji === emoji && r.mine) ? "ch-tool-emoji-mine" : ""}`}
+                title={`React ${emoji}`}
+                onClick={() => react(emoji)}
+              >
+                {emoji}
+              </button>
+            ))}
+          {onReact && (
+            <button
+              type="button"
+              className="ch-tool"
+              title="More reactions"
+              aria-haspopup="true"
+              aria-expanded={pickerOpen}
+              onClick={() => {
+                setMenuOpen(false);
+                setPickerOpen((v) => !v);
+              }}
+            >
+              <SmilePlus className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {!inThread && onOpenThread && (
+            <button
+              type="button"
+              className="ch-tool"
+              title="Reply in thread"
+              onClick={() => onOpenThread(message.id)}
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {/* Rendered only when it can do something, the way the retry buttons
+              already are. An overflow button that opens nothing is worse than
+              no overflow button. */}
+          {(permalink || canEdit || canDelete || message.slack?.permalink || (slackOutbound && !message.slack && onShareToSlack)) && (
+            <button
+              type="button"
+              className="ch-tool"
+              title="More"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={() => {
+                setPickerOpen(false);
+                setMenuOpen((v) => !v);
+              }}
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+          )}
+
+          {pickerOpen && (
+            <div className="ch-emoji-picker" role="menu" aria-label="React">
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="ch-emoji-picker-item"
+                  title={`React ${emoji}`}
+                  onClick={() => react(emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {menuOpen && (
+            <div className="ch-menu" role="menu" aria-label="Message actions">
+              {permalink && (
+                <button
+                  type="button"
+                  className="ch-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    void copyToClipboard(
+                      sharePageUrl(permalink),
+                    );
+                  }}
+                >
+                  <Link2 className="w-3 h-3" />
+                  Copy link
+                </button>
+              )}
+              {permalink && (
+                <button
+                  type="button"
+                  className="ch-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openForwardToChat({
+                      url: sharePageUrl(permalink),
+                      label: "message",
+                      previewText: message.content,
+                    });
+                  }}
+                >
+                  <Forward className="w-3 h-3" />
+                  Forward to…
+                </button>
+              )}
+              {message.slack?.permalink && (
+                <a
+                  className="ch-menu-item"
+                  role="menuitem"
+                  href={message.slack.permalink}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={() => setMenuOpen(false)}
+                >
+                  <SlackLogo className="w-3 h-3" />
+                  Open in Slack
+                </a>
+              )}
+              {slackOutbound && !message.slack && onShareToSlack && (mine || canDelete) && (
+                <button
+                  type="button"
+                  className="ch-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onShareToSlack(message.id);
+                  }}
+                >
+                  <SlackLogo className="w-3 h-3" />
+                  Share to Slack
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  type="button"
+                  className="ch-menu-item"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    setDraft(message.content);
+                    setEditing(true);
+                  }}
+                >
+                  <Pencil className="w-3 h-3" />
+                  Edit
+                </button>
+              )}
+              {canDelete && (
+                <button
+                  type="button"
+                  className="ch-menu-item ch-menu-danger"
+                  role="menuitem"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onDelete?.(message.id);
+                  }}
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Delete
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
+
+/** Where this line stands with Slack, as a bare glyph whose title names it:
+ *  "From Slack" for a mirrored-in line, "Also in Slack" for ours that crossed
+ *  over (both open the Slack copy), and a muted eye for a line its author kept
+ *  local in a channel that otherwise mirrors. Nothing in a channel with no mirror. */
+function SlackMark({ message, slackOutbound }: { message: ChatMessageView; slackOutbound?: boolean }) {
+  const s = message.slack;
+  if (s) {
+    const label = s.direction === "inbound" ? "From Slack" : "Also in Slack";
+    const inner = <SlackLogo className="w-3 h-3" muted={s.direction === "outbound"} />;
+    return s.permalink ? (
+      <a className="ch-slack-mark" href={s.permalink} target="_blank" rel="noreferrer" title={`${label} · open there`} aria-label={`${label}, open there`}>
+        {inner}
+      </a>
+    ) : (
+      <span className="ch-slack-mark" title={label} aria-label={label} role="img">{inner}</span>
+    );
+  }
+  if (slackOutbound && message.localOnly) {
+    return (
+      <span className="ch-slack-mark ch-slack-mark-local" title="Not in Slack: kept out by its author" aria-label="Not in Slack" role="img">
+        <EyeOff className="w-3 h-3" />
+      </span>
+    );
+  }
+  return null;
+}
+
+// ── Dividers ────────────────────────────────────────────────────────────────
+
+export function ChatDayDivider({ label }: { label: string }) {
+  return (
+    <div className="ch-day">
+      <span className="ch-day-label">{label}</span>
+    </div>
+  );
+}
+
+export function ChatNewDivider() {
+  return (
+    <div className="ch-new" role="separator" aria-label="New messages">
+      <span className="ch-new-label">new</span>
+    </div>
+  );
+}

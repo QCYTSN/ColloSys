@@ -1,0 +1,1408 @@
+"use client";
+
+import { useCallback, useMemo, useRef, useState } from "react";
+import { HOSTED_PAGE_FRAME, HOSTED_PAGE_PAD, HOSTED_PAGE_TOP } from "../../lib/hostedPage";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useMutation, useConvex } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { toast } from "sonner";
+import { AuthGuard } from "../../components/AuthGuard";
+import { PaneLoader } from "../../components/PaneLoader";
+import { DashboardLayout } from "../../components/DashboardLayout";
+import { fmtDuration, fmtClock } from "../../components/triggerCadence";
+// The `--on <event>` vocabulary is shared with the CLI so the two cannot drift.
+import {
+  TRIGGER_EVENT_SHORTHANDS,
+  TRIGGER_EVENT_NAMES,
+  TRIGGER_EVENT_LABELS,
+  triggerEventShorthand,
+  eventFilterForSave,
+} from "@codecast/shared/contracts";
+import { HOSTED_AGENT_TYPE, routineFloor } from "@codecast/shared/contracts/assistant";
+import { firstRunWords, hostedSchedule, hostedWhenOf, routineExampleSeed, routineExamples, routineLimitLine, WEEKDAYS, type HostedWhen, type HostedRepeat } from "../../components/triggers/hostedSchedule";
+import { useLaneMailAbilities } from "../../components/simple/useLaneMail";
+import { usePlanMeter } from "../../components/simple/usePlanFigures";
+import { serverErrorText } from "../../lib/errorCause";
+import { ShortcutTooltip } from "../../components/KeyboardShortcutsHelp";
+import { isTriggerFailing, isTriggerTerminal, taskDisplayTitle, groupTriggerRowsByHome, type TaskRow, type TriggerRow, type TriggerHomeGroup } from "../../components/triggerTasks";
+import { TriggerRowItem, TriggerHomeHeader } from "../../components/TriggerRow";
+import { HorizonRail } from "../../components/triggers/HorizonRail";
+import { useTriggers, fetchTriggerRuns } from "../../hooks/useSyncTriggers";
+import { openRunInStore } from "../../components/TriggerRunHistory";
+import { SelectBox } from "../../components/ui/select-box";
+import { SegmentedToggle } from "../../components/SegmentedToggle";
+import { useInboxStore, filterInboxScopeFromState, type TriggerEdit } from "../../store/inboxStore";
+import { gestureToast } from "../../store/undoStack";
+import { isTriggerEditable } from "../../lib/triggerEditable";
+import { useAssistantScope, useModeWords, useSurface } from "../../lib/surfaces";
+import { isAssistantRoutine, withinScope } from "../../lib/assistantScope";
+import { AssistantScopeSwitch, MoreInEverything } from "../../components/AssistantScopeSwitch";
+import { PageHeading } from "../../components/PageHeading";
+import {
+  Clock,
+  Plus,
+  Zap,
+  Repeat,
+  ChevronDown,
+  ChevronRight,
+  AlertTriangle,
+  CheckCircle2,
+  Search,
+  ListFilter,
+  Pencil,
+  X,
+} from "lucide-react";
+import { useTitlebarHead } from "../../hooks/useTitlebarHead";
+import { useMountEffect } from "../../hooks/useMountEffect";
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { FeatureUpsell } from "../../components/agentFeatures/FeatureUpsell";
+import { Button } from "../../components/ui/button";
+const api = _api as any;
+
+// ── Time helpers (parseDuration is a parity port of `cast trigger add --in/--every`) ──
+
+function parseDuration(input: string): number | undefined {
+  const match = input.toLowerCase().trim().match(/^(\d+)\s*(s|sec|m|min|h|hr|hour|d|day)s?$/);
+  if (!match) return undefined;
+  const num = parseInt(match[1]);
+  const unit = match[2][0];
+  if (unit === "s") return num * 1000;
+  if (unit === "m") return num * 60 * 1000;
+  if (unit === "h") return num * 60 * 60 * 1000;
+  if (unit === "d") return num * 24 * 60 * 60 * 1000;
+  return undefined;
+}
+
+
+
+function projectName(path?: string): string {
+  if (!path) return "";
+  return path.split("/").filter(Boolean).pop() || path;
+}
+
+// Open a task's latest run at the message that triggered it. The precise target
+// comes from a one-shot webListRuns fetch on click (an always-visible surface
+// can't afford a standing subscription per task), then it rides the same store
+// deep-link channel as the run-history list. Falls back to just opening the
+// run's conversation when the history can't be enumerated.
+//
+// Shared by every surface that points at a run — the rail's dots and the failure
+// banner — so "show me what happened" behaves the same wherever it's offered.
+function useOpenLatestRun() {
+  const router = useRouter();
+  const convex = useConvex();
+  return useCallback(async (task: any) => {
+    try {
+      const runs = await fetchTriggerRuns(convex, task._id);
+      const run = runs?.[0]; // newest first — the dot is the latest run
+      if (run) {
+        openRunInStore(run);
+        router.push(`/inbox?s=${run._id}`);
+        return;
+      }
+    } catch {
+      // fall through to the coarse target
+    }
+    if (task.last_run_conversation_id) {
+      useInboxStore.getState().requestNavigate(task.last_run_conversation_id);
+      router.push(`/inbox?s=${task.last_run_conversation_id}`);
+    }
+  }, [convex, router]);
+}
+
+// The rail's past dots open the latest run through the page's navigation.
+function PageHorizonRail({ tasks, now }: { tasks: any[]; now: number }) {
+  const openPastRun = useOpenLatestRun();
+  return <HorizonRail tasks={tasks} now={now} onOpenPastRun={openPastRun} />;
+}
+
+// ── Schedule composer (create / edit / duplicate) ──
+
+type SchedKind = "now" | "in" | "every" | "on";
+
+// interval_ms / delay back to a token parseDuration understands ("90m" if not a
+// clean hour/day boundary, else "2h" / "3d").
+function msToDurationToken(ms: number): string {
+  const mins = Math.max(Math.round(ms / 60_000), 1);
+  if (mins % (60 * 24) === 0) return `${mins / (60 * 24)}d`;
+  if (mins % 60 === 0) return `${mins / 60}h`;
+  return `${mins}m`;
+}
+
+function deriveInitial(t: any | undefined) {
+  if (!t) {
+    // Human-created schedules default to apply: you wrote the prompt, it just
+    // does the task. Read-only is the marked exception (the checkbox below).
+    // Agent-created schedules (cast trigger add) still default to propose —
+    // their prompts were never reviewed by a person.
+    return { prompt: "", title: "", kind: "in" as SchedKind, duration: "30m", eventKey: "pr_comment", mode: "apply" as const, agent: "claude" as const, project: "" };
+  }
+  let kind: SchedKind = "in";
+  let duration = "30m";
+  let eventKey = "pr_comment";
+  if (t.schedule_type === "recurring" && t.interval_ms) {
+    kind = "every";
+    duration = msToDurationToken(t.interval_ms);
+  } else if (t.schedule_type === "event") {
+    kind = "on";
+    // A filter nothing names reads back as its raw pair, which is not one of
+    // the options, so fall back to a real key rather than blanking the select.
+    const named = triggerEventShorthand(t.event_filter ?? undefined);
+    eventKey = named && TRIGGER_EVENT_SHORTHANDS[named] ? named : "pr_comment";
+  } else if (t.schedule_type === "once" && t.run_at) {
+    kind = "in";
+    duration = msToDurationToken(Math.max(t.run_at - Date.now(), 60_000));
+  }
+  return {
+    prompt: t.prompt ?? "",
+    title: t.title ?? "",
+    kind,
+    duration,
+    eventKey,
+    mode: (t.mode === "apply" ? "apply" : "propose") as "propose" | "apply",
+    agent: (t.agent_type === "codex" ? "codex" : "claude") as "claude" | "codex",
+    project: t.project_path ?? "",
+  };
+}
+
+/** Hosted mode's "when": how often, then the day or date, then the time. */
+function HostedWhenPicker({ when, onChange }: { when: HostedWhen; onChange: (when: HostedWhen) => void }) {
+  const field = "bg-transparent py-2 text-sm text-sol-text focus:outline-none";
+  const set = (patch: Partial<HostedWhen>) => onChange({ ...when, ...patch });
+  return (
+    <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-sol-text-muted">
+      <SelectBox variant="bare" value={when.repeat} onChange={(e) => set({ repeat: e.target.value as HostedRepeat })} aria-label="How often">
+        <option value="daily">Every day</option>
+        <option value="weekly">Every week</option>
+        <option value="once">Once</option>
+        <option value="now">Right now</option>
+      </SelectBox>
+      {when.repeat === "weekly" && (
+        <>
+          <span>on</span>
+          <SelectBox variant="bare" value={String(when.weekday)} onChange={(e) => set({ weekday: Number(e.target.value) })} aria-label="Day of the week">
+            {WEEKDAYS.map((day, i) => <option key={day} value={i}>{day}</option>)}
+          </SelectBox>
+        </>
+      )}
+      {when.repeat === "once" && (
+        <>
+          <span>on</span>
+          <input type="date" value={when.date} onChange={(e) => set({ date: e.target.value })} aria-label="Date" className={field} />
+        </>
+      )}
+      {when.repeat !== "now" && (
+        <>
+          <span>at</span>
+          <input type="time" value={when.time} onChange={(e) => set({ time: e.target.value })} aria-label="Time" className={field} />
+        </>
+      )}
+    </span>
+  );
+}
+
+/** The form's example once the person's mail is connected. */
+const MAIL_ROUTINE_PLACEHOLDER = 'What should the assistant do? e.g. "Summarize my unread mail and flag anything urgent"';
+
+/** A hosted empty Routines page: three routines to start from, each opening
+ *  the form filled in, in the style of /welcome's asks. */
+function RoutineExamples({ onPick }: { onPick: (seed: ReturnType<typeof routineExampleSeed>) => void }) {
+  const { connected } = useLaneMailAbilities();
+  return (
+    <div className="mt-2 flex w-full max-w-md flex-col gap-2" data-routine-examples>
+      {routineExamples(connected).map((example) => (
+        <button
+          key={example.label}
+          type="button"
+          onClick={() => onPick(routineExampleSeed(example, Date.now()))}
+          className="flex w-full items-center gap-3 rounded-[var(--radius,8px)] border border-sol-border bg-sol-card px-4 py-3 text-left text-sm text-sol-text transition-colors hover:border-sol-text-dim/50 hover:bg-sol-bg-highlight"
+        >
+          <span className="min-w-0 flex-1">{example.label}</span>
+          <Plus className="h-3.5 w-3.5 shrink-0 text-sol-text-dim" aria-hidden />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TriggerForm({ onClose, editTask, seedTask, embedded }: {
+  onClose: () => void;
+  editTask?: any;
+  seedTask?: any;
+  embedded?: boolean;
+}) {
+  const isEdit = !!editTask;
+  // The person's other running hosted routines, which the plan's limit counts.
+  const armedRoutines = useInboxStore((s) => Object.values(s.agentTasks ?? {}).filter((t: any) =>
+    !!t && isAssistantRoutine(t) && (t.status === "scheduled" || t.status === "running") && t._id !== editTask?._id).length);
+  const init = useMemo(() => deriveInitial(editTask ?? seedTask), [editTask, seedTask]);
+  const create = useMutation(api.agentTasks.webCreate);
+  const [prompt, setPrompt] = useState(init.prompt);
+  const [title, setTitle] = useState(init.title);
+  const [kind, setKind] = useState<SchedKind>(init.kind);
+  const [duration, setDuration] = useState(init.duration);
+  const [eventKey, setEventKey] = useState(init.eventKey);
+  const [mode, setMode] = useState<"propose" | "apply">(init.mode);
+  const [agent, setAgent] = useState<"claude" | "codex">(init.agent);
+  const [project, setProject] = useState(init.project);
+  const [submitting, setSubmitting] = useState(false);
+  const words = useModeWords();
+  const devForm = useSurface("triggers.devForm");
+  // A routine for the hosted assistant: one being edited or copied whose home
+  // is hosted, or a new one where the form's developer rows are hidden. It
+  // takes no agent or project and runs on a schedule only (webCreate starts
+  // its home conversation). A daemon trigger opened in hosted mode keeps its
+  // agent and project, unshown.
+  const source = editTask ?? seedTask;
+  const hostedRoutine = source ? source.hosted_home === true : !devForm;
+  const devRows = devForm && !hostedRoutine;
+  const offersEvents = !hostedRoutine && (devForm || init.kind === "on");
+  // Hosted mode says when as a person does (every Monday at 9, once on a
+  // date), defaulting to a schedule the plan allows, with the plan's limits
+  // said under it. A stored routine the picker cannot say (every 3 hours)
+  // keeps the duration controls.
+  const [hostedWhen, setHostedWhen] = useState(() => (!devForm && hostedRoutine ? hostedWhenOf(source, Date.now()) : null));
+  // A mail example only once mail is connected (lane.ts firstAsks' rule).
+  const mailAbilities = useLaneMailAbilities();
+  const { plan } = usePlanMeter(false);
+
+  // Suggest project paths from sessions already in the store — same data the
+  // sidebar's workspace list derives from, without re-running its grouping.
+  const sessions = useInboxStore((s) => s.sessions);
+  const projectOptions = useMemo(() => {
+    const seen = new Map<string, number>();
+    // Scoped enumeration: cached sessions from other scopes/teams must not
+    // leak their project paths into this workspace's suggestions.
+    for (const s of Object.values(filterInboxScopeFromState(useInboxStore.getState()))) {
+      const p = (s as any)?.project_path;
+      if (!p) continue;
+      const u = (s as any)?.updated_at ?? 0;
+      if ((seen.get(p) ?? 0) < u) seen.set(p, u);
+    }
+    return [...seen.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p).slice(0, 12);
+  }, [sessions]);
+
+  const parsed = parseDuration(duration);
+  const needsDuration = kind === "in" || kind === "every";
+  const hostedSched = hostedWhen ? hostedSchedule(hostedWhen, Date.now()) : null;
+  const valid = prompt.trim().length > 0 && (hostedWhen ? !!hostedSched : (!needsDuration || parsed !== undefined));
+
+  const preview = !needsDuration
+    ? null
+    : parsed === undefined
+      ? "format: 30m, 2h, 1d"
+      : kind === "in"
+        ? `runs at ${fmtClock(Date.now() + parsed)}`
+        : `every ${fmtDuration(parsed)}, first run ${fmtClock(Date.now() + parsed)}`;
+
+  const submit = async () => {
+    if (!valid || submitting) return;
+    setSubmitting(true);
+    try {
+      const args: TriggerEdit & Record<string, any> = {
+        prompt: prompt.trim(),
+        title: title.trim() || undefined,
+        mode,
+      };
+      if (!hostedRoutine) {
+        args.agent_type = agent;
+        args.project_path = isEdit ? project.trim() : project.trim() || undefined;
+      } else if (!isEdit) {
+        args.agent_type = HOSTED_AGENT_TYPE;
+      }
+      if (hostedWhen && hostedSched) {
+        args.schedule_type = hostedSched.schedule_type;
+        args.run_at = hostedSched.run_at;
+        if (hostedSched.interval_ms) args.interval_ms = hostedSched.interval_ms;
+      } else if (kind === "on") {
+        args.schedule_type = "event";
+        // Keeps a --source or --repo the trigger was armed with; the form
+        // offers only the event, and saving must not widen it.
+        args.event_filter = eventFilterForSave(eventKey, (editTask ?? seedTask)?.event_filter);
+      } else if (kind === "every") {
+        args.schedule_type = "recurring";
+        args.interval_ms = parsed;
+        args.run_at = Date.now() + parsed!;
+      } else {
+        args.schedule_type = "once";
+        args.run_at = kind === "in" ? Date.now() + parsed! : Date.now();
+      }
+      if (isEdit) {
+        // Through the store: the edit paints at once and is one undo.
+        const state = useInboxStore.getState();
+        const row = state.agentTasks[editTask._id] ?? state.foreignTriggers[editTask._id];
+        if (!isTriggerEditable((row ?? editTask).status)) { toast.error("Can't edit — it may be running or finished"); return; }
+        gestureToast("Saved", () => state.editTrigger(editTask._id, args));
+      } else {
+        await create(args);
+        toast.success((hostedWhen ? hostedWhen.repeat === "now" : kind === "now") ? "Queued, runs within a minute" : words.triggerCreated);
+      }
+      onClose();
+    } catch (e) {
+      // A hosted routine's refusal (the plan's limits) is the sentence to show.
+      const reason = hostedRoutine ? serverErrorText(e) : "";
+      toast.error(isEdit ? "Failed to save" : words.triggerCreateFailed, reason ? { description: reason } : undefined);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  // A labeled row on a hairline: label in a fixed column, the control bare
+  // beside it. The rule under each row is the control's line; it turns cyan
+  // while the row holds focus. Same grammar as the settings kit's rows.
+  // Hosted mode's labels are sentence case, like the rest of its forms.
+  const Row = ({ label, children, className = "" }: { label: string; children: React.ReactNode; className?: string }) => (
+    <div className={`flex items-start gap-4 border-b border-sol-border/40 focus-within:border-sol-cyan/70 transition-colors ${className}`}>
+      <span className={`w-14 flex-shrink-0 pt-2 select-none ${devForm ? "text-[10px] uppercase tracking-widest text-sol-text-dim" : "text-[12px] text-sol-text-muted"}`}>{label}</span>
+      <div className="flex-1 min-w-0 flex flex-wrap items-center gap-x-4 gap-y-1">{children}</div>
+    </div>
+  );
+  const bareInput =
+    "bg-transparent py-2 text-xs text-sol-text placeholder:text-sol-text-dim focus:outline-none";
+  // Hosted mode asks what to do with what it finds as a positive choice:
+  // report back, or act (approvals still guard every send and change).
+  const hostedModeChoice = (
+    <div role="radiogroup" aria-label="What to do" className="flex flex-col gap-1.5 py-2">
+      {([["propose", "Just tell me what you find"], ["apply", "Go ahead and do it (I'll still ask before sending or changing anything)"]] as const).map(([value, label]) => (
+        <label key={value} className="inline-flex items-start gap-2 text-[13px] text-sol-text cursor-pointer select-none">
+          <input type="radio" name="routine-mode" checked={mode === value} onChange={() => setMode(value)} className="mt-[3px] accent-sol-orange" />
+          {label}
+        </label>
+      ))}
+    </div>
+  );
+  // Beside the agent where that row shows, else in the footer.
+  const readOnlyBox = (
+    <label className="inline-flex items-center gap-1.5 py-1 text-xs text-sol-text-muted cursor-pointer select-none">
+      <input
+        type="checkbox"
+        checked={mode === "propose"}
+        onChange={(e) => setMode(e.target.checked ? "propose" : "apply")}
+        className="accent-sol-cyan"
+      />
+      {words.triggerReadOnly}
+    </label>
+  );
+
+  return (
+    // Standalone: a band between hairlines on the page. Embedded: sits under
+    // the row's own divider. Either way, nothing inside draws a box; the
+    // primary button is the page's one fill.
+    <div className={embedded ? "pt-1" : "border-t border-sol-border/40 pt-1 mb-6"}>
+      {isEdit && (
+        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-sol-cyan pt-2 pb-1">
+          <Pencil className="w-3 h-3" /> Editing {words.trigger.toLowerCase()}
+        </div>
+      )}
+      <Row label={words.triggerPromptLabel}>
+        <textarea
+          autoFocus
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submit();
+            if (e.key === "Escape") onClose();
+          }}
+          placeholder={hostedRoutine && mailAbilities.connected ? MAIL_ROUTINE_PLACEHOLDER : words.triggerPromptPlaceholder}
+          rows={3}
+          className={`w-full ${bareInput} text-sm leading-relaxed resize-none`}
+        />
+      </Row>
+      <Row label="Title">
+        <input
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder={words.triggerTitlePlaceholder}
+          className={`w-full ${bareInput}`}
+        />
+      </Row>
+      {hostedWhen ? (
+        <Row label="When">
+          <HostedWhenPicker when={hostedWhen} onChange={setHostedWhen} />
+          {hostedSched && !isEdit && (
+            <span className="basis-full text-[12px] text-sol-text-muted">First run: {firstRunWords(hostedSched.run_at, Date.now())}</span>
+          )}
+          <span className={`basis-full pb-2 text-[11px] ${hostedSched ? "text-sol-text-dim" : "text-sol-red"}`}>
+            {hostedSched ? routineLimitLine(plan, routineFloor(plan), armedRoutines) : "Pick a time that hasn't passed yet."}
+          </span>
+        </Row>
+      ) : (
+      <Row label="When">
+        <SegmentedToggle
+          variant="bare"
+          value={kind}
+          onChange={(k) => setKind(k as SchedKind)}
+          items={[
+            { key: "now", label: "now" },
+            { key: "in", label: "in…" },
+            { key: "every", label: "every…" },
+            ...(offersEvents ? [{ key: "on", label: "on event" }] : []),
+          ]}
+        />
+        {needsDuration && (
+          <span className="inline-flex items-center gap-2">
+            <input
+              value={duration}
+              onChange={(e) => setDuration(e.target.value)}
+              aria-invalid={parsed === undefined}
+              className={`w-14 ${bareInput} font-mono border-b ${
+                parsed === undefined ? "border-sol-red text-sol-red" : "border-sol-border/60 focus:border-sol-cyan"
+              }`}
+            />
+            <span className={`text-[11px] ${parsed === undefined ? "text-sol-red" : "text-sol-text-dim"}`}>{preview}</span>
+          </span>
+        )}
+        {kind === "on" && (
+          <SelectBox variant="bare" value={eventKey} onChange={(e) => setEventKey(e.target.value)}>
+            {TRIGGER_EVENT_NAMES.map((k) => (
+              <option key={k} value={k}>{TRIGGER_EVENT_LABELS[k] ?? k}</option>
+            ))}
+          </SelectBox>
+        )}
+      </Row>
+      )}
+      {!devRows && hostedRoutine && <Row label="Then">{hostedModeChoice}</Row>}
+      {devRows && (
+        <Row label="Agent">
+          <SegmentedToggle
+            variant="bare"
+            value={agent}
+            onChange={(a) => setAgent(a as "claude" | "codex")}
+            items={[
+              { key: "claude", label: "claude" },
+              { key: "codex", label: "codex" },
+            ]}
+          />
+          {readOnlyBox}
+        </Row>
+      )}
+      {devRows && (
+        <Row label="Project">
+          <input
+            value={project}
+            onChange={(e) => setProject(e.target.value)}
+            list="trigger-project-roots"
+            placeholder="Optional path"
+            className={`w-full ${bareInput} font-mono`}
+          />
+          <datalist id="trigger-project-roots">
+            {projectOptions.map((p) => <option key={p} value={p} />)}
+          </datalist>
+        </Row>
+      )}
+
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 pt-3 pb-1">
+        {devRows ? <span className="text-[11px] text-sol-text-dim">Runs on your daemon, which polls every 30s</span> : hostedRoutine ? <span /> : readOnlyBox}
+        <div className="ml-auto flex items-center gap-3 whitespace-nowrap">
+          <button onClick={onClose} className="text-xs text-sol-text-dim hover:text-sol-text transition-colors">
+            Cancel
+          </button>
+          <Button
+            variant={devForm ? "cyan" : "amber"}
+            size="sm"
+            onClick={submit}
+            disabled={!valid || submitting}
+          >
+            {isEdit
+              ? submitting ? "Saving…" : "Save changes"
+              : submitting ? words.creatingTrigger : words.createTrigger}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──
+
+function Section({ title, count, subtitle, children, defaultOpen = true, bare = false }: {
+  title: string;
+  count: number;
+  subtitle?: string;
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+  /** The list alone, no heading: the page's only section needs no name. */
+  bare?: boolean;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (count === 0) return null;
+  if (bare) return <div className="mb-6 flex flex-col border-t border-sol-border/40">{children}</div>;
+  return (
+    <div className="mb-6">
+      <button
+        data-cc-list-section
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-widest text-sol-text-dim hover:text-sol-text-muted transition-colors mb-2 select-none w-full"
+      >
+        {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+        {title}
+        <span className="text-sol-text-dim/70 normal-case tracking-normal font-mono">{count}</span>
+        {subtitle && (
+          <span className="text-sol-text-dim/60 normal-case tracking-normal font-normal ml-1">· {subtitle}</span>
+        )}
+      </button>
+      {open && <div className="flex flex-col border-t border-sol-border/40">{children}</div>}
+    </div>
+  );
+}
+
+// ── Aggregate health stats across all tasks ──
+
+interface SchedStats {
+  active: number;
+  // The primary split: standing loops vs one-shot runs. Event schedules join
+  // neither count (they have their own filter) but are part of `active`.
+  recurring: number;
+  oneTime: number;
+  totalRuns: number;
+  // Active triggers whose LAST run failed — i.e. actually in trouble right now.
+  // Keyed on last_run_failed, never on retry_count: that counter is the current
+  // streak and a recovered trigger keeps its history, so counting it here made
+  // one old blip read as "retrying" forever (the rail, which already keys on
+  // last_run_failed, disagreed with the banner and the rail was right).
+  failing: number;
+  nextRunAt: number | null; // soonest upcoming scheduled run
+  running: number;
+}
+
+function computeStats(all: any[], now: number): SchedStats {
+  let active = 0, recurring = 0, oneTime = 0, totalRuns = 0, failing = 0, running = 0;
+  let nextRunAt: number | null = null;
+  for (const t of all) {
+    totalRuns += t.run_count ?? 0;
+    const isActive = t.status === "scheduled" || t.status === "running";
+    if (isActive) {
+      active++;
+      if (t.schedule_type === "once") oneTime++;
+      else if (t.schedule_type === "recurring") recurring++;
+      if (t.status === "running") running++;
+      if (isTriggerFailing(t)) failing++;
+      if (t.status === "scheduled" && t.run_at && t.run_at > now) {
+        if (nextRunAt === null || t.run_at < nextRunAt) nextRunAt = t.run_at;
+      }
+    }
+  }
+  return { active, recurring, oneTime, totalRuns, failing, nextRunAt, running };
+}
+
+// The overview is one sentence under the title, not a strip of tiles: every
+// number here is also said by a section header, a filter pill or a row label,
+// so it earns only a line. The clickable parts are the same toggles the filter
+// pills drive (type, failing); the rest is plain text.
+function OverviewLine({ stats, now, filters, update }: {
+  stats: SchedStats;
+  now: number;
+  filters: Filters;
+  update: (patch: Partial<Filters>) => void;
+}) {
+  const words = useModeWords();
+  const sep = <span className="text-sol-text-dim/60">·</span>;
+  const num = "tabular-nums font-medium text-sol-text";
+  const toggle = (on: boolean, accent: string) =>
+    `inline-flex items-center gap-1 rounded px-1 -mx-1 transition-colors ${
+      on ? `${accent} bg-sol-bg-highlight` : "hover:text-sol-text"
+    }`;
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-sol-text-muted">
+      <span><span className={num}>{stats.active}</span> active</span>
+      {sep}
+      <ShortcutTooltip label={words.triggersRecurringTip}>
+        <button
+          onClick={() => update({ type: filters.type === "recurring" ? "all" : "recurring" })}
+          className={toggle(filters.type === "recurring", "text-sol-violet")}
+        >
+          <span className={num}>{stats.recurring}</span> recurring
+        </button>
+      </ShortcutTooltip>
+      {sep}
+      <ShortcutTooltip label={words.triggersOnceTip}>
+        <button
+          onClick={() => update({ type: filters.type === "once" ? "all" : "once" })}
+          className={toggle(filters.type === "once", "text-sol-cyan")}
+        >
+          <span className={num}>{stats.oneTime}</span> one-time
+        </button>
+      </ShortcutTooltip>
+      {stats.running > 0 ? (
+        <>
+          {sep}
+          <span className="text-emerald-400">
+            <span className="tabular-nums font-medium">{stats.running}</span> running now
+          </span>
+        </>
+      ) : stats.nextRunAt ? (
+        <>
+          {sep}
+          <span className="text-sol-cyan">next in <span className="tabular-nums font-medium">{fmtDuration(Math.max(stats.nextRunAt - now, 0))}</span></span>
+        </>
+      ) : null}
+      {sep}
+      {stats.failing > 0 ? (
+        <ShortcutTooltip label={words.triggersFailedTip}>
+          <button
+            onClick={() => update({ failing: !filters.failing })}
+            className={toggle(filters.failing, "text-sol-red")}
+          >
+            <AlertTriangle className="w-3 h-3 text-sol-red" />
+            <span className={`${num} text-sol-red`}>{stats.failing}</span>
+            <span className="text-sol-red">failed last run</span>
+          </button>
+        </ShortcutTooltip>
+      ) : (
+        <span className="inline-flex items-center gap-1 text-emerald-400">
+          <CheckCircle2 className="w-3 h-3" /> healthy
+        </span>
+      )}
+    </div>
+  );
+}
+
+// Every trigger listed here is a button: the point of telling someone a run
+// failed is to hand them the run. Each row opens the failed run itself — the
+// same target the rail's red dot uses — so the error is one click from what
+// went wrong, not a dead-end notice.
+function AttentionBanner({ tasks }: { tasks: any[] }) {
+  const openRun = useOpenLatestRun();
+  if (tasks.length === 0) return null;
+  const plural = tasks.length === 1;
+  // The count already sits in the overview line; this band carries the names.
+  // Grounded: a left bar on the column edge and a tint, no rounded island.
+  return (
+    <div className="flex items-start gap-2.5 border-l-2 border-sol-red bg-sol-red/[0.06] pl-3 pr-3 py-2 mt-3">
+      <div className="min-w-0 text-xs flex-1">
+        <span className="text-sol-red font-medium">
+          Failed on {plural ? "its" : "their"} last run
+        </span>
+        <div className="mt-0.5 flex flex-col items-start gap-0.5">
+          {tasks.slice(0, 3).map((t) => (
+            <button
+              key={t._id}
+              onClick={() => openRun(t)}
+              aria-label={`Open failed run: ${taskDisplayTitle(t)}`}
+              className="group max-w-full truncate text-left rounded -mx-1 px-1 py-0.5 text-sol-text-dim hover:bg-sol-red/10 hover:text-sol-text transition-colors cursor-pointer"
+            >
+              <span className="text-sol-text-muted group-hover:text-sol-text underline decoration-dotted decoration-sol-text-dim/50 underline-offset-2">
+                {taskDisplayTitle(t)}
+              </span>
+              {t.retry_count > 0 && ` — retry ${t.retry_count}`}
+              {t.last_run_summary ? ` · ${t.last_run_summary.replace(/^Failed:?\s*/, "")}` : ""}
+            </button>
+          ))}
+          {tasks.length > 3 && (
+            <span className="text-sol-text-dim px-1">+{tasks.length - 3} more</span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Filtering ──
+
+interface Filters {
+  search: string;
+  mode: string; // all | apply | propose
+  type: string; // all | recurring | once | event
+  project: string; // all | <path>
+  agent: string; // all | claude | codex
+  failing: boolean; // only triggers whose last run failed
+}
+
+const EMPTY_FILTERS: Filters = { search: "", mode: "all", type: "all", project: "all", agent: "all", failing: false };
+
+function filtersActive(f: Filters): boolean {
+  return f.search.trim() !== "" || f.mode !== "all" || f.type !== "all" || f.project !== "all" || f.agent !== "all" || f.failing;
+}
+
+function matchesFilters(t: any, f: Filters): boolean {
+  if (f.failing && !isTriggerFailing(t)) return false;
+  if (f.mode !== "all" && (t.mode ?? "propose") !== f.mode) return false;
+  if (f.type !== "all" && t.schedule_type !== f.type) return false;
+  if (f.agent !== "all" && (t.agent_type || "claude") !== f.agent) return false;
+  if (f.project !== "all" && t.project_path !== f.project) return false;
+  const q = f.search.trim().toLowerCase();
+  if (q) {
+    const hay = `${t.title ?? ""} ${t.display_title ?? ""} ${t.display_summary ?? ""} ${t.prompt ?? ""} ${t.last_run_summary ?? ""}`.toLowerCase();
+    if (!hay.includes(q)) return false;
+  }
+  return true;
+}
+
+// The type filter is text that takes its cadence color when on (violet loops,
+// cyan one-shots, yellow event hooks) — click filters, click again clears.
+// Same toggle the overview line's recurring/one-time words drive.
+const TYPE_TOGGLES: { key: string; label: string; Icon: any; on: string }[] = [
+  { key: "recurring", label: "recurring", Icon: Repeat, on: "text-sol-violet" },
+  { key: "once", label: "one-time", Icon: Clock, on: "text-sol-cyan" },
+  { key: "event", label: "event", Icon: Zap, on: "text-sol-yellow" },
+];
+
+// Palette grammar: the search is bare text on a hairline that turns cyan on
+// focus, and every filter beneath it is text — toggles that take color when
+// on, selects as value plus chevron, a ghost icon for grouping. No control
+// draws its own box; the bar's rules are the only lines.
+type Grouping = "session" | "project" | "none";
+
+/** How many routines a hosted list holds before it offers search and the
+ *  kind filters. */
+const HOSTED_FILTERS_FROM = 6;
+
+function FilterBar({ filters, update, projects, hasCodex, hasEvent, shown, total, grouping, setGrouping, devFilters }: {
+  filters: Filters;
+  update: (patch: Partial<Filters>) => void;
+  projects: string[];
+  hasCodex: boolean;
+  hasEvent: boolean;
+  shown: number;
+  total: number;
+  grouping: Grouping;
+  setGrouping: (v: Grouping) => void;
+  /** The run mode, project and agent filters and the grouping control
+   *  (surface "triggers.devFilters"). */
+  devFilters: boolean;
+}) {
+  const active = filtersActive(filters);
+  // A short hosted list needs no search or kind filters: every routine is in
+  // view already. They come back past a handful, or while one is set.
+  if (!devFilters && total < HOSTED_FILTERS_FROM && !active) return null;
+  return (
+    <div className={`sticky top-0 z-20 mb-2 bg-sol-bg/85 backdrop-blur ${devFilters ? "border-b border-sol-border/40" : ""}`}>
+      <div className="relative border-b border-sol-border/40 focus-within:border-sol-cyan/70 transition-colors">
+        <Search className="absolute left-0 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-sol-text-dim pointer-events-none" />
+        <input
+          id="trigger-search"
+          value={filters.search}
+          onChange={(e) => update({ search: e.target.value })}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              update({ search: "" });
+              e.currentTarget.blur();
+            }
+          }}
+          placeholder={devFilters ? "Search title, prompt, last result…" : "Search routines"}
+          className="w-full bg-transparent pl-6 pr-6 py-2.5 text-xs text-sol-text placeholder:text-sol-text-dim focus:outline-none"
+        />
+        {filters.search && (
+          <ShortcutTooltip label="Clear search">
+            <button
+              onClick={() => update({ search: "" })}
+              aria-label="Clear search"
+              className="absolute right-0 top-1/2 -translate-y-1/2 text-sol-text-dim hover:text-sol-text"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </ShortcutTooltip>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-1.5 text-[11px]">
+        <div className="flex items-center gap-3">
+          {/* Hosted routines never run on events, so the event chip is a
+              developer filter there. */}
+          {TYPE_TOGGLES.filter((p) => p.key !== "event" || (hasEvent && devFilters)).map(({ key, label, Icon, on }) => (
+            <button
+              key={key}
+              onClick={() => update({ type: filters.type === key ? "all" : key })}
+              aria-pressed={filters.type === key}
+              className={`inline-flex items-center gap-1 py-1 font-medium transition-colors ${
+                filters.type === key ? on : "text-sol-text-dim hover:text-sol-text"
+              }`}
+            >
+              <Icon className="w-3 h-3" />
+              {devFilters ? label : label.charAt(0).toUpperCase() + label.slice(1)}
+            </button>
+          ))}
+        </div>
+        {devFilters && (<>
+        <SelectBox variant="bare" className="text-[11px]" value={filters.mode} onChange={(e) => update({ mode: e.target.value })}>
+          <option value="all">all modes</option>
+          <option value="apply">makes changes</option>
+          <option value="propose">read-only</option>
+        </SelectBox>
+        {projects.length > 1 && (
+          <SelectBox variant="bare" className="text-[11px]" value={filters.project} onChange={(e) => update({ project: e.target.value })}>
+            <option value="all">all projects</option>
+            {projects.map((p) => <option key={p} value={p}>{projectName(p)}</option>)}
+          </SelectBox>
+        )}
+        {hasCodex && (
+          <SelectBox variant="bare" className="text-[11px]" value={filters.agent} onChange={(e) => update({ agent: e.target.value })}>
+            <option value="all">all agents</option>
+            <option value="claude">claude</option>
+            <option value="codex">codex</option>
+          </SelectBox>
+        )}
+        {/* The same grouping the inbox roster uses — by the session each
+            trigger fires into — is the default; project and flat are a
+            click away. */}
+        <span className="inline-flex items-center gap-1.5 text-sol-text-dim">
+          <span>by</span>
+          <SegmentedToggle
+            variant="bare"
+            value={grouping}
+            onChange={(g) => setGrouping(g as Grouping)}
+            items={[
+              { key: "session", label: "session" },
+              { key: "project", label: "project" },
+              { key: "none", label: "none" },
+            ]}
+          />
+        </span>
+        </>)}
+        {active && (
+          <span className="ml-auto inline-flex items-center gap-2 text-sol-text-dim">
+            <span className="tabular-nums">{shown} of {total}</span>
+            <button onClick={() => update(EMPTY_FILTERS)} className="hover:text-sol-text underline underline-offset-2">
+              clear
+            </button>
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Rows ──
+
+// The inline editor (edit / duplicate) is the ONE thing a row unfolds on this
+// page; reading — last result, run history, prompt — is the trigger page's
+// job, one click on the row away. Row-local form state lives here, keyed by
+// task id, so a deep link (?task=X&edit=1 from the trigger page's Edit verb,
+// or &duplicate=1 from the palette) can open it from above.
+type RowForm = { id: string; mode: "edit" | "duplicate" } | null;
+
+function PageRow({ task, isNext, form, setForm, deepLinked }: {
+  task: TaskRow;
+  isNext?: boolean;
+  form: RowForm;
+  setForm: (f: RowForm) => void;
+  deepLinked: boolean;
+}) {
+  const router = useRouter();
+  const deleteTrigger = useInboxStore((st) => st.deleteTrigger);
+  const rowRef = useRef<HTMLDivElement>(null);
+  // Scroll the deep-linked row into view when it BECOMES the target — a later
+  // click on another trigger changes only the query on this mounted page.
+  useWatchEffect(() => {
+    if (deepLinked) rowRef.current?.scrollIntoView({ block: "center" });
+  }, [deepLinked]);
+  // openId only feeds the row's "active session" tint, which this page never
+  // shows (no activeSessionId here): the row's click opens the trigger page.
+  const row = useMemo<TriggerRow>(
+    () => ({ task, openId: task.originating_conversation_id ?? task.last_run_conversation_id, unread: false }),
+    [task],
+  );
+  const terminal = isTriggerTerminal(task.status);
+  const mode = form?.id === task._id ? form.mode : null;
+  return (
+    <div ref={rowRef}>
+      <TriggerRowItem
+        row={row}
+        variant="page"
+        isNext={isNext}
+        highlighted={deepLinked && !mode}
+        onOpen={() => router.push(`/triggers/${task.short_id ?? task._id}`)}
+        onEdit={() => setForm({ id: task._id, mode: "edit" })}
+        onDuplicate={() => setForm({ id: task._id, mode: "duplicate" })}
+        onDelete={terminal ? () => { deleteTrigger(task._id); toast.success("Deleted"); } : undefined}
+      />
+      {mode && (
+        <div className="px-4 pb-3 border-b border-sol-border/40 bg-sol-bg-alt/25 animate-fadeSlideIn">
+          <TriggerForm
+            embedded
+            editTask={mode === "edit" ? task : undefined}
+            seedTask={mode === "duplicate" ? task : undefined}
+            onClose={() => setForm(null)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The band above a group of rows — a project, a day, a home session.
+const bandCls = "flex items-center gap-1.5 text-[11px] text-sol-text-dim py-1.5 px-4 bg-sol-bg-alt/30 border-b border-sol-border/40";
+
+function groupByProjectPath(tasks: TaskRow[]): [string, TaskRow[]][] {
+  const groups = new Map<string, TaskRow[]>();
+  for (const t of tasks) {
+    const key = t.project_path || "— no project";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(t);
+  }
+  return [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+// A home-session header for the page: the roster's header, fed from the
+// store's session row so the state word and dot are live.
+function PageHomeHeader({ group, now, showProject }: { group: TriggerHomeGroup; now: number; showProject: boolean }) {
+  const router = useRouter();
+  const home = useInboxStore((st) => (group.homeId ? st.sessions[group.homeId] : undefined));
+  const first = group.rows[0].task;
+  const open = () => {
+    const id = group.homeId ?? first.last_run_conversation_id ?? first.created_by_conversation_id;
+    if (id) router.push(`/conversation/${id}`);
+  };
+  return <TriggerHomeHeader group={group} home={home} now={now} isActive={false} showProject={showProject} onOpen={open} size="md" />;
+}
+
+type RowListProps = {
+  tasks: TaskRow[];
+  now: number;
+  grouping: Grouping;
+  nextId?: string;
+  form: RowForm;
+  setForm: (f: RowForm) => void;
+  deepLinkId?: string;
+  showProject: boolean;
+};
+
+function RowList({ tasks, now, grouping, nextId, form, setForm, deepLinkId, showProject }: RowListProps) {
+  const isTarget = (t: TaskRow) => !!deepLinkId && (deepLinkId === t._id || deepLinkId.toLowerCase() === t.short_id);
+  const rowOf = (t: TaskRow) => (
+    <PageRow key={t._id} task={t} isNext={t._id === nextId} form={form} setForm={setForm} deepLinked={isTarget(t)} />
+  );
+  if (grouping === "none") return <>{tasks.map(rowOf)}</>;
+  if (grouping === "project") {
+    return (
+      <>
+        {groupByProjectPath(tasks).map(([proj, rows]) => (
+          <div key={proj} className="flex flex-col">
+            <div className={bandCls}>
+              {proj.startsWith("—") ? proj : projectName(proj)}
+              <span className="font-mono text-sol-text-dim/60">{rows.length}</span>
+            </div>
+            {rows.map(rowOf)}
+          </div>
+        ))}
+      </>
+    );
+  }
+  const groups = groupTriggerRowsByHome(tasks.map((task) => ({ task, unread: false })));
+  return (
+    <>
+      {groups.map((g) => (
+        <div key={g.key} className="flex flex-col">
+          <PageHomeHeader group={g} now={now} showProject={showProject} />
+          {g.rows.map((r) => rowOf(r.task))}
+        </div>
+      ))}
+    </>
+  );
+}
+
+// ── History: analytics + day-grouped, paginated finished runs ──
+
+function dayBucket(ts: number, now: number): string {
+  const startOfDay = (ms: number) => {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  };
+  const days = Math.round((startOfDay(now) - startOfDay(ts)) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return "Earlier this week";
+  if (days < 30) return "Earlier this month";
+  return "Older";
+}
+
+const DAY_ORDER = ["Today", "Yesterday", "Earlier this week", "Earlier this month", "Older"];
+
+function groupByDay(tasks: TaskRow[], now: number): [string, TaskRow[]][] {
+  const groups = new Map<string, TaskRow[]>();
+  for (const t of tasks) {
+    const key = dayBucket(t.last_run_at ?? t.created_at, now);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(t);
+  }
+  return DAY_ORDER.filter((k) => groups.has(k)).map((k) => [k, groups.get(k)!]);
+}
+
+const HISTORY_PAGE = 25;
+
+function HistoryBody({ tasks, now, grouping, form, setForm, deepLinkId, fleet }: {
+  tasks: TaskRow[];
+  /** Developer mode's run statistics; hosted mode says each row's own end. */
+  fleet: boolean;
+  now: number;
+  grouping: Grouping;
+  form: RowForm;
+  setForm: (f: RowForm) => void;
+  deepLinkId?: string;
+}) {
+  const [failuresOnly, setFailuresOnly] = useState(false);
+  const [limit, setLimit] = useState(HISTORY_PAGE);
+
+  const succeeded = useMemo(() => tasks.filter((t) => t.status === "completed").length, [tasks]);
+  const failed = tasks.length - succeeded;
+  const rate = tasks.length ? Math.round((succeeded / tasks.length) * 100) : 0;
+
+  const shown = failuresOnly ? tasks.filter((t) => t.status === "failed") : tasks;
+  const visible = shown.slice(0, limit);
+  const rowOf = (t: TaskRow) => (
+    <PageRow
+      key={t._id}
+      task={t}
+      form={form}
+      setForm={setForm}
+      deepLinked={!!deepLinkId && (deepLinkId === t._id || deepLinkId.toLowerCase() === t.short_id)}
+    />
+  );
+
+  return (
+    <div className="flex flex-col">
+      {/* success / failure proportion — a text line and a thin bar, no box */}
+      {fleet && <div className="px-4 py-2.5 border-b border-sol-border/40">
+        <div className="flex items-center justify-between text-[11px] mb-1.5">
+          <span className="text-sol-text-dim">
+            <span className="text-emerald-400">{succeeded} succeeded</span>
+            {failed > 0 && <> · <span className="text-sol-red">{failed} failed</span></>}
+          </span>
+          <span className="text-sol-text-muted tabular-nums">{rate}% success</span>
+        </div>
+        <div className="h-1.5 rounded-full bg-sol-bg-alt overflow-hidden flex">
+          <div className="bg-emerald-500/70 h-full transition-all" style={{ width: `${(succeeded / Math.max(tasks.length, 1)) * 100}%` }} />
+          <div className="bg-sol-red/70 h-full transition-all" style={{ width: `${(failed / Math.max(tasks.length, 1)) * 100}%` }} />
+        </div>
+      </div>}
+
+      {fleet && failed > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-sol-border/40">
+          <button
+            onClick={() => setFailuresOnly((v) => !v)}
+            className={`inline-flex items-center gap-1 text-[11px] rounded-md px-2 py-1 transition-colors ${
+              failuresOnly
+                ? "text-sol-red bg-sol-red/15"
+                : "bg-sol-bg-alt text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-highlight"
+            }`}
+          >
+            <AlertTriangle className="w-3 h-3" /> failures only
+          </button>
+        </div>
+      )}
+
+      {shown.length === 0 ? (
+        <p className="text-[11px] text-sol-text-dim py-3 px-4">No failures — every finished run succeeded.</p>
+      ) : grouping === "project" ? (
+        groupByProjectPath(visible).map(([proj, rows]) => (
+          <div key={proj} className="flex flex-col">
+            <div className={bandCls}>
+              {proj.startsWith("—") ? proj : projectName(proj)}
+              <span className="font-mono text-sol-text-dim/60">{rows.length}</span>
+            </div>
+            {rows.map(rowOf)}
+          </div>
+        ))
+      ) : (
+        // Finished runs read by day, whichever grouping the live list uses —
+        // a finished one-time's home session is history too.
+        groupByDay(visible, now).map(([label, rows]) => (
+          <div key={label} className="flex flex-col">
+            <div className={bandCls}>{label}<span className="font-mono text-sol-text-dim/60">{rows.length}</span></div>
+            {rows.map(rowOf)}
+          </div>
+        ))
+      )}
+
+      {shown.length > limit && (
+        <button
+          onClick={() => setLimit((l) => l + HISTORY_PAGE)}
+          className="self-start text-[11px] text-sol-cyan hover:underline underline-offset-2 mt-2 px-4"
+        >
+          show {Math.min(HISTORY_PAGE, shown.length - limit)} more · {shown.length - limit} hidden
+        </button>
+      )}
+    </div>
+  );
+}
+
+function FilteredEmpty({ onClear }: { onClear: () => void }) {
+  const words = useModeWords();
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+      <ListFilter className="w-7 h-7 text-sol-text-dim" />
+      <p className="text-sm text-sol-text-muted">{words.noTriggersMatch}</p>
+      <button
+        onClick={onClear}
+        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium rounded-lg bg-sol-bg-alt text-sol-text-dim hover:text-sol-text hover:bg-sol-bg-highlight transition-colors"
+      >
+        Clear filters
+      </button>
+    </div>
+  );
+}
+
+function TriggersContent() {
+  // Store-fed (hooks/useSyncTriggers): the list paints from the cached roster
+  // synchronously; the feeder keeps it fresh. `undefined` only while the cache
+  // is empty AND the first answer is in flight.
+  const { tasks: taskRows, ready: tasksReady } = useTriggers();
+  const titlebarRef = useTitlebarHead<HTMLDivElement>();
+  const words = useModeWords();
+  const cliHint = useSurface("hint.cli");
+  // Hosted mode starts an empty page from examples rather than a blank form.
+  const examples = !useSurface("triggers.devForm");
+  const devFilters = useSurface("triggers.devFilters");
+  // Hosted mode's Assistant scope lists the assistant's routines alone
+  // (lib/assistantScope), the same switch as the inbox's; what it leaves out
+  // is one line at the foot.
+  const scope = useAssistantScope();
+  const scopedRows = useMemo(() => withinScope(taskRows, scope.only, isAssistantRoutine) as TaskRow[], [taskRows, scope.only]);
+  const outOfScope = taskRows.length - scopedRows.length;
+  const tasks: TaskRow[] | undefined = tasksReady || scopedRows.length > 0 ? scopedRows : undefined;
+  // Deep links, read REACTIVELY (tab-context searchParams): the tab shell
+  // keeps this page mounted, so a later click on another trigger changes only
+  // the query. ?new=1 (the dock's "+ New") lands with the create form open;
+  // ?task=<id|tr-N> scrolls to that row; &edit=1 / &duplicate=1 open its form.
+  const searchParams = useSearchParams();
+  const deepLinkId = searchParams.get("task") ?? undefined;
+  const deepLinkMode = searchParams.get("edit") === "1" ? "edit" : searchParams.get("duplicate") === "1" ? "duplicate" : null;
+  const [showForm, setShowForm] = useState(() => searchParams.get("new") === "1");
+  // An example routine the empty page opened the form with (RoutineExamples).
+  const [formSeed, setFormSeed] = useState<ReturnType<typeof routineExampleSeed> | null>(null);
+  const closeForm = () => { setShowForm(false); setFormSeed(null); };
+  const [form, setForm] = useState<RowForm>(null);
+  useWatchEffect(() => {
+    if (searchParams.get("new") === "1") setShowForm(true);
+  }, [searchParams]);
+  // The deep-linked row's form opens once its row can be found — by Convex id
+  // or by short id (the palette links by whichever it has).
+  useWatchEffect(() => {
+    if (!deepLinkId || !deepLinkMode || !tasks) return;
+    const target = tasks.find((t) => t._id === deepLinkId || t.short_id === deepLinkId.toLowerCase());
+    if (target) setForm({ id: target._id, mode: deepLinkMode });
+  }, [deepLinkId, deepLinkMode, tasks === undefined]);
+  const [now, setNow] = useState(() => Date.now());
+
+  // Tick so countdowns ("in 23m", "due now") stay live without resubscribing.
+  useMountEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10_000);
+    return () => clearInterval(id);
+  });
+
+  const [picked, setFilters] = useState<Filters>(EMPTY_FILTERS);
+  // A filter whose control is hidden never narrows the list.
+  const filters = useMemo<Filters>(
+    () => (devFilters ? picked : { ...picked, mode: "all", project: "all", agent: "all" }),
+    [devFilters, picked],
+  );
+  const update = (patch: Partial<Filters>) => setFilters((f) => ({ ...f, ...patch }));
+  const [pickedGrouping, setGrouping] = useState<Grouping>("session");
+  // Without the grouping control (hosted mode), routines are one plain list:
+  // the conversation a run lands in is not something to sort by.
+  const grouping: Grouping = devFilters ? pickedGrouping : "none";
+  const fleet = useSurface("triggers.fleetChrome");
+
+  // Filters drive the list AND the rail so what's shown stays consistent. Stats
+  // and the failure banner stay global — they're a health overview of everything.
+  const filtered = useMemo(
+    () => (tasks ?? []).filter((t) => matchesFilters(t, filters)),
+    [tasks, filters]
+  );
+
+  const { active, paused, history } = useMemo(() => {
+    return {
+      // Live runs first, then soonest fire — the roster's order.
+      active: filtered
+        .filter((t) => t.status === "scheduled" || t.status === "running")
+        .sort((a, b) => {
+          const ra = a.status === "running" ? 0 : 1, rb = b.status === "running" ? 0 : 1;
+          return ra !== rb ? ra - rb : (a.run_at ?? Infinity) - (b.run_at ?? Infinity);
+        }),
+      paused: filtered.filter((t) => t.status === "paused"),
+      history: filtered
+        .filter((t) => isTriggerTerminal(t.status))
+        .sort((a, b) => (b.last_run_at ?? b.created_at) - (a.last_run_at ?? a.created_at)),
+    };
+  }, [filtered]);
+
+  const stats = useMemo(() => computeStats(tasks ?? [], now), [tasks, now]);
+  const failingActive = useMemo(
+    () => (tasks ?? []).filter((t) => (t.status === "scheduled" || t.status === "running") && isTriggerFailing(t)),
+    [tasks]
+  );
+  const projects = useMemo(
+    () => ([...new Set((tasks ?? []).map((t) => t.project_path).filter(Boolean))] as string[]).sort(),
+    [tasks]
+  );
+  const hasCodex = useMemo(() => (tasks ?? []).some((t) => t.agent_type === "codex"), [tasks]);
+  const hasEvent = useMemo(() => (tasks ?? []).some((t) => t.schedule_type === "event"), [tasks]);
+
+  const activeSubtitle = useMemo(() => {
+    const recurring = active.filter((t) => t.schedule_type === "recurring").length;
+    const oneTime = active.filter((t) => t.schedule_type === "once").length;
+    const events = active.filter((t) => t.schedule_type === "event").length;
+    const parts: string[] = [];
+    if (recurring > 0) parts.push(`${recurring} recurring`);
+    if (oneTime > 0) parts.push(`${oneTime} one-time`);
+    if (events > 0) parts.push(`${events} on event`);
+    return parts.join(" · ") || undefined;
+  }, [active]);
+  const historyFailed = useMemo(() => history.filter((t) => t.status === "failed").length, [history]);
+
+  // The soonest upcoming run gets an "up next" accent. active is sorted by run_at
+  // ascending, so the first scheduled row with a future run_at is the winner.
+  const nextId = useMemo(() => {
+    const next = active.find((t) => t.status === "scheduled" && t.run_at && t.run_at > now);
+    return next?._id as string | undefined;
+  }, [active, now]);
+
+  const hasTasks = tasks !== undefined && tasks.length > 0;
+  const anyShown = active.length + paused.length + history.length > 0;
+  const listProps = { now, grouping, form, setForm, deepLinkId, showProject: projects.length > 1 };
+
+  return (
+    <div className="h-full overflow-y-auto bg-sol-bg" data-main-scroll>
+      <div className={`${HOSTED_PAGE_FRAME} ${fleet ? "px-5 sm:px-6 py-8" : `${HOSTED_PAGE_PAD} ${HOSTED_PAGE_TOP} pb-8`}`}>
+        {/* Hosted: the row's items start at its top, so the New button never
+            pushes the title below where To-dos and Approvals put theirs. */}
+        <div ref={titlebarRef} className={`flex gap-2 ${fleet ? "items-center mb-5" : "items-start flex-wrap gap-y-2 mb-1.5"}`}>
+          {fleet ? (
+            <>
+              <Zap className="w-4 h-4 text-sol-amber" />
+              <h1 className="text-lg font-semibold text-sol-text whitespace-nowrap">{words.triggers}</h1>
+              <span className="hidden sm:inline min-w-0 truncate text-xs text-sol-text-dim">{words.triggersLede}</span>
+            </>
+          ) : (
+            // Hosted mode counts what runs: the Active list. Paused routines
+            // are their own titled section.
+            // Its description goes on its own line below, so the heading
+            // line holds only the title, its count and the controls.
+            <PageHeading title={words.triggers} count={tasks?.length ? (fleet ? active.length + paused.length : active.length) : undefined} />
+          )}
+          {/* Under the title on a phone, beside it from sm up. */}
+          <div className={fleet ? "contents" : "order-last basis-full sm:order-none sm:basis-auto"}>
+            <AssistantScopeSwitch label="Which routines this lists" hidden={outOfScope} />
+          </div>
+          {/* One way to start a routine at a time: the empty state offers its
+              own, and an open form is already the new routine. */}
+          {!showForm && hasTasks && (
+            <Button
+              data-tour="triggers-new"
+              onClick={() => setShowForm(true)}
+              // Hosted mode keeps the page calm: a secondary button, not the
+              // heaviest thing on it.
+              variant={fleet ? "amber" : "outline"}
+              size="sm"
+              className="ml-auto shrink-0"
+            >
+              <Plus /> {words.newTrigger}
+            </Button>
+          )}
+        </div>
+        {!fleet && <p className="mb-5 text-xs text-sol-text-dim">{words.triggersLede}</p>}
+
+        <FeatureUpsell
+          slug="triggers"
+          className="mb-5"
+          reason="Agents can set their own follow-ups here, like checking CI half an hour after a push, so work continues after the session goes quiet."
+        />
+
+        {showForm && <TriggerForm key={formSeed?.prompt ?? "new"} seedTask={formSeed ?? undefined} onClose={closeForm} />}
+
+        {tasks === undefined ? (
+          <PaneLoader />
+        ) : tasks.length === 0 ? (
+          // Nothing to filter or search yet: no bar, no filtered-empty line.
+          showForm ? <MoreInEverything hidden={outOfScope} /> : (
+          <div className="flex flex-col items-center justify-center gap-3 py-24 text-center">
+            {!examples && <Zap className="w-8 h-8 text-sol-text-dim" />}
+            <p className="text-sm text-sol-text-muted">{words.noTriggers}</p>
+            <p className="text-xs text-sol-text-dim max-w-sm">{words.triggersEmptyHint}</p>
+            {cliHint && (
+              <>
+                <code className="font-mono text-xs text-sol-text-muted bg-sol-bg-alt rounded-md px-3 py-1.5">
+                  cast trigger add "Check CI on main" --in 30m
+                </code>
+              </>
+            )}
+            {examples && <RoutineExamples onPick={(seed) => { setFormSeed(seed); setShowForm(true); }} />}
+            {examples ? (
+              <button
+                onClick={() => setShowForm(true)}
+                className="mt-1 text-sm text-sol-text-muted underline decoration-sol-border underline-offset-4 transition-colors hover:text-sol-text"
+              >
+                Or write your own
+              </button>
+            ) : (
+              <Button variant="amber" size="sm" className="mt-2" onClick={() => setShowForm(true)}>
+                <Plus /> {words.newTrigger}
+              </Button>
+            )}
+            {/* The overflow sits inside the empty block it explains. */}
+            <MoreInEverything hidden={outOfScope} centered />
+          </div>
+          )
+        ) : (
+          <>
+            {/* The overview sits on the page, not in a box: one line of
+                numbers under the title, the ±24h rail beneath it, the failed
+                names if any — everything on the title's left edge. The sticky
+                filter bar's hairline closes it. The rail plots all filtered
+                tasks, not just active: finished one-times and paused loops
+                still own dots on the past half. */}
+            {hasTasks && (
+              <div className="reveal mb-4">
+                {fleet && <OverviewLine stats={stats} now={now} filters={filters} update={update} />}
+                {fleet && <PageHorizonRail tasks={filtered} now={now} />}
+                <AttentionBanner tasks={failingActive} />
+              </div>
+            )}
+            <FilterBar
+              filters={filters}
+              update={update}
+              projects={projects}
+              hasCodex={hasCodex}
+              hasEvent={hasEvent}
+              shown={filtered.length}
+              // Hosted mode counts the routines the list shows, not the
+              // stopped ones under History, against its six-routine rule.
+              total={devFilters ? tasks.length : tasks.filter((t) => !isTriggerTerminal(t.status)).length}
+              grouping={grouping}
+              setGrouping={setGrouping}
+              devFilters={devFilters}
+            />
+            {!anyShown ? (
+              <FilteredEmpty onClear={() => update(EMPTY_FILTERS)} />
+            ) : (
+              <div className="reveal reveal-2">
+                {/* The overview line already says the split; repeat it here
+                    only when a filter makes the section's split differ. */}
+                {/* Hosted mode names Active only beside Paused; alone, it is just
+                    the list under the page's title, which counts it. */}
+                <Section title="Active" count={active.length} subtitle={filtersActive(filters) ? activeSubtitle : undefined} bare={!fleet && paused.length === 0}>
+                  <RowList tasks={active} nextId={nextId} {...listProps} />
+                </Section>
+                <Section title="Paused" count={paused.length}>
+                  <RowList tasks={paused} {...listProps} />
+                </Section>
+                <Section
+                  // Hosted mode names what the section holds: routines that
+                  // ran their course or were stopped (plainEndedWords).
+                  title={fleet ? "History" : "Finished and stopped"}
+                  count={history.length}
+                  // Success rates are fleet health; hosted mode says only what
+                  // went wrong, in the person's words.
+                  subtitle={historyFailed > 0 ? (fleet ? `${historyFailed} failed` : `${historyFailed} didn't finish`) : fleet ? "all succeeded" : undefined}
+                  defaultOpen={active.length === 0}
+                >
+                  <HistoryBody tasks={history} now={now} grouping={grouping} form={form} setForm={setForm} deepLinkId={deepLinkId} fleet={fleet} />
+                </Section>
+              </div>
+            )}
+          </>
+        )}
+        {hasTasks && <MoreInEverything hidden={outOfScope} />}
+      </div>
+    </div>
+  );
+}
+
+export default function TriggersPage() {
+  return (
+    <AuthGuard>
+      <DashboardLayout>
+        <TriggersContent />
+      </DashboardLayout>
+    </AuthGuard>
+  );
+}

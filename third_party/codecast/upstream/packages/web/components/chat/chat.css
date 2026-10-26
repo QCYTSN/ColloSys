@@ -1,0 +1,3919 @@
+/* Team chat surface.
+ *
+ * Kept out of globals.css deliberately, mirroring components/editor/editor.css:
+ * the whole chat look reviews as one file, and it can't collide with unrelated
+ * edits to the global sheet.
+ *
+ * The visual language is the rest of codecast, not Slack: JetBrains Mono,
+ * solarized tokens, hairline rules, square-ish corners, high density. Every
+ * colour here is a --sol-* token so light and dark both work with no second
+ * palette. */
+
+/* ── Layout ──────────────────────────────────────────────────────────────── */
+
+.ch-shell {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  /* The thread panel becomes an overlay on a narrow surface, and an overlay
+   * needs something to be positioned against. */
+  position: relative;
+  /* …and the columns collapse by the width of THIS BOX, not of the window. The
+   * page ships inside a shell whose sidebar takes ~240px, so a viewport media
+   * query answers a question nobody asked. */
+  container: ch-shell / inline-size;
+  background: var(--sol-bg);
+  color: var(--sol-text);
+  /* Width of the avatar / hover-timestamp column. Sized so "12:23 AM" at the
+   * hover timestamp's font fits on one line beside the 8px gutter padding —
+   * at 46px it wrapped to two lines. Every gutter-aligned rule reads this. */
+  --ch-gutter: 56px;
+}
+
+.ch-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ── Channel rail ────────────────────────────────────────────────────────── */
+
+.ch-rail {
+  width: 208px;
+  flex: 0 0 208px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-right: 1px solid color-mix(in srgb, var(--sol-border) 32%, transparent);
+  background: color-mix(in srgb, var(--sol-bg-alt) 45%, var(--sol-bg));
+}
+
+.ch-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 10px 8px 12px;
+}
+
+.ch-rail-title {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--sol-text-muted);
+}
+
+.ch-rail-add {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  color: var(--sol-text-muted);
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.ch-rail-add:hover {
+  background: color-mix(in srgb, var(--sol-border) 22%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-rail-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 12px;
+}
+
+/* Pinned is a handful of rows: it always shows whole and the other lists give up the room. */
+.ch-rail-list-pinned {
+  flex: none;
+  overflow: visible;
+}
+
+.ch-chan {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--sol-text-muted);
+  text-align: left;
+  transition: background 110ms ease, color 110ms ease;
+}
+
+.ch-chan:hover {
+  background: color-mix(in srgb, var(--sol-border) 16%, transparent);
+  color: var(--sol-text-secondary);
+}
+
+.ch-chan-hash {
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--sol-text-muted);
+}
+
+/* The monogram exists only in the narrow strip (below). */
+.ch-chan-mono {
+  display: none;
+}
+
+.ch-chan-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Unread is carried by WEIGHT and full-strength text, never by colour alone —
+ * colour is already doing work for the active state. */
+.ch-chan-unread {
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-chan-unread .ch-chan-hash {
+  color: var(--sol-text-muted);
+}
+
+.ch-chan-active,
+.ch-chan-active:hover {
+  background: color-mix(in srgb, var(--sol-blue) 15%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-chan-active .ch-chan-hash {
+  color: var(--sol-blue);
+}
+
+.ch-chan-muted {
+  color: var(--sol-text-dim);
+}
+
+.ch-chan-muted .ch-chan-hash {
+  color: var(--sol-text-dim);
+}
+
+/* A mention count is the one thing allowed to shout. */
+.ch-chan-badge {
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--sol-red);
+  color: var(--sol-bg);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-chan-dot {
+  flex: 0 0 auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--sol-text-muted);
+}
+
+/* ── Channel header ──────────────────────────────────────────────────────── */
+
+.ch-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 14px;
+  flex-shrink: 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+  background: color-mix(in srgb, var(--sol-bg-alt) 28%, var(--sol-bg));
+}
+
+.ch-head-name {
+  display: flex;
+  align-items: baseline;
+  gap: 3px;
+  flex: 0 0 auto;
+  /* One line always: a phone-width header squeezed the name into a column
+   * of single letters before anything else yielded. */
+  white-space: nowrap;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-head-hash {
+  color: var(--sol-text-muted);
+  font-weight: 500;
+}
+
+/* "listening: N roles" — which org roles read this room on their next wake.
+ * Sized like the topic and truncating like it: on a phone the header keeps
+ * its one line and the words give way before the controls do. */
+/* The wrapper is the flex item that yields width; a percentage cap on the
+ * button itself would resolve against its own auto-sized wrapper (cyclic) and
+ * squeeze the label to "lis…" on a wide desktop. */
+.ch-head-listen-host {
+  position: relative;
+  flex: 0 1 auto;
+  /* Never below an ellipsis: under pressure the line reads "listening…"
+   * and the button's title carries the names. */
+  min-width: 5.5em;
+  max-width: 40%;
+}
+
+.ch-head-listen {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--sol-violet) 35%, transparent);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--sol-text-muted);
+  background: none;
+  cursor: pointer;
+}
+
+.ch-head-listen:hover,
+.ch-head-listen[aria-expanded="true"] {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-violet) 10%, transparent);
+}
+
+.ch-head-listen > svg {
+  flex: 0 0 auto;
+  color: var(--sol-violet);
+}
+
+.ch-head-listen-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The popover under it: who listens, and which of the viewer's own roles can
+ * be told to. Same card as the message menu (.ch-menu) so it is one surface. */
+.ch-listen-pop {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 260px;
+  padding: 6px 0;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  border-radius: 8px;
+  background: var(--sol-bg);
+  box-shadow: 0 12px 32px -12px color-mix(in srgb, var(--sol-text) 35%, transparent);
+}
+
+.ch-listen-head {
+  padding: 4px 12px 5px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sol-text-dim);
+}
+
+.ch-listen-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--sol-text-secondary);
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ch-listen-row:hover {
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-listen-row a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.ch-listen-handle {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--sol-violet);
+}
+
+.ch-listen-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-listen-state {
+  flex: 0 0 auto;
+  font-size: 10px;
+  color: var(--sol-text-dim);
+}
+
+.ch-listen-row[aria-checked="true"] .ch-listen-state {
+  color: var(--sol-green);
+}
+
+.ch-listen-empty {
+  padding: 4px 12px 6px;
+  font-size: 11.5px;
+  color: var(--sol-text-muted);
+}
+
+.ch-head-topic {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  color: var(--sol-text-muted);
+  border-left: 1px solid color-mix(in srgb, var(--sol-border) 34%, transparent);
+  padding-left: 10px;
+}
+
+/* ── Message list ────────────────────────────────────────────────────────── */
+
+/* The wrapper exists so the jump pill can be positioned against the viewport of
+ * the list rather than against its scrolling content. */
+.ch-list-wrap {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ch-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  /* The virtualizer measures rows; anchoring fights it for control of scrollTop
+   * and the two together produce a list that creeps while new rows arrive. */
+  overflow-anchor: none;
+}
+
+/* A short channel sits against the composer; a long one must still scroll from
+ * the top. Putting `display:flex` plus `justify-content:flex-end` (or
+ * `margin-top:auto` on the sizer) ON THE SCROLLER makes the overflowing top
+ * unreachable: the scroller has a fixed height, so flex-end overflows the
+ * start and scrollTop cannot move. The fill is the flex container instead —
+ * `height:auto; min-height:100%` so it grows with a long transcript and only
+ * packs extra space when the transcript is shorter than the viewport. */
+.ch-list-fill {
+  box-sizing: border-box;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: 12px 0 8px;
+}
+
+.ch-list-sizer {
+  width: 100%;
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.ch-loading-older {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 0;
+  font-size: 11px;
+  color: var(--sol-text-muted);
+}
+
+/* Sits above the composer, centred. Appears only when the reader has scrolled
+ * away on purpose. */
+.ch-jump {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid color-mix(in srgb, var(--sol-blue) 45%, transparent);
+  border-radius: 12px;
+  background: var(--sol-card);
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--sol-text) 18%, transparent);
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sol-blue);
+  z-index: 4;
+  animation: ch-jump-in 140ms ease-out;
+}
+
+.ch-jump:hover {
+  background: color-mix(in srgb, var(--sol-blue) 12%, var(--sol-card));
+}
+
+@keyframes ch-jump-in {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to   { opacity: 1; transform: translate(-50%, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-jump { animation: none; }
+}
+
+/* ── Send states ─────────────────────────────────────────────────────────── */
+
+/* Failed reads as loudly as a mention, because it is the one state the reader
+ * must not scroll past. */
+.ch-msg-failed {
+  background: color-mix(in srgb, var(--sol-red) 7%, transparent);
+  box-shadow: inset 2px 0 0 var(--sol-red);
+}
+
+.ch-send-failed {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--sol-red);
+}
+
+.ch-send-retry {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sol-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* The row is a two column grid: a fixed gutter that holds either the avatar or
+ * (when the message is grouped under the one above) a hover-revealed timestamp,
+ * and the body. Keeping the gutter identical in both states is what stops text
+ * shifting horizontally as messages group. */
+.ch-msg {
+  display: grid;
+  grid-template-columns: var(--ch-gutter) 1fr;
+  align-items: start;
+  padding: 2px 16px 2px 0;
+  position: relative;
+}
+
+.ch-msg:hover {
+  background: color-mix(in srgb, var(--sol-border) 9%, transparent);
+}
+
+.ch-msg-lead {
+  margin-top: 7px;
+}
+
+/* A permalink landing. The flash fades out on its own rather than leaving a
+ * persistent highlight: it answers "which one" and then gets out of the way, so
+ * the message reads like every other message a second later. */
+.ch-msg-flash {
+  animation: ch-flash 1.6s ease-out 1;
+}
+
+@keyframes ch-flash {
+  0% { background: color-mix(in srgb, var(--sol-yellow) 26%, transparent); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-msg-flash { animation: none; background: color-mix(in srgb, var(--sol-yellow) 14%, transparent); }
+}
+
+.ch-msg-gutter {
+  display: flex;
+  justify-content: flex-end;
+  padding-right: 8px;
+  padding-top: 2px;
+}
+
+/* Faces come from components/comments/CommentAvatar — the same round avatar the
+ * rest of the app draws, so a teammate is not a circle in a comment and a square
+ * in chat on the same screen. Only the thread stack's overlap is chat's own. */
+
+/* Hover timestamp on grouped rows. Hidden rather than absent so it reserves no
+ * layout and cannot reflow the body on hover. */
+.ch-msg-hovertime {
+  font-size: 9.5px;
+  line-height: 18px;
+  white-space: nowrap;
+  color: var(--sol-text-muted);
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 90ms ease;
+}
+
+.ch-msg:hover .ch-msg-hovertime {
+  opacity: 1;
+}
+
+.ch-msg-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-bottom: 1px;
+}
+
+.ch-msg-author {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-msg-time {
+  font-size: 10px;
+  color: var(--sol-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The human a session persona ran as ("via Ada"). Quieter than the author name
+   but still legible: the words were machine-typed, the authority is theirs. */
+.ch-msg-via {
+  font-size: 10.5px;
+  color: var(--sol-text-muted);
+}
+
+.ch-msg-time:hover {
+  color: var(--sol-text);
+  text-decoration: underline;
+}
+
+.ch-msg-body {
+  font-size: 13px;
+  line-height: 1.58;
+  color: var(--sol-text-secondary);
+  overflow-wrap: anywhere;
+  /* Prose gets a measure. Unbounded, a message ran 150 characters a line at
+   * 1600px and past 200 on a 27" display, where the eye loses the line return.
+   * Code, tables and images stay free to use the whole column. */
+  max-width: 78ch;
+}
+
+.ch-msg-body pre,
+.ch-msg-body table,
+.ch-msg-body img {
+  max-width: none;
+}
+
+.ch-msg-body p {
+  margin: 0 0 4px;
+}
+
+.ch-msg-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* Plain hyperlinks LOOK like links — the app's amber, underlined. Scoped to
+ * class-less anchors: every pill in a message body (entity, mention,
+ * published-page) is an <a> that brings its own dress, and only bare markdown
+ * links arrive without a class. */
+.ch-msg-body a:not([class]) {
+  color: var(--sol-link);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--sol-link) 45%, transparent);
+  text-underline-offset: 2px;
+}
+
+.ch-msg-body a:not([class]):hover {
+  text-decoration-color: var(--sol-link);
+}
+
+.ch-msg-edited {
+  margin-left: 5px;
+  font-size: 9.5px;
+  color: var(--sol-text-muted);
+}
+
+.ch-msg-deleted {
+  font-size: 12.5px;
+  font-style: italic;
+  color: var(--sol-text-muted);
+}
+
+/* Mentions wear the doc editor's own chip (editor.css: .editor-mention
+ * .mention-person) — one stylesheet, not a chat imitation. Chat adds only the
+ * self accent: your own name runs hotter than everyone else's. */
+.editor-mention.ch-mention-self {
+  color: var(--sol-orange);
+  background: color-mix(in srgb, var(--sol-orange) 17%, transparent);
+}
+
+/* A role pill: the org page's violet, the same chip geometry as a person. It
+ * is an <a> to the role's page, so it keeps the chip's own colour on hover
+ * rather than the body's plain-link amber. */
+.editor-mention.mention-role,
+.ch-msg-body a.ch-mention-role,
+.ch-msg-body a.ch-mention-role:hover {
+  color: var(--sol-violet);
+  background: color-mix(in srgb, var(--sol-violet) 15%, transparent);
+  text-decoration: none;
+}
+
+/* `#name` pointing at one of the team's rooms (remarkChatMentions). */
+.ch-msg-body a.ch-channel-ref,
+.ch-msg-body a.ch-channel-ref:hover {
+  color: var(--sol-cyan);
+  background: color-mix(in srgb, var(--sol-cyan) 13%, transparent);
+  border-radius: 4px;
+  padding: 0 3px;
+  text-decoration: none;
+}
+.ch-msg-body a.ch-channel-ref:hover {
+  background: color-mix(in srgb, var(--sol-cyan) 22%, transparent);
+}
+
+/* A person named who exists only in the team's Slack workspace: the person
+ * chip wearing the Slack mark. Nothing here to open — they are paged in the
+ * line's Slack copy — so it is a span, not a link. */
+.editor-mention.ch-mention-slack {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ch-mention-slack-mark {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 auto;
+}
+
+/* "folded": a role or session this line named was over its hourly mention
+ * cap and was not woken. Beside the text like "(edited)" — a fact about the
+ * wake, not a warning about the line. */
+.ch-msg-folded {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 4px;
+  border: 1px dashed color-mix(in srgb, var(--sol-text-muted) 55%, transparent);
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 14px;
+  color: var(--sol-text-muted);
+  vertical-align: 1px;
+  cursor: default;
+}
+
+/* The whole row when it mentions you, so it is findable while scrolling fast. */
+.ch-msg-mentions-me {
+  background: color-mix(in srgb, var(--sol-orange) 7%, transparent);
+  box-shadow: inset 2px 0 0 var(--sol-orange);
+}
+
+.ch-msg-mentions-me:hover {
+  background: color-mix(in srgb, var(--sol-orange) 11%, transparent);
+}
+
+/* ── Agent (anchor) messages ─────────────────────────────────────────────── */
+
+.ch-agent-chip {
+  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--sol-violet) 45%, transparent);
+  border-radius: 3px;
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sol-violet);
+  line-height: 14px;
+}
+
+/* Thinking state. Three dots breathing, plus the label — motion alone is not an
+ * accessible signal, so the words carry the meaning and the motion carries the
+ * liveness. */
+.ch-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--sol-text-muted);
+}
+
+.ch-thinking-dots {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.ch-thinking-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sol-violet);
+  animation: ch-breathe 1.25s ease-in-out infinite;
+}
+
+.ch-thinking-dot:nth-child(2) { animation-delay: 0.16s; }
+.ch-thinking-dot:nth-child(3) { animation-delay: 0.32s; }
+
+@keyframes ch-breathe {
+  0%, 60%, 100% { opacity: 0.28; transform: translateY(0); }
+  30%           { opacity: 1;    transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-thinking-dot { animation: none; opacity: 0.7; }
+}
+
+.ch-agent-error {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--sol-red);
+}
+
+.ch-agent-retry {
+  font-size: 11px;
+  color: var(--sol-blue);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ── Reactions ───────────────────────────────────────────────────────────── */
+
+.ch-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ch-reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 38%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sol-bg-alt) 50%, transparent);
+  font-size: 11px;
+  color: var(--sol-text-muted);
+  transition: border-color 110ms ease, background 110ms ease;
+}
+
+.ch-reaction:hover {
+  border-color: color-mix(in srgb, var(--sol-blue) 50%, transparent);
+}
+
+.ch-reaction-mine {
+  border-color: color-mix(in srgb, var(--sol-blue) 60%, transparent);
+  background: color-mix(in srgb, var(--sol-blue) 14%, transparent);
+  color: var(--sol-blue);
+}
+
+.ch-reaction-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Who reacted — the pill's hover card. Overrides the ui/tooltip default
+ * (theme-inverted bg-primary) with the app's own card surface so it reads as
+ * chat, and stacks the emoji large above the names, Slack-style. The element
+ * qualifier out-specifies the tooltip's utility classes — the card portals to
+ * <body>, so stylesheet order between chat.css and the tailwind build is the
+ * only other tiebreak, and it isn't guaranteed. */
+div.ch-reaction-tip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  max-width: 220px;
+  padding: 8px 12px;
+  border: 1px solid var(--sol-border);
+  background: var(--sol-card);
+  color: var(--sol-text-secondary);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ch-reaction-tip-emoji {
+  font-size: 22px;
+  line-height: 1;
+}
+
+/* ── Thread affordance ───────────────────────────────────────────────────── */
+
+/* The context line over a broadcast reply in the channel ("also send to
+ * #channel"): the way back to the thread the message belongs to. */
+.ch-msg-threadctx {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  margin-bottom: 1px;
+  border: none;
+  background: none;
+  font-size: 10px;
+  font-family: inherit;
+  color: var(--sol-text-muted);
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+
+.ch-msg-threadctx:hover {
+  color: var(--sol-cyan);
+}
+
+.ch-thread-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 4px;
+  padding: 2px 7px 2px 3px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--sol-blue);
+  transition: background 110ms ease, border-color 110ms ease;
+}
+
+.ch-thread-link:hover {
+  background: color-mix(in srgb, var(--sol-blue) 9%, transparent);
+  border-color: color-mix(in srgb, var(--sol-blue) 28%, transparent);
+}
+
+.ch-thread-faces {
+  display: inline-flex;
+}
+
+.ch-thread-face {
+  border: 1.5px solid var(--sol-bg);
+  margin-right: -4px;
+  object-fit: cover;
+  background: var(--sol-bg-alt);
+}
+
+.ch-thread-count {
+  font-weight: 600;
+}
+
+.ch-thread-last {
+  color: var(--sol-text-muted);
+}
+
+.ch-thread-link:hover .ch-thread-last {
+  color: var(--sol-text-muted);
+}
+
+/* ── Hover toolbar ───────────────────────────────────────────────────────── */
+
+.ch-tools {
+  position: absolute;
+  top: -10px;
+  right: 14px;
+  display: none;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent);
+  border-radius: 6px;
+  background: var(--sol-card);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--sol-text) 12%, transparent);
+  z-index: 3;
+}
+
+.ch-msg:hover .ch-tools,
+.ch-msg:focus-within .ch-tools {
+  display: flex;
+}
+
+.ch-tool {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 22px;
+  border-radius: 4px;
+  color: var(--sol-text-muted);
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.ch-tool:hover {
+  background: color-mix(in srgb, var(--sol-border) 22%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-tool-emoji {
+  font-size: 13px;
+  line-height: 1;
+  transition: background 100ms ease, transform 100ms ease;
+}
+
+.ch-tool-emoji:hover {
+  transform: translateY(-1px);
+}
+
+.ch-tool-emoji-mine {
+  background: color-mix(in srgb, var(--sol-blue) 16%, transparent);
+}
+
+/* ── Huddle digest rows ──────────────────────────────────────────────────── */
+
+/* A system row about a call, not a person's message: the gutter wears a call
+ * badge instead of the author's face and the header names the huddle. Green is
+ * the call color everywhere else (the session surface's huddle card, the live
+ * walkie), so the row reads as the same kind of event here. */
+.ch-call-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sol-green) 14%, transparent);
+  color: color-mix(in srgb, var(--sol-green) 80%, var(--sol-text));
+}
+
+/* The toast's face slot is 26px; the huddle badge fills it. */
+.ch-toast-call {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.ch-call-kicker {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--sol-green) 80%, var(--sol-text));
+}
+
+.ch-call-lead {
+  font-size: 11.5px;
+  color: var(--sol-text-muted);
+}
+
+/* The huddle header holds a title and a roster line, either of which can run
+ * long. Wrap BETWEEN them rather than squeezing each into a narrow column, and
+ * keep the clock in one piece. */
+.ch-call-head {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.ch-call-head .ch-msg-time {
+  white-space: nowrap;
+}
+
+/* ── Dividers ────────────────────────────────────────────────────────────── */
+
+.ch-day {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 16px 10px;
+}
+
+.ch-day::before,
+.ch-day::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+
+.ch-day-label {
+  flex: 0 0 auto;
+  padding: 1px 9px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 34%, transparent);
+  border-radius: 10px;
+  background: var(--sol-bg);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--sol-text-muted);
+}
+
+/* Unread rule. Matches the transcript's existing NEW divider so the two surfaces
+ * teach the same thing. */
+.ch-new {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 16px 6px;
+}
+
+.ch-new::after {
+  content: "";
+  flex: 1 1 auto;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    var(--sol-orange),
+    color-mix(in srgb, var(--sol-orange) 12%, transparent)
+  );
+}
+
+.ch-new-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sol-orange);
+}
+
+/* ── Composer ────────────────────────────────────────────────────────────── */
+
+.ch-composer {
+  container: ch-composer / inline-size;
+  flex-shrink: 0;
+  margin: 0 16px 14px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 42%, transparent);
+  border-radius: 7px;
+  background: var(--sol-card);
+  transition: border-color 130ms ease, box-shadow 130ms ease;
+}
+
+.ch-composer:focus-within {
+  border-color: color-mix(in srgb, var(--sol-blue) 55%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-blue) 11%, transparent);
+}
+
+.ch-slack-connect {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 50%, transparent);
+  border-radius: 7px 7px 0 0;
+  background: color-mix(in srgb, var(--sol-cyan) 4%, transparent);
+  font-size: 11px;
+}
+
+.ch-slack-connect-icon {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.ch-slack-connect-copy {
+  flex: 1 1 180px;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+.ch-slack-connect-title {
+  color: var(--sol-text);
+  font-weight: 600;
+}
+
+.ch-slack-connect-copy p {
+  margin: 2px 0 0;
+  color: var(--sol-text-muted);
+  text-wrap: pretty;
+}
+
+.ch-slack-connect-copy .ch-slack-connect-error {
+  color: var(--sol-red);
+}
+
+.ch-slack-connect-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 10px;
+  margin-left: auto;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 75%, transparent);
+  border-radius: 5px;
+  background: var(--sol-card);
+  color: var(--sol-text);
+  font-size: 11px;
+  font-weight: 500;
+  transition: background 130ms ease, transform 130ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .ch-slack-connect-button:hover:not(:disabled) {
+    background: var(--sol-bg-highlight);
+  }
+}
+
+.ch-slack-connect-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.ch-slack-connect-button:focus-visible {
+  outline: 2px solid var(--sol-blue);
+  outline-offset: 2px;
+}
+
+.ch-slack-connect-button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.ch-slack-connect-checking {
+  color: var(--sol-text-dim);
+  background: transparent;
+}
+
+.ch-composer-choice:has(input:disabled) {
+  color: var(--sol-text-dim);
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-slack-connect-button { transition: background 130ms ease; }
+  .ch-slack-connect-button:active:not(:disabled) { transform: none; }
+}
+
+.ch-composer-options {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 28px;
+  min-width: 28px;
+  max-width: calc(100% - 80px);
+  margin-left: auto;
+  padding: 4px 6px;
+  border-radius: 6px;
+  color: var(--sol-text-muted);
+  font-size: 10px;
+  transition: color 130ms ease, background 130ms ease;
+}
+
+.ch-composer-options > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-composer-options > svg {
+  flex-shrink: 0;
+}
+
+.ch-composer-options:hover,
+.ch-composer-options[data-state="open"] {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+}
+
+.ch-composer-options:focus-visible,
+.ch-composer-attach:focus-visible {
+  outline: 2px solid var(--sol-blue);
+  outline-offset: 2px;
+}
+
+.ch-composer-menu {
+  width: 300px;
+  max-width: calc(100vw - 24px);
+  padding: 14px;
+  border-color: var(--sol-border);
+  background: var(--sol-card);
+  color: var(--sol-text);
+}
+
+.ch-composer-menu-heading {
+  display: block;
+  margin-bottom: 10px;
+  color: var(--sol-text-dim);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.ch-composer-delivery {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 50%, transparent);
+}
+
+.ch-composer-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.ch-composer-choice input,
+.ch-composer-choice svg {
+  flex-shrink: 0;
+  accent-color: var(--sol-cyan);
+}
+
+.ch-composer-choice span {
+  overflow-wrap: anywhere;
+}
+
+.ch-composer-shortcuts > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 28px;
+  color: var(--sol-text-muted);
+  font-size: 11px;
+}
+
+.ch-composer-shortcuts > div > span:last-child {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.ch-composer [data-sv-composer] form > div {
+  background: transparent;
+}
+
+/* The composer is the app's own MessageInput (see ChatComposer). It is built to
+ * FLOAT over a conversation, so it brings two things that are wrong for a
+ * composer sitting in a block below the list:
+ *
+ *   - a 64px gradient scrim pulled up over the content behind it. In a chat it
+ *     lands squarely on the newest message and greys out the one line the reader
+ *     most wants — which is exactly how it read before this rule.
+ *   - its own page background and bottom padding, which paint over the card the
+ *     composer is framed in.
+ *
+ * Both are cancelled here rather than in MessageInput: every other surface still
+ * wants the floating behaviour. */
+.ch-composer [data-sv-composer] > .bg-gradient-to-t {
+  display: none;
+}
+
+/* The frame owns the inset. MessageInput's own box is full-bleed, which is right
+ * when it floats over a conversation and wrong here: it sat flush against this
+ * card's border while every control in the foot row was inset 8px. Padding the
+ * wrapper lines the text field up with them and gives it room to breathe at the
+ * top. */
+.ch-composer [data-sv-composer] > .pointer-events-auto {
+  padding: 6px 8px 0;
+  background: transparent;
+}
+
+/* Framed inside another surface (palette confirm, huddle rail): no page
+ * margins, and MessageInput's sticky / pointer-events-none float is cancelled
+ * so the box is a normal block. */
+.ch-composer-flush {
+  margin: 0;
+}
+.ch-composer-flush [data-sv-composer] {
+  position: static;
+  pointer-events: auto;
+}
+.ch-composer-flush [role="listbox"] {
+  z-index: 50;
+}
+
+/* ── Thread panel ────────────────────────────────────────────────────────── */
+
+.ch-thread {
+  position: relative;
+  width: var(--ch-thread-w, 384px);
+  flex: 0 0 var(--ch-thread-w, 384px);
+  /* No CSS cap: the drag handle (ChatThreadPanel) bounds the width against the
+   * shell so the transcript keeps a readable column, and a saved width wider
+   * than this window is clamped the moment it is dragged. A percentage here
+   * once fought the drag — the panel stopped at a third of the surface with
+   * nothing to say why. */
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid color-mix(in srgb, var(--sol-border) 32%, transparent);
+  background: color-mix(in srgb, var(--sol-bg-alt) 22%, var(--sol-bg));
+}
+
+/* A message whose tools popover (the menu, the emoji picker) is open must
+ * paint over the rows below it. Every virtual row is transformed, so each is
+ * its own stacking context and a z-index inside one cannot escape it: the
+ * menu's own z-index only ordered it against its siblings in the same row,
+ * and the next row's text painted straight over "Copy link". Raising the ROW
+ * is what orders it against the other rows. The thread root is a row too. */
+.ch-list-sizer > [data-vkey]:has(.ch-tools-open) {
+  z-index: 5;
+}
+
+.ch-thread-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 9px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+
+.ch-thread-heading {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Only the full-surface thread (narrow shell) goes BACK; the side panel closes. */
+.ch-thread-back {
+  display: none;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-left: -6px;
+  border-radius: 5px;
+  color: var(--sol-text-muted);
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.ch-thread-back:hover {
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-thread-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-thread-sub {
+  font-size: 10.5px;
+  color: var(--sol-text-muted);
+}
+
+.ch-thread-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 0 6px;
+}
+
+/* The root message of a thread reads as the subject of the panel, so it gets a
+ * rule under it and the replies hang below. */
+.ch-thread-root {
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 26%, transparent);
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+}
+
+.ch-thread-replies-label {
+  padding: 0 16px 4px var(--ch-gutter);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--sol-text-muted);
+}
+
+/* ── Toast ───────────────────────────────────────────────────────────────── */
+
+.ch-toast {
+  display: flex;
+  gap: 9px;
+  width: 348px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 44%, transparent);
+  border-radius: 8px;
+  background: var(--sol-card);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--sol-text) 16%, transparent);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 130ms ease, transform 130ms ease;
+}
+
+.ch-toast:hover {
+  border-color: color-mix(in srgb, var(--sol-blue) 45%, transparent);
+}
+
+/* Loud: someone is addressing you. The accent edge is the whole difference
+ * between "the room is talking" and "this one is about you". */
+.ch-toast-loud {
+  box-shadow:
+    inset 3px 0 0 var(--sol-orange),
+    0 6px 20px color-mix(in srgb, var(--sol-text) 16%, transparent);
+  padding-left: 13px;
+}
+
+/* Actions appear on hover only. A toast that always shows two buttons reads as a
+ * dialog and invites a click it does not need. */
+.ch-toast-actions {
+  display: flex;
+  align-self: flex-start;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity 110ms ease;
+}
+
+.ch-toast:hover .ch-toast-actions,
+.ch-toast:focus-within .ch-toast-actions {
+  opacity: 1;
+}
+
+.ch-toast-action {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 4px;
+  color: var(--sol-text-muted);
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.ch-toast-action:hover {
+  background: color-mix(in srgb, var(--sol-border) 24%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-toast-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ch-toast-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.ch-toast-author {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-toast-where {
+  font-size: 10.5px;
+  color: var(--sol-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Two lines of preview, then clip. Enough to decide whether to switch context,
+ * not so much that the toast becomes the message. */
+.ch-toast-preview {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--sol-text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.ch-toast-count {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--sol-blue);
+}
+
+/* ── Empty + skeleton ────────────────────────────────────────────────────── */
+
+.ch-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 32px;
+  text-align: center;
+}
+
+.ch-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sol-text-secondary);
+}
+
+.ch-empty-sub {
+  font-size: 11.5px;
+  color: var(--sol-text-muted);
+  max-width: 320px;
+  line-height: 1.55;
+}
+
+
+/* ── Narrow windows ──────────────────────────────────────────────────────────
+ *
+ * Three fixed columns is a 1500px design. A 13" laptop, or any split window, is
+ * the common case — so once the surface itself is under 940px the rail collapses
+ * to an icon strip (the channels are still one click away, and unread still
+ * shows), and under 860px the thread panel stops being a column and takes the
+ * whole surface, with a back button to the channel: two columns at that width
+ * left neither readable. Container queries, so the app sidebar's 240px is already subtracted:
+ * a 1180px window with the sidebar open is a 940px surface. */
+
+@container ch-shell (max-width: 940px) {
+  .ch-rail {
+    width: 44px;
+    flex: 0 0 44px;
+  }
+
+  .ch-rail-head {
+    justify-content: center;
+    padding: 10px 0 8px;
+  }
+
+  .ch-rail-title,
+  .ch-chan-name,
+  .ch-chan-slack {
+    display: none;
+  }
+
+  .ch-rail-list {
+    padding: 0 4px 12px;
+  }
+
+  .ch-chan {
+    justify-content: center;
+    gap: 0;
+    padding: 4px 0;
+    position: relative;
+  }
+
+  /* A channel is its monogram here, not a hash: a column of hashes says
+   * "channels", a column of lettered tiles says WHICH. The hue is the one the
+   * name gets everywhere (lib/avatarInitials), so a channel's tile matches
+   * its colour in every other surface. A DM keeps its face, which already is
+   * a monogram. */
+  .ch-chan-hash:has(.lucide-hash),
+  .ch-chan-hash:has(.lucide-lock),
+  .ch-chan-hash:has(.lucide-bot) {
+    display: none;
+  }
+
+  .ch-chan-mono {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 7px;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    color: #fff;
+    opacity: 0.72;
+    transition: opacity 110ms ease, box-shadow 110ms ease;
+  }
+
+  .ch-chan-unread .ch-chan-mono,
+  .ch-chan:hover .ch-chan-mono {
+    opacity: 1;
+  }
+
+  .ch-chan-active .ch-chan-mono {
+    opacity: 1;
+    box-shadow: 0 0 0 2px var(--sol-bg), 0 0 0 3.5px var(--sol-blue);
+  }
+
+  .ch-chan-muted .ch-chan-mono {
+    opacity: 0.4;
+  }
+
+  .ch-chan-mono-lock {
+    position: absolute;
+    right: -4px;
+    bottom: -4px;
+    width: 12px;
+    height: 12px;
+    padding: 2px;
+    border-radius: 50%;
+    background: var(--sol-bg);
+    color: var(--sol-text-muted);
+  }
+
+  /* A DM's face grows to the tile's size so the two columns read as one. */
+  .ch-chan-hash .cc-cmt-avatar {
+    width: 24px !important;
+    height: 24px !important;
+    font-size: 10px !important;
+  }
+
+  /* A live room has no space for the chip; the tile wears a violet ring and
+   * the tooltip says the word. */
+  .ch-chan-occ {
+    display: none;
+  }
+
+  .ch-chan-live .ch-chan-mono,
+  .ch-chan-live .ch-chan-hash .cc-cmt-avatar {
+    box-shadow: 0 0 0 2px var(--sol-bg), 0 0 0 3.5px var(--sol-violet);
+  }
+
+  /* The count would not fit beside the tile, so it rides the corner. */
+  .ch-chan-badge {
+    position: absolute;
+    top: 1px;
+    right: 2px;
+    min-width: 13px;
+    height: 13px;
+    font-size: 8.5px;
+    line-height: 13px;
+    box-shadow: 0 0 0 1.5px var(--sol-bg);
+  }
+
+  .ch-chan-dot {
+    position: absolute;
+    top: 4px;
+    right: 5px;
+  }
+
+  .ch-chan-muted svg[aria-label="Muted"] {
+    display: none;
+  }
+}
+
+/* ── Rail tooltip ─────────────────────────────────────────────────────────────
+ *
+ * The row's voice when the pointer rests on it: name, topic, one state. In the
+ * narrow strip this is the only place the name appears at all. */
+
+.ch-rail-tip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 240px;
+  padding: 6px 9px;
+  border-radius: 7px;
+  background: var(--sol-card);
+  color: var(--sol-text);
+  border: 1px solid color-mix(in srgb, var(--sol-border) 50%, transparent);
+  box-shadow: 0 8px 24px -8px rgba(0, 0, 0, 0.35), 0 2px 6px rgba(0, 0, 0, 0.1);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ch-rail-tip-title {
+  font-weight: 600;
+}
+
+.ch-rail-tip-detail {
+  color: var(--sol-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-rail-tip-state {
+  font-size: 10.5px;
+  color: var(--sol-text-dim);
+}
+
+
+/* Phone-width header: the chords and the huddle label go before the words
+ * that say who is here. (HuddleButton takes `compact` from the page for the
+ * same width; the search pill sheds its keycaps here.) */
+@container ch-shell (max-width: 600px) {
+  .ch-search-keys {
+    display: none;
+  }
+}
+
+@container ch-shell (max-width: 860px) {
+  .ch-thread {
+    position: absolute;
+    inset: 0;
+    z-index: 6;
+    width: auto;
+    flex: none;
+    border-left: 0;
+    background: var(--sol-bg);
+  }
+
+  .ch-thread .edge-resize,
+  .ch-thread-close {
+    display: none;
+  }
+
+  .ch-thread-back {
+    display: grid;
+  }
+
+  /* The channel column under a full-surface thread keeps its own z-indexes to
+   * itself: its composer is sticky at z-10, above the thread's 6, and its
+   * placeholder painted through the reply box. */
+  .ch-shell:has(> .ch-thread) .ch-main {
+    isolation: isolate;
+  }
+}
+
+/* ── Skeleton ────────────────────────────────────────────────────────────────
+ *
+ * A first load has a shape. Without one, a slow channel and a channel whose
+ * query failed both render as the same blank rectangle — and the empty state,
+ * which only belongs to a channel that really is empty, never appears. */
+
+.ch-skeleton {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 14px;
+  padding: 16px 16px 12px 0;
+}
+
+.ch-skel-row {
+  display: grid;
+  grid-template-columns: var(--ch-gutter) 1fr;
+  align-items: start;
+}
+
+.ch-skel-avatar {
+  justify-self: end;
+  margin-right: 8px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--sol-border) 34%, transparent);
+  animation: ch-pulse 1.6s ease-in-out infinite;
+}
+
+.ch-skel-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ch-skel-line {
+  height: 9px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sol-border) 28%, transparent);
+  animation: ch-pulse 1.6s ease-in-out infinite;
+}
+
+.ch-skel-head {
+  width: 118px;
+  height: 8px;
+  background: color-mix(in srgb, var(--sol-border) 40%, transparent);
+}
+
+@keyframes ch-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-skel-avatar, .ch-skel-line { animation: none; }
+}
+
+/* ── Empty state extras ──────────────────────────────────────────────────── */
+
+.ch-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 2px;
+  border-radius: 50%;
+}
+
+.ch-empty-bad {
+  background: color-mix(in srgb, var(--sol-red) 14%, transparent);
+  color: var(--sol-red);
+}
+
+.ch-empty-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-blue) 45%, transparent);
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sol-blue);
+  transition: background 110ms ease;
+}
+
+.ch-empty-action:hover {
+  background: color-mix(in srgb, var(--sol-blue) 12%, transparent);
+}
+
+/* ── Popovers: reaction picker, message menu, notification level ─────────── */
+
+/* The toolbar disappears on mouse-out, so it has to stay up while one of its
+ * own popovers is open. */
+.ch-msg:hover .ch-tools,
+.ch-msg:focus-within .ch-tools,
+.ch-tools-open {
+  display: flex;
+}
+
+.ch-emoji-picker,
+.ch-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 8;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent);
+  border-radius: 7px;
+  background: var(--sol-card);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--sol-text) 20%, transparent);
+}
+
+.ch-emoji-picker {
+  display: flex;
+  gap: 1px;
+}
+
+.ch-emoji-picker-item {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 24px;
+  border-radius: 5px;
+  font-size: 14px;
+  line-height: 1;
+  transition: background 100ms ease, transform 100ms ease;
+}
+
+.ch-emoji-picker-item:hover {
+  background: color-mix(in srgb, var(--sol-blue) 16%, transparent);
+  transform: translateY(-1px);
+}
+
+.ch-menu {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+
+.ch-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 8px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--sol-text-secondary);
+  text-align: left;
+  transition: background 100ms ease, color 100ms ease;
+}
+
+.ch-menu-item:hover {
+  background: color-mix(in srgb, var(--sol-border) 22%, transparent);
+  color: var(--sol-text);
+}
+
+.ch-menu-danger {
+  color: var(--sol-red);
+}
+
+.ch-menu-danger:hover {
+  background: color-mix(in srgb, var(--sol-red) 12%, transparent);
+  color: var(--sol-red);
+}
+
+.ch-notify {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+/* A click anywhere else closes the menu without the menu itself having to know
+ * about the document. */
+.ch-notify-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 7;
+}
+
+.ch-notify-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  min-width: 190px;
+  padding: 3px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent);
+  border-radius: 7px;
+  background: var(--sol-card);
+  box-shadow: 0 6px 20px color-mix(in srgb, var(--sol-text) 20%, transparent);
+}
+
+.ch-notify-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  border-radius: 5px;
+  text-align: left;
+  transition: background 100ms ease;
+}
+
+.ch-notify-item:hover {
+  background: color-mix(in srgb, var(--sol-border) 22%, transparent);
+}
+
+.ch-notify-label {
+  font-size: 11.5px;
+  color: var(--sol-text-secondary);
+}
+
+.ch-notify-hint {
+  font-size: 10px;
+  color: var(--sol-text-muted);
+}
+
+.ch-notify-on .ch-notify-label {
+  font-weight: 600;
+  color: var(--sol-blue);
+}
+
+/* ── Editing in place ────────────────────────────────────────────────────── */
+
+.ch-edit {
+  margin: 2px 0 4px;
+}
+
+.ch-edit-box {
+  width: 100%;
+  max-width: 78ch;
+  padding: 6px 8px;
+  border: 1px solid color-mix(in srgb, var(--sol-blue) 45%, transparent);
+  border-radius: 6px;
+  background: var(--sol-card);
+  color: var(--sol-text);
+  font-size: 13px;
+  line-height: 1.55;
+  font-family: inherit;
+  resize: vertical;
+}
+
+.ch-edit-box:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-blue) 11%, transparent);
+}
+
+.ch-edit-foot {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.ch-edit-save {
+  font-weight: 600;
+  color: var(--sol-blue);
+}
+
+.ch-edit-cancel {
+  color: var(--sol-text-muted);
+}
+
+/* ── Channel management menu (ChannelMenu.tsx) ──────────────────────────── */
+
+
+
+
+
+
+.ch-channel-menu-edit {
+  display: flex;
+  gap: 5px;
+  padding: 5px 6px;
+}
+
+.ch-channel-menu-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 4px 7px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 5px;
+  background: var(--sol-bg);
+  color: var(--sol-text);
+  font-size: 12px;
+}
+
+.ch-channel-menu-input:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--sol-blue) 60%, transparent);
+}
+
+.ch-channel-menu-save {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 5px;
+  background: var(--sol-blue);
+  color: var(--sol-bg);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+/* The rename/topic editor the menu hands off to (ChannelFieldEditor). */
+.ch-channel-edit {
+  position: fixed;
+  z-index: 60;
+  width: 280px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent);
+  border-radius: 10px;
+  background: var(--sol-card);
+  box-shadow: 0 8px 28px color-mix(in srgb, var(--sol-text) 20%, transparent);
+}
+
+.ch-channel-edit-label {
+  padding: 0 2px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--sol-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── Typing indicator ────────────────────────────────────────────────────── */
+
+/* Lives in the composer foot, opposite the keyboard hints, so its appearance
+ * never moves the message list: the row's height is already spent. */
+
+.ch-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 10px;
+  color: var(--sol-text-muted);
+  animation: ch-typing-in 160ms ease-out;
+}
+
+.ch-typing-avatars {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Overlap the stack; each face keeps a bg-colored ring so the overlap reads
+ * as depth instead of a smudge. */
+.ch-typing-avatars > * {
+  margin-left: -5px;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 1.5px var(--sol-bg);
+}
+
+.ch-typing-avatars > *:first-child {
+  margin-left: 0;
+}
+
+.ch-typing-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ch-typing-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2.5px;
+  padding-top: 1px;
+}
+
+.ch-typing-dots > span {
+  width: 3px;
+  height: 3px;
+  border-radius: 9999px;
+  background: currentColor;
+  animation: ch-typing-dot 1.2s ease-in-out infinite;
+}
+
+.ch-typing-dots > span:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.ch-typing-dots > span:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+@keyframes ch-typing-dot {
+  0%, 60%, 100% {
+    opacity: 0.35;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-2px);
+  }
+}
+
+@keyframes ch-typing-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-typing {
+    animation: none;
+  }
+  .ch-typing-dots > span {
+    animation: none;
+    opacity: 0.7;
+  }
+}
+
+/* ── People: DM header, members popover, teammate picker ─────────────────── */
+
+/* Centered, not the name row's baseline: the faces carry no text, so on a
+ * baseline their bottom edge sits on the name's baseline and they ride high. */
+.ch-head-dm {
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.ch-dm-faces {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Overlapped faces, each ringed by the header's own background so the stack
+ * reads as one group rather than three touching circles. */
+.ch-dm-face {
+  display: inline-flex;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sol-bg-alt) 28%, var(--sol-bg));
+}
+.ch-dm-face + .ch-dm-face { margin-left: -6px; }
+
+.ch-dm-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--sol-text-muted);
+}
+
+/* Sizes to its faces — .ch-tool's fixed 24px would spill the pile over the
+ * next control in the header. */
+.ch-members-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  height: 22px;
+  padding: 0 8px 0 4px;
+  flex: 0 0 auto;
+}
+
+.ch-members-count {
+  font-size: 11px;
+  color: var(--sol-text-muted);
+}
+
+.ch-people-pop {
+  width: 264px;
+  padding: 8px;
+}
+
+.ch-people-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sol-text-dim);
+}
+
+.ch-people-list {
+  max-height: 264px;
+  overflow-y: auto;
+}
+
+.ch-people-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--sol-text);
+  text-align: left;
+}
+.ch-people-row:hover { background: color-mix(in srgb, var(--sol-text) 5%, transparent); }
+
+.ch-people-name { flex: 1 1 auto; min-width: 0; }
+.ch-people-you { color: var(--sol-text-dim); }
+
+.ch-people-remove {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 5px;
+  color: var(--sol-text-dim);
+  opacity: 0;
+  transition: opacity 120ms, color 120ms;
+}
+.ch-people-row:hover .ch-people-remove { opacity: 1; }
+.ch-people-remove:hover { color: var(--sol-red); }
+
+.ch-people-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  color: var(--sol-text-muted);
+}
+.ch-people-add:hover {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 5%, transparent);
+}
+
+/* Roles and sessions inside a room (ChannelAgents.tsx). */
+.ch-people-actions { display: flex; gap: 2px; }
+.ch-people-actions .ch-people-add { width: auto; flex: 1 1 0; }
+.ch-agents-head { display: flex; align-items: center; gap: 5px; }
+.ch-agents-head .ch-roster-count { margin-left: auto; }
+.ch-agent-sub {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--sol-text-dim);
+}
+.ch-members-agents {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 4px;
+  font-size: 11px;
+  color: var(--sol-violet);
+}
+
+/* ── Roster: one row per person, one mark per side ─────────────────────────
+ * The marks sit in fixed-width columns so "here" and the Slack mark line up
+ * down the list and under their column labels. */
+.ch-roster-pop-wide { width: 312px; }
+
+.ch-roster-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.ch-roster-head .ch-people-title { padding-right: 0; }
+.ch-roster-count {
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--sol-text-muted);
+}
+.ch-roster-cols {
+  display: inline-flex;
+  gap: 4px;
+  padding: 0 6px 8px 0;
+}
+.ch-roster-col {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--sol-text-dim);
+}
+
+.ch-roster-note {
+  margin: -2px 6px 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--sol-text-dim);
+}
+
+.ch-roster-search { margin: 0 0 6px; }
+
+.ch-roster-row { gap: 4px; }
+.ch-roster-row > :first-child { margin-right: 4px; }
+.ch-roster-row .ch-people-name { margin-right: 4px; }
+
+.ch-roster-mark {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 22px;
+  height: 20px;
+  border-radius: 5px;
+  font-size: 11px;
+  color: var(--sol-text-dim);
+}
+.ch-roster-mark-in {
+  color: var(--sol-cyan);
+  background: color-mix(in srgb, var(--sol-cyan) 12%, transparent);
+}
+.ch-roster-mark-slack.ch-roster-mark-in {
+  color: var(--sol-magenta);
+  background: color-mix(in srgb, var(--sol-magenta) 12%, transparent);
+}
+.ch-roster-mark-team {
+  color: color-mix(in srgb, var(--sol-cyan) 55%, var(--sol-text-dim));
+}
+.ch-roster-mark-none { opacity: 0.45; }
+.ch-roster-mark-out {
+  border: 1px dashed color-mix(in srgb, var(--sol-border) 80%, transparent);
+}
+.ch-roster-mark-btn {
+  cursor: pointer;
+  transition: color 120ms, background 120ms, border-color 120ms;
+}
+.ch-roster-mark-btn.ch-roster-mark-out:hover {
+  color: var(--sol-text);
+  border-color: var(--sol-cyan);
+  border-style: solid;
+}
+.ch-roster-mark-slack.ch-roster-mark-btn.ch-roster-mark-out:hover { border-color: var(--sol-magenta); }
+
+/* An "in" mark that can be undone becomes its own undo on hover. */
+.ch-roster-mark-off { display: none; }
+.ch-roster-mark-btn.ch-roster-mark-in:hover {
+  color: var(--sol-red);
+  background: color-mix(in srgb, var(--sol-red) 12%, transparent);
+}
+.ch-roster-mark-btn.ch-roster-mark-in:hover .ch-roster-mark-on { display: none; }
+.ch-roster-mark-btn.ch-roster-mark-in:hover .ch-roster-mark-off { display: inline; }
+
+.ch-roster-divider {
+  margin: 8px 6px 2px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 50%, transparent);
+  font-size: 10.5px;
+  color: var(--sol-text-dim);
+}
+.ch-roster-candidate .ch-people-name { color: var(--sol-text-muted); }
+.ch-roster-add {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  color: var(--sol-cyan);
+  opacity: 0;
+  transition: opacity 120ms, background 120ms;
+}
+.ch-roster-candidate:hover .ch-roster-add,
+.ch-roster-add:focus-visible { opacity: 1; }
+.ch-roster-add:hover { background: color-mix(in srgb, var(--sol-cyan) 12%, transparent); }
+
+.ch-roster-err {
+  margin: 6px 6px 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--sol-red);
+}
+.ch-roster-err-inline { color: var(--sol-red); }
+
+.ch-roster-reconnect {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--sol-text-muted);
+  background: color-mix(in srgb, var(--sol-magenta) 7%, transparent);
+}
+.ch-roster-reconnect svg { margin-top: 2px; }
+.ch-roster-reconnect-btn {
+  flex: 0 0 auto;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--sol-bg);
+  background: var(--sol-magenta);
+}
+.ch-roster-reconnect-btn:disabled { opacity: 0.5; }
+
+.ch-picker { margin-top: 4px; }
+
+.ch-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sol-text) 3%, transparent);
+}
+.ch-picker-search input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12.5px;
+  color: var(--sol-text);
+}
+
+.ch-picker-list {
+  max-height: 216px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
+.ch-picker-on { background: color-mix(in srgb, var(--sol-cyan) 8%, transparent); }
+.ch-picker-on:hover { background: color-mix(in srgb, var(--sol-cyan) 12%, transparent); }
+
+.ch-picker-empty {
+  padding: 12px 6px;
+  font-size: 12px;
+  color: var(--sol-text-dim);
+  text-align: center;
+}
+
+.ch-picker-go {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sol-bg);
+  background: var(--sol-cyan);
+  transition: opacity 120ms;
+}
+.ch-picker-go:disabled { opacity: 0.35; cursor: default; }
+.ch-picker-go:not(:disabled):hover { opacity: 0.9; }
+
+.ch-rail-head-dms {
+  margin-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 26%, transparent);
+  padding-top: 10px;
+}
+
+.ch-rail-empty-dms {
+  padding: 4px 12px 8px;
+  font-size: 11px;
+  color: var(--sol-text-dim);
+}
+
+.ch-composer-attach {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  padding: 3px 5px;
+  margin-right: 2px;
+  border-radius: 6px;
+  color: var(--sol-text-dim);
+  transition: color 120ms, background 120ms;
+}
+.ch-composer-attach:hover {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+}
+
+/* ── Drop target ─────────────────────────────────────────────────────────── */
+
+.ch-main { position: relative; }
+
+.ch-drop-overlay {
+  position: absolute;
+  inset: 6px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px dashed color-mix(in srgb, var(--sol-cyan) 55%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--sol-cyan) 7%, transparent);
+  pointer-events: none;
+}
+
+.ch-drop-card {
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--sol-cyan);
+  background: color-mix(in srgb, var(--sol-bg) 88%, var(--sol-cyan));
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.18);
+}
+
+/* ── Attachments ─────────────────────────────────────────────────────────── */
+
+.ch-atts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.ch-att {
+  display: block;
+  max-width: min(420px, 100%);
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent);
+  background: color-mix(in srgb, var(--sol-text) 3%, transparent);
+  cursor: zoom-in;
+  transition: border-color 120ms, transform 120ms;
+}
+.ch-att:hover { border-color: color-mix(in srgb, var(--sol-cyan) 45%, transparent); }
+.ch-att img {
+  display: block;
+  max-width: 100%;
+  max-height: 340px;
+  object-fit: contain;
+}
+
+/* Several images tile as squares so four screenshots read as a contact sheet
+ * rather than a jumbo scroll. */
+.ch-atts-grid .ch-att {
+  width: 168px;
+  height: 168px;
+}
+.ch-atts-grid .ch-att img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ch-att-video {
+  max-height: 340px;
+  cursor: default;
+  background: #000;
+}
+
+.ch-att-loading {
+  display: block;
+  width: 168px;
+  height: 120px;
+  background: linear-gradient(100deg,
+    color-mix(in srgb, var(--sol-text) 4%, transparent) 40%,
+    color-mix(in srgb, var(--sol-text) 8%, transparent) 50%,
+    color-mix(in srgb, var(--sol-text) 4%, transparent) 60%);
+  background-size: 200% 100%;
+  animation: ch-att-shimmer 1.4s infinite;
+}
+@keyframes ch-att-shimmer { to { background-position: -200% 0; } }
+
+/* Sent before its upload finished: the local preview, dimmed under a ring. */
+.ch-att-uploading {
+  position: relative;
+  cursor: default;
+}
+.ch-att-uploading img { opacity: 0.55; }
+.ch-att-spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 22px;
+  height: 22px;
+  margin: -11px 0 0 -11px;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--sol-text) 18%, transparent);
+  border-top-color: var(--sol-text);
+  animation: ch-att-spin 0.8s linear infinite;
+}
+@keyframes ch-att-spin { to { transform: rotate(360deg); } }
+
+.ch-att-missing {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px dashed color-mix(in srgb, var(--sol-border) 60%, transparent);
+  font-size: 11.5px;
+  color: var(--sol-text-dim);
+}
+
+/* ── Chat modal shell (new message, search) ──────────────────────────────── */
+
+/* One overlay for every chat dialog. Size and top offset are custom
+ * properties so a surface changes two numbers, not the shell. */
+.ch-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: var(--ch-modal-top, 12vh);
+  background: color-mix(in srgb, black 55%, transparent);
+  backdrop-filter: blur(3px);
+  animation: ch-modal-fade 140ms ease;
+}
+
+.ch-modal {
+  width: min(var(--ch-modal-w, 520px), calc(100vw - 32px));
+  max-height: var(--ch-modal-h, 70vh);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--sol-border);
+  border-radius: 14px;
+  background: var(--sol-bg);
+  box-shadow: 0 18px 60px color-mix(in srgb, black 45%, transparent);
+  animation: ch-modal-rise 160ms cubic-bezier(0.2, 0.9, 0.3, 1);
+}
+
+@keyframes ch-modal-fade { from { opacity: 0; } }
+@keyframes ch-modal-rise { from { opacity: 0; transform: translateY(10px) scale(0.985); } }
+
+.ch-modal-close {
+  display: inline-flex;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--sol-text-dim);
+}
+.ch-modal-close:hover { color: var(--sol-text); background: color-mix(in srgb, var(--sol-text) 7%, transparent); }
+
+/* The keyboard cursor's row, in any chat list. */
+.ch-row-hot { background: color-mix(in srgb, var(--sol-cyan) 10%, transparent); }
+
+/* Small uppercase eyebrow over a group of rows. A room NAME inside one keeps
+ * its case: a slug or a person's name shouted in caps reads as a different word. */
+.ch-eyebrow {
+  padding: 8px 8px 3px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sol-text-dim);
+}
+.ch-eyebrow-name { text-transform: none; letter-spacing: 0; }
+
+/* Key legend at the foot of a chat dialog — the palette's, verbatim. */
+.ch-modal-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent);
+  font-size: 10px;
+  color: var(--sol-text-dim);
+}
+.ch-modal-legend span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ── New message modal ───────────────────────────────────────────────────── */
+
+.ch-nm-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.ch-nm-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--sol-text);
+}
+
+.ch-nm-to {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: 0 12px;
+  padding: 7px 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 80%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--sol-text) 3%, transparent);
+  cursor: text;
+}
+.ch-nm-to:focus-within {
+  border-color: color-mix(in srgb, var(--sol-cyan) 55%, var(--sol-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--sol-cyan) 14%, transparent);
+}
+
+.ch-nm-to-label {
+  font-size: 12px;
+  color: var(--sol-text-dim);
+  margin-right: 2px;
+}
+
+.ch-nm-to input {
+  flex: 1 1 160px;
+  min-width: 150px;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 13px;
+  color: var(--sol-text);
+  padding: 2px 0;
+}
+
+.ch-nm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 3px;
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--sol-cyan) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sol-cyan) 30%, transparent);
+}
+.ch-nm-chip button {
+  display: inline-flex;
+  padding: 1px;
+  border-radius: 999px;
+  color: var(--sol-text-dim);
+}
+.ch-nm-chip button:hover { color: var(--sol-red); }
+
+.ch-nm-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 8px;
+}
+
+.ch-nm-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--sol-text);
+  text-align: left;
+}
+
+.ch-nm-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-weight: 500;
+}
+
+.ch-nm-sub {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 11.5px;
+  color: var(--sol-text-dim);
+}
+
+.ch-nm-hash {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  color: var(--sol-text-muted);
+  background: color-mix(in srgb, var(--sol-text) 6%, transparent);
+}
+
+.ch-nm-go-icon { color: var(--sol-text-dim); flex-shrink: 0; }
+
+.ch-nm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 18px 10px;
+  font-size: 12.5px;
+  color: var(--sol-text-dim);
+  text-align: center;
+}
+.ch-nm-empty-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  border-radius: 7px;
+  font-size: 12px;
+  color: var(--sol-text-muted);
+}
+.ch-nm-empty-action:hover { color: var(--sol-text); border-color: var(--sol-border); }
+
+.ch-nm-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 12px;
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent);
+}
+
+.ch-nm-start {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sol-bg);
+  background: var(--sol-cyan);
+  transition: opacity 120ms;
+}
+.ch-nm-start:disabled { opacity: 0.35; cursor: default; }
+.ch-nm-start kbd { margin-left: 2px; }
+.ch-nm-start:not(:disabled):hover { opacity: 0.9; }
+
+.ch-nm-alt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--sol-text-muted);
+}
+.ch-nm-alt:hover { color: var(--sol-text); }
+
+/* ── Suggested DMs (teammates without an open room) ──────────────────────── */
+
+.ch-chan-suggest { opacity: 0.62; }
+.ch-chan-suggest:hover { opacity: 1; }
+
+.ch-chan-suggest .ch-chan-name { font-weight: 400; }
+
+/* ── Chat search ─────────────────────────────────────────────────────────── */
+
+.ch-search-overlay { --ch-modal-top: 9vh; }
+.ch-search { --ch-modal-w: 680px; --ch-modal-h: 74vh; }
+
+.ch-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent);
+}
+
+.ch-search-bar-icon { color: var(--sol-text-muted); flex-shrink: 0; }
+
+.ch-search-bar input {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 14px;
+  color: var(--sol-text);
+}
+.ch-search-bar input::placeholder { color: var(--sol-text-dim); }
+
+.ch-search-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 0;
+}
+
+.ch-search-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--sol-text-muted);
+  border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+button.ch-search-chip:hover { color: var(--sol-text); }
+
+.ch-search-chip-on {
+  color: var(--sol-cyan);
+  border-color: color-mix(in srgb, var(--sol-cyan) 45%, transparent);
+  background: color-mix(in srgb, var(--sol-cyan) 10%, transparent);
+}
+
+.ch-search-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--sol-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-search-list {
+  flex: 1 1 auto;
+  min-height: 120px;
+  overflow-y: auto;
+  padding: 8px 8px 10px;
+}
+
+.ch-search-hint {
+  padding: 26px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--sol-text-muted);
+}
+.ch-search-hint-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--sol-text-dim);
+}
+.ch-search-hint code {
+  font-size: 10.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--sol-text) 7%, transparent);
+}
+
+/* Rows sit where real hits sit: 22px avatar and body at the hit's offsets. */
+.ch-search-skel {
+  --ch-gutter: 31px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 10px 8px;
+}
+
+.ch-search-group { margin-bottom: 6px; }
+
+.ch-search-room {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ch-search-hit {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  text-align: left;
+}
+
+.ch-search-hit-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ch-search-hit-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ch-search-hit-author {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.ch-search-hit-time {
+  font-size: 10.5px;
+  color: var(--sol-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.ch-search-hit-thread {
+  font-size: 10px;
+  color: var(--sol-text-dim);
+  border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+
+.ch-search-hit-snippet {
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--sol-text-muted);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.ch-search-hit-go {
+  color: var(--sol-text-dim);
+  opacity: 0;
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+.ch-row-hot .ch-search-hit-go { opacity: 1; }
+
+/* The header affordance: a quiet pill that reads as "this surface is searchable". */
+.ch-search-open {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 6px;
+  height: 22px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 7px;
+  font-size: 11.5px;
+  color: var(--sol-text-dim);
+  transition: color 120ms, border-color 120ms;
+}
+.ch-search-open:hover {
+  color: var(--sol-text-muted);
+  border-color: color-mix(in srgb, var(--sol-border) 90%, transparent);
+}
+
+
+
+/* ── Walkie: voice messages ──────────────────────────────────────────────────
+ *
+ * A voice message is a message, so the transcript keeps the timeline's own type
+ * and colour and the audio control sits beside it as a small, quiet affordance.
+ * No waveform, no player chrome, no second visual language: the row should read
+ * as one more line in the conversation that happens to be playable.
+ */
+
+.ch-voice {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  max-width: 78ch;
+  padding: 3px 9px 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 80%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--sol-text) 3%, transparent);
+  font: inherit;
+  text-align: left;
+}
+
+.ch-voice-text {
+  font-size: 13px;
+  line-height: 1.58;
+  color: var(--sol-text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* "talking…" before the first word, "no words" for a burst the recognizer never
+ * heard. Dimmer than the transcript, because it is a state and not speech. */
+.ch-voice-waiting {
+  color: var(--sol-text-dim);
+  font-style: italic;
+}
+
+.ch-voice-clock {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--sol-text-dim);
+}
+
+/* The transcript and the playback line share a column, so the line sits under
+ * the words rather than beside them and the row keeps its single-line rhythm
+ * when nothing is playing. */
+.ch-voice-body {
+  min-width: 0;
+  flex: 1;
+  display: inline-block;
+}
+
+/* How far through the recording the playback has got. A hairline, drawn only
+ * for the bubble actually playing: this is the smallest thing that can answer
+ * "am I halfway through this or nearly done", and anything heavier would turn a
+ * message that happens to be playable into a media player. */
+.ch-voice-progress {
+  display: block;
+  margin-top: 4px;
+  height: 2px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--sol-text) 10%, transparent);
+  background-image: linear-gradient(
+    to right,
+    var(--walkie-rx) calc(var(--p) * 100%),
+    transparent calc(var(--p) * 100%)
+  );
+}
+
+/* The words are being recovered from the recording by the server, because the
+ * live recognizer came back with nothing. A wait, not a loss. */
+.ch-voice-spinner {
+  width: 11px;
+  height: 11px;
+  margin-right: 4px;
+  vertical-align: -1px;
+  display: inline-block;
+  animation: ch-voice-spin 900ms linear infinite;
+}
+
+@keyframes ch-voice-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-voice-spinner { animation: none; }
+}
+
+/* The walkie's cool accent, not the call's violet: playing a voice note is
+ * listening to somebody, which is the receiving direction, and a burst is not a
+ * huddle. Both directions of a LIVE burst are coloured by who is talking; a
+ * finished one has only the one direction left, into your ears. */
+.ch-voice-play,
+.ch-voice-noaudio {
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  color: var(--walkie-rx);
+  background: color-mix(in srgb, var(--walkie-rx) 14%, transparent);
+  transition: background 120ms, color 120ms;
+}
+
+.ch-voice-play:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--walkie-rx) 26%, transparent);
+}
+
+.ch-voice-play:disabled {
+  color: var(--sol-text-dim);
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+  cursor: default;
+}
+
+.ch-voice-play-on {
+  background: color-mix(in srgb, var(--walkie-rx) 26%, transparent);
+}
+
+.ch-voice-noaudio {
+  color: var(--sol-text-dim);
+  background: color-mix(in srgb, var(--sol-text) 8%, transparent);
+}
+
+/* A recording that arrived beside other files. Same control and same shape as a
+ * voice bubble — it IS one, just not the whole message — with the file's name
+ * where a transcript would be, because nobody transcribed it. */
+.ch-voice-att {
+  margin-top: 5px;
+}
+
+/* Live: a coloured edge marks the one bubble that is still being spoken, and
+ * the whole thing is a button because walking into the room is the point.
+ *
+ * WHICH colour is the direction — warm for your own voice going out, cool for a
+ * teammate's coming in, the two tokens every walkie surface shares. In a DM the
+ * two bubbles sit one above the other, so this is the cheapest way to tell at a
+ * glance which of them is you. */
+.ch-voice-live {
+  --dir: var(--walkie-rx);
+  border-color: color-mix(in srgb, var(--dir) 45%, transparent);
+  background: color-mix(in srgb, var(--dir) 8%, transparent);
+  transition: background 120ms, border-color 120ms;
+}
+
+.ch-voice-tx { --dir: var(--walkie-tx); }
+.ch-voice-rx { --dir: var(--walkie-rx); }
+
+.ch-voice-live:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--dir) 16%, transparent);
+}
+
+.ch-voice-live:disabled {
+  cursor: default;
+}
+
+.ch-voice-pulse {
+  align-self: center;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+/* The same breathing the anchor's "thinking" dots use, and for the same reason:
+ * it means words are still arriving. Reduced motion keeps the dot — it just
+ * stops moving, and the word beside it already carries the state. */
+.ch-voice-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dir, var(--walkie-rx));
+  animation: ch-voice-breathe 1.4s ease-in-out infinite;
+}
+
+@keyframes ch-voice-breathe {
+  0%, 100% { opacity: 0.35; transform: scale(0.82); }
+  45%      { opacity: 1;    transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ch-voice-dot { animation: none; opacity: 1; }
+}
+
+/* Where a visitor's composer would be (community page): reading is open,
+   posting needs an account. Same footprint as the composer so the room does
+   not jump when a sign in lands. */
+.ch-guest-post {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 0 16px 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--sol-border);
+  border-radius: 10px;
+  color: var(--sol-text-muted);
+  font-size: 13px;
+}
+.ch-guest-post-compact { margin: 0 12px 12px; padding: 10px 12px; }
+.ch-guest-post-text { flex: 1; min-width: 12em; }
+.ch-guest-post-alt { color: var(--sol-text-dim); text-decoration: underline; text-underline-offset: 3px; }
+.ch-guest-post-alt:hover { color: var(--sol-text); }
+
+/* ── Slack mirror ─────────────────────────────────────────────────────────────
+ * Every colour a --sol-* token, with two deliberate exceptions: the Slack mark
+ * itself keeps its four brand colours (components/SlackLogo, greyed for a paused
+ * or absent mirror), and the Add to Slack button keeps Slack's own purple
+ * because it opens Slack's own consent screen and must look unmistakably like
+ * Slack. Do not tokenise either. */
+
+/* Header pill. */
+.ch-head-slack {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  height: 22px;
+  padding: 0 7px 0 6px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--sol-text-muted);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+.ch-head-slack:hover {
+  color: var(--sol-text);
+  border-color: color-mix(in srgb, var(--sol-border) 90%, transparent);
+  background: color-mix(in srgb, var(--sol-bg-highlight) 60%, transparent);
+}
+.ch-head-slack-name {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ch-head-slack-name::before {
+  content: "#";
+  opacity: 0.55;
+  margin-right: 1px;
+}
+.ch-head-slack-quiet::before { content: none; }
+/* Mirrored: the pill is the mark and a dot, nothing to read twice. */
+.ch-head-slack-live, .ch-head-slack-paused, .ch-head-slack-error { padding: 0 6px; gap: 4px; }
+
+/* The Slack mark as a channel row's label. Sits after the name at the size of
+ * the row's other glyphs; hidden with the names in the narrow strip. */
+.ch-chan-slack { width: 10px; height: 10px; flex: 0 0 auto; }
+.ch-head-slack-none { border-style: dashed; color: var(--sol-text-dim); }
+.ch-head-slack-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--sol-green);
+}
+.ch-head-slack-glyph { width: 9px; height: 9px; color: var(--sol-text-dim); }
+.ch-head-slack-glyph-warn { color: var(--sol-orange); }
+
+/* Per-line glyph, beside the time; its title names it. */
+.ch-slack-mark {
+  display: inline-flex;
+  align-items: center;
+  align-self: center;
+  color: var(--sol-text-muted);
+}
+a.ch-slack-mark:hover { color: var(--sol-text); }
+.ch-slack-mark-local { color: var(--sol-text-dim); opacity: 0.8; }
+.ch-slack-chip {
+  border-color: color-mix(in srgb, var(--sol-text-muted) 45%, transparent);
+  color: var(--sol-text-muted);
+}
+/* A Slack app's face: the mark in a soft tile, avatar-sized. */
+.ch-slack-face {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--sol-bg-alt) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--sol-border) 50%, transparent);
+}
+
+/* Slack quotes and cards (attachments arrive as blockquotes). */
+.ch-msg-body blockquote {
+  margin: 4px 0;
+  padding: 2px 0 2px 10px;
+  border-left: 2px solid color-mix(in srgb, var(--sol-border) 90%, transparent);
+  color: var(--sol-text-secondary);
+}
+.ch-msg-body blockquote p { margin: 2px 0; }
+.ch-msg-body blockquote img { max-height: 200px; border-radius: 4px; }
+
+/* A quoted message (ChatQuote): the author's face, room and time over the
+   quoted words, opening the original. */
+.ch-msg-body blockquote.ch-quote {
+  margin: 6px 0;
+  padding: 7px 12px 8px;
+  border-left: 3px solid color-mix(in srgb, var(--sol-blue) 55%, transparent);
+  border-radius: 2px 8px 8px 2px;
+  background: color-mix(in srgb, var(--sol-bg-alt) 70%, transparent);
+  color: var(--sol-text);
+  font-style: normal;
+  max-width: 72ch;
+}
+.ch-quote-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-bottom: 3px;
+  text-decoration: none;
+  color: inherit;
+}
+.ch-quote-head:hover .ch-quote-author { text-decoration: underline; }
+.ch-quote-author { font-weight: 600; color: var(--sol-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ch-quote-meta { font-size: 11px; color: var(--sol-text-dim); white-space: nowrap; }
+.ch-quote-slack {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--sol-bg-alt) 80%, transparent);
+}
+.ch-quote-body { color: var(--sol-text-secondary); }
+.ch-quote-body p { margin: 2px 0; font-style: normal; }
+
+/* A Slack person named in a mirrored line (slackSync slackPersonHref): a
+   mention chip that opens the DM with them, or them in Slack. */
+.ch-msg-body a[href^="/chat?with="],
+.ch-msg-body a[href^="https://slack.com/app_redirect"] {
+  padding: 0 4px;
+  border-radius: 4px;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--sol-blue);
+  background: color-mix(in srgb, var(--sol-blue) 12%, transparent);
+}
+.ch-msg-body a[href^="/chat?with="]:hover,
+.ch-msg-body a[href^="https://slack.com/app_redirect"]:hover {
+  background: color-mix(in srgb, var(--sol-blue) 22%, transparent);
+}
+
+/* The dialog. */
+.ch-slack-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10001;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 9vh;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(3px);
+  animation: ch-slack-fade 140ms ease-out;
+}
+@keyframes ch-slack-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ch-slack-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.ch-slack-dialog {
+  width: min(560px, calc(100vw - 24px));
+  max-height: calc(100vh - 12vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--sol-bg);
+  border: 1px solid var(--sol-border);
+  border-radius: 10px;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  color: var(--sol-text);
+  animation: ch-slack-rise 180ms ease-out;
+  overflow: hidden;
+}
+.ch-slack-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+}
+.ch-slack-title { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+.ch-slack-sub {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 2px;
+  font-size: 11px;
+  color: var(--sol-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ch-slack-arrow { margin: 0 4px; color: var(--sol-text-dim); }
+.ch-slack-ws { color: var(--sol-text-dim); font-weight: 400; }
+.ch-slack-close {
+  margin-left: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--sol-text-dim);
+  font-size: 16px;
+  line-height: 1;
+}
+.ch-slack-close:hover { color: var(--sol-text); background: var(--sol-bg-highlight); }
+.ch-slack-body { padding: 12px 16px 14px; overflow: auto; display: flex; flex-direction: column; gap: 14px; }
+.ch-slack-lede { font-size: 12px; line-height: 1.55; color: var(--sol-text-secondary); margin: 0; }
+.ch-slack-fine { font-size: 10.5px; line-height: 1.5; color: var(--sol-text-dim); margin: 0; }
+.ch-slack-quiet { font-size: 11px; color: var(--sol-text-dim); padding: 8px 2px; }
+.ch-slack-quiet:hover:not(:disabled) { color: var(--sol-text); }
+.ch-slack-quiet:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ── Channel browser (add channels from Slack) ─────────────────────────────
+ * Wider than the per channel dialog: the list is the point, and a row carries
+ * a name, a purpose, a member count and an import state side by side. */
+.ch-slack-browser { width: min(680px, calc(100vw - 24px)); }
+.ch-slack-browser-body { gap: 16px; }
+.ch-slack-browser-tools { display: flex; align-items: center; gap: 10px; }
+.ch-slack-browser-tools .ch-slack-search { flex: 1 1 auto; }
+.ch-slack-browser-quick { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.ch-slack-browser-list { max-height: min(340px, 44vh); }
+.ch-slack-browser-heading {
+  padding: 8px 9px 3px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--sol-text-dim);
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+.ch-slack-browser-row { height: auto; min-height: 34px; padding: 0 9px 0 0; gap: 0; }
+.ch-slack-browser-row-here { color: var(--sol-text-dim); }
+.ch-slack-browser-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 34px;
+  padding: 0 9px;
+  text-align: left;
+  color: inherit;
+}
+.ch-slack-browser-main:disabled { cursor: default; }
+.ch-slack-box {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 90%, transparent);
+  border-radius: 3px;
+  color: var(--sol-bg);
+  background: transparent;
+  transition: background 100ms ease, border-color 100ms ease;
+}
+.ch-slack-box-on { background: var(--sol-cyan); border-color: var(--sol-cyan); }
+.ch-slack-browser-row-here .ch-slack-box { border-style: dashed; color: var(--sol-text-dim); }
+/* The name never truncates in favour of the purpose: the purpose is the one
+ * that gives way, since the name is what the row is FOR. */
+.ch-slack-browser-main .ch-slack-row-name { flex: 0 0 auto; max-width: 45%; }
+.ch-slack-browser-purpose {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10.5px;
+  color: var(--sol-text-dim);
+}
+.ch-slack-browser-row .ch-slack-row-meta { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; }
+.ch-slack-browser-since { color: color-mix(in srgb, var(--sol-text-dim) 75%, transparent); }
+.ch-slack-browser-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 220px;
+  font-size: 10.5px;
+  color: var(--sol-text-muted);
+  white-space: nowrap;
+}
+.ch-slack-browser-state:empty { display: none; }
+.ch-slack-browser-progress { display: inline-flex; align-items: center; gap: 4px; color: var(--sol-green); }
+.ch-slack-browser-fail { display: inline-flex; align-items: center; gap: 4px; color: var(--sol-red); overflow: hidden; text-overflow: ellipsis; }
+.ch-slack-browser-invite { color: var(--sol-orange); }
+.ch-slack-browser-open { display: inline-flex; align-items: center; gap: 3px; color: var(--sol-cyan); }
+.ch-slack-browser-open:hover { text-decoration: underline; }
+.ch-slack-tag-quiet { color: var(--sol-text-dim); border-color: color-mix(in srgb, var(--sol-border) 80%, transparent); margin-left: 5px; }
+.ch-slack-import { margin-top: 6px; }
+.ch-slack-import-failed { color: var(--sol-orange); }
+.ch-slack-import-again { padding: 0 0 0 8px; text-decoration: underline; text-underline-offset: 2px; }
+.ch-slack-empty { display: flex; align-items: center; gap: 6px; padding: 14px 10px; font-size: 11px; color: var(--sol-text-dim); }
+
+/* The step for private channels: one line and one button, in the browser
+ * body under the list, only while the person has not connected. */
+.ch-slack-connect-self {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px dashed color-mix(in srgb, var(--sol-border) 80%, transparent);
+  border-radius: 6px;
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--sol-text-dim);
+}
+.ch-slack-connect-self > span { flex: 1 1 auto; }
+.ch-slack-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--sol-border);
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--sol-text);
+  white-space: nowrap;
+  background: var(--sol-bg);
+}
+.ch-slack-secondary:hover:not(:disabled) { background: var(--sol-bg-highlight); }
+.ch-slack-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+.ch-slack-browser-footnote { display: inline-flex; align-items: center; gap: 12px; min-width: 0; }
+.ch-slack-people-link { display: inline-flex; align-items: center; gap: 4px; padding: 0; color: var(--sol-cyan); }
+.ch-slack-people-link:hover { text-decoration: underline; }
+
+/* Your direct messages: a row with a switch, the history windows under it
+ * while off. Compact on the settings card, boxed inside the browser. */
+.ch-slack-dms { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; border: 1px dashed color-mix(in srgb, var(--sol-border) 80%, transparent); border-radius: 6px; }
+.ch-slack-dms-compact { border: 0; padding: 6px 0 0; border-top: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent); border-radius: 0; }
+.ch-slack-dms-row { display: flex; align-items: flex-start; gap: 10px; }
+.ch-slack-dms-row .ch-slack-secondary, .ch-slack-dms-row [role=switch] { flex: 0 0 auto; margin-top: 2px; }
+.ch-slack-dms-title { font-size: 11.5px; font-weight: 600; color: var(--sol-text); margin-bottom: 2px; }
+.ch-slack-dms-window { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* People from Slack: one row per person, the picker on the right. */
+.ch-slack-people { width: min(640px, calc(100vw - 24px)); }
+.ch-slack-people-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 6px;
+  max-height: min(420px, 55vh);
+  overflow: auto;
+}
+.ch-slack-person {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+.ch-slack-person:last-child { border-bottom: 0; }
+.ch-slack-person-face { flex: 0 0 auto; display: inline-flex; }
+.ch-slack-person-who { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.ch-slack-person-name { font-size: 12px; color: var(--sol-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-slack-person-meta { font-size: 10.5px; color: var(--sol-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-slack-person-pick { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.ch-slack-person-as { flex: 0 0 auto; display: inline-flex; }
+.ch-slack-select {
+  height: 26px;
+  max-width: 220px;
+  padding: 0 6px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  border-radius: 5px;
+  background: var(--sol-bg);
+  color: var(--sol-text);
+  font-size: 11px;
+}
+.ch-slack-select:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* History windows: one row of cards, the default marked, each with its own
+ * one line reason, so the choice is made from the words and not from memory. */
+.ch-slack-windows { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ch-slack-window {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 9px;
+  text-align: left;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 6px;
+  color: var(--sol-text-muted);
+}
+.ch-slack-window:hover:not(:disabled) { border-color: var(--sol-border); color: var(--sol-text); }
+.ch-slack-window:disabled { opacity: 0.6; cursor: not-allowed; }
+.ch-slack-window-on { border-color: var(--sol-cyan); background: color-mix(in srgb, var(--sol-cyan) 9%, transparent); color: var(--sol-text); }
+.ch-slack-window-label { display: inline-flex; align-items: center; font-size: 11.5px; font-weight: 600; }
+.ch-slack-window-hint { font-size: 10px; line-height: 1.4; color: var(--sol-text-dim); }
+.ch-slack-browser-foot { padding: 10px 16px 12px; border-top: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent); }
+@media (max-width: 640px) {
+  .ch-slack-windows { grid-template-columns: repeat(2, 1fr); }
+  .ch-slack-browser-tools { flex-wrap: wrap; }
+  .ch-slack-browser-purpose, .ch-slack-browser-since { display: none; }
+}
+.ch-slack-section { display: flex; flex-direction: column; gap: 7px; }
+.ch-slack-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--sol-text-dim);
+}
+.ch-slack-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  align-self: flex-start;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: 7px;
+  background: #4A154B;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.ch-slack-add:disabled { opacity: 0.6; }
+.ch-slack-err {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--sol-red);
+  padding: 6px 8px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--sol-red) 9%, transparent);
+}
+.ch-slack-err-inline { color: var(--sol-orange); background: color-mix(in srgb, var(--sol-orange) 10%, transparent); }
+
+.ch-slack-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 80%, transparent);
+  border-radius: 6px;
+  background: var(--sol-bg-inset, var(--sol-bg-alt));
+  color: var(--sol-text-dim);
+}
+.ch-slack-search:focus-within { border-color: var(--sol-cyan); }
+.ch-slack-search input { flex: 1; min-width: 0; background: transparent; outline: none; font-size: 12px; color: var(--sol-text); }
+.ch-slack-list {
+  max-height: 200px;
+  overflow: auto;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  border-radius: 6px;
+}
+.ch-slack-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  height: 30px;
+  padding: 0 9px;
+  text-align: left;
+  color: var(--sol-text-secondary);
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+.ch-slack-row:last-child { border-bottom: 0; }
+.ch-slack-row:hover:not(:disabled) { background: var(--sol-bg-highlight); color: var(--sol-text); }
+.ch-slack-row:disabled { opacity: 0.5; cursor: not-allowed; }
+.ch-slack-row-on { background: color-mix(in srgb, var(--sol-cyan) 12%, transparent); color: var(--sol-text); }
+.ch-slack-row-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ch-slack-row-meta { margin-left: auto; font-size: 10.5px; color: var(--sol-text-dim); white-space: nowrap; }
+.ch-slack-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sol-cyan);
+  border: 1px solid color-mix(in srgb, var(--sol-cyan) 45%, transparent);
+  border-radius: 3px;
+  padding: 0 4px;
+  line-height: 13px;
+}
+.ch-slack-check { color: var(--sol-cyan); }
+
+.ch-slack-dirs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.ch-slack-dir {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  border-radius: 6px;
+  text-align: left;
+  color: var(--sol-text-muted);
+  background: transparent;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+.ch-slack-dir:hover { border-color: var(--sol-border); color: var(--sol-text); }
+.ch-slack-dir-on { border-color: var(--sol-cyan); background: color-mix(in srgb, var(--sol-cyan) 9%, transparent); color: var(--sol-text); }
+.ch-slack-dir-label { font-size: 11.5px; font-weight: 600; }
+.ch-slack-dir-hint { font-size: 10px; line-height: 1.4; color: var(--sol-text-dim); }
+@media (max-width: 520px) { .ch-slack-dirs { grid-template-columns: 1fr; } }
+
+.ch-slack-opts { display: flex; flex-direction: column; margin: 0; padding: 0; list-style: none; border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent); border-radius: 6px; }
+.ch-slack-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 30%, transparent);
+}
+.ch-slack-opt:last-child { border-bottom: 0; }
+.ch-slack-opt-dim { opacity: 0.5; }
+.ch-slack-opt-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ch-slack-opt-label { font-size: 11.5px; color: var(--sol-text); }
+.ch-slack-opt-hint { font-size: 10px; line-height: 1.4; color: var(--sol-text-dim); }
+
+.ch-slack-seg { display: inline-flex; border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent); border-radius: 6px; overflow: hidden; align-self: flex-start; }
+.ch-slack-seg-item { height: 26px; padding: 0 10px; font-size: 11px; color: var(--sol-text-muted); border-right: 1px solid color-mix(in srgb, var(--sol-border) 40%, transparent); }
+.ch-slack-seg-item:last-child { border-right: 0; }
+.ch-slack-seg-item:hover { color: var(--sol-text); background: var(--sol-bg-highlight); }
+.ch-slack-seg-on { color: var(--sol-text); background: color-mix(in srgb, var(--sol-cyan) 12%, transparent); }
+
+.ch-slack-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 4px; }
+.ch-slack-foot-split { justify-content: flex-start; }
+.ch-slack-foot-split > :last-child { margin-left: auto; }
+.ch-slack-primary {
+  height: 30px;
+  padding: 0 14px;
+  border-radius: 6px;
+  background: var(--sol-cyan);
+  color: var(--sol-bg);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ch-slack-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.ch-slack-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  border-radius: 6px;
+  font-size: 11.5px;
+  color: var(--sol-text-muted);
+}
+.ch-slack-secondary:hover { color: var(--sol-text); background: var(--sol-bg-highlight); }
+.ch-slack-secondary-danger:hover { color: var(--sol-red); border-color: color-mix(in srgb, var(--sol-red) 50%, transparent); }
+.ch-slack-danger { height: 28px; padding: 0 10px; border-radius: 6px; background: var(--sol-red); color: #fff; font-size: 11.5px; font-weight: 600; }
+.ch-slack-confirm { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--sol-text-muted); }
+
+.ch-slack-status {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--sol-green) 35%, transparent);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--sol-green) 6%, transparent);
+}
+.ch-slack-status-paused { border-color: color-mix(in srgb, var(--sol-border) 80%, transparent); background: color-mix(in srgb, var(--sol-bg-alt) 60%, transparent); }
+.ch-slack-status-row { display: flex; align-items: center; gap: 8px; }
+.ch-slack-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--sol-green); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-green) 18%, transparent); }
+.ch-slack-dot-paused { background: var(--sol-text-dim); box-shadow: none; }
+.ch-slack-dot-err { background: var(--sol-orange); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-orange) 18%, transparent); }
+.ch-slack-status-text { font-size: 12px; font-weight: 600; }
+.ch-slack-open { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--sol-text-muted); }
+.ch-slack-open:hover { color: var(--sol-text); text-decoration: underline; }
+.ch-slack-open-next { margin-left: 10px; }
+.ch-slack-facts { display: grid; grid-template-columns: repeat(3, auto); gap: 4px 18px; margin: 0; }
+.ch-slack-facts dt { font-size: 9.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--sol-text-dim); }
+.ch-slack-facts dd { margin: 1px 0 0; font-size: 11.5px; color: var(--sol-text-secondary); font-variant-numeric: tabular-nums; }
+
+.ch-slack-ledger { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; border: 1px solid color-mix(in srgb, var(--sol-border) 45%, transparent); border-radius: 6px; max-height: 150px; overflow: auto; }
+.ch-slack-ledger-row { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 4px 9px; font-size: 10.5px; border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 25%, transparent); color: var(--sol-text-muted); }
+.ch-slack-ledger-row:last-child { border-bottom: 0; }
+.ch-slack-ledger-kind { color: var(--sol-text-secondary); }
+.ch-slack-ledger-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.ch-slack-ledger-done .ch-slack-ledger-status { color: var(--sol-green); }
+.ch-slack-ledger-failed .ch-slack-ledger-status { color: var(--sol-red); }
+.ch-slack-ledger-time { color: var(--sol-text-dim); font-variant-numeric: tabular-nums; }
+
+/* "More" behind the four everyday switches. */
+.ch-slack-more { margin-top: -6px; }
+.ch-slack-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 10.5px;
+  color: var(--sol-text-muted);
+  padding: 4px 2px;
+  user-select: none;
+}
+.ch-slack-more > summary::-webkit-details-marker { display: none; }
+.ch-slack-more > summary::before { content: "▸"; font-size: 9px; color: var(--sol-text-dim); }
+.ch-slack-more[open] > summary::before { content: "▾"; }
+.ch-slack-more > summary:hover { color: var(--sol-text); }
+.ch-slack-more-count { font-size: 9.5px; color: var(--sol-cyan); }
+.ch-slack-more > .ch-slack-opts { margin-top: 6px; }
+.ch-slack-summary { padding: 6px 8px; border-left: 2px solid color-mix(in srgb, var(--sol-border) 90%, transparent); }
+
+/* Phone width: stack what was a row. */
+@media (max-width: 520px) {
+  .ch-slack-seg { display: flex; flex-wrap: wrap; align-self: stretch; }
+  .ch-slack-seg-item { flex: 1 1 45%; }
+  .ch-slack-ledger-row { grid-template-columns: 1fr auto; }
+  .ch-slack-ledger-status { grid-column: 1 / -1; max-width: none; white-space: normal; }
+  .ch-slack-facts { grid-template-columns: 1fr 1fr; }
+  .ch-slack-foot, .ch-slack-foot-split { flex-wrap: wrap; }
+}
+
+/* The standalone community page: a slim header over the three column shell. */
+.ch-community-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--sol-bg);
+}
+.ch-community-page > .ch-shell { flex: 1 1 auto; min-height: 0; }
+.ch-community-bar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  height: 44px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--sol-border);
+  color: var(--sol-text);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+.ch-community-brand { display: inline-flex; align-items: center; color: var(--sol-text); }
+.ch-community-where { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.ch-community-slash { color: var(--sol-text-dim); font-weight: 400; }
+.ch-community-links { display: flex; gap: 14px; margin-left: 10px; }
+.ch-community-links a { color: var(--sol-text-muted); text-decoration: none; }
+.ch-community-links a:hover { color: var(--sol-text); }
+.ch-community-spacer { flex: 1; }
+.ch-community-cta {
+  padding: 5px 12px;
+  border-radius: 8px;
+  background: var(--sol-text);
+  color: var(--sol-bg);
+  font-weight: 600;
+  text-decoration: none;
+}
+.ch-community-cta:hover { opacity: 0.9; }
+@media (max-width: 640px) { .ch-community-links { display: none; } }

@@ -1,0 +1,247 @@
+{
+  "date": "2026-10-26",
+  "sources": [
+    {
+      "name": "OpenDesign",
+      "commit": "26d60298f8129e229a1c10aab4df7ca25b1e9ad3",
+      "root": ".local/reference-research/open-design",
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "sha256": "07f940ddb56f83c028d83302d3a34f74f4916977b045f71cb3742a04474aa16e",
+          "lines": 497,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/AGENTS.md",
+          "sha256": "5434c989b856903750071fb4576f212691bc39ff46e21d2fdffa84d513850ea8",
+          "lines": 61,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/AGENTS.md",
+          "sha256": "135063a950cc7b314d51da7b05fb3351eb1cd73c92451938c55ea39d9ac246c2",
+          "lines": 65,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/App.tsx",
+          "sha256": "42dde2584fbf33364bf3221574d7f892691ee1a9e1aba49f784e454f27d27ae3",
+          "lines": 6243,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/styles/tokens.css",
+          "sha256": "432f159cffa170319558b5b2944cecba1925266a4f71f229097e38024047f824",
+          "lines": 349,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/styles/material.css",
+          "sha256": "a74694f026bcc348ea043ae991b3bd3629c5524ba49cd811a011811f0fdb24db",
+          "lines": 253,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/styles/shell.css",
+          "sha256": "ea5ef2050bd9895f7c65277134749523c1bd44a36d6427240762ac0cc5c1bcb8",
+          "lines": 2603,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/styles/primitives.css",
+          "sha256": "2bc908272d4a848441c2b4be7a6f8fc475f6600d8951751260782e74f4a9e5b2",
+          "lines": 472,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/EntryShell.tsx",
+          "sha256": "370c1f715fc0f3db6578e7cf3b52cdf396571d45ce37c0fa7557292b572bb1ac",
+          "lines": 4832,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/EntryNavRail.module.css",
+          "sha256": "801c9e54a874247eb6613685a45a9d218738ef4600833961ff90953a632adcf6",
+          "lines": 199,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/WorkspaceTabsBar.tsx",
+          "sha256": "1402c8e5fb4d129a39cd5734a734bf10b9969819adb48725b1b424a5d164c78f",
+          "lines": 2864,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/ProjectView.tsx",
+          "sha256": "f07634d0d27fa35f13d02dbb89d478212a35cae0b7976043a816e09fc9cb6d2c",
+          "lines": 16397,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/project-split-layout.ts",
+          "sha256": "8ced8fc07efa463b3910866441635c7eb329aba3eacda087659860497e175300",
+          "lines": 204,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/CustomSelect.tsx",
+          "sha256": "83867dbac5f27b61e7a3881a8e585ce616c4db83f8224ec277fe853475c36f39",
+          "lines": 330,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/chat/AnchoredMenuShell.tsx",
+          "sha256": "c6415f15ab9b577898a77971e9c85224e911eea029d1f798e26a44e8f4456790",
+          "lines": 333,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/chat/AnchoredMenuShell.module.css",
+          "sha256": "5b0aeb2274b09f38f4fc03cdc3859af8a28c6714c82a1a36776a68a2d1aab8fc",
+          "lines": 24,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/hooks/useAnchoredPopover.ts",
+          "sha256": "bb35bc3db8cf575cdb265e2354e1ed076ecc17d2ccb173c9e0005c3d01ad4ad6",
+          "lines": 388,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "apps/web/src/components/chat/ExecutionShell.tsx",
+          "sha256": "ba0fbb189e5b5f41795b8f0b499c7b2143f82fc490233927bab8c0f691d39fbb",
+          "lines": 959,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/components/src/button.tsx",
+          "sha256": "b975ece6c5f83b409650742f2613a24031d7e24f21375525ae2543d8ddabe5d0",
+          "lines": 52,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/components/src/button.module.css",
+          "sha256": "153d5ef6bd7d1af3e2ee9213edb93a3253d3b1fd2e1aafb7a8c34215a5d46bfa",
+          "lines": 173,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/components/src/dialog.tsx",
+          "sha256": "587a01a21251f9aa6dd7aef7fb80b9297803204f6061e32f9382b712744bb613",
+          "lines": 139,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "5af3e43224f112bc45788d510afd3e1c0eec60bbc54e9a95b9171e54d750f4b0",
+          "lines": 202,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        }
+      ]
+    },
+    {
+      "name": "Codecast",
+      "commit": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+      "root": "third_party/codecast/upstream",
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "sha256": "bd9b16dbac5bd7716d02fe201f5caee37ee7dd1a63dc2cc7d757c57579772bdb",
+          "lines": 231,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "docs/principles.md",
+          "sha256": "d8c33043092eab5a081b7db4e9044834e1e459016b06aff43aa83fe117dcb0db",
+          "lines": 268,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/app/inbox/page.tsx",
+          "sha256": "559c925fb944859958c496add952bd507c3267b5f288557afb6a31f8dc036bb7",
+          "lines": 14,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/app/inbox/QueuePageClient.tsx",
+          "sha256": "5d6e1c69e318e80bdb691809606cf5eafefed6454913388b0303786d03e1bbc5",
+          "lines": 882,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/DashboardLayout.tsx",
+          "sha256": "54fbbc7363874c36d06c1e9ecbc4af896f30f5dce16a3ec157c5ae7d85e263c0",
+          "lines": 1663,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/ConversationView.tsx",
+          "sha256": "32a9c872f82f31c8233021109ea4c4935b617712a1d763833fa30a8f0d6cb4db",
+          "lines": 5275,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/conversationScroll.ts",
+          "sha256": "5b30632e2ce696a87ef080b61ed15c85c2cdb574eb47fe2a853be7e81134d620",
+          "lines": 417,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/FileDiffLayout.tsx",
+          "sha256": "4b3e0c797a49d3d46c76668c8deae78e8d82eeaf88e6ebb3dd7baf6432402e74",
+          "lines": 1478,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/FileDiffSidebar.tsx",
+          "sha256": "d14c0e1ba7fc78ceaab7fd7b6d5b03a813e514511a40b6e83315be4240cc375c",
+          "lines": 271,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/DiffView.tsx",
+          "sha256": "da940dba6fde66788407ea0f26207dabab6dae07acb5bfc814fa042a6262e4d5",
+          "lines": 588,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/tasks/TaskRow.tsx",
+          "sha256": "f9001c383e16176ec1fb26a1251f4c729de4d8e92b99d94135b7430a2e8b0a80",
+          "lines": 439,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/tasks/TaskInlineThread.tsx",
+          "sha256": "eab15d9440ef2c2c4c9a7d01b8cd37ea3c19116cf9349cb8760116eab45cd16d",
+          "lines": 46,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/ui/dropdown-menu.tsx",
+          "sha256": "25394c21ab967c0efb3b11e18dac959c1aab8c62c1b9849c54cc833f52f52126",
+          "lines": 200,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/components/ui/dialog.tsx",
+          "sha256": "aaf9e847c274fe093921723ce1ccd50e1cc0454789b47dbe525c5f2c6af0b451",
+          "lines": 128,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "packages/web/app/globals.css",
+          "sha256": "ae7523e2495c4ac577204600f5def81d56bb5c858cceab7b3983e1d286272529",
+          "lines": 7857,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        },
+        {
+          "path": "platform/packages/design/tokens.css",
+          "sha256": "464c0353f97f1e7f7289748e841f026f4eb22c7797b1d51c07f14346a499cdd6",
+          "lines": 52,
+          "readMode": "selected sections traced, not a claim of exhaustive file comprehension"
+        }
+      ]
+    }
+  ]
+}

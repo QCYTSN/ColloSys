@@ -1,0 +1,29 @@
+/* The call stage's own sheet. The corner root that once held the walkie
+ * strip, the pill and the floating dock retired with them (pl-756): every
+ * small call surface is the face row in the header now, and the stage is
+ * the one shape left here.
+ */
+
+/* ── The stage as a container ─────────────────────────────────────────────
+ * The stage header holds four groups on one 44px line and none of its
+ * buttons can shrink, so a narrow window (the desktop window's minimum is
+ * 520px) used to paint the room's group under the view control. The stage
+ * root is a container; as it narrows the words beside the icons go, the
+ * icons stay, and every button keeps its title. The room's title drops its
+ * "huddle · " prefix at the same step, so the room's name is what survives
+ * truncation. `.rt-seg-word` is the word on the view control's positions
+ * (RoomThread.tsx, SegmentedRadio). */
+.call-stage {
+  container: call-stage / inline-size;
+}
+@container call-stage (width < 760px) {
+  .stage-word,
+  .rt-seg-word {
+    display: none;
+  }
+}
+@container call-stage (width < 640px) {
+  .stage-word-tight {
+    display: none;
+  }
+}

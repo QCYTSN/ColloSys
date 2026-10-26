@@ -1,0 +1,15522 @@
+import { resourceOffloadStubs, cancelResourceBatch } from "./resourceOffloadActions";
+import { captureError } from "../lib/analytics";
+import type { ResourceOffloadIntent } from "@codecast/shared/contracts/resourceOffloadIntent";
+import type { CloudPlacementProgress } from "@codecast/shared/contracts";
+import { followersSig, sameViewAnchor, type FollowerRow, type ViewAnchor } from "../lib/follow";
+import { settingsDataKey } from "../lib/settingsData";
+import type { SharedObjectKind } from "@codecast/shared/entities";
+import type { CodeAnchorText } from "@codecast/shared/comments";
+import type { GraphRefStatus, TaskWait } from "@codecast/shared/tasks";
+import { addWaitDraft, removeBlockerEdge, removeBlocksEdge, removeWaitDraft, rollbackWaitDraft, setBlockerEdge, setRelatedEdge, type TaskWaitInput } from "./taskGraphDraft";
+import { carryRingStubs } from "../lib/calls/ringStubs";
+import { carryNodeSessions } from "../lib/workflowRun";
+import { runFilesOf } from "../lib/calls/callVideo";
+import { nextMembershipVisibility, type TeamVisibilityLevel, type VisibilityChangeMode } from "@codecast/convex/convex/teamVisibility";
+import { queuedMessagesFromPending } from "./pendingMessageJournal";
+import { mergeQueueRows, reorderQueueRows } from "../lib/sharedQueue";
+import { parseJointMessage } from "@codecast/shared/contracts/jointMessage";
+import { isSessionDismissed, isSessionKilled, isSessionStashed } from "../lib/sessionRetirement";
+export { isSessionDismissed, isSessionKilled, isSessionStashed } from "../lib/sessionRetirement";
+import { create } from "zustand";
+import { useSyncExternalStore, useRef } from "react";
+import {
+  mutativeMiddleware,
+  action,
+  asyncAction,
+  receiptAsyncAction,
+  DispatchNotWiredError,
+  isParkedDispatchError,
+  isRefusedDispatchError,
+  sync,
+  bindUndoStore,
+  type DurableCreateContinuation,
+} from "./mutativeMiddleware";
+import { rekeyUndoIds, sameShape, withoutUndo } from "@platform/engine";
+import { adoptWorkspaceSnapshot, createWorkspace, serializeWorkspace, hydrateWorkspace, autoAllowed as wsAutoAllowedPure, isSessionRailOpen, isCommentRailOpen, SESSION_LIST_PANE, TERMINAL_PANE, type PersistedWorkspace, showPane, hidePane, togglePane, setPresentation as wsSetPresentationPure, setSize as wsSetSizePure, type WorkspaceState, type SlotId, type Pane, type Presentation } from "./workspace";
+import { applyWorkbench as applyWorkbenchPure, captureWorkbench, chipFilterOf, resolveWorkbenchFilter, type WorkbenchSnapshot } from "./workbench";
+import { declareViewNav, freshHomeLaunchPending, hasViewNavigated, recordNavEvent, settleFreshHomeLaunch, type ViewNavSource } from "./viewNav";
+import { applySyncTable, applySyncRecord, applySyncPatch, applyShapeLocks, type PendingEntry } from "./syncProtocol";
+import { syncTransaction } from "./syncTransaction";
+import { installStoreListenerCensus } from "./storeListenerCensus";
+import { current, isDraft, original } from "mutative";
+import { soundDismiss, soundKill } from "../lib/sounds";
+import type { AppPermissionKind } from "../lib/osPermissions";
+import { cacheFloorUnderSnapshot, keysWithSnapshotDrops, noteSnapshotSync } from "./idbCollectionDiff";
+import { loadCache, loadPaintCacheSync, writePatchesToIDB, setHydrating, loadConversationMessages, writeConversationMessages, writeConversationUserMessages, enqueueDispatch, removeDispatch, loadOutbox, salvageLocalFirstV2Data, setUpgradeBlockedListener, PERSISTENCE_AVAILABLE } from "./idbCache";
+import {
+  DISPATCH_TABLE_MAP,
+  HYDRATION_CRITICAL_READ_KEYS,
+  HYDRATION_CRITICAL_KEYS,
+  HYDRATION_PAINT_KEYS,
+  HYDRATION_DEFERRED_KEYS,
+  REGISTRY_SYNC_OPTS,
+  collectionInitialState,
+  hydrationMergeStrategy,
+  type RegisteredCollectionSlots,
+} from "./clientSyncRegistry";
+
+// Sync-log cursor key (docs/architecture/sync-log-migration.md D7). ONE
+// definition — the applier (useSyncChangeFeed) persists cursors under it and
+// stampSyncAck's immediate-retire branch reads it; a second spelling would
+// silently break the retire race it exists for.
+const SYNC_LOG_META_PREFIX = "synclog:v1:";
+export function syncLogScopeMetaKey(scopeKey: string): string {
+  return `${SYNC_LOG_META_PREFIX}${scopeKey}`;
+}
+
+// Reverse of the registry's storeKey→server-table dispatch map, for stamping
+// sync-log acks onto the pending entries a dispatched patch created (one server
+// table can back several store keys — conversations backs both `sessions` and
+// `conversations`).
+const TABLE_TO_STORE_KEYS: Record<string, string[]> = {};
+for (const [storeKey, cfg] of Object.entries(DISPATCH_TABLE_MAP)) {
+  (TABLE_TO_STORE_KEYS[cfg.table] ??= []).push(storeKey);
+}
+import { makeCollectionSig } from "./wakeSig";
+import { broadcastGesture, BRIDGED_FIELDS, type BridgedField, type GestureMessage } from "./gestureBridge";
+// Single source of truth for the agent-status contract, shared with the Convex
+// backend and the CLI daemon. See packages/shared/contracts/agentStatus.ts.
+import { type AgentStatus, ACTIVE_AGENT_STATUSES, CONVERSATION_FIELD_TWINS, cloudAgentProviderOfConversation, childAskingAt, deriveLiveAt, rowLiveDeadlines, type LiveFacts, type UserRest, modelOptionKey, formatDecisionAnswer, parseDecisionAnswer, decisionAnswerLabel, advisoryAnswerOpen, hasThreadState, clearedThreadStateFields, isInboxRowField, settingsAfterSnippet, type DeviceSnippetChange, managedIdsAfter, type ProviderKeyCommand } from "@codecast/shared/contracts";
+import { agentStatusAt, liveFactsOf } from "../lib/liveness";
+// The shared inbox projection (docs/architecture/sync-convergence.md): the
+// working-set selection, fold, fact/stamp field ownership, and the epoch clock.
+// Membership on this replica is the SAME selection the server scan runs.
+import {
+  INBOX_FACT_FIELDS,
+  INBOX_PROJECTION_FIELDS,
+  inboxEpoch,
+  selectWorkingSet,
+  computeFold,
+  projectInbox,
+  digestProjection,
+  placeProjectableRow,
+  inboxSortTimeOfRow,
+  rowLastTurnAllowsPark,
+  emptyInboxTally,
+  isOrphanOrSubagent,
+  isAssignedAwayFromViewer,
+  rollupParentIdOf,
+  rideLeadPlacements,
+  roleLeadIdsOf,
+  isUnderRole,
+  isHardBlocked,
+  DEAD_AGENT_STATUSES,
+  fnv1a32Update,
+  FNV1A32_OFFSET,
+  WORKING_SET_RECENCY_MS,
+  isSessionUnread,
+  guestIdentity,
+  type SessionActivityFacts,
+  type InboxBucket,
+  type InboxTally,
+  type InboxTruncation,
+  type InboxSortTime,
+  type ProjectableInboxRow,
+  type WorkingSetRow,
+  type WorkState,
+} from "@codecast/shared/contracts";
+// The declared overlays — the ONLY sanctioned local deviations from the shared
+// projection (sync-convergence C5). Bounds live with the enumeration.
+import {
+  BLOCKED_REVIVE_TTL_MS,
+  HIDDEN_OVERRIDE_SETTLE_MS,
+  collectInboxOverlayDeps,
+  overlaysAffecting,
+  convHasPendingSend,
+  pendingRowsUnsettled,
+  isInterruptControlMessage,
+  sessionsWithPendingSend,
+  pendingSendIdsOf,
+  freshReviveRequestIds,
+  type DeclaredInboxOverlay,
+  type InboxOverlayDeps,
+  type InboxOverlayState,
+} from "./inboxOverlays";
+import { noteSyncApply, monotonicNow } from "./syncActivity";
+export { BLOCKED_REVIVE_TTL_MS, HIDDEN_OVERRIDE_SETTLE_MS } from "./inboxOverlays";
+export {
+  DECLARED_INBOX_OVERLAYS,
+  collectInboxOverlayDeps,
+  isOverlayAffected,
+  overlaysAffecting,
+  anyOverlayActive,
+  convHasPendingSend,
+  isInterruptControlMessage,
+  sessionsWithPendingSend,
+  pendingSendIdsOf,
+  freshReviveRequestIds,
+  type DeclaredInboxOverlay,
+  type InboxOverlayDeps,
+} from "./inboxOverlays";
+export { monotonicNow } from "./syncActivity";
+import { awaitingOkIds, decisionDraftKey, pendingDecisionConvIds, sessionHasOpenQuestion, type QuestionResolutions } from "../lib/decisionQueue";
+import type { LocalMirror, MergeBackStatus, OpenTaskReport, SessionActivity, SubagentCaps, SubagentSlot } from "@codecast/shared/contracts";
+import type { BrowserPaneOffer } from "@codecast/shared/contracts/browserPaneOffer";
+import { cardVerdictIndexes } from "@codecast/shared/contracts/changeCard";
+import { isAgentSpawnedConversation, isAgentTeamWorker, isSubagentConversation, nestParentIdOf } from "@codecast/convex/convex/ccAccountsShared";
+
+export type { PendingEntry } from "./syncProtocol";
+
+// A tracked create can outlive the UI's bounded resolver window while the
+// durable outbox remains the owner of the command. Subclass the
+// existing parked error so every send caller keeps the optimistic message
+// pending and the normal rekey continuation can redrive it later.
+export class SessionCreatePendingError extends DispatchNotWiredError {
+  constructor() {
+    super("createSession", true);
+    this.name = "SessionCreatePendingError";
+    this.message = "Session creation is still pending durable delivery";
+  }
+}
+
+export async function awaitTrackedSessionCreateResult(
+  create: Promise<string>,
+  timeoutMs = 30_000,
+): Promise<string> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      create,
+      new Promise<string>((_, reject) => {
+        timeout = setTimeout(
+          () => reject(new SessionCreatePendingError()),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+  }
+}
+
+// Convex-id check lives in lib/entityLinks (the entity-routing source of truth).
+// What the sidebar-hosted create modal is showing. One name, three spellings
+// collapsed (the field, the opener's parameter, and the action).
+export type CreateModalKind = 'task' | 'plan' | 'doc' | 'chat' | 'huddle';
+
+// A trigger strip request (see triggerStripRequest): taskId null means the
+// conversation's all-triggers view; expand asks the strip to open.
+/** The fields the triggers page's form edits (agentTasks.webUpdate's args). */
+export type TriggerEdit = {
+  prompt?: string;
+  title?: string;
+  mode?: string;
+  agent_type?: string;
+  project_path?: string;
+  schedule_type?: "once" | "recurring" | "event";
+  interval_ms?: number;
+  run_at?: number;
+  event_filter?: import("@codecast/shared/contracts").TriggerScopeFilter;
+};
+export type TriggerStripRequest = { convId: string; taskId: string | null; expand: boolean; nonce: number };
+/** accountSwitch.requestAccountSwitch's args, as the store action forwards them. */
+export type AccountSwitchArgs = {
+  profile?: string;
+  email?: string;
+  device_id?: string;
+  continue_blocked?: boolean;
+  include_subagents?: boolean;
+  continue_client_ids?: Record<string, string>;
+  conversation_ids?: string[];
+};
+
+import { stampSessionCommand } from "./sessionCommandStamp";
+
+// Imported for internal use AND re-exported so the many call sites that import
+// `isConvexId` from the store keep working.
+import { isConvexId } from "../lib/entityLinks";
+import { firstRun } from "./firstRunState";
+import { pathOnMyMachines, wakesOnUse, type MachineCandidate } from "../lib/machinePicker";
+import { projectRootOf } from "../lib/recentProjectPaths";
+import { cloudPlacementFor, CLOUD_SESSION_SOURCES, isHostedAgentType, type CloudSessionSource } from "@codecast/shared/contracts";
+import { promptTitle } from "@codecast/shared/contracts/assistant";
+
+/** What a conversation being started is called until its row syncs: a
+ *  hosted one by the person's first words (the server stores the same
+ *  placeholder), else the generic name in the agent's own words. */
+function stubTitle(agentType: string, firstMessage?: string): string {
+  if (!isHostedAgentType(agentType)) return "New session";
+  return promptTitle(firstMessage) || "New conversation";
+}
+import { defaultAgentType } from "../lib/defaultAgent";
+import { retryHostedStart } from "../lib/startHostedConversation";
+import { isHostedUi, laneOf, simpleModeAllowed } from "../components/simple/lanePaths";
+import { readLaneHint, writeLaneHint, type LaneHint } from "../components/simple/laneBoot";
+import type { SessionMapLayout, SessionMapView } from "../components/sessionMap/sessionMapModel";
+import { assistantScopeOnly, inAssistantScope, restorableIn, type ScopeUi } from "../lib/assistantScope";
+import { conversationRefInPath, conversationTabPath } from "../lib/pathLabel";
+import { directConversationId } from "../lib/desktopHandoff";
+import { healTabPaths, isNonTabRoute, shellTabPath } from "../lib/tabRoutes";
+import { tabSafePath, tabSafeTitle } from "../lib/tabSafePath";
+import {
+  countLeaves,
+  findLeaf as findStageLeaf,
+  insertLeaf as insertStageLeaf,
+  seedLeafId as stageSeedLeafId,
+  moveLeaf as moveStageLeaf,
+  leavesOf as stageLeavesOf,
+  removeLeaf as removeStageLeaf,
+  setBranchSizes as setStageBranchSizes,
+  setLeafPath as setStageLeafPath,
+  MAX_STAGE_LEAVES,
+  type SplitEdge,
+  type SplitTarget,
+  type StageNode,
+} from "./stageSplit";
+import { divertSessionOpen } from "../lib/openIntent";
+import type { PalettePick } from "../lib/palettePick";
+import type { TourRun } from "../tours/types";
+export { isConvexId };
+
+// Canonical entity-derivation helpers live in lib/liveEntities. Re-exported here
+// so existing call sites that import from the store keep working.
+export { resolveAssigneeInfo, resolveSessionAuthor, computePlanProgress, mergeLiveTasks } from "../lib/liveEntities";
+import { deriveDocDisplayTitle, isForeignSession } from "../lib/liveEntities";
+import { feedCoverMetaKey } from "../lib/feedCatchup";
+import { DEFAULT_SETTINGS_SECTION, type SettingsSectionId } from "../lib/settingsSections";
+import { activeWorkspaceKey } from "../lib/workspaceScope";
+import type { AgentChainSpec, AgentDefinitionSpec } from "@codecast/shared/contracts";
+import type { PendingComment } from "../lib/quoteFormat";
+import type { Comment as CommentRow } from "../lib/commentThread";
+import { pushInboxViewHistory, isApplyingViewHistory, sameInboxView, type InboxViewSnapshot } from "../lib/inboxViewHistory";
+import { sessionFocusKind, type SessionFocusKind } from "../lib/inboxRouting";
+// Team chat lives in its own slice: four delta-synced collections plus the
+// optimistic writers over them. Spread into the config below, and its state
+// shape is folded into InboxStoreState so the draft type covers it.
+import {
+  createChatSlice,
+  CHAT_SYNC_REGISTRY,
+  liftExcludesForIncoming,
+  selectChannelReadMarker,
+  type ChatSliceState,
+} from "./chatSlice";
+import { bindOptimisticMessageWriter, createOrgSlice, ORG_SYNC_REGISTRY, projectLeadScopeOutcome, pushRoleFieldsIntent, type OrgSliceState } from "./orgSlice";
+import { writeAsServerShape } from "./serverShape";
+import { replaceContents } from "./simSlot";
+import { attachProjectStubDraft, createInitiativeSlice, detachProjectStubDraft, moveProjectInGoals, moveProjectInLocks, rekeyInitiativeProjectDraft, type InitiativeSliceActions } from "./initiativeSlice";
+import { createProjectUpdatesSlice, type ProjectUpdatesSliceActions } from "./projectUpdatesSlice";
+import { createLineWorkflowSlice, type LineWorkflowSliceActions } from "./lineWorkflowSlice";
+import { createLineSlice, type LineSliceActions } from "./lineSlice";
+import { createTrialSlice, type TrialSliceActions } from "./trialSlice";
+import { taskCreateStub, taskStubId } from "./taskStub";
+import { createExpectationsSlice, type ExpectationsSliceActions } from "./expectationsSlice";
+import { createOpsSlice, type OpsSliceActions } from "./opsSlice";
+import { createComposeSlice, type ComposeInstance, type ComposeSliceState } from "./composeSlice";
+// Re-exported so chat surfaces import their selectors from the store, like every
+// other view does, instead of reaching into the slice file.
+export {
+  selectChatRail,
+  selectChannelMessages,
+  selectChannelReadMarker,
+  selectThreadReplies,
+  selectChatReactions,
+  teamChannelPushOpts,
+  isChatRoomRefusal,
+  chatSendState,
+  chatReactionStubId,
+  newChatMessageClientId,
+  newChatChannelClientId,
+  CHAT_CHANNEL_STUB_PREFIX,
+  CHAT_MESSAGE_STUB_PREFIX,
+  CHAT_READ_STUB_PREFIX,
+  CHAT_REACTION_STUB_PREFIX,
+} from "./chatSlice";
+export type {
+  ChatChannelRow,
+  ChatMessageRow,
+  ChatReadRow,
+  ChatReactionRow,
+  ChatSlackLinkRow,
+  ChatRailRow,
+  ChatRailChannel,
+  ChatRailScope,
+  ChatNotifyLevel,
+  ChatSendOptions,
+} from "./chatSlice";
+export type { ThreadInboxRow, ThreadKind, ThreadLastReply } from "./threadTypes";
+export { threadRowId } from "./threadTypes";
+import type { ThreadsCursor } from "./threadTypes";
+import { isTriggerEditable } from "../lib/triggerEditable";
+export type { ThreadsCursor } from "./threadTypes";
+
+// Critical UI prefs mirrored to localStorage so they're available
+// synchronously at module load — avoids a layout flash between first paint
+// and IDB hydration. The IDB-backed clientState remains the source of truth
+// across tabs; localStorage is just a sync-readable cache for first-paint
+// values that affect layout. Keep this set TINY — every key here adds
+// localStorage churn on every change.
+// pinned_surfaces joins the critical set for the same reason sidebar_collapsed
+// is here: it decides the ARRANGEMENT at first paint. Seeded from localStorage
+// synchronously, a pinned split renders as a split immediately instead of
+// flashing a peek overlay until the server clientState arrives.
+const CRITICAL_UI_KEYS = ["sidebar_collapsed", "zen_mode", "inbox_shortcuts_hidden", "inbox_flat_view", "workspace", "nav_sections"] as const;
+const CRITICAL_PREFS_LS_KEY = "codecast-critical-ui";
+
+function readCriticalUiPrefs(): Record<string, any> {
+  // Guard on localStorage itself (not window): React Native may define `window`
+  // without a DOM Storage, and SSR has neither.
+  if (typeof localStorage === "undefined") return {};
+  try {
+    const raw = localStorage.getItem(CRITICAL_PREFS_LS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    const out: Record<string, any> = {};
+    for (const k of CRITICAL_UI_KEYS) {
+      if (parsed[k] !== undefined) out[k] = parsed[k];
+    }
+    return out;
+  } catch { return {}; }
+}
+
+function writeCriticalUiPrefs(partial: Record<string, any>) {
+  if (typeof localStorage === "undefined") return;
+  let toWrite: Record<string, any> | null = null;
+  for (const k of CRITICAL_UI_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(partial, k)) {
+      if (!toWrite) toWrite = {};
+      toWrite[k] = partial[k];
+    }
+  }
+  if (!toWrite) return;
+  try {
+    const existing = JSON.parse(localStorage.getItem(CRITICAL_PREFS_LS_KEY) || "{}");
+    localStorage.setItem(CRITICAL_PREFS_LS_KEY, JSON.stringify({ ...existing, ...toWrite }));
+  } catch {}
+}
+
+// The arrangement (not its contents) is a durable preference: mirror it into
+// the ui bag on every slot mutation so it survives reload and rides the same
+// per-device sync as the other layout prefs. In CRITICAL_UI_KEYS, so the shell
+// paints the right arrangement immediately instead of flashing a default.
+function persistWorkspace(draft: any) {
+  // A detached tab window keeps its own in-memory arrangement but never
+  // persists it — the ui bag and device key are the MAIN window's layout, and
+  // a breakout window writing them would reshape every other window's frame.
+  if (typeof window !== "undefined" && (window as any).__CODECAST_ELECTRON__?.isTabWindow === true) return;
+  const ws = draft.workspace as WorkspaceState;
+  if (!draft.clientState) draft.clientState = {};
+  if (!draft.clientState.ui) draft.clientState.ui = {};
+  // Shared slots follow the user like any layout pref…
+  draft.clientState.ui.workspace = serializeWorkspace(ws, "shared");
+  writeCriticalUiPrefs({ workspace: draft.clientState.ui.workspace });
+  // …device slots never leave this browser profile (SLOT_PERSISTENCE).
+  try {
+    if (typeof localStorage !== "undefined") {
+      localStorage.setItem(DEVICE_WORKSPACE_KEY, JSON.stringify(serializeWorkspace(ws, "device")));
+    }
+  } catch {}
+}
+
+const DEVICE_WORKSPACE_KEY = "codecast-device-workspace";
+
+function readDeviceWorkspace(): any {
+  try {
+    if (typeof localStorage === "undefined") return null;
+    const raw = localStorage.getItem(DEVICE_WORKSPACE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+// Region "is it open" questions are now selectors over slot state, not stored
+// booleans — one source of truth for the right edge.
+/** Nav is folded to its hover-peek edge (the old ui.sidebar_collapsed). */
+export const selectNavCollapsed = (s: { workspace: WorkspaceState }) => s.workspace.nav.presentation === "collapsed";
+
+export const selectSessionRailOpen = (s: { workspace: WorkspaceState }) => isSessionRailOpen(s.workspace);
+export const selectCommentRailOpen = (s: { workspace: WorkspaceState }) => isCommentRailOpen(s.workspace);
+export const selectSessionRailUserClosed = (s: { workspace: WorkspaceState }) =>
+  !wsAutoAllowedPure(s.workspace, "context", SESSION_LIST_PANE);
+
+export function getProjectName(gitRoot?: string, projectPath?: string): string {
+  const path = gitRoot || projectPath;
+  if (!path) return "unknown";
+  return path.split("/").filter(Boolean).pop() || "unknown";
+}
+
+// -- Types --
+
+export type PlanRef = {
+  _id: string;
+  short_id: string;
+  title: string;
+  status: string;
+};
+
+export type TaskRef = {
+  _id: string;
+  short_id: string;
+  title: string;
+  status: string;
+};
+
+// Lightweight shapes returned by `*.webMentionList` server queries. Only the
+// fields the mention picker actually renders, kept thin so we can hold a
+// cross-team index in memory comfortably.
+export type MentionTaskItem = {
+  _id: string;
+  title: string;
+  short_id: string;
+  status: string;
+  priority: string;
+  updated_at: number;
+  team_id?: string | null;
+  user_id?: string | null;
+};
+
+export type MentionDocItem = {
+  _id: string;
+  title: string;
+  doc_type: string;
+  source_file?: string | null;
+  updated_at: number;
+  team_id?: string | null;
+  user_id?: string | null;
+};
+
+export type MentionPlanItem = {
+  _id: string;
+  title: string;
+  short_id: string;
+  status: string;
+  goal?: string;
+  updated_at: number;
+  team_id?: string | null;
+  user_id?: string | null;
+};
+
+export type PlanItem = {
+  _id: string;
+  short_id: string;
+  title: string;
+  goal?: string;
+  // The charter (docs/architecture/org-staffing.md S7; components/charter).
+  success_metrics?: string[];
+  priority?: "p0" | "p1" | "p2" | "p3";
+  owner_role_id?: string;
+  non_goals?: string[];
+  /** The Project the plan is filed under (server row field). */
+  project_id?: string;
+  status: string;
+  source: string;
+  // Workspace: set = that team's plan, unset = personal (lib/workspaceScope).
+  team_id?: string;
+  // ACCESS key ("team:<id>" | "user:<id>"), server-stamped; independent of
+  // team_id (routing). Views filter on it via lib/workspaceScope.
+  workspace?: string;
+  progress?: { total: number; done: number; in_progress: number; open: number };
+  task_count?: number;
+  session_count?: number;
+  created_at: number;
+  updated_at: number;
+};
+
+// The collections the cross-entity change feed can upsert/prune. Keep in sync
+// with hooks/useSyncChangeFeed's ENTITY_COLLECTION map.
+export { writeAsServerShape };
+
+export type FeedCollection =
+  | "sessions"
+  | "tasks"
+  | "docs"
+  | "plans"
+  | "projects"
+  ;
+
+export type ProjectItem = {
+  _id: string;
+  short_id?: string;
+  /** A web create's stub key, stored on the server row so it supersedes the stub. */
+  client_key?: string;
+  title: string;
+  description?: string;
+  status: string;
+  /** Workspace truth (server row field): set = team project, absent = personal. */
+  team_id?: string | null;
+  // ACCESS key ("team:<id>" | "user:<id>"), server-stamped; independent of
+  // team_id (routing). Views filter on it via lib/workspaceScope.
+  workspace?: string;
+  color?: string;
+  icon?: string;
+  target_date?: number;
+  labels?: string[];
+  /** The checkout the project lives in; a lead hired for it starts there. */
+  project_path?: string;
+  // The charter (docs/architecture/org-staffing.md S7; components/charter).
+  goal?: string;
+  success_metrics?: string[];
+  priority?: "p0" | "p1" | "p2" | "p3";
+  owner_role_id?: string;
+  non_goals?: string[];
+  risks?: string[];
+  budget?: { tokens_per_day?: number; hands_per_day?: number };
+  task_counts: { total: number; done: number; in_progress: number };
+  plan_count: number;
+  doc_count: number;
+  active_plan_count: number;
+  created_at: number;
+  updated_at: number;
+};
+
+export type PrStatus = {
+  pr_id: string;
+  repository: string;
+  number: number;
+  title?: string;
+  state: string;
+  at: number;
+};
+
+/** The role a session row belongs to, as the server snapshots it on the row. */
+export type SessionRoleSnapshot = { _id: string; short_id: string; name: string; handle: string; avatar: string; status: string; tenure_kind: "standing" | "program" };
+
+export type CloudContextTooLarge = { total_bytes: number; cap_bytes: number; files: Array<{ path: string; bytes: number }> };
+
+export type InboxSession = {
+  _id: string;
+  session_id: string;
+  title?: string;
+  short_title?: string | null;
+  subtitle?: string;
+  updated_at: number;
+  // conversations.status ("active" | "completed") — a working-set membership
+  // input (shared inWorkingSet). Absent on rows cached before it shipped; the
+  // membership adapter reads absence as "active" (the schema admits no other
+  // value a cached row could hide).
+  status?: string;
+  // Overlay-borne fact (INBOX_FACT_FIELDS): whether the newest turn permits a
+  // park verdict — the server computed it from the newest message, including
+  // the probed fallback the row's preview lacks.
+  last_turn_allows_park?: boolean | null;
+  started_at?: number;
+  project_path?: string;
+  git_root?: string;
+  git_branch?: string;
+  git_remote_url?: string;
+  agent_type: string;
+  // Local-only create intent for ContextChat stubs. Persisted with the stub so
+  // an outbox-cap/boot heal can reissue createSession without losing the
+  // originating task/doc/plan relation; the server row never needs this field.
+  _linkedObject?: { type: string; id: string };
+  // Local-only recovery metadata for a cross-agent continuation. The server
+  // represents it as parent_conversation_id (not forked_from), but a stranded
+  // stub must still reissue forkFromMessage with target_agent_type rather than
+  // degrade into a blank createSession.
+  _forkTargetAgentType?: string;
+  // Local-only launch intent captured when createSession is enqueued. If the
+  // create parks and the user changes a picker on the stub before it lands,
+  // rekey reconciliation compares the latest row with this frozen snapshot and
+  // durably reconfigures the blank real session before sending its first turn.
+  _launchSnapshot?: SessionLaunchSnapshot;
+  // Local-only filing intent for a session created while a label filter was
+  // focused. It survives a parked create/reload and is cleared only after the
+  // authoritative bucket-assignment row syncs back.
+  _postCreateBucketId?: string;
+  // Local-only "kept draft" marker for a deferred compose stub the user chose
+  // to keep instead of abandoning. It is what makes a 0-message blank VISIBLE
+  // in the inbox (placeInboxRows' engaged-blank gate) and immune to the
+  // orphaned-stub ghost sweep until the draft is sent or the row dismissed.
+  _hasDraft?: boolean;
+  // Local-only marker on the deferred blank a fresh launch lands on. Until
+  // its first send it is the home screen's composer, not a session: it wears
+  // no "Starting…" state and takes no inbox row (isIdleLandingStub).
+  _landing?: boolean;
+  // Last-known model id (e.g. "claude-opus-4-8"); conversations can switch
+  // models mid-stream. Shown as an inbox badge when ui.show_model_badge is on.
+  model?: string | null;
+  effort?: string | null;
+  // Per-session stable-context launch override and feed exclusions. These are
+  // local-only while a new-session stub is pending, then ride create/reconfigure.
+  stable_mode?: string;
+  /** Blank session: the agent definition it launches as (compose "as" pill). */
+  agent_definition?: string;
+  stable_exclude?: string[];
+  message_count: number;
+  idle_summary?: string;
+  // The agent's pinned "where this thread stands" line (`cast state`), with the
+  // clock and message_count from when it was written. The card renders its
+  // headline in place of idle_summary and dims it as the gap grows — see
+  // shared/contracts/threadState.
+  thread_state?: string | null;
+  thread_state_at?: number | null;
+  thread_state_msg_count?: number | null;
+  // Declared tri-state of that line: "working" | "blocked" | "done". Changes
+  // only on a state write, so thread_state_at in the wake signature covers it.
+  thread_state_status?: string | null;
+  is_idle: boolean;
+  // True when an AskUserQuestion poll is open and unanswered. The agent is
+  // blocked on the user, so this always means "needs input" regardless of the
+  // raced agent_status. Derived server-side from message data.
+  awaiting_input?: boolean;
+  is_unresponsive?: boolean;
+  is_connected?: boolean;
+  has_pending: boolean;
+  // The daemon's own status, before any trust rule. Never read it as what the
+  // agent is doing: derive that at read time (agentStatusAt, deriveLiveAt),
+  // since a verdict moves with time while this fact does not (ct-56054).
+  agent_status?: AgentStatus;
+  // The is_idle inputs (ct-47609), overlay-owned facts: the replica re-derives
+  // is_idle / is_unresponsive / the trusted status at its own clock from these
+  // (shared deriveLiveAt), so the idle grace, a heartbeat lapse and the status
+  // decay flip locally without a server re-execution.
+  agent_status_updated_at?: number | null;
+  // The settle's own facts (ct-49533): agent_status_boundary says the status
+  // settled the row on a resume / clear / manual compact rather than on a turn
+  // ending — a placement input, and the signal any completion-reactive surface
+  // (a chime, unread) must ignore. turn_completed_at is when the lead turn
+  // ended, the per-turn identity for a session the harness keeps alive for
+  // background work, whose status then stops moving between turns.
+  agent_status_boundary?: boolean | null;
+  // When the lead turn behind the current status ended (ct-49533). The stamp
+  // outlives later status writes, so it names the delivery even for a session
+  // the harness keeps alive afterwards — which is what the done and working
+  // classes sort a bucket by (ct-49550).
+  turn_completed_at?: number | null;
+  hibernated_at?: number | null;
+  last_heartbeat?: number | null;
+  last_role_is_user?: boolean | null;
+  auq_open?: boolean | null;
+  daemon_alive_until?: number | null;
+  producing_until?: number | null;
+  // A child of this row is asking (overlay fact, ct-56051): lifts the parent
+  // into QUESTIONS when the asking child is not held here.
+  child_asking?: boolean | null;
+  child_asking_until?: number | null;
+  tmux_session?: string | null;
+  permission_mode?: string | null;
+  // When the agent process behind this session started. Background watches and
+  // monitors armed before it belong to a process that has been replaced, so
+  // they are dead however alive the session is (see monitorRows).
+  agent_started_at?: number | null;
+  // The daemon's verified open background work (shared/contracts/openTasks) and
+  // when it last checked. Overlay-borne. Lets the inbox draw a "↳ Background …"
+  // row without this conversation's messages, and tells the message-derived
+  // rows which watches the daemon found dead.
+  open_tasks?: OpenTaskReport[] | null;
+  open_tasks_at?: number | null;
+  // What the agent is doing right now ("editing chat.ts"), overlay borne
+  // (conversations.activity). Read it through isSessionActivityFresh: a card
+  // shows it only while the row is working and the stamp is fresh, and
+  // subscribes to its text and stamp, never the object (each overlay push
+  // hands back a new object).
+  activity?: SessionActivity | null;
+  is_deferred?: boolean;
+  // When the user deferred the row; orders deferred rows by defer time.
+  inbox_deferred_at?: number | null;
+  // The user's own rest verdict — where they filed the row (Needs Input, Done,
+  // Dormant) — current per the server's inbox_rest_at >= updated_at rule, the
+  // same contract as is_deferred. The raw stamp rides along so the optimistic
+  // write sets both and the client re-checks currency as updated_at moves.
+  user_rest?: UserRest | null;
+  inbox_rest?: UserRest | null;
+  inbox_rest_at?: number | null;
+  // The settle classifier's verdict for the CURRENT settle (server nulls a
+  // stale one), consulted only when the agent made no declaration of its own.
+  settle_verdict?: "done" | "needs_input" | "dormant" | null;
+  is_pinned?: boolean;
+  // When the user pinned this session (Date.now() ms). Drives a stable order in
+  // the Pinned group so cards don't reshuffle on agent status churn.
+  inbox_pinned_at?: number | null;
+  inbox_dismissed_at?: number | null;
+  // Stash = set aside WITHOUT killing. Hides the session from the active
+  // buckets into the Stashed group (above Dismissed) while the agent keeps
+  // running. Same absolute-flag semantics as dismiss; a dismiss clears it.
+  inbox_stashed_at?: number | null;
+  inbox_snoozed_until?: number | null;
+  // "Stash and hide": the stash survives trigger wakes (a plain stash pops
+  // back on one). Honored only while inbox_stashed_at is set — see the shared
+  // isStashHidden. Every stash write sets it, true or null.
+  inbox_stash_hidden?: boolean | null;
+  // The RETIRED marker — the user tore this session down. Set by every kill
+  // surface (`cast kill`, the web killSession command, applyHideTransition's
+  // kill branch) and outranks every other state signal: a killed row is never
+  // "working" and never "waiting for input", however stale its has_pending /
+  // agent_status still are. Cleared only by a sanctioned revival (an explicit
+  // send, Restart, undismiss) — see classifyWorkState in convex/inboxFilters.ts,
+  // whose precedence the client predicates below mirror.
+  inbox_killed_at?: number | null;
+  last_user_message?: string | null;
+  // Newest image in the conversation (server-denormalized, see convex schema).
+  // Presence doubles as "this session has images"; rendered as the inbox row
+  // thumbnail when the inbox_image_thumbs pref is on.
+  image_preview_url?: string | null;
+  // Teammate comment threads (message/code/global anchors) still unresolved —
+  // the card's "someone flagged this" chip. Server-derived on the inbox row.
+  open_comment_threads?: number;
+  // Who spoke last in those open threads and what they said (denormalized by
+  // comments.refreshCommentSignal). author_id is a users id string or "agent";
+  // the chip mutes itself when the viewer spoke last.
+  last_comment_author?: string | null;
+  last_comment_author_id?: string | null;
+  last_comment_excerpt?: string | null;
+  last_comment_at?: number | null;
+  session_error?: string;
+  // True when the session's latest turn is an unresolved Claude Code auth/API
+  // error banner ("Please run /login · API Error: 401 …") — the CLI was signed
+  // out / rate-limited mid-turn and is parked waiting on the user to
+  // re-authenticate or retry. Surfaced by the server; routes the row to
+  // needs-input and shows a distinct "login" badge. Self-clears when a real
+  // turn supersedes the banner.
+  pending_api_error?: boolean;
+  // "auth" | "limit" | "throttle" | "error" | "connection" | "fatal" — which
+  // banner family parked the session; picks the badge label ("login" /
+  // "limit" / "throttled" / "dropped" / "failed"; self-retrying "error" gets
+  // none).
+  pending_api_error_kind?: string | null;
+  // When the block landed (the newest banner message's timestamp) — renders
+  // the ticking "Xm ago" on the blocked-sessions banner and its rows.
+  pending_api_error_at?: number | null;
+  /** A hosted conversation whose last turn ended on a stop notice: the
+   *  notice's kind (conversations.hosted_stop). lib/hostedNotice hostedStopOf. */
+  hosted_stop?: string | null;
+  context_tokens?: number | null;
+  last_model_call_at?: number | null;
+  implementation_session?: { _id: string; title?: string };
+  is_subagent?: boolean;
+  parent_conversation_id?: string;
+  // Visible-child pointer: the session that spawned this one (agent-team
+  // teammate → its lead). Unlike parent_conversation_id it does NOT mark the
+  // row a subagent — the card stays top-level; it only powers the parent
+  // click-through. agent_team_name/agent_name identify the teammate so a
+  // name in a transcript can resolve to the sibling session carrying it.
+  spawned_by_conversation_id?: string | null;
+  // The handoff pair (`cast handoff --to`, handoff.start): where a child came
+  // from and where a source continued. Links only; neither marks the row a
+  // subagent.
+  handed_off_from_conversation_id?: string | null;
+  handed_off_to_conversation_id?: string | null;
+  handed_off_from_details?: { conversation_id: string; short_id: string; title?: string | null; agent_type?: string | null; model?: string | null } | null;
+  handed_off_to_details?: { conversation_id: string; short_id: string; title?: string | null; agent_type?: string | null; model?: string | null } | null;
+  agent_team_name?: string | null;
+  agent_name?: string | null;
+  active_plan?: PlanRef;
+  active_task?: TaskRef;
+  worktree_name?: string | null;
+  worktree_branch?: string | null;
+  // "Run in the cloud", before the host has it: the row is parked on the cloud
+  // device while a local daemon prepares the host and acquires its worktree
+  // there (cloud_spawn). Cleared by cloud.placeConversation, so its absence is
+  // the honest "this session is placed and running".
+  cloud_placement?: "pending" | null;
+  // Where a cloud session runs on the host: its own worktree (absent/null =
+  // isolated) or the host's main checkout ("shared"). Stamped at create and by
+  // placement; the card's chip and the header badge read it.
+  cloud_workspace?: "isolated" | "shared" | null;
+  // What a cloud worktree started from (stamped once, at placement): the
+  // laptop branch/commit it was seeded with, whether that tree was dirty, or
+  // origin/main with the reason for an automatic downgrade. The chip shows
+  // `@<base7>`, the header tooltip the "Started from …" line.
+  cloud_seed?: { source: "checkout" | "origin_main"; base: string; branch?: string | null; dirty?: boolean | null; laptop_root?: string | null; device_id?: string | null; reason?: string | null; at: number } | null;
+  // The last cloud placement failed because the project context was over the
+  // cap: the files that would have to stay behind (home-relative, largest
+  // first). The error banner asks whether to leave them out.
+  cloud_context_too_large?: CloudContextTooLarge | null;
+  cloud_placement_progress?: CloudPlacementProgress | null;
+  // A cloud session's tree mirrored live into a worktree on one of the
+  // owner's laptops: the laptop running it writes this (starting, live,
+  // paused, local_edit, error); the header chip and the machine menu read it.
+  local_mirror?: LocalMirror | null;
+  // A bulk migration (Settings → Migration) is moving this session between
+  // machines: the row is fenced (messages queue) until the destination owns
+  // it. The batch id links the card to its progress row.
+  migration_batch_id?: string | null;
+  workflow_run_id?: string | null;
+  // A dynamic-workflow agent conversation (server-emitted beside
+  // workflow_run_id, always a boolean — `|| false`). Read by isSub via
+  // isAgentSpawnedConversation so the chime stands down on it exactly as the
+  // needs-input push does.
+  is_workflow_sub?: boolean;
+  is_workflow_primary?: boolean;
+  workflow_run_status?: string | null;
+  workflow_run_name?: string | null;
+  workflow_run_agents_done?: number | null;
+  workflow_run_agents_total?: number | null;
+  workflow_run_activity?: string | null;
+  workflow_run_started_at?: number | null;
+  // The schedule (agent_tasks row) that spawned this conversation as a run.
+  // Lets the sidebar badge/strip attribute any historical run to its schedule.
+  agent_task_id?: string | null;
+  // Denormalized armed inject-trigger state ("none" | "standing" | "once") —
+  // the shared classifier's structural-dormancy input (placeProjectableRow),
+  // read off the row instead of agent_tasks. Absent reads as "none".
+  armed_trigger_kind?: string | null;
+  // The pull request this session shepherds, folded onto the row by the server
+  // so a card can show its state without reading pull_requests. `state` is the
+  // shepherd state (review_pending, ci_red, behind, approved, merged, ...).
+  pr_status?: PrStatus | null;
+  // The subagent fleet (convex/subagentFleet.ts): a worker's slot ("running"
+  // or "queued"), when it took it, the machine and limits it counts against,
+  // and what became of its worktree's changes when it ended.
+  subagent_slot?: SubagentSlot | null;
+  subagent_slot_at?: number | null;
+  subagent_slot_device?: string | null;
+  subagent_caps?: SubagentCaps | null;
+  merge_back?: MergeBackStatus | null;
+  // The page an agent offered as a pane (`cast browser pane <url>`). The card
+  // wears a small glyph while the offer is unhandled; opening or dismissing it
+  // stamps opened_at. See lib/browserPaneOffer.
+  browser_pane_offer?: BrowserPaneOffer | null;
+  // Harness /loop state (server-folded from ScheduleWakeup / wakeup-fire
+  // messages; see convex/loopState.ts). An armed loop rows this session into
+  // the inbox trigger set like an armed trigger. Never "stopped" here — the
+  // server projects tombstones as null.
+  loop_state?: {
+    status: "armed" | "waking";
+    wakeup_at: number;
+    armed_at: number;
+    fired_at?: number;
+    event_at: number;
+    reason?: string;
+    prompt?: string;
+  } | null;
+  forked_from?: string | null;
+  parent_message_uuid?: string | null;
+  // Messages inherited from the parent up to the fork point. Lets the branch
+  // map show this branch's own size (message_count - fork_copied) when the row
+  // is sourced from the session cache rather than the fork-details payload.
+  fork_copied?: number;
+  icon?: string;
+  icon_color?: string;
+  // The session's character (docs/architecture/session-characters.md S1): the
+  // chosen face key and name, absent for the hash default. Read only through
+  // lib/sessionIdentity.
+  character_avatar?: string | null;
+  character_name?: string | null;
+  // Org pointers and, when one is set, a snapshot of that role so the row can
+  // wear the role's face and name without the org tree loaded.
+  org_role_id?: string | null;
+  standing_role_id?: string | null;
+  role?: SessionRoleSnapshot | null;
+  // Kept-for-later flag. Drives the Favorites top-level view (a long-term set,
+  // grouped by project) — the same session cache, filtered. Set optimistically
+  // by toggleFavorite and carried on both the inbox and favorites server rows.
+  is_favorite?: boolean;
+  dismissed_at?: number;
+  team_id?: string | null;
+  is_private?: boolean;
+  // The per-session team level. The inbox projection never carries it; the
+  // field holds only what setTeamVisibility wrote optimistically, so a reader
+  // prefers a server row's value when it has one (lib/teamFeedRows).
+  team_visibility?: string | null;
+  // Which device currently runs this session (null = unassigned; auto-routing
+  // picks the most-recently-active local machine on next send).
+  owner_device_id?: string | null;
+  // The saved Claude account the session is pinned to (null = the machine's login).
+  cc_account?: string | null;
+  // LOCAL-ONLY, blank sessions only: the machine the user picked in the
+  // new-session row. A request, not a fact — it rides the create (see
+  // createSessionFromStub) and routing may still fall back, after which
+  // owner_device_id is the truth. Never written to the server as a field.
+  target_device_id?: string | null;
+  // The session's author (conversation.user_id). The inbox is user-scoped, so a
+  // synced row is always the current user's own — but a teammate's session can be
+  // INJECTED into this same cache (deep-link / search / command-palette open). The
+  // card shows the author only when this isn't the current user. author_name/avatar
+  // are the source-provided display fallback for injected rows whose author isn't on
+  // the live team roster; otherwise the name/avatar derive from the roster by user_id.
+  user_id?: string;
+  author_name?: string | null;
+  author_avatar?: string | null;
+  // Second-party owner (the member routed to steer a session run by another
+  // account) and the caller-relative "this session is mine to triage" verdict,
+  // both stamped by the server (computeInboxSessions). Team mode reads these to
+  // keep a foreign teammate row READ-ONLY — dismiss/stash/pin/kill mutate global
+  // conversation fields, so acting on a teammate's card would hide it from them.
+  owner_user_id?: string | null;
+  owned_by_me?: boolean;
+  // Unacknowledged handoff: a teammate assigned this session to the current user
+  // and they haven't acked it yet (session_owners.seen_at unset). Stamped by
+  // computeInboxSessions; cleared by ackSessionAssignment (server) and
+  // clearAssignedPing (local-first).
+  assigned_ping?: { by_name: string; note?: string | null; at: number } | null;
+  // An Anchor's session renders under its bot identity (acting_user_id), shown
+  // even on the host's own row; is_anchor marks it a standing member.
+  acting_user_id?: string | null;
+  is_anchor?: boolean;
+  persistent?: boolean;
+  anchor_id?: string | null;
+};
+
+// An image attached to an outbound (optimistic) message. While its upload is in
+// flight it carries a local `preview_url` (blob:) + `uploading: true` so the
+// pending bubble can show a thumbnail + spinner; once uploaded it carries the
+// real `storage_id` and the spinner clears.
+export type OptimisticImage = {
+  media_type: string;
+  storage_id?: string;
+  preview_url?: string;
+  uploading?: boolean;
+};
+
+export type Message = {
+  _id: string;
+  message_uuid?: string;
+  role: string;
+  content?: string;
+  timestamp: number;
+  thinking?: string;
+  tool_calls?: any[];
+  tool_results?: any[];
+  images?: any[];
+  subtype?: string;
+  _isOptimistic?: true;
+  _isQueued?: true;
+  _clientId?: string;
+  _isFailed?: true;
+  // The server holds this send (its transcript row exists, or a control line
+  // was consumed), but this window has not seen the echo yet. A settled row
+  // still renders, in place, until the echo lands in messages[] and
+  // prunePendingEchoes retires it; nothing redrives or counts it as in flight.
+  // Server evidence alone never removes a row: a sent message must never
+  // vanish before its echo is on screen.
+  _isSettled?: true;
+  _isLocalQueue?: true;
+  _queuePosition?: number;
+  // The exact content the durable send dispatched for this row (mention
+  // expansion appends context the bubble's raw `content` doesn't have). The
+  // server fingerprints command args by client id, so every redrive/resend must
+  // replay these bytes — rebuilding from `content` makes the server refuse the
+  // replay as COMMAND_ID_REUSED and falsely fail an already-delivered message.
+  _dispatchContent?: string;
+  client_id?: string;
+  // The conversation's server-stamped `updated_at` at the instant this optimistic
+  // send was added. The server bumps `updated_at` when it accepts the send, so a
+  // later snapshot whose `updated_at` exceeds this baseline proves the server has
+  // processed our message — the only safe moment to let the absence-based prune
+  // (is_idle && !has_pending) drop the pending pill. Without it a stale pre-send
+  // snapshot prunes a just-sent message and flickers the card out of Working.
+  _sentBaselineTs?: number;
+};
+
+// The complete, non-paginated set of navigable (user + assistant) messages for
+// a conversation, fetched once via getUserMessages and cached so the sticky
+// header and message browser have the full list regardless of which window of
+// messages is currently paginated in.
+export type UserMessage = {
+  images?: Array<{ media_type: string; storage_id?: string; data?: string }>;
+  from_user_id?: string;
+  _id: string;
+  message_uuid?: string;
+  role: "user";
+  content: string;
+  timestamp: number;
+};
+
+export type PaginationState = {
+  lastTimestamp: number | null;
+  oldestTimestamp: number | null;
+  hasMoreAbove: boolean;
+  hasMoreBelow: boolean;
+  loadOlderTimestamp?: number;
+  loadNewerTimestamp?: number;
+  isLoadingOlder: boolean;
+  isLoadingNewer: boolean;
+  jumpMode: "start" | "end" | null;
+  loadedStartIndex: number;
+  isSearchingForTarget: boolean;
+  initialized: boolean;
+};
+
+export type ConversationMeta = Record<string, any>;
+
+export type ForkChild = {
+  _id: string;
+  user_id?: string;
+  title: string;
+  short_id?: string;
+  started_at?: number;
+  username?: string;
+  parent_message_uuid?: string;
+  message_count?: number;
+  agent_type?: string;
+  session_id?: string;
+  // Enriches the BranchSelector chip + hover; all free off the conversation row
+  // (see mapForkDetails). fork_copied = messages inherited from the parent up to
+  // the fork point, so message_count - fork_copied is this branch's own size.
+  updated_at?: number;
+  last_message_preview?: string;
+  last_message_role?: string;
+  last_user_message_at?: number;
+  status?: string;
+  git_branch?: string;
+  fork_copied?: number;
+  fork_status?: "copying" | "complete" | "failed";
+  // First user prompt past the fork point — the divergent message that
+  // distinguishes this branch from its siblings (see mapForkDetails).
+  first_divergent_preview?: string;
+  // The conversation this branch was forked from — the origin line whose
+  // post-fork size the branch selector shows as "main". Stamped by the client
+  // when the fork family is assembled (children: this conversation, siblings:
+  // its parent); never persisted.
+  origin_id?: string;
+  // Client-seeded stub that stands in until the server row lands. It knows its
+  // inherited history only as far as the client had it loaded, so it never
+  // contributes to origin-line arithmetic.
+  optimistic?: boolean;
+  // Triage/visibility state off the same conversation row. preloadForkSessions
+  // copies these onto the seeded row so a stashed/dismissed/killed branch never
+  // masquerades as an active needs-input card at boot.
+  forked_from?: string | null;
+  project_path?: string;
+  git_root?: string;
+  inbox_dismissed_at?: number | null;
+  inbox_stashed_at?: number | null;
+  inbox_snoozed_until?: number | null;
+  inbox_stash_hidden?: boolean | null;
+  inbox_killed_at?: number | null;
+  inbox_pinned_at?: number | null;
+};
+
+// The loose conversation-summary shape every cache-seeding surface maps its
+// server payload into: fork preloads (ForkChild), the ?s= deep-link inject
+// (getConversation), the palette inject (performListRecentSessions rows and
+// favorite store rows), and task/doc/workflow linked-session opens
+// (taskMining snapshots). All of them seed `store.sessions` from data narrower
+// than a synced row, so they share ONE constructor below instead of each
+// hand-picking fields — hand-picked shapes are how stashed sessions seeded as
+// active cards and flashed into the inbox at boot (ct-42666).
+export type SessionSummary = {
+  _id: string;
+  session_id?: string;
+  title?: string;
+  updated_at?: number;
+  started_at?: number;
+  agent_type?: string | null;
+  message_count?: number;
+  is_idle?: boolean;
+  project_path?: string | null;
+  git_root?: string | null;
+  forked_from?: string | null;
+  parent_message_uuid?: string | null;
+  parent_conversation_id?: string | null;
+  user_id?: string;
+  author_name?: string | null;
+  author_avatar?: string | null;
+  inbox_dismissed_at?: number | null;
+  inbox_stashed_at?: number | null;
+  inbox_snoozed_until?: number | null;
+  inbox_stash_hidden?: boolean | null;
+  inbox_killed_at?: number | null;
+  inbox_pinned_at?: number | null;
+};
+
+const SUMMARY_PASSTHROUGH_KEYS = [
+  "project_path",
+  "git_root",
+  "forked_from",
+  "parent_message_uuid",
+  "parent_conversation_id",
+  "user_id",
+  "author_name",
+  "author_avatar",
+] as const;
+
+export const TRIAGE_STAMP_KEYS = [
+  "inbox_dismissed_at",
+  "inbox_stashed_at",
+  "inbox_snoozed_until",
+  "inbox_stash_hidden",
+  "inbox_killed_at",
+  "inbox_pinned_at",
+] as const;
+
+// Build a session cache row from a server summary. The one rule that makes
+// this sound: a key the payload does not carry stays ABSENT on the row —
+// never defaulted. The inbox categorizer cannot tell "field missing" from
+// "field false", so fabricating `inbox_stashed_at: null` from a projection
+// that simply omitted the field would un-hide a triaged session; leaving it
+// absent lets a later, richer payload (or preloadForkSessions' heal pass)
+// fill it. Keys the payload DOES carry are copied even when null — an
+// explicit null is a real "not stashed". Unknown extra keys on the summary
+// are dropped (whitelist), so a caller spreading a fat server object can't
+// smuggle a new field shape past this contract.
+export function sessionRowFromSummary(summary: SessionSummary): InboxSession {
+  const row = {
+    _id: summary._id,
+    session_id: summary.session_id || summary._id,
+    title: summary.title,
+    updated_at: summary.updated_at ?? summary.started_at ?? Date.now(),
+    started_at: summary.started_at,
+    agent_type: summary.agent_type || "claude_code",
+    message_count: summary.message_count ?? 0,
+    is_idle: summary.is_idle ?? true,
+    has_pending: false,
+  } as InboxSession;
+  for (const k of SUMMARY_PASSTHROUGH_KEYS) {
+    if (summary[k] !== undefined) (row as any)[k] = summary[k];
+  }
+  for (const k of TRIAGE_STAMP_KEYS) {
+    if (summary[k] !== undefined) (row as any)[k] = summary[k] ?? null;
+  }
+  // The buckets read the enriched twin, so derive it the way the server does —
+  // but only when the stamp was actually delivered.
+  if (summary.inbox_pinned_at !== undefined) row.is_pinned = !!summary.inbox_pinned_at;
+  return row;
+}
+
+export type CurrentConversationContext = {
+  conversationId?: string;
+  projectPath?: string;
+  gitRoot?: string;
+  agentType?: string;
+  source?: "inbox" | "sessions";
+};
+
+// -- Task / Doc Types --
+
+export type TaskStep = {
+  title: string;
+  done?: boolean;
+  verification?: string;
+};
+
+export type TaskExecutionStatus = "done" | "done_with_concerns" | "blocked" | "needs_context";
+
+export type IssueProvider = "linear" | "github";
+
+// The provider twin of a task backed by a Linear or GitHub issue
+// (docs/architecture/issue-sync.md S1.1). Server authored: clients never write
+// it optimistically, so field protection never has to reconcile it.
+export type TaskExternal = {
+  provider: IssueProvider;
+  id: string;
+  /** "LIN-123" or "owner/repo#482". */
+  identifier: string;
+  url: string;
+  number?: number;
+  repo?: string;
+  team_key?: string;
+  source_id?: string;
+  remote_updated_at: number;
+  synced_at: number;
+  /** Provider assignee display when it maps to no codecast user. */
+  assignee_label?: string;
+  state_name?: string;
+  last_error?: string;
+};
+
+/** S1.2: a comment pulled from, or pushed to, the provider. */
+export type TaskCommentExternal = { provider: IssueProvider; id: string; url?: string; author?: string };
+
+/** Every kind with an "anyone with the link" switch besides conversations. */
+export type PublicShareKind = Exclude<SharedObjectKind, "message">;
+
+/** Where each shareable kind keeps its cached rows, for the optimistic write. */
+const SHARE_COLLECTIONS: Record<PublicShareKind, string[]> = {
+  doc: ["docs", "docDetails"],
+  plan: ["plans"],
+  task: ["tasks"],
+  call: [],
+  project: ["projects"],
+  initiative: ["initiatives"],
+  decision: ["sessionDecisions", "decisionDetails", "handledDecisions"],
+  stack: ["decisionStacks"],
+  trigger: ["agentTasks", "foreignTriggers"],
+  run: ["workflowRuns"],
+};
+
+/** A close parked behind the open-subtasks dialog (lib/taskActions closeTaskWithGuard). */
+export type TaskCloseGuard = {
+  status: 'done' | 'dropped';
+  statusId?: string;
+  parents: Array<{ shortId: string; open: TaskItem[] }>;
+};
+
+export type TaskItem = {
+  _id: string;
+  short_id: string;
+  title: string;
+  /** "Anyone with the link" is on (convex publicShare.ts). */
+  share_token?: string;
+  description?: string;
+  task_type: string;
+  status: string;
+  priority: string;
+  source: string;
+  triage_status?: string;
+  // True = on the human's board: set by triage promote or `cast task create
+  // --human`. Machine-created tasks without it are agent-internal.
+  promoted?: boolean;
+  // Idempotency key on optimistic create-stubs; altKey-supersedes to the real row.
+  client_key?: string;
+  // Subtask edge: the task this one is filed under. Always a task in the SAME
+  // workspace (convex resolveParentTask enforces that), so nesting can never
+  // pull a row across the workspace boundary the views scope by.
+  parent_id?: string | null;
+  // Manual list rank; unranked rows fall back to created_at (same ms scale).
+  sort_order?: number;
+  // Short id of the canonical task this one duplicates (set with drop status).
+  duplicate_of?: string;
+  labels?: string[];
+  blocked_by?: string[];
+  blocks?: string[];
+  // The task graph (docs/architecture/task-graph.md): blockers outside the
+  // graph (TG2), and links that do not block (TG5), all task short ids.
+  waits?: TaskWait[];
+  found_during?: string;
+  superseded_by?: string;
+  related?: string[];
+  /** Graph refs the detail looked up that name no task (taskMining
+   *  webGetTaskDetail): `statusLookup`'s `searched`, so they read as not
+   *  found rather than unknown. Detail-only, preserved across list deltas. */
+  graph_missing?: string[];
+  /** The list's snapshot of its blocker and parent refs (convex
+   *  lib/taskGraph stampGraphStatus), read beneath the store's live rows
+   *  (lib/taskBlockers). Preserved across rows that lack it (the detail). */
+  graph_status?: GraphRefStatus[];
+  user_id?: string;
+  assignee?: string;
+  assignee_info?: { name: string; image?: string } | null;
+  confidence?: number;
+  created_at: number;
+  updated_at: number;
+  closed_at?: number;
+  creator?: { name: string; image?: string };
+  plan?: PlanRef;
+  activeSession?: { session_id: string; title?: string; agent_status?: string; agent_type?: string } | null;
+  source_agent_type?: string | null;
+  origin_session?: { conversation_id: string; session_id: string; title?: string; started_by?: string; last_message_at?: number; message_count?: number } | null;
+  session_count?: number;
+  created_from_conversation?: string;
+  /** The call this task was pulled from (a transcripts id). */
+  from_call?: string;
+  conversation_ids?: string[];
+  steps?: TaskStep[];
+  acceptance_criteria?: string[];
+  execution_status?: TaskExecutionStatus;
+  execution_concerns?: string;
+  verification_evidence?: string;
+  files_changed?: string[];
+  estimated_minutes?: number;
+  actual_minutes?: number;
+  started_at?: number;
+  team_id?: string;
+  // ACCESS key ("team:<id>" | "user:<id>"), server-stamped; independent of
+  // team_id (routing). Views filter on it via lib/workspaceScope.
+  workspace?: string;
+  workflow_run_id?: string;
+  workflow_node_id?: string;
+  project_path?: string;
+  /** The Project the task is filed under (server row field). */
+  project_id?: string;
+  external?: TaskExternal;
+};
+
+// Manual session buckets: personal named groups for filing inbox sessions by
+// workstream (chips in the session panel header + a "by bucket" grouping mode).
+export type BucketItem = {
+  _id: string;
+  user_id?: string;
+  name: string;
+  color?: string;
+  sort_order?: number;
+  archived_at?: number;
+  created_at: number;
+  updated_at: number;
+};
+
+// One row per (user, conversation); bucket_id null/undefined = unfiled.
+export type BucketAssignmentItem = {
+  _id: string;
+  user_id?: string;
+  conversation_id: string;
+  bucket_id?: string | null;
+  updated_at: number;
+};
+
+// One row per (user, conversation): where this viewer's attention stopped.
+// Unread is never stored — it is isSessionUnread(mark, session.updated_at),
+// re-derived at render so an ack and a new turn cannot disagree.
+export type SessionReadItem = {
+  _id: string;
+  conversation_id: string;
+  acknowledged_at: number;
+  manual_unread?: boolean;
+  updated_at: number;
+};
+
+// The decision queue: one explicit question an agent handed its human via
+// `cast decide` (session_decisions table). Answering is local-first — the
+// resolution fields flip on the draft and ride the generic patch rail; the
+// chosen option separately enters the session as a normal user message.
+/** One binding row as webListBindings returns it. Optimistic stubs carry a
+ *  client_key as _id until the server row supersedes them. */
+export interface CapabilityBindingRow {
+  _id: string;
+  user_id?: string;
+  team_id?: string;
+  capability_slug: string;
+  scope_kind: string;
+  scope_key: string;
+  enabled: boolean;
+  config?: Record<string, string>;
+  client_filter?: string[];
+  min_client_version?: string;
+  client_key?: string;
+  created_by?: string;
+  updated_at: number;
+}
+
+export type DecisionOption = {
+  label: string;
+  description?: string;
+  body_md?: string;
+  evidence?: Array<{ label: string; url: string }>;
+  cost?: string;
+  risk?: string;
+  // A published page the option is judged by (the-line.md L6): the document
+  // page renders these as a comparison row above the option list.
+  page_slug?: string;
+};
+export type DecisionKind = "single" | "multi" | "rank" | "form";
+// What the web hands answerDecision: one index (single), a typed answer, a
+// list of indexes (multi / rank) or a key→value map (form), or a dismissal.
+export type DecisionAnswerInput = { index?: number; text?: string; json?: any } | { dismiss: true };
+export type DecisionFormField = { key: string; label: string; type: "text" | "number" | "select" | "bool"; options?: string[] };
+export type DecisionHop = { role_id: string; recommendation?: number; note?: string; at: number; passed_at?: number };
+// `via`: the session that carried a person's answer at their word (cast decide answer --for-human).
+export type DecisionParty = { kind: "user" | "role" | "policy"; id: string; via?: string };
+
+export type SessionDecisionItem = {
+  _id: string;
+  short_id?: string;
+  conversation_id: string;
+  session_id: string;
+  user_id?: string;
+  question: string;
+  context_md?: string;
+  options: DecisionOption[];
+  report_slug?: string;
+  /** A change card (the-line-end-to-end.md LE10) the decision is about. */
+  card?: import("@codecast/shared/contracts/changeCard").ChangeCard;
+  blocking: boolean;
+  default_option?: number;
+  /** A pointer card (a staffing proposal's): answering clears it and
+   *  delivers nothing into the session. */
+  silent?: boolean;
+  // withdrawn: the agent took its question back (`cast decide cancel`).
+  status: "pending" | "answered" | "dismissed" | "withdrawn";
+  answer_index?: number;
+  answer_text?: string;
+  // multi: number[] (indexes); rank: number[] (ordered); form: Record<key, value>.
+  answer_json?: any;
+  // W2 (docs/architecture/decisions-as-documents.md): the document, the
+  // routing, the task binding and the stack.
+  kind?: DecisionKind;
+  category?: string;
+  category_proposed?: string;
+  doc_id?: string;
+  form?: { fields: DecisionFormField[] };
+  task_id?: string;
+  station?: string;
+  stack_id?: string;
+  // A gate on the line (the-line.md L4): the run this question pauses.
+  workflow_run_id?: string;
+  gate_node_id?: string;
+  /** Asked by a trial run (convex lib/trialDecision): its answer records what the person would have done and ships nothing. */
+  trial?: boolean;
+  holder?: { kind: "user" | "role"; id: string };
+  holder_key?: string;
+  /** A person handed it to a teammate or a role (convex passCore); null when nobody did. */
+  passed_to?: { kind: "user" | "role"; id: string } | null;
+  /** Whether it sits in the viewer's own queue (convex decisionRowsForViewer). A row the team's line decisions
+   *  brought in that is not the viewer's says false; the queue surfaces read inViewerQueue. */
+  in_queue?: boolean;
+  /** The workspace the team's line decisions read it from (sessionDecisions.listOpenForLines); that feed prunes by it. */
+  line_workspace?: string;
+  /** A line decision's problem: the worst finding's severity, 1 to 10, when a judge scored one. */
+  problem_severity?: number | null;
+  asked_user_ids?: string[];
+  hops?: DecisionHop[];
+  answered_by?: DecisionParty;
+  grant_id?: string;
+  scope_keys?: string[];
+  reopened_from?: { grant_id: string; answer_index?: number; at: number };
+  created_at: number;
+  // conversation.message_count at ask time; live count minus this is
+  // "messages since the ask", correct beyond the loaded window.
+  asked_message_count?: number;
+  // Last `cast decide edit`; created_at is the ask time (queue age).
+  updated_at?: number;
+  resolved_at?: number;
+  // Who asked, as a snapshot (see schema); the live session row wins at render.
+  session_title?: string;
+  project_path?: string;
+};
+
+// What the stack page hands setStackPolicy: the mutation's own argument names.
+export type StackPolicyPatch = {
+  auto_default_after_ms?: number;
+  clear_auto_default?: boolean;
+  due_at?: number;
+  clear_due?: boolean;
+  delegate?: string;
+};
+
+// A decision stack (decisionStacks.listStacks row): an ordered set of
+// decisions one person clears in one sitting, with its progress counted
+// server side so the queue groups without loading every member.
+export type DecisionStackItem = {
+  _id: string;
+  short_id?: string;
+  title: string;
+  team_id?: string;
+  scope_user_id?: string;
+  owner_user_id: string;
+  role_id?: string;
+  // due_at (the-line.md L10): when the person means to have cleared it; the
+  // queue shows it on the group header and sorts overdue stacks first.
+  policy: { auto_default_after_ms?: number; delegate_role_id?: string; due_at?: number };
+  status: "open" | "done";
+  decision_ids: string[];
+  // The optimistic stub's key; the list feed's altKey supersedes onto it.
+  client_key?: string;
+  total: number;
+  resolved: number;
+  pending: number;
+  next_decision_id?: string;
+  next_short_id?: string;
+  created_at: number;
+  updated_at: number;
+};
+
+// "Handled without you" (sessionDecisions.listHandledByRoles): a decision a
+// role answered under a grant, with the role and the grant for the disagree
+// and reopen controls.
+export type HandledDecisionItem = SessionDecisionItem & {
+  role: { _id: string; short_id?: string; name: string; handle?: string; status?: string; host_user_id?: string } | null;
+  grant: { _id: string; role_id: string; category: string; scope_key: string; expires_at: number; revoked_at?: number } | null;
+};
+
+// The document page's context (sessionDecisions.getWithDoc), keyed by the
+// decision id: the doc body, the task, the stack, the ladder with role names,
+// the people, the holder role, and the grant offer.
+// The discussion of one decision (convex decisionDiscussion.discussion): who
+// owns it, resolved now, and each ask with the owner's reply read from its
+// transcript. One row per decision viewed, keyed by the decision's Convex id.
+export type DecisionDiscussionOwnerVia = "asker" | "run" | "lead" | "workspace";
+export type DecisionDiscussionTurn = {
+  client_id: string;
+  text: string;
+  at: number;
+  user_id: string;
+  by: string;
+  conversation_id: string;
+  delivered: boolean;
+  reply: { text: string; at: number } | null;
+};
+export type DecisionDiscussionItem = {
+  _id: string;
+  decision_short_id?: string;
+  owner: { conversation_id: string; short_id?: string; name: string; via: DecisionDiscussionOwnerVia } | null;
+  turns: DecisionDiscussionTurn[];
+};
+/** A person's words to a decision's owner on their way: painted at once,
+ *  retired when the server's row carries the same client id. */
+export type DecisionDiscussionSend = { client_id: string; text: string; at: number };
+
+export type DecisionDetailItem = {
+  _id: string;
+  decision: SessionDecisionItem;
+  doc: { _id: string; title?: string; content?: string; updated_at?: number } | null;
+  task: { _id: string; short_id?: string; title: string; status?: string; status_id?: string; project_id?: string } | null;
+  stack: { _id: string; short_id?: string; title: string; decision_ids: string[]; policy?: DecisionStackItem["policy"]; status: string } | null;
+  ladder: Array<DecisionHop & { role: HandledDecisionItem["role"] }>;
+  asked_users: Array<{ _id: string; name: string; avatar_url?: string }>;
+  holder_role: HandledDecisionItem["role"];
+  grant_offer: { role_id: string; role_name: string; category: string; scope_key: string; agreements: number; askers: number; may_grant: boolean } | null;
+  grant: HandledDecisionItem["grant"];
+  /** Why a pending decision no longer stands and what replaced it (line-versions.md LV1); null while current. */
+  superseded?: import("@codecast/shared/contracts/superseded").Superseded;
+};
+
+// conversation_id → bucket_id lookup, derived at read time from the assignment
+// rows (never stored — see the liveEntities rule on derived snapshots).
+const convBucketMaps = new WeakMap<object, Record<string, string | undefined>>();
+export function convBucketMap(assignments: Record<string, BucketAssignmentItem>): Record<string, string | undefined> {
+  const cached = convBucketMaps.get(assignments);
+  if (cached) return cached;
+  // A conversation can transiently carry two rows: the optimistic
+  // `bucketassign-` stub (immortal on disk — the cache never deletes without an
+  // exclude — so hydration unions it back each boot until live sync rekeys it)
+  // and the real server row. Real rows beat stubs, then newer beats older, so
+  // a stale stub can never shadow a later re-bucketing.
+  const winner: Record<string, BucketAssignmentItem> = {};
+  for (const a of Object.values(assignments)) {
+    const prev = winner[a.conversation_id];
+    if (prev) {
+      const realness = Number(isConvexId(a._id)) - Number(isConvexId(prev._id));
+      if (realness < 0 || (realness === 0 && (a.updated_at ?? 0) <= (prev.updated_at ?? 0))) continue;
+    }
+    winner[a.conversation_id] = a;
+  }
+  const map: Record<string, string | undefined> = {};
+  for (const a of Object.values(winner)) map[a.conversation_id] = a.bucket_id ?? undefined;
+  convBucketMaps.set(assignments, map);
+  return map;
+}
+
+// conversation_id → the viewer's read mark. Same two-rows-per-conversation
+// problem as convBucketMap (an optimistic `sessionread-` stub alongside the
+// real server row), resolved the same way: real beats stub, then newer wins.
+const sessionReadMaps = new WeakMap<Record<string, SessionReadItem>, Record<string, SessionReadItem>>();
+export function sessionReadMap(reads: Record<string, SessionReadItem>): Record<string, SessionReadItem> {
+  const cached = sessionReadMaps.get(reads);
+  if (cached) return cached;
+  const winner: Record<string, SessionReadItem> = {};
+  for (const r of Object.values(reads)) {
+    const prev = winner[r.conversation_id];
+    if (prev) {
+      const realness = Number(isConvexId(r._id)) - Number(isConvexId(prev._id));
+      if (realness < 0 || (realness === 0 && (r.updated_at ?? 0) <= (prev.updated_at ?? 0))) continue;
+    }
+    winner[r.conversation_id] = r;
+  }
+  sessionReadMaps.set(reads, winner);
+  return winner;
+}
+
+// The same lookup inside a draft, for the optimistic write path.
+function findSessionReadInDraft(
+  draft: { sessionReads: Record<string, SessionReadItem> },
+  conversationId: string,
+): SessionReadItem | undefined {
+  let best: SessionReadItem | undefined;
+  for (const id in draft.sessionReads) {
+    const row = draft.sessionReads[id];
+    if (row?.conversation_id !== conversationId) continue;
+    if (!best) { best = row; continue; }
+    const realness = Number(isConvexId(row._id)) - Number(isConvexId(best._id));
+    if (realness > 0 || (realness === 0 && (row.updated_at ?? 0) > (best.updated_at ?? 0))) best = row;
+  }
+  return best;
+}
+
+const sessionUnreadMaps = new WeakMap<
+  Record<string, InboxSession>,
+  WeakMap<Record<string, SessionReadItem>, WeakMap<Record<string, number>, Record<string, boolean>>>
+>();
+// One row's verdict, kept while the row ref, its winning mark and its local
+// viewed time hold: a heartbeat hands back a new sessions map in which every
+// other row keeps its ref, so the rebuild re-judges only the rows that moved.
+const sessionUnreadByRow = new WeakMap<InboxSession, { mark: SessionReadItem | undefined; viewed: number | undefined; unread: boolean }>();
+
+/** Which sessions are lit for this viewer, derived from the marks, the rows'
+ *  own updated_at, and the local "last opened" record as the fallback for a
+ *  session with no server mark yet. Derived once per list render and handed to
+ *  each card as a scalar prop — a per-card selector over sessionReads would
+ *  re-scan the collection on every heartbeat notification. */
+export function sessionUnreadMap(state: {
+  sessions: Record<string, InboxSession>;
+  sessionReads: Record<string, SessionReadItem>;
+  _lastViewedAt: Record<string, number>;
+}): Record<string, boolean> {
+  let byReads = sessionUnreadMaps.get(state.sessions);
+  if (!byReads) sessionUnreadMaps.set(state.sessions, byReads = new WeakMap());
+  let byViewed = byReads.get(state.sessionReads);
+  if (!byViewed) byReads.set(state.sessionReads, byViewed = new WeakMap());
+  const cached = byViewed.get(state._lastViewedAt);
+  if (cached) return cached;
+  const marks = sessionReadMap(state.sessionReads);
+  const out: Record<string, boolean> = {};
+  for (const id in state.sessions) {
+    const session = state.sessions[id];
+    if (!session) continue;
+    const mark = marks[id];
+    const viewed = state._lastViewedAt[id];
+    let verdict = sessionUnreadByRow.get(session);
+    if (!verdict || verdict.mark !== mark || verdict.viewed !== viewed) {
+      verdict = { mark, viewed, unread: isSessionUnread({ ...sessionActivityFacts(session), mark, localViewedAt: viewed }) };
+      sessionUnreadByRow.set(session, verdict);
+    }
+    if (verdict.unread) out[id] = true;
+  }
+  byViewed.set(state._lastViewedAt, out);
+  return out;
+}
+
+/** The three row facts the read model reads, pulled off an inbox row. One
+ *  place, so the card's comparison and the ack's stamp are the same number —
+ *  acknowledging anything else leaves a card that cannot be cleared. */
+export function sessionActivityFacts(row: {
+  updated_at?: number;
+  turn_completed_at?: number | null;
+  agent_status_boundary?: boolean | null;
+} | undefined | null): SessionActivityFacts {
+  return {
+    updatedAt: row?.updated_at ?? 0,
+    turnCompletedAt: row?.turn_completed_at ?? null,
+    statusBoundary: row?.agent_status_boundary ?? null,
+  };
+}
+
+// Wake signature for unread, memoized by the three input refs. A list
+// subscribes to THIS, never to the raw collections: `sessions` hands back a
+// new ref on every ~1s liveness heartbeat, but updated_at moves only on real
+// activity, so the signature string stays identical and nothing re-renders
+// (store/wakeSig.ts — same rule sessionsWakeSig follows). It cannot ride
+// sessionsWakeSig itself: that signature deliberately omits updated_at.
+export function sessionUnreadWakeSig(state: {
+  sessions: Record<string, InboxSession>;
+  sessionReads: Record<string, SessionReadItem>;
+  _lastViewedAt: Record<string, number>;
+}): string {
+  return unreadSetSig(sessionUnreadMap(state));
+}
+// A digest of the lit set (makeCollectionSig over the unread map), so the
+// signature is short whatever the number of unread sessions.
+const unreadSetSig = makeCollectionSig<boolean>(() => "");
+
+// Close the open subtree under a parent in the draft — the optimistic mirror
+// of the server's cascadeClose, so a "close subtasks too" choice renders
+// instantly. Statuses are raw fields and reconcile cleanly with the echo.
+function cascadeCloseDraft(draft: { tasks: Record<string, TaskItem> }, parentId: string, status: string) {
+  const all = Object.values(draft.tasks) as any[];
+  const queue = [String(parentId)];
+  let guard = 0;
+  while (queue.length > 0 && guard++ < 500) {
+    const cur = queue.shift()!;
+    for (const t of all) {
+      if (!t.parent_id || String(t.parent_id) !== cur) continue;
+      queue.push(String(t._id));
+      // Only stamp `status` — the render reads status alone. A locally-stamped
+      // closed_at/updated_at would become a pending field lock the server's own
+      // timestamp never echoes, and a frozen updated_at drops later delta pushes
+      // (it is the collection version key). The server sets those on echo.
+      if (t.status !== "done" && t.status !== "dropped") t.status = status;
+    }
+  }
+}
+
+export type TaskDetail = TaskItem & {
+  comments?: any[];
+  linked_conversations?: any[];
+  related_docs?: any[];
+  source_insight?: any;
+  creator?: { _id: string; name: string; image?: string };
+  history?: any[];
+  created_from_conversation?: string;
+  plan?: PlanRef;
+};
+
+export type DocItem = {
+  _id: string;
+  title: string;
+  content: string;
+  doc_type: string;
+  source: string;
+  source_file?: string;
+  // Workspace: set = that team's doc, unset = personal. The server ships the
+  // EFFECTIVE team here (conversation-derived — convex data.ts
+  // stampEffectiveTeam), so views filter on it directly (lib/workspaceScope).
+  team_id?: string;
+  // ACCESS key ("team:<id>" | "user:<id>"), server-stamped; independent of
+  // team_id (routing). Views filter on it via lib/workspaceScope.
+  workspace?: string;
+  labels?: string[];
+  pinned?: boolean;
+  plan_id?: string;
+  plan_short_id?: string;
+  plan_status?: string;
+  parent_id?: string | null;
+  sort_order?: number;
+  linked_doc_ids?: string[];
+  created_at: number;
+  updated_at: number;
+};
+
+export type DocDetail = DocItem & {
+  conversation?: any;
+  related_tasks?: any[];
+  related_sessions?: any[];
+  // Last time this client opened (or body-prefetched) the doc — drives the
+  // persisted docDetails cache's LRU retention (partitionDocDetailRetention).
+  _cachedAt?: number;
+};
+
+import type { KeyBindingOverride } from "@codecast/shared/contracts/keyBindings";
+export type { TaskViewPrefs, DocViewPrefs, PlanViewPrefs, SavedView, SavedViewRow, InboxViewMode, ClientLayouts, ClientDismissed, ClientTips } from "./clientPrefsTypes";
+import type { TaskViewPrefs, DocViewPrefs, PlanViewPrefs, SavedView, SavedViewRow, InboxViewMode, ClientLayouts, ClientDismissed, ClientTips } from "./clientPrefsTypes";
+
+/** What the header slide-over shows (components/anchor/AnchorPanel). */
+export type AnchorPanelTarget = { kind: "anchor"; id: string } | { kind: "session"; id: string };
+
+export type ClientUI = {
+  theme?: "light" | "dark";
+  // The person's own keyboard bindings over the defaults
+  // (@codecast/shared/contracts/keyBindings). Stamped: follows them to every
+  // device, and `cast shortcuts` writes the same key from any session.
+  key_bindings?: KeyBindingOverride[];
+  // Which app this person lives in: "simple" is the hosted assistant's calm
+  // lane (/simple, docs/architecture/hosted-assistant.md), "full" or absent is
+  // the whole app. Stamped LWW, so a switch on one device follows the person.
+  lane?: "simple" | "full";
+  // The agent a new conversation starts with (a Convex agent_type), read only
+  // through lib/defaultAgent, which also decides hosted mode's and a
+  // machine-less account's default. Absent means Claude.
+  default_agent?: string;
+  visual_style?: "classic" | "minimal";
+  sidebar_collapsed?: boolean;
+  // The sidebar sections the chevrons pin open (true) or closed (false), by
+  // section key. A section the user never touched is absent and follows the
+  // route ("you are on /tasks, so Tasks is open"); a pin is the user saying
+  // otherwise, so it outlives the route — and the reload. Unstamped: the
+  // sidebar's shape is a per-device layout preference like the rest.
+  nav_sections?: Record<string, boolean>;
+  /** Teammates' shared mods this person runs (lib/mods/host): mod ids. Their own mods run by their own switch. */
+  mods_installed?: string[];
+  zen_mode?: boolean;
+  sticky_headers_disabled?: boolean;
+  diff_panel_open?: boolean;
+  file_diff_view_mode?: "unified" | "split";
+  // Files the reader has marked viewed on a pull request, by pull request id.
+  // A reading mark, so it follows the person to every device.
+  pr_viewed_files?: Record<string, string[]>;
+  // The conversation diff pane's base (shared/diff DiffBase), by conversation id.
+  diff_base?: Record<string, "session" | "branch" | "commit" | "turn">;
+  // Files the reader marked seen in a conversation's diff pane, by conversation
+  // id, then path, to the stamp of the file's text when marked: a mark lapses
+  // when the file changes after it (lib/diffSeenMarks).
+  diff_seen_files?: Record<string, Record<string, string>>;
+  // Where a new line note goes on a pull request: held for the review, or out
+  // at once. A reading habit, so it follows the person.
+  pr_note_mode?: "review" | "now";
+  pr_merge_method?: "squash" | "merge" | "rebase";
+  pr_delete_branch?: boolean;
+  // When the person last had a pull request open, by pull request id: what
+  // the timeline draws its "since you last looked" line from.
+  pr_last_seen?: Record<string, number>;
+  active_team_id?: string;
+  active_filter?: "my" | "team";
+  inbox_shortcuts_hidden?: boolean;
+  // The inbox triage bar (components/triage/TriageBar) hidden to a corner
+  // button that takes no layout height. A per-user preference, stamped LWW
+  // (STAMPED_UI_KEYS) like the other view prefs.
+  triage_bar_compact?: boolean;
+  // The master sound switch: off silences every cue the app can make.
+  sounds_enabled?: boolean;
+  // Chat toast sounds, split from the above: an agent fleet's chirps and a
+  // teammate speaking are different interruptions, and people who mute one
+  // usually still want the other. Absent = on, same as sounds_enabled.
+  chat_sounds_enabled?: boolean;
+  // Per-category gates under the master switch (lib/sounds.ts maps each cue to
+  // one of these). Absent = on. Stamped LWW like sounds_enabled
+  // (STAMPED_UI_KEYS): a mute is a per-user preference, so the newest toggle
+  // on any device wins on every device — including a localhost dev origin,
+  // which is otherwise just another device with its own local bag.
+  session_sounds_enabled?: boolean; // a session arriving, finishing, going idle
+  call_sounds_enabled?: boolean;    // ring, join/leave, declined, a knock at the door
+  walkie_sounds_enabled?: boolean;  // the six push-to-talk cues
+  ui_sounds_enabled?: boolean;      // feedback for your own gestures: send, dismiss, kill
+  // Output level, a 0..1.5 multiplier over each cue's calibrated gain. 1 (and
+  // absent) = the exact levels every cue was measured at in lib/cueSpec.ts;
+  // the headroom above 1 is safe because master gains sit near 0.05.
+  sound_volume?: number;
+  // Chat toasts stay quiet until this instant. Set from the snooze button on a
+  // toast — the off switch has to be one gesture from the annoyance, or people
+  // mute everything after one bad afternoon.
+  chat_snooze_until?: number;
+  task_view?: TaskViewPrefs;
+  doc_view?: DocViewPrefs;
+  plan_view?: PlanViewPrefs;
+  saved_views?: SavedView[];
+  show_subagents?: boolean;
+  // Trigger rows under inbox cards: expanded (full row per trigger — name,
+  // last report, countdown, verbs) or folded to a one-line strip that only says
+  // the card has triggers and when the next one fires. Absent = folded: the
+  // strip is the resting state; the pill toggle opens the detail.
+  // LEGACY — superseded by card_bars; still read as the default when card_bars
+  // is unset so an existing "expanded" choice survives the upgrade.
+  show_triggers?: boolean;
+  // The bars under inbox cards — triggers, workflow runs, monitors and
+  // background commands — as one family with one control: "strip" folds each
+  // card's bars to a one-line summary (the resting state), "full" shows every
+  // bar as its own row, "hidden" removes them entirely (the same gesture the
+  // subagent toggle offers). Absent = show_triggers legacy, then "strip".
+  card_bars?: "strip" | "full" | "hidden";
+  // The machine you last chose by hand in the new-session picker — the default
+  // the picker opens on for NEW work (defaultMachineId rung 2). Deliberately
+  // UNSTAMPED, i.e. per-device: "where should this run" is answered differently
+  // from a phone than from the laptop that holds the checkouts.
+  last_picked_device_id?: string;
+  // The composer's "start from" pick for cloud sessions: the preparing
+  // laptop's checkout (absent = checkout) or origin/main. Per-device like
+  // last_picked_device_id: it is a statement about this machine's checkouts.
+  cloud_start_from?: "checkout" | "origin_main";
+  // User-set height (px) of the trigger full-prompt viewport (TriggerPromptView
+  // drag handle). Layout pref → unstamped, per-device local_wins.
+  trigger_prompt_height?: number;
+  // The doc page's drafting layer (alternatives' underline and pager, Lab
+  // flags) is showing. Off, a doc reads as plain prose; ghosts stay dimmed.
+  doc_drafting?: boolean;
+  // "Show old sessions" — reveal cached rows the live (authoritative) inbox
+  // subscription no longer returns. Default hide. Successor to the removed
+  // show_old_sessions key, whose blanket-local_wins sync made one browse click
+  // a permanent all-clients cruft mode (the OFF could never propagate, and a
+  // stale server `true` was unkillable). This key is stamped LWW (see
+  // STAMPED_UI_KEYS): the newest toggle on ANY device wins everywhere —
+  // including off — so sticky can't decay into stuck. The legacy key still
+  // lingers in server docs; nothing may ever read it (resolveShowOld).
+  inbox_show_old?: boolean;
+  // When the user last said "Not now" to the "clear out your working set"
+  // prompt. Stamped LWW: a snooze on one device silences the prompt on every
+  // device for its window (STALE_PROMPT_SNOOZE_MS in GlobalSessionPanel).
+  inbox_stale_prompt_snoozed_at?: number;
+  // Inbox scope. "mine" (default) is the personal inbox: your own sessions plus
+  // any explicitly routed to you. "team" turns the inbox into a shared board of
+  // every team-visible session across the active team (a superset of "mine").
+  // Stamped LWW so the chosen scope survives reloads and follows the user.
+  inbox_scope?: "mine" | "team";
+  // Hosted mode's inbox lists the assistant's conversations; true widens it
+  // to everything the developer inbox holds (hostedOnlyInbox). Ctrl+, and the
+  // panel's Assistant / Everything switch flip it.
+  hosted_inbox_everything?: boolean;
+  // Hosted mode's "Esc for shortcuts" under the composer has been shown: it
+  // is said once, then lives in the shortcuts sheet (HostedStatusLine).
+  hosted_esc_hint_seen?: boolean;
+  // Show each session's model as a badge in the inbox list. Off by default.
+  show_model_badge?: boolean;
+  // Show a session's checkout position (its branch, or the short sha of a
+  // detached head) as a pill on inbox cards when it sits off the default
+  // branch. On by default; read as `!== false`.
+  show_branch_pill?: boolean;
+  // Show each session's agent client icon (Claude Code, opencode, …) next to
+  // its title in the inbox list. On by default; read as `!== false`.
+  show_agent_icon?: boolean;
+  // Mark where a session runs in the inbox list: a cloud icon for a cloud
+  // machine, a small device icon for one of your other machines. On by
+  // default; read as `!== false`.
+  show_device_icon?: boolean;
+  // Give EVERY session a character — an animal face and a name — instead of
+  // only the ones somebody personified by hand (session-characters.md S2).
+  // Off by default: a face is a choice, not something that happens to you.
+  personify_sessions?: boolean;
+  // Opt in to the teammate-comment tools (the gutter "comment" handle + the
+  // header toggle when a conversation has none yet). Off by default — you still
+  // SEE and can reply to comments others leave regardless of this.
+  comments_enabled?: boolean;
+  // Suggested replies above the composer ("suggestion pills"), predicted by a
+  // small model from the session tail plus the user's own frequent past
+  // inputs. Off by default; stamped LWW — a behavior pref that follows the
+  // user, not the device.
+  composer_suggestions?: boolean;
+  // The composer's mic has been explained once, so it never explains itself
+  // again. A hold is not a click, and a small round key cannot say so on its own
+  // — the first DM composer that offers push to talk floats a small callout
+  // over it, and this retires that callout for good. Stamped LWW: learning the
+  // gesture on the laptop means the phone's browser has learned it too.
+  walkie_hold_seen?: boolean;
+  // The org page's first open guide (org-staffing.md S14) has been dismissed
+  // once, so the page never opens on it again; "How this page works" in the
+  // toolbar reopens it by hand. Stamped LWW: a person who has read the guide
+  // on one device has read it everywhere.
+  org_nux_seen?: boolean;
+  // The staffing pane's cold read intro (org-staffing.md S17): the two
+  // sentences over a proposal that say what codecast is proposing and what
+  // accepting costs. Dismissed once, or stamped by the first accepted change,
+  // and never shown again. Stamped LWW: read on one device is read everywhere.
+  org_intro_seen?: boolean;
+  // The introduction anywhere (org-staffing.md S20): the card that rises
+  // bottom right on the next visit to any page and introduces the org
+  // feature. Dismissed either way, or stamped by seeing the org page by any
+  // route, and never shown again. Stamped LWW: sold once, on one device, is
+  // sold once everywhere.
+  org_upsell_seen?: boolean;
+  // The color themes introduction (ThemeIntroAnywhere): the corner card with
+  // a swatch per theme. Answered either way, or a theme chosen in settings,
+  // and it never rises again. Stamped LWW: met on one device, met everywhere.
+  theme_intro_seen?: boolean;
+  // The review "Propose an org now" started on the org page: when, in which
+  // workspace, and the session doing it (its stub id first, the real id once
+  // the server names it). Kept here, not in component state, so a reload or
+  // a visit elsewhere does not forget a running review and offer to start a
+  // second one. Stamped LWW: the phone sees the laptop's review too. The
+  // page derives reviewing, ended or nothing from it (staffingModel.reviewRunState).
+  org_review_run?: { since: number; session_id: string | null; workspace: string } | null;
+  // A pass of the expectations proposer started from a project's
+  // Expectations page, per project id (components/expectations/draftExpectations):
+  // when, how (its routine's trigger, or a fresh session) and the session.
+  // The page reads it as "reading" until a proposal newer than it lands.
+  expectations_drafts?: Record<string, { since: number; session_id?: string | null; via: "routine" | "session" }>;
+  // The goals, projects and people opened in place on the Org screen's
+  // document (components/company/CompanyDocument). Absent until the person
+  // opens or folds one, and the document opens on its most pressing goal
+  // until then. Stamped LWW: a goal opened on the laptop is open on the phone.
+  org_expanded?: string[];
+  // What the /org chart shows (components/org/OrgChart): the people with their
+  // roles and live sessions ("people", the default), the goals and projects
+  // beside them ("everything"), or the goals alone ("goals"). A value from an
+  // older screen ("read", "map") reads as the default. Stamped LWW, like
+  // org_expanded: the reading follows the person to every device.
+  org_view?: "people" | "everything" | "goals" | "read" | "map";
+  // The /org chart's "Expand all": every role and session card opened in
+  // place. Stamped LWW like org_view.
+  org_expand_all?: boolean;
+  // The /org chart's companion drawer (components/org/OrgPanel), closed by the
+  // person. Absent: open. A proposal or a session named in the address opens
+  // it whatever this says.
+  org_panel?: "closed";
+  // The session map's arrangement (components/sessionMap): the piles the
+  // person made, where each pile and loose card sits, and which piles are
+  // folded. Stamped LWW: the desk is the same on every device.
+  session_map?: SessionMapLayout;
+  // How the session map is sliced: grouping, sort, pile order and filters.
+  // Kept apart from the arrangement so a view change never enters its undo
+  // history. Stamped LWW like the arrangement.
+  session_map_view?: SessionMapView;
+  // Which view the people window shows: the wall of faces (default) or the
+  // roster list. Unstamped, so it stays a per-device reading preference like
+  // the sidebar and zen mode — the window is a different size on every machine,
+  // and which view fits is a fact about the window, not about the person.
+  people_view?: "wall" | "list";
+  // The floating faces' circle size (lib/faces/layout FLOAT_FACE_SIZES).
+  // Unstamped: the size that suits a laptop is a stamp on an ultrawide.
+  float_face_size?: number;
+  // Which microphone and camera a deliberate join opens (lib/calls/joinPrefs).
+  // Unstamped on purpose: a device id names hardware attached to THIS machine,
+  // so the newest choice must not travel — the laptop's headset id is noise on
+  // the desktop, and switchActiveDevice would simply fail on it.
+  call_mic_device_id?: string;
+  call_camera_device_id?: string;
+  call_speaker_device_id?: string;
+  // Whether a deliberate join turns the camera on, and whether it opens the
+  // microphone. Stamped LWW, because these ARE about the person: somebody who
+  // joins with video joins with video wherever they are signed in. Absent
+  // means ON for both — see lib/calls/joinPrefs — so only an explicit false
+  // is a choice.
+  call_camera_on?: boolean;
+  call_mic_on?: boolean;
+  // Whether the microphone may open before the person presses anything: the
+  // walkie warms it under a hovered talk button and a prewarmed room publishes
+  // it muted (lib/calls/walkieMic). Absent means ON; an explicit false makes a
+  // press, an unmute or a record the only things that open it. Stamped LWW:
+  // "may the app hold my microphone" is about the person, not the machine.
+  call_mic_auto_open?: boolean;
+  // Fold the pinned thread-state panel above the composer down to its headline
+  // row. Expanded by default — the panel exists to be read on arrival — and
+  // left unstamped, so it stays a per-device reading preference like the other
+  // layout toggles.
+  thread_state_collapsed?: boolean;
+  // The calls history list beside an open call (/calls/<id>). Folded away by
+  // default, so a call reads as its own page; per-device like the other
+  // layout toggles.
+  calls_list_open?: boolean;
+  // The /pages gallery: tiles or a by-day timeline, and its order.
+  pages_view?: "grid" | "timeline";
+  pages_sort?: "updated" | "published" | "views" | "title";
+  // Inbox session panel view mode. When true, the panel drops the
+  // Pinned/New/Needs-Input/Working grouping and shows every session as one flat
+  // list sorted newest-first by creation time (started_at). Toggled by Ctrl+,.
+  inbox_flat_view?: boolean;
+  // Successor to inbox_flat_view: see InboxViewMode. The legacy boolean is kept
+  // coherent (true for either flat mode) so older readers still flatten. Ctrl+, cycles.
+  inbox_view_mode?: InboxViewMode;
+  // Per-user manual order for the "time" view: a SPARSE map of conversation id →
+  // sort key, where the key lives in the SAME epoch-ms space as started_at. Rows
+  // absent from the map fall back to their creation time, so un-dragged rows and
+  // brand-new sessions interleave by creation automatically; a drag pins just the
+  // moved row with a single midpoint write. See flatViewComparator / computeManualSortKey.
+  inbox_manual_order?: Record<string, number>;
+  // Read watermark for the TRIGGERS section: outcomes with last_run_at newer
+  // than this count as "N new" on the collapsed header. Refreshed whenever the
+  // user toggles the section (expanding IS reading the briefing).
+  schedules_seen_at?: number;
+  // Sidebar subsection rows pinned to the top of the rail (lib/sidebarPins).
+  // Structural shape rather than the SidebarPin import: sidebarPins.ts imports
+  // this store, and a type import back the other way invites a require cycle.
+  // Stamped (STAMPED_UI_KEYS): a per-user shortcut list, so a pin made on one
+  // device stays pinned on the others. Unstamped, local_wins let an empty
+  // array on a second client clobber the pin (ct-51761).
+  sidebar_pins?: Array<{ kind: "project" | "view" | "channel"; id: string; label: string }>;
+  // The roles and sessions pinned in the app header (org-staffing.md S30,
+  // lib/headerPins). A role pins by its org_roles id, a session by its
+  // conversation id; the header resolves each from the anchors and sessions
+  // collections at render, so a pin the viewer can no longer see is simply
+  // not drawn and grants nothing. Absent is the DEFAULT (the person's global
+  // Executive Assistant, else the active workspace's agent); an empty list is a
+  // person who unpinned everything. Stamped (per user, every device).
+  header_pins?: Array<{ kind: "role" | "session"; id: string }>;
+  // The Threads page's "include agent sessions" toggle. Off unless exactly
+  // true. Stamped (STAMPED_UI_KEYS): a per-user view preference.
+  threads_include_sessions?: boolean;
+  // The workspace arrangement (see store/workspace.ts): which slots are open,
+  // peek vs split, and their sizes. Subject-bearing panes are deliberately NOT
+  // persisted — the arrangement is worth remembering, its contents are
+  // re-derived from where you are now.
+  workspace?: PersistedWorkspace;
+  // Simple view: calm, low-chrome rendering of conversations and inbox cards —
+  // secondary badges, counts and meta rows drop away. On by default; a
+  // per-user preference ("my reading style follows me") → stamped LWW.
+  simple_view?: boolean;
+  // The color of your own messages in the Minimal style: a preset id or a
+  // #rrggbb hex (lib/bubbleColor.ts). Follows the person, so it is stamped.
+  user_bubble_color?: string;
+  // The color theme a mod offers, as "<mod name>/<theme id>" (lib/theme/colorTheme.ts); empty or absent is codecast's own palette.
+  color_theme?: string;
+  // Minimal hides the schedule, plan and workflow strips under a conversation's
+  // header; true brings them back. Classic always shows them.
+  show_session_context?: boolean;
+  // One line per session in the inbox list, in every style. Unset means the
+  // style decides (resolveInboxCompact).
+  inbox_compact?: boolean;
+  // The person's own style and list density for hosted mode, picked while in
+  // it. Unset, hosted mode starts Minimal and compact; the developer picks
+  // above are left alone either way.
+  hosted_visual_style?: "classic" | "minimal";
+  hosted_inbox_compact?: boolean;
+  // Open an agent's pane offer (`cast browser pane <url>`) without a click,
+  // while the offered session is the one being read and the stage has room.
+  // Off by default — an agent may ask for a pane, never take one. Per-user
+  // ("my reading style follows me") → stamped LWW.
+  auto_open_browser_panes?: boolean;
+  // Show a small thumbnail on inbox session rows when the session contains
+  // images (session.image_preview_url). Independent of simple_view — applies
+  // in both. Off by default; per-user preference → stamped LWW.
+  inbox_image_thumbs?: boolean;
+  // What the inbox opens on when no conversation is selected: the fleet board
+  // (a live band-grouped tile grid of every session) or the chronological
+  // activity feed. Board is the default. Per-user → stamped LWW.
+  inbox_home?: "board" | "feed";
+};
+
+// A tab freezes its WHOLE view, frame included. Content identity (path,
+// session) says what the stage shows; `workspace` carries the panel
+// arrangement — left nav, list, right rail, dock: each slot's pane,
+// presentation and size — exactly as the tab last showed it. Switching away
+// stamps the live arrangement onto the tab; switching back restores it, the
+// same way the tab restores its columns and scroll. A tab with no snapshot
+// yet (a fresh tab) inherits the frame it was opened under.
+export type AppTab = {
+  id: string;
+  title: string;
+  path: string;
+  sessionId?: string;
+  createdAt: number;
+  /** The full panel arrangement as of the last switch away from this tab. */
+  workspace?: WorkspaceState;
+  /** The right rail's conversation at stamp time (sidePanelSessionId). */
+  railSessionId?: string | null;
+  /**
+   * The stage as a split of panes (store/stageSplit). Absent = the ordinary
+   * single-path tab. When present, `path` mirrors the FOCUSED leaf's path —
+   * that invariant is what lets every consumer of a tab's path (highlight,
+   * breadcrumbs, URL sync, titles) stay ignorant of splits. Both chokepoints
+   * that rewrite `path` (updateTab, stampActiveTab) maintain it.
+   */
+  layout?: StageNode;
+  focusedLeafId?: string;
+};
+
+/** How a leaf joins the stage: under a named id (a pane the shell keeps
+ *  re-pointing), and whether it takes focus (default) or leaves the focused
+ *  pane, `tab.path` and the URL untouched. */
+export type StageInsertOpts = { id?: string; focus?: boolean };
+
+/** `path` and the focused leaf must say the same thing; every path write goes
+ *  through here so they cannot drift. */
+function withTabPath(tab: AppTab, raw: string): AppTab {
+  // Every path write lands here, so the address a tab persists is always the storable one (lib/tabSafePath).
+  const path = tabSafePath(raw);
+  if (tab.layout && tab.focusedLeafId) {
+    return { ...tab, path, layout: setStageLeafPath(tab.layout, tab.focusedLeafId, path) };
+  }
+  // A plain tab never holds the pane spelling of a session: the stage would
+  // render it as a bare session pane, which cannot load a row the store lacks
+  // (a teammate's session from a deep link). The inbox spelling loads it.
+  return { ...tab, path: conversationTabPath(path) };
+}
+
+/** A patch applied to a tab, the one way: a path write flows into the focused
+ *  leaf (withTabPath) unless the patch replaces the layout itself, a caller's
+ *  layout has each leaf take the storable spelling (setLeafPath), as does the
+ *  path written beside it, and the title follows the stored path. */
+function patchedTab(t: AppTab, patch: Partial<AppTab>): AppTab {
+  const { path, ...rest } = patch;
+  if (rest.layout) rest.layout = stageLeavesOf(rest.layout).reduce((root, l) => setStageLeafPath(root, l.id, l.path), rest.layout);
+  const base = path !== undefined && rest.layout === undefined ? withTabPath(t, path) : t;
+  const next = { ...base, ...rest, ...(path !== undefined && rest.layout !== undefined ? { path: tabSafePath(path) } : {}) };
+  return { ...next, title: tabSafeTitle(next.path, next.title) };
+}
+
+// The session boot lands on when the URL names a conversation: that session if
+// the cache holds it, else null (land nowhere; the inbox loads the link or says
+// it cannot). Undefined when the URL names none, so boot restores the client's
+// own position. Landing on another session while a link resolves was the silent
+// redirect: an unavailable link showed whatever the viewer had open last.
+//
+// A URL that names any other shell page (/questions, /triggers, /tasks) also
+// owns the view, so it is null too: restoring the last conversation there
+// moved the address bar off the page the link pointed at (an approval
+// notification, /welcome's way into the app). Only the inbox and the app root
+// restore the client's own position.
+export function bootLinkTarget(sessions: Record<string, unknown>, path?: string): string | null | undefined {
+  if (path === undefined) {
+    if (typeof window === "undefined" || !window.location) return undefined;
+    path = window.location.pathname + window.location.search;
+  }
+  const ref = conversationRefInPath(path);
+  if (ref) return sessions[ref] ? ref : null;
+  const page = path.split("?")[0].split("#")[0].replace(/\/+$/, "") || "/";
+  if (page === "/" || page === "/inbox" || isNonTabRoute(page)) return undefined;
+  return null;
+}
+
+// The path to stamp onto a tab from the live browser URL when switching away.
+// Includes the query string so a tab's deep-link (`/inbox?s=<id>`) survives a
+// switch — stamping only `pathname` was silently dropping it.
+//
+// Crucial detail: the inbox canonicalizes its URL to `/conversation/<id>` while a
+// session is open, but an inbox tab must STAY on the inbox route — otherwise its
+// pane re-matches the standalone `<Conversation>` component on the next show,
+// unmounting the whole subtree (and the scroll position with it). So an inbox tab
+// whose live URL is a `/conversation/<id>` keeps the equivalent `/inbox?s=<id>`.
+export function stampedTabPath(tab: AppTab): string {
+  // React Native defines `window` but not `window.location`, so guard on the
+  // actual API (a bare `typeof window` check sails through and then throws).
+  if (typeof window === "undefined" || !window.location) return tab.path;
+  const live = window.location.pathname + window.location.search;
+  const conv = directConversationId(window.location.pathname);
+  if (conv && tab.path.split("?")[0] === "/inbox") return `/inbox?s=${conv}`;
+  // A live URL outside the shell (the app root during boot, a marketing page,
+  // the palette window) is not this tab's content: keep what the tab held, or
+  // the stamp pins the tab to a path the shell cannot render (lib/tabRoutes).
+  if (isNonTabRoute(window.location.pathname)) return tab.path;
+  return live;
+}
+
+// Stamp the active tab with everything a later switch back must restore: its
+// live path, the panel arrangement, and the right rail's conversation.
+function stampActiveTab(draft: { activeTabId: string | null; tabs: AppTab[]; workspace: WorkspaceState; sidePanelSessionId: string | null }, patch?: Partial<AppTab>) {
+  if (!draft.activeTabId) return;
+  draft.tabs = draft.tabs.map((t: AppTab) => t.id === draft.activeTabId ? patchedTab({
+    ...withTabPath(t, stampedTabPath(t)),
+    workspace: draft.workspace,
+    railSessionId: draft.sidePanelSessionId,
+  }, patch ?? {}) : t);
+}
+
+// The other half of the freeze: put a tab's stamped frame back on screen.
+// Adoption is slot-validated (adoptWorkspaceSnapshot) so a legacy or partial
+// snapshot can never leave the workspace missing a slot, and the persistence
+// mirror is refreshed so a reload paints the frame that is actually visible.
+function restoreTabWorkspace(draft: any, tab: AppTab | undefined) {
+  if (!tab) return;
+  const next = adoptWorkspaceSnapshot(draft.workspace as WorkspaceState, tab.workspace);
+  if (next !== draft.workspace) {
+    draft.workspace = next;
+    persistWorkspace(draft);
+  }
+  if (tab.railSessionId !== undefined && tab.railSessionId !== draft.sidePanelSessionId) {
+    draft.sidePanelSessionId = tab.railSessionId;
+  }
+}
+
+export type ClientState = {
+  current_conversation_id?: string;
+  dismissed_ids?: string[];
+
+  ui?: ClientUI;
+  layouts?: ClientLayouts;
+  dismissed?: ClientDismissed;
+  tips?: ClientTips;
+  drafts?: Record<string, Record<string, any> | null>;
+  tabs?: AppTab[];
+  activeTabId?: string;
+
+  // deprecated: backward compat
+  sidebar_collapsed?: boolean;
+  zen_mode?: boolean;
+  layout?: { sidebar: number; main: number };
+};
+
+type Draft = InboxStoreState;
+
+// -- Helpers --
+
+// Out of the active inbox buckets for either reason (dismissed or stashed).
+// Hidden sessions are viewed through the peek path (viewingDismissedId) so
+// navigation never silently resurrects them.
+export function isSessionHidden(
+  s: Pick<InboxSession, "inbox_dismissed_at" | "inbox_stashed_at" | "inbox_snoozed_until">,
+): boolean {
+  return !!s.inbox_dismissed_at || !!s.inbox_stashed_at || (s.inbox_snoozed_until ?? 0) > Date.now();
+}
+
+// ── Working-set membership (sync-convergence C4/C5) ─────────────────────────
+//
+// "In the inbox" is no longer a per-device memory of the last payload
+// (liveInboxIds) with exemptions — it is the SHARED working-set selection
+// (selectWorkingSet, caps included) evaluated over this replica's rows, the
+// same computation the server scan runs. The old gate's exemptions map onto
+// data and declared overlays:
+//   pinned          → the pinned window (a membership window, not an exemption)
+//   dismissed/stash → their 30-day windows
+//   subagents       → children are never their own members; they ride their
+//                     visible parent (placeInboxRows nesting)
+//   stubs/focused/drafts → declared overlays (./inboxOverlays), rendering-only
+// "Old" is now the FOLD (the deterministic 12h gap cut): folded members hide
+// behind the show-old toggle; show-old selects shown + folded INSIDE the
+// computation and never bypasses the selection. Rows outside the working set
+// (CLI label extras, aged-out cruft, foreign rows in the cache) are invisible
+// to every counting surface, whatever the toggle says.
+
+export type InboxMembership = {
+  /** The epoch (minute-quantized clock) this selection was evaluated at. */
+  epoch: number;
+  /** Working-set members (union of the capped windows), by conversation id. */
+  members: ReadonlySet<string>;
+  /** Members under the fold cut — hidden behind the show-old toggle. */
+  belowFold: ReadonlySet<string>;
+  truncated: InboxTruncation[];
+};
+
+// THE row adapter: an InboxSession row as the shared WorkingSetRow — the
+// membership/fold input, and the base projectableRowOf spreads its placement
+// facts over, so the render path and the compare path read one mapping.
+// Absent facts read as their honest fallback: a cached row that predates the
+// `status` field can only be "active" | "completed" (the schema admits nothing
+// else), and both are recent-window eligible, so "active" loses nothing. A
+// legacy pin without its timestamp still holds its pinned seat. A covered
+// row's queue flag is the server's fact, as is (the server classifies and
+// folds on the raw conversations.has_pending_messages).
+function workingSetRowOf(s: InboxSession): WorkingSetRow {
+  return {
+    _id: s._id,
+    status: s.status ?? "active",
+    updated_at: s.updated_at ?? 0,
+    message_count: s.message_count ?? 0,
+    title: s.title ?? null,
+    is_subagent: s.is_subagent ?? null,
+    parent_conversation_id: s.parent_conversation_id || undefined,
+    parent_message_uuid: s.parent_message_uuid ?? null,
+    // A run's own log is never a member (isRunLog).
+    is_workflow_primary: s.is_workflow_primary ?? null,
+    workflow_run_id: s.workflow_run_id ?? null,
+    inbox_killed_at: s.inbox_killed_at ?? null,
+    inbox_pinned_at: s.inbox_pinned_at ?? (s.is_pinned ? (s.updated_at || 1) : null),
+    inbox_dismissed_at: s.inbox_dismissed_at ?? null,
+    inbox_stashed_at: s.inbox_stashed_at ?? null,
+    inbox_snoozed_until: s.inbox_snoozed_until ?? null,
+    has_pending_messages: s.has_pending ?? null,
+    owned_by_me: s.owned_by_me ?? null,
+    // The lead a teammate rides (rollupParentIdOf): the fold and the bucket
+    // follow it in the shared computation.
+    spawned_by_conversation_id: s.spawned_by_conversation_id ?? null,
+    agent_team_name: s.agent_team_name ?? null,
+    agent_name: s.agent_name ?? null,
+    // The role a session rides (isUnderRole): same shared computation.
+    org_role_id: s.org_role_id ?? null,
+    standing_role_id: s.standing_role_id ?? null,
+  };
+}
+
+// A row that can be its own projection member: a real (server-keyed) row the
+// shared visibility rule does not fold into a parent. Subagents and orphans
+// ride their parent; a plan handoff (parent pointer + parent message) is a
+// member like any other — the server stamps it, so the replica must select
+// it too. Nesting under a present parent is presentation only.
+// Per row ref: placement asks this of every cached row several times a pass,
+// and a row's answer can only change with the row.
+const memberCandidateByRow = new WeakMap<InboxSession, boolean>();
+function isMemberCandidate(s: InboxSession): boolean {
+  let v = memberCandidateByRow.get(s);
+  if (v === undefined) memberCandidateByRow.set(s, (v = isConvexId(s._id) && !isOrphanOrSubagent(s)));
+  return v;
+}
+
+// Memoized by (collection signature, minute-quantized activity, epoch): the
+// selection re-runs on real structural change, when a row's updated_at crosses
+// a minute (the grain the 30d window and the fold cut actually read), and once
+// per minute (the epoch tick) — never per heartbeat. Sub-minute updated_at
+// drift is invisible until the next quantum — deliberate; the digest compare
+// evaluates the shared module directly at the payload's epoch and never reads
+// this render index. The activity term is separate from sessionsWakeSig on
+// purpose: the sidebar's wake signature must stay heartbeat-blind, while
+// membership genuinely depends on activity time at minute grain.
+// The stamps membership reads ride the key too (workingSetRowOf reads the
+// STAMPS, while the structural signature reads the pinned flag and the sort
+// rank), so a gesture that moves only a stamp can never leave membership
+// serving the previous selection.
+const membershipTimeSig = makeCollectionSig<InboxSession>((s) =>
+  `${Math.floor((s.updated_at ?? 0) / 60_000)}|${s.inbox_pinned_at ?? ""}|${s.inbox_dismissed_at ?? ""}|${s.inbox_stashed_at ?? ""}|${s.inbox_snoozed_until ?? ""}|${s.inbox_killed_at ?? ""}`);
+let _membershipKey: string | null = null;
+let _membershipVal: InboxMembership | null = null;
+export function computeInboxMembership(
+  sessions: Record<string, InboxSession>,
+  epoch: number,
+): InboxMembership {
+  const key = `${sessionsWakeSig(sessions)}\x1e${membershipTimeSig(sessions)}\x1e${epoch}`;
+  if (_membershipVal && _membershipKey === key) return _membershipVal;
+  const rows: WorkingSetRow[] = [];
+  for (const s of Object.values(sessions)) {
+    // Only member candidates: stubs and child rows are overlay and structure,
+    // not membership (they pass through partitionWorkingSet).
+    if (!isMemberCandidate(s)) continue;
+    rows.push(workingSetRowOf(s));
+  }
+  const { members, truncated } = selectWorkingSet(rows, epoch);
+  const { belowFold } = computeFold(members);
+  _membershipVal = { epoch, members: new Set(members.keys()), belowFold, truncated };
+  _membershipKey = key;
+  return _membershipVal;
+}
+
+// The render epoch (sync-convergence C2): the latest overlay payload's epoch
+// advanced by the local clock, minute-quantized. Raw wall time only ever
+// enters through inboxEpoch, and a payload from a server ahead of this device
+// wins, so device clock skew cannot roll the view backwards.
+export function renderInboxEpoch(
+  sessionsProjection: Record<string, { epoch: number }> | undefined,
+  now: number,
+): number {
+  const payloadEpoch = sessionsProjection?.["mine"]?.epoch ?? 0;
+  return Math.max(payloadEpoch, inboxEpoch(now));
+}
+
+// The overlays that keep a row RENDERED whatever its membership: the create
+// stub (until the server row supersedes), the focused row (visible while
+// open, never counted beyond the set) and a kept draft (renders locally,
+// never counts). pending_send and revive move a placement; triage_gesture
+// moves a row between sections; neither changes visibility.
+const KEEP_VISIBLE_OVERLAYS: ReadonlySet<DeclaredInboxOverlay> = new Set(["create_stub", "focused", "draft_blank"]);
+// The overlays that turn a settled placement into WORKING: the user already
+// acted (a send in flight, a fleet revive) and the echo has not landed.
+const IN_FLIGHT_OVERLAYS: ReadonlySet<DeclaredInboxOverlay> = new Set(["pending_send", "revive"]);
+const wearsAny = (id: string, deps: InboxOverlayDeps, set: ReadonlySet<DeclaredInboxOverlay>) =>
+  overlaysAffecting(id, deps).some((o) => set.has(o));
+
+// The overlay deps for a surface that only needs the keep rule (membership
+// partition without the chokepoint's full state): focus, pending creates and
+// drafts; no sends, triage locks or revives.
+function keepOverlayDeps(
+  sessions: Record<string, InboxSession>,
+  focusedId: string | null,
+  pendingSessionCreates: Record<string, unknown> | undefined,
+): InboxOverlayDeps {
+  return collectInboxOverlayDeps(
+    { sessions, pending: {}, pendingSessionCreates: pendingSessionCreates ?? {}, currentSessionId: focusedId, sessionsWithQueuedMessages: EMPTY_PENDING_SEND_IDS, blockedReviveRequestedAt: {} },
+    0,
+  );
+}
+
+// Split a (scope-filtered) session map into the rows the inbox renders and the
+// count of folded members hidden behind the show-old toggle. Membership comes
+// from the shared selection; the pass-throughs are exactly the declared
+// keep overlays (store/inboxOverlays KEEP_VISIBLE_OVERLAYS) plus child rows,
+// which ride their parent and are never their own members. Returns the
+// original ref when nothing was dropped so downstream memos hold.
+export function partitionWorkingSet(
+  sessions: Record<string, InboxSession>,
+  membership: InboxMembership,
+  opts: { showOld: boolean; focusedId?: string | null; deps?: InboxOverlayDeps },
+): { visibleSessions: Record<string, InboxSession>; oldCount: number } {
+  const deps = opts.deps ?? keepOverlayDeps(sessions, opts.focusedId ?? null, undefined);
+  let dropped = 0;
+  let oldCount = 0;
+  const visibleSessions: Record<string, InboxSession> = {};
+  for (const [id, sess] of Object.entries(sessions)) {
+    const overlayKept = isOrphanOrSubagent(sess) || wearsAny(id, deps, KEEP_VISIBLE_OVERLAYS);
+    if (overlayKept) {
+      visibleSessions[id] = sess;
+      continue;
+    }
+    if (!membership.members.has(id)) {
+      dropped++;
+      continue;
+    }
+    if (membership.belowFold.has(id)) {
+      oldCount++;
+      if (!opts.showOld) {
+        dropped++;
+        continue;
+      }
+    }
+    visibleSessions[id] = sess;
+  }
+  if (dropped === 0) return { visibleSessions: sessions, oldCount };
+  return { visibleSessions, oldCount };
+}
+
+// Is this cached row outside the caller's personal inbox? Two ways in: it is a
+// teammate's session that only entered the shared cache via team mode, a
+// deep-link or search — or it is a session the caller RUNS but has assigned to
+// someone else, which belongs in that person's inbox and not here (the server
+// scan drops it from the payload; this is the same rule over the never-pruned
+// client cache, which would otherwise keep rendering the last copy it saw).
+// A row is "mine" if I authored it and still own it (or nobody does), if it is
+// routed to me to steer, if it is an optimistic stub, or if it is a thin row
+// with no known author.
+// Per row ref and viewer: the scope filter and the asking pass both ask it of
+// every cached row on each placement.
+const foreignByRow = new WeakMap<InboxSession, { meId: string; foreign: boolean }>();
+export function isForeignRow(s: InboxSession, meId: string | null | undefined): boolean {
+  if (!meId) return false; // unknown viewer → don't hide anything
+  const hit = foreignByRow.get(s);
+  if (hit && hit.meId === meId) return hit.foreign;
+  const foreign = isForeignRowUncached(s, meId);
+  foreignByRow.set(s, { meId, foreign });
+  return foreign;
+}
+function isForeignRowUncached(s: InboxSession, meId: string): boolean {
+  if (!isConvexId(s._id)) return false; // optimistic stub — always mine
+  if (isAssignedAwayFromViewer(s, meId)) return true;
+  if (!s.user_id) return false; // thin/legacy row with no author → keep
+  return isForeignSession(s, undefined, meId);
+}
+
+// Scope the never-prune sessions cache to the current inbox scope BEFORE the
+// old-session partition runs. This is what makes "mine" and "team" coherent even
+// though both read the same shared cache:
+//   • "mine": drop rows that are definitively a teammate's, so team-mode rows (or
+//     a teammate session opened via deep-link/search) never leak into the
+//     personal inbox — regardless of the show-old toggle.
+//   • "team": keep exactly the rows the team subscription reported (teamInboxIds),
+//     plus the open session and any optimistic stub. Before the first team payload
+//     lands (empty set) fall back to the mine filter so the board shows your own
+//     work immediately instead of flashing empty.
+// The focused row is always kept so the session you're viewing never vanishes.
+const EMPTY_TEAM_INBOX_IDS: ReadonlySet<string> = new Set<string>();
+const inboxScopeCache = new WeakMap<object, {
+  scope: "mine" | "team";
+  meId: string | null | undefined;
+  teamInboxIds: ReadonlySet<string>;
+  focusedId: string | null | undefined;
+  value: Record<string, InboxSession>;
+}>();
+
+export function filterInboxScope(
+  sessions: Record<string, InboxSession>,
+  scope: "mine" | "team",
+  meId: string | null | undefined,
+  teamInboxIds: ReadonlySet<string> = EMPTY_TEAM_INBOX_IDS,
+  focusedId?: string | null,
+): Record<string, InboxSession> {
+  const hit = inboxScopeCache.get(sessions);
+  if (hit && hit.scope === scope && hit.meId === meId && hit.teamInboxIds === teamInboxIds && hit.focusedId === focusedId) return hit.value;
+  const value = computeInboxScope(sessions, scope, meId, teamInboxIds, focusedId);
+  inboxScopeCache.set(sessions, { scope, meId, teamInboxIds, focusedId, value });
+  return value;
+}
+
+function computeInboxScope(
+  sessions: Record<string, InboxSession>,
+  scope: "mine" | "team",
+  meId: string | null | undefined,
+  teamInboxIds: ReadonlySet<string> = EMPTY_TEAM_INBOX_IDS,
+  focusedId?: string | null,
+): Record<string, InboxSession> {
+  if (scope === "team" && teamInboxIds.size > 0) {
+    const out: Record<string, InboxSession> = {};
+    for (const id in sessions) {
+      if (!Object.hasOwn(sessions, id)) continue;
+      const s = sessions[id];
+      if (teamInboxIds.has(id) || id === focusedId || !isConvexId(id)) out[id] = s;
+    }
+    return out;
+  }
+  // "mine" (and team before its first payload): hide definitively-foreign rows.
+  let anyForeign = false;
+  for (const id in sessions) {
+    if (!Object.hasOwn(sessions, id)) continue;
+    const s = sessions[id];
+    if (s._id !== focusedId && isForeignRow(s, meId)) { anyForeign = true; break; }
+  }
+  if (!anyForeign) return sessions; // referentially stable when nothing to drop
+  const out: Record<string, InboxSession> = {};
+  for (const id in sessions) {
+    if (!Object.hasOwn(sessions, id)) continue;
+    const s = sessions[id];
+    if (id === focusedId || !isForeignRow(s, meId)) out[id] = s;
+  }
+  return out;
+}
+
+// filterInboxScope with its canonical arguments read off a store snapshot — the
+// one call every session picker / MRU list makes before enumerating the shared
+// cache. The cache holds rows from other scopes and previously viewed teams, so
+// any raw Object.values(sessions) surface leaks them.
+export function filterInboxScopeFromState(st: {
+  sessions: Record<string, InboxSession>;
+  clientState: { ui?: { inbox_scope?: "mine" | "team" } };
+  currentUser?: { _id: unknown } | null;
+  teamInboxIds: ReadonlySet<string>;
+  currentSessionId: string | null;
+}): Record<string, InboxSession> {
+  return filterInboxScope(
+    st.sessions,
+    st.clientState.ui?.inbox_scope ?? "mine",
+    st.currentUser?._id?.toString?.() ?? null,
+    st.teamInboxIds,
+    st.currentSessionId,
+  );
+}
+
+// ── Projection stamps: checking data, never render sources (C1/C6) ──────────
+
+// One stamped row from the overlay payload: the server's placement of a
+// projection MEMBER. Stored per scope in sessionsProjection, NEVER on the
+// session row.
+export type InboxProjectionStamp = {
+  bucket: InboxBucket;
+  work_state: WorkState;
+  asking: boolean;
+  below_fold: boolean;
+  // A client recompute scheduling hint and payload staleness signal; the
+  // stale_bucket twin is never rendered.
+  bucket_stale_at: number | null;
+  stale_bucket: InboxBucket | null;
+};
+
+export type SessionsProjectionSlot = {
+  // The payload's projection version — compared against the client's own
+  // INBOX_PROJECTION_VERSION before any diff (deploy skew = silence + metric).
+  v: number;
+  // The payload's epoch: the compare evaluates the shared module AT this clock.
+  epoch: number;
+  // Receipt time on the monotonic clock — payload age for the compare gates.
+  receivedAtMono: number;
+  tally: { shown: InboxTally; folded: InboxTally };
+  set_digest: string | null;
+  truncated: InboxTruncation[];
+  stamps: Record<string, InboxProjectionStamp>;
+};
+
+// The overlay-owned FACT fields as the client preserve list: the base list and
+// every other sessions channel carry null for these (the server strips them),
+// so the sync merge must keep the overlay's value instead of clobbering it.
+// DERIVED from the shared constant — a signature test pins the derivation.
+export const SESSIONS_PRESERVE_FIELDS: readonly string[] = [
+  ...INBOX_FACT_FIELDS,
+  // Local-only post-create intent, preserved across the stub→real rekey.
+  "_postCreateBucketId",
+];
+
+// The projection STAMP fields, stripped from every sessions row channel before
+// the merge (single writer: stamps exist only in sessionsProjection). Also
+// derived from the shared constant.
+export const SESSIONS_STRIP_FIELDS: readonly string[] = [...INBOX_PROJECTION_FIELDS];
+const SESSIONS_STRIP_FIELD_SET: ReadonlySet<string> = new Set(SESSIONS_STRIP_FIELDS);
+const INBOX_FACT_FIELD_SET: ReadonlySet<string> = new Set(INBOX_FACT_FIELDS);
+
+// The one fact merge: an overlay row's FACTS onto a session row, field by
+// field (stamps never reach a row), leaving an unchanged row's identity alone.
+// An overlay row is the fact writer for its row, so every fact field it does
+// not carry reads as null — never "keep what was there": the server's trusted
+// status is undefined once the managed row is gone, the key is absent from
+// the payload, and a stale "stopped" would otherwise outlive it and file a
+// declared-done session under Needs Input on this replica alone.
+function mergeOverlayFacts(target: Record<string, unknown>, incoming: Record<string, unknown>, pending: Record<string, PendingEntry>): Record<string, PendingEntry> {
+  const { fields: facts, pending: nextPending } = applySyncPatch("sessions", String(target._id), {
+    ...Object.fromEntries(INBOX_FACT_FIELDS.map((key) => [key, incoming[key] ?? null])),
+    ...incoming,
+  }, [], pending);
+  for (const key of INBOX_FACT_FIELDS) {
+    const next = facts[key] === undefined ? null : facts[key];
+    if (!Object.is(target[key], next)) target[key] = next;
+  }
+  for (const key in facts) {
+    if (SESSIONS_STRIP_FIELD_SET.has(key) || INBOX_FACT_FIELD_SET.has(key)) continue;
+    if (!Object.is(target[key], facts[key])) target[key] = facts[key];
+  }
+  return nextPending;
+}
+
+// True when merging `incoming` onto `base` would change nothing. An overlay
+// payload carries the whole live set (~600 rows) on every push, and almost
+// every row repeats the last one. The merge reads and writes through mutative
+// draft proxies and looks each field up in the pending map: on a phone that
+// was a quarter of the JS thread's busy time after a signed in launch. This
+// check reads only plain objects, so an unchanged row never touches the draft.
+// Mirrors mergeOverlayFacts: an absent fact reads as null, stamps are skipped.
+function overlayRowUnchanged(base: Record<string, unknown>, incoming: Record<string, unknown>): boolean {
+  for (const key of INBOX_FACT_FIELDS) {
+    if (!sameOverlayValue(base[key], incoming[key] ?? null)) return false;
+  }
+  for (const key in incoming) {
+    if (SESSIONS_STRIP_FIELD_SET.has(key) || INBOX_FACT_FIELD_SET.has(key)) continue;
+    if (!sameOverlayValue(base[key], incoming[key])) return false;
+  }
+  return true;
+}
+function sameOverlayValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  // The few structured facts (open_tasks, activity) arrive as fresh objects.
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// Session ids with a pending entry: a lock or an exclude may change what a
+// merge writes, so those rows always take the full merge.
+function sessionIdsWithPending(pending: Record<string, PendingEntry>): Set<string> {
+  const ids = new Set<string>();
+  for (const key in pending) {
+    if (key.startsWith("sessions:")) ids.add(key.split(":", 2)[1]);
+  }
+  return ids;
+}
+
+// Facts the overlay delivered for ids the store did not hold yet: a session a
+// daemon or `cast spawn` just started, whose base row (fast fields stripped
+// to null) is still in flight on the other subscription — the two coalesce
+// independently, so the overlay can land first. Held per scope until the row
+// lands through syncTable, then merged exactly as the applier would have; a
+// newer payload replaces the whole hold, so nothing outlives one execution.
+let _heldOverlayFacts: Record<string, Record<string, Record<string, unknown>>> = {};
+function applyHeldOverlayFacts(sessions: Record<string, unknown>, pending: Record<string, PendingEntry>): Record<string, PendingEntry> {
+  for (const scope in _heldOverlayFacts) {
+    const held = _heldOverlayFacts[scope];
+    for (const id in held) {
+      const target = sessions[id] as Record<string, unknown> | undefined;
+      if (!target) continue;
+      pending = mergeOverlayFacts(target, held[id], pending);
+      delete held[id];
+    }
+  }
+  return pending;
+}
+export function __resetHeldOverlayFactsForTests(): void {
+  _heldOverlayFacts = {};
+}
+
+// The row channels whose applies mark the replica as mid catch-up for the
+// digest compare's quiescence gate (store/syncActivity): the projection's
+// inputs that arrive through syncTable. Not the liveness overlay (it has its
+// own applier and is the compare's input), not the user doc (heartbeat churn).
+const SYNC_ACTIVITY_FIELDS: ReadonlySet<string> = new Set(["sessions", "sessionDecisions"]);
+
+// THE COUNTING CHOKEPOINT (sync-convergence C4/C5). Every surface that decides
+// which sessions are IN the inbox — panel, fleet board, nav order, badges,
+// mobile — goes through here. It is the only place the synced view keys
+// (inbox_scope, inbox_show_old) parameterize counting: scope picks the row
+// set, show-old picks shown vs shown+folded INSIDE the shared computation.
+// A guard test (lib/__tests__/inboxProjectionGuards) holds that no other
+// counting path reads those keys or reaches around the selection.
+//
+// Team scope stays server-gated (teamInboxIds): the replica lacks the
+// visibility inputs to select a team working set (C4), so the board renders
+// exactly what the team subscription reported, unpartitioned.
+type InboxVisible = { visibleSessions: Record<string, InboxSession>; oldCount: number; membership: InboxMembership | null; scoped: Record<string, InboxSession> };
+// One memo per scope and focused row, like placeInboxRows' slots: the badges
+// ask for "mine" with no focus while the panel asks with the open row, and a
+// single shared slot made each evict the other and rescan every session.
+const _visibleMemo = new Map<string, { key: unknown[]; val: InboxVisible }>();
+export function computeInboxVisible(
+  state: {
+    sessions: Record<string, InboxSession>;
+    clientState: { ui?: { inbox_scope?: "mine" | "team"; inbox_show_old?: boolean } };
+    currentUser?: { _id?: unknown } | null;
+    teamInboxIds?: ReadonlySet<string>;
+    sessionsProjection?: Record<string, { epoch: number }>;
+    pendingSessionCreates?: Record<string, unknown>;
+  },
+  opts?: { focusedId?: string | null; scope?: "mine" | "team"; now?: number; deps?: InboxOverlayDeps },
+): InboxVisible {
+  // opts.scope overrides the synced view key for surfaces that are always
+  // personal whatever the panel shows (the sidebar/dock badges via
+  // placeInboxRows' "mine" force) — the ONE sanctioned way around the key.
+  const scope = opts?.scope ?? state.clientState.ui?.inbox_scope ?? "mine";
+  const showOld = resolveShowOld(state.clientState.ui);
+  const meId = state.currentUser?._id?.toString?.() ?? null;
+  const focusedId = opts?.focusedId ?? null;
+  const teamInboxIds = state.teamInboxIds ?? EMPTY_TEAM_INBOX_IDS;
+  // ONE clock: the caller's `now` (placeInboxRows passes its coarse tick) so
+  // membership and placement evaluate at the same epoch.
+  const epoch = renderInboxEpoch(state.sessionsProjection, opts?.now ?? Date.now());
+  // Keyed on the COLLECTION IDENTITY, not a wake signature: the returned
+  // visibleSessions map holds row references, and a signature that ignores
+  // churny fields (updated_at) would hand consumers stale rows — the "recent"
+  // view then sorts on last minute's activity. Any store write mints a new
+  // collection ref, so identity is exactly "nothing changed". The expensive
+  // part (the working-set selection + fold) keeps its own coarser memo in
+  // computeInboxMembership.
+  const deps = opts?.deps ?? keepOverlayDeps(state.sessions, focusedId, state.pendingSessionCreates);
+  const key = [state.sessions, scope, showOld, meId, teamInboxIds, focusedId, epoch, [...deps.pendingCreateIds].sort().join(",")];
+  const slot = `${scope}\x1f${focusedId ?? ""}`;
+  const memo = _visibleMemo.get(slot);
+  if (memo && key.length === memo.key.length && key.every((v, i) => Object.is(v, memo.key[i]))) {
+    return memo.val;
+  }
+  const scoped = filterInboxScope(state.sessions, scope, meId, teamInboxIds, focusedId);
+  let result: InboxVisible;
+  if (scope === "team") {
+    result = { visibleSessions: scoped, oldCount: 0, membership: null, scoped };
+  } else {
+    const membership = computeInboxMembership(scoped, epoch);
+    result = { ...partitionWorkingSet(scoped, membership, { showOld, deps }), membership, scoped };
+  }
+  _visibleMemo.set(slot, { key, val: result });
+  if (_visibleMemo.size > PLACED_MEMO_CAP) _visibleMemo.delete(_visibleMemo.keys().next().value!);
+  return result;
+}
+
+// Ordering precedence for a session, lowest-rank-first. Computed ONCE per
+// session so the comparator is a cheap tuple compare instead of re-deriving the
+// classification on every comparison. Each entry mirrors a tier of the old
+// short-circuit comparator exactly (pinned → not-deferred → stub-id →
+// new → waiting-for-input → idle), so the resulting order is identical.
+const REST_RANK: Record<SessionRestState, number> = { needs_input: 0, done: 1, dormant: 2 };
+// The (waiting, rest, idle) triple the rank reads. A PLACED row (a top-level
+// real row the chokepoint ran through the shared module) ranks by its
+// placement's work_state, so order and section can never disagree — the
+// ct-47520 class: the legacy per-row classifier filed a staleness-swept row
+// as needs_input while the chokepoint placed it Done. Rows with no placement
+// (create stubs, children riding their parent) keep the legacy verdict.
+export function rankVerdictOf(s: InboxSession, placement?: { work_state: WorkState } | null): SessionVerdict {
+  return placement ? verdictOfWorkState(placement.work_state) : classifySession(s);
+}
+function sessionSortRank(s: InboxSession, placement?: { work_state: WorkState } | null): [number, number, number, number, number, number, number] {
+  const c = rankVerdictOf(s, placement);
+  return [
+    s.is_pinned ? 0 : 1,                              // pinned first
+    s.is_deferred ? 1 : 0,                            // deferred last
+    isConvexId(s._id) ? 1 : 0,                        // optimistic stub ids first
+    (s.message_count ?? 0) === 0 ? 0 : 1,            // brand-new (no messages) first
+    c.waiting ? 0 : 1,                                // needs-input first
+    // Among settled rows: blocked → delivered → parked. Also what wakes the
+    // sidebar when a row moves between the three rest sections (the wake
+    // signature folds this rank in).
+    c.waiting ? REST_RANK[c.rest] : 0,
+    c.idle ? 0 : 1,                                   // idle before active
+  ];
+}
+
+// The WorkState a row sorts by: its placed verdict, or — for a row the
+// chokepoint never placed (a create stub, a child riding its parent) — the
+// legacy verdict read back as a work state. The exact inverse of
+// verdictOfWorkState, so the class the order uses is the class the section
+// files under.
+function sortWorkStateOf(s: InboxSession, placement?: { work_state: WorkState } | null): WorkState {
+  if (placement) return placement.work_state;
+  const c = rankVerdictOf(s, null);
+  return c.waiting ? c.rest : c.idle ? "idle" : "working";
+}
+
+// Where a row sits INSIDE its group (shared inboxSortTimeOfRow, ct-49550): one
+// event stamp per class plus the creation grace, so a section is ordered by
+// when something happened to each row instead of by id. Cached on the row
+// object like the placement is — the sync layer keeps a row's ref stable
+// unless a field changed — and keyed by the class and the coarse clock the
+// grace reads.
+type SortKeyEntry = { work_state: WorkState; epoch: number; time: InboxSortTime };
+const _sortKeyCache = new WeakMap<object, SortKeyEntry>();
+function sessionSortTime(s: InboxSession, placement: { work_state: WorkState } | null, now: number): InboxSortTime {
+  const work_state = sortWorkStateOf(s, placement);
+  // The clock at minute grain: the only time term is the 5-minute creation
+  // grace, so a per-render `now` would cost a recompute for nothing.
+  const epoch = inboxEpoch(now);
+  const hit = _sortKeyCache.get(s);
+  if (hit && hit.work_state === work_state && hit.epoch === epoch) return hit.time;
+  const time = inboxSortTimeOfRow(s, work_state, epoch);
+  _sortKeyCache.set(s, { work_state, epoch, time });
+  return time;
+}
+const sessionSortKey = (s: InboxSession, placement: { work_state: WorkState } | null, now: number) =>
+  sessionSortTime(s, placement, now).key;
+
+// A session paired with its precomputed sort rank and its in-bucket sort key.
+type RankedSession = { s: InboxSession; rank: ReturnType<typeof sessionSortRank>; key: number };
+
+// Defer is "send to the end": deferred rows sink below the rest, in the order
+// they were deferred, so the latest defer lands under every earlier one
+// whatever its own event time.
+function compareDeferred(a: InboxSession, b: InboxSession): number {
+  if (!!a.is_deferred !== !!b.is_deferred) return a.is_deferred ? 1 : -1;
+  if (!a.is_deferred) return 0;
+  return (a.inbox_deferred_at ?? 0) - (b.inbox_deferred_at ?? 0);
+}
+
+// Comparator over precomputed ranks: the categorical tuple first, then the
+// class's own time key (ascending — the shared inboxSortTime orients it), then
+// _id as the stable tiebreak. Defined once and shared by sortSessions and
+// placeInboxRows so the active-session order lives in exactly one place.
+function compareRankedSessions(a: RankedSession, b: RankedSession): number {
+  for (let i = 0; i < a.rank.length; i++) {
+    if (a.rank[i] !== b.rank[i]) return a.rank[i] - b.rank[i];
+  }
+  const deferred = compareDeferred(a.s, b.s);
+  if (deferred) return deferred;
+  if (a.key !== b.key) return a.key - b.key;
+  return a.s._id < b.s._id ? -1 : a.s._id > b.s._id ? 1 : 0;
+}
+
+export function sortSessions(sessions: Record<string, InboxSession>): InboxSession[] {
+  // One O(N) classification pass, then an O(N log N) sort over cheap precomputed
+  // keys. The previous version called the per-row classifier /
+  // isSessionEffectivelyIdle / isConvexId inside the comparator — i.e. thousands
+  // of times per sort — which dominated the constant re-categorize cost the
+  // inbox pays on every liveness sync (see Chrome trace: sortSessions hot on
+  // every status flip). Output order is byte-identical to the old comparator.
+  const now = Date.now();
+  const keyed: RankedSession[] = Object.values(sessions)
+    .filter((s) => !isSessionHidden(s))
+    .map((s) => ({ s, rank: sessionSortRank(s), key: sessionSortKey(s, null, now) }));
+  keyed.sort(compareRankedSessions);
+  return keyed.map((x) => x.s);
+}
+
+// ACTIVE_AGENT_STATUSES / DEAD_AGENT_STATUSES come from @codecast/shared/contracts (canonical).
+
+// Stable empty set so callers that omit pendingSendIds don't allocate and
+// don't churn memoized identities.
+const EMPTY_PENDING_SEND_IDS: ReadonlySet<string> = new Set<string>();
+
+// The daemon definitively reports the agent as running. Used both to
+// short-circuit idle detection and to decide when a "pending working" send has
+// been confirmed (status flipped active) vs is still in-flight.
+export type AgentStatusFacts = Pick<InboxSession, "agent_status" | "updated_at" | "last_heartbeat" | "open_tasks" | "open_tasks_at">;
+export function isAgentActive(session: AgentStatusFacts, now = Date.now()): boolean {
+  const status = agentStatusAt(session, now);
+  return !!status && ACTIVE_AGENT_STATUSES.has(status);
+}
+
+// convHasPendingSend / sessionsWithPendingSend (the pending_send overlay's
+// members), BLOCKED_REVIVE_TTL_MS and freshReviveRequestIds (the revive
+// overlay's bound and members) live in ./inboxOverlays and are re-exported
+// above for existing importers.
+
+// Should a blocked session still wear its amber login/limit/dropped chip? Only
+// while the user hasn't acted on it. Acting shows up as two local facts, the
+// same pair the pill count and the banner already drop a session on: a message
+// of theirs sits in the session's outbox, or a fleet revive was stamped for it.
+// The server's pending_api_error clears much later — when the resumed agent's
+// first real turn syncs back — so reading that flag alone left every row still
+// shouting "login" after the whole fleet had been told to continue. An expired
+// stamp (BLOCKED_REVIVE_TTL_MS) lets the still-set server flag resurface, so a
+// revive that never happened isn't hidden.
+export function showsBlockedBadge(
+  pendingApiError: boolean | undefined,
+  hasPendingSend: boolean,
+  reviveRequestedAt: number | undefined,
+  now: number,
+): boolean {
+  if (!pendingApiError || hasPendingSend) return false;
+  return !(reviveRequestedAt != null && now - reviveRequestedAt < BLOCKED_REVIVE_TTL_MS);
+}
+
+export function pendingSendConsumed(
+  session: (AgentStatusFacts & Pick<InboxSession, "is_idle" | "has_pending">) | undefined,
+  sentBaselineTs?: number,
+): boolean {
+  if (!session || session.has_pending || sentBaselineTs == null || (session.updated_at ?? 0) <= sentBaselineTs) return false;
+  const status = agentStatusAt(session, Date.now());
+  return !!session.is_idle || !!(status && (ACTIVE_AGENT_STATUSES.has(status) || DEAD_AGENT_STATUSES.has(status)));
+}
+
+export const PENDING_SEND_PRUNE_GRACE_MS = 15_000;
+
+function pendingSendEchoed(msg: Message, localMessages: Message[]): boolean {
+  return localMessages.some((m) => {
+    if (m.role !== "user" || m._isOptimistic || m._isQueued || m._isFailed) return false;
+    // A queued send someone merged into another (mergeQueued) lands as one
+    // part of a joint turn under the other row's client id.
+    if (m.content?.startsWith("<user-message") && m.timestamp >= msg.timestamp && parseJointMessage(m.content)?.some((p) => p.body === (msg.content ?? "").trim())) return true;
+    if (msg._clientId) return m.client_id === msg._clientId;
+    if (m._id === msg._id) return true;
+    return isInterruptControlMessage(msg.content)
+      ? isInterruptControlMessage(m.content) && m.timestamp > (msg._sentBaselineTs ?? msg.timestamp - 120_000)
+      : stripImageRef(m.content || "") === stripImageRef(msg.content || "") && Math.abs(m.timestamp - msg.timestamp) < 120_000;
+  });
+}
+
+/** A hosted conversation took an approval's answer. Its turn consumes the
+ *  answer without writing a transcript row, so the bubble the store painted
+ *  for it (answerDecision) never meets an echo. What the turn resumes on is
+ *  the decision itself (assistant/input.ts: `resolved`), so the proof is the
+ *  decision's own row: the server has acknowledged the answer once no local
+ *  lock holds its status and the row no longer reads pending. The row must
+ *  also have moved past the stamp the answer was sent at with nothing left
+ *  queued. Row movement alone proves nothing: a title or summary write lands
+ *  the same way while the answer still waits in the outbox, and a bubble
+ *  settled then is skipped by every path that would later show it failed. */
+export type DecisionEvidence = { sessionDecisions: Record<string, { status: string } | undefined>; pending: Record<string, unknown> };
+function hostedAnswerTaken(
+  session: Pick<InboxSession, "has_pending" | "updated_at"> | undefined,
+  sentBaselineTs: number,
+  decisionId: string | undefined,
+  decisions: DecisionEvidence | undefined,
+): boolean {
+  if (!session || session.has_pending || (session.updated_at ?? 0) <= sentBaselineTs) return false;
+  if (!decisionId || !decisions) return false;
+  if (decisions.pending[`sessionDecisions:${decisionId}:status`]) return false;
+  return decisions.sessionDecisions[decisionId]?.status !== "pending";
+}
+
+export function reconcilePendingSendForSession(
+  pendingMessages: Record<string, Message[]>,
+  convId: string,
+  session: (AgentStatusFacts & Pick<InboxSession, "is_idle" | "has_pending" | "agent_type">) | undefined,
+  _focusedConvId: string | null,
+  localMessages?: Message[],
+  decisions?: DecisionEvidence,
+): boolean {
+  const pending = pendingMessages[convId];
+  if (!pending?.length) return false;
+  let changed = false;
+  const kept = pending.filter((m) => m._isLocalQueue || !pendingSendEchoed(m, localMessages ?? []));
+  const hosted = isHostedAgentType(session?.agent_type);
+  for (const message of kept) {
+    if (message._isFailed || message._isSettled || message._isLocalQueue) continue;
+    const sentAt = message._sentBaselineTs ?? message.timestamp;
+    const answers = hosted ? parseDecisionAnswer(message.content)?.id : undefined;
+    if (answers) {
+      if (!hostedAnswerTaken(session, sentAt, answers, decisions)) continue;
+    } else {
+      if (!isInterruptControlMessage(message.content) && !/^\/(?:model|effort)(?:\s|$)/.test(message.content ?? "")) continue;
+      if (Date.now() - message.timestamp < PENDING_SEND_PRUNE_GRACE_MS) continue;
+      if (!pendingSendConsumed(session, sentAt)) continue;
+    }
+    message._isSettled = true;
+    delete message._isOptimistic;
+    delete message._isQueued;
+    changed = true;
+  }
+  if (kept.length !== pending.length) {
+    if (kept.length) pendingMessages[convId] = kept;
+    else delete pendingMessages[convId];
+    changed = true;
+  }
+  return changed;
+}
+
+// The (waiting, rest, idle) verdict a surface outside the chokepoint reads
+// off ONE row — the sidebar rank/wake signature, the sessions page, the fleet
+// bands, trigger absorption, the waiting chime. Derived from the SHARED work
+// state, never a second classifier: `waiting` is a settled verdict
+// (needs_input / done / dormant), `rest` names the settled section, `idle` is
+// "not working".
+export type SessionRestState = "needs_input" | "done" | "dormant";
+export type SessionVerdict = { idle: boolean; waiting: boolean; rest: SessionRestState };
+
+export function verdictOfWorkState(ws: WorkState): SessionVerdict {
+  const waiting = ws === "needs_input" || ws === "done" || ws === "dormant";
+  return { waiting, rest: waiting ? (ws as SessionRestState) : "needs_input", idle: ws !== "working" };
+}
+
+export function isSessionEffectivelyIdle(session: InboxSession): boolean {
+  return classifySession(session).idle;
+}
+
+// A concrete blocker that must escalate even for a STANDING session (one with a
+// recurring schedule injecting into it) or a scheduled run collapsed under its
+// schedule's group row: the shared isHardBlocked (an open poll, an unresolved
+// auth/API error, a permission prompt, a dead or unresponsive agent with
+// content) behind the two guards the chokepoint also applies — a queued
+// outbound message means the user already acted, and a KILLED row is retired
+// (it matters most here because this predicate is what pulls an ANCHOR out of
+// its own space and into the inbox: a killed anchor keeps its frozen
+// awaiting_input / permission_blocked, so without this it re-escalated forever
+// after teardown). A plain finished turn (idle with messages) is the
+// uneventful steady state of standing automation, not a claim on the user's
+// attention. No pinned exemption: placement of pinned rows is the caller's
+// concern (they never leave the Pinned group).
+export function isSessionHardBlocked(
+  session: AgentStatusFacts & Pick<InboxSession, "_id" | "message_count" | "awaiting_input" | "is_unresponsive" | "pending_api_error" | "inbox_killed_at" | "thread_state_status">,
+  sessionsWithQueuedMessages?: Set<string>,
+  now = Date.now(),
+): boolean {
+  if (sessionsWithQueuedMessages?.has(session._id)) return false;
+  if (session.inbox_killed_at) return false;
+  return isHardBlocked({
+    awaitingInput: !!session.awaiting_input,
+    pendingApiError: session.pending_api_error === true,
+    agentStatus: agentStatusAt(session, now),
+    messageCount: session.message_count ?? 0,
+    isUnresponsive: !!session.is_unresponsive,
+    declaredStatus: session.thread_state_status ?? null,
+    // A row with queued messages already returned above.
+    hasPending: false,
+  });
+}
+
+// Per-session-object memo of the shared verdict. placeInboxRows runs on every
+// REAL session change (a single agent flipping working↔idle re-buckets the
+// whole list), and over a never-pruned store that means re-deriving the
+// verdict for thousands of unchanged rows each time.
+//
+// The win comes from object identity: the liveness overlay (syncOverlay) and
+// applySyncTable both preserve a session row's reference unless one of its
+// fields actually changed, so keying by the row object lets an unchanged
+// session reuse its prior verdict — the recompute then scales with the number
+// of CHANGED rows, not the total store. The verdict is pure in the row object
+// (no Date.now(), no external set): the row's facts as they stand, with no
+// staleness sweep or trust decay (those are TIME-driven and enter the
+// chokepoint through `now`; the row's own activity time is the clock here).
+// A changed row arrives as a new object and misses the cache. WeakMap so
+// entries vanish with their session (eviction / replacement) — no leak, no
+// stale key. `waiting` here is the no-in-flight verdict; the chokepoint
+// layers the tiny in-flight set on top (an in-flight send forces a session
+// OUT of needs-input).
+type RowVerdict = { bucket: InboxBucket; work_state: WorkState };
+const _placementCache = new WeakMap<object, { live: string; p: RowVerdict }>();
+const _classifyCache = new WeakMap<RowVerdict, SessionVerdict>();
+/** One row's bucket and work state from its shipped live fields, outside the
+ *  working set: the per-row placement the inbox sections use, without the
+ *  membership fold. For a surface listing rows the inbox may not hold. The
+ *  status is the verdict at `now` (the row holds the daemon's raw one); the
+ *  placement is reused while the live fields stand. */
+export function sessionPlacement(s: InboxSession, now = Date.now()): RowVerdict {
+  const live: LiveFacts = {
+    agent_status: agentStatusAt(s, now) ?? null,
+    is_idle: !!s.is_idle,
+    is_unresponsive: !!s.is_unresponsive,
+    awaiting_input: !!s.awaiting_input,
+    daemon_alive: !!s.is_connected,
+  };
+  const key = liveKeyOf(live);
+  const hit = _placementCache.get(s);
+  if (hit && hit.live === key) return hit.p;
+  const p = placeProjectableRow(projectableRowOf(s, live), false, inboxEpoch(s.updated_at ?? 0));
+  _placementCache.set(s, { live: key, p });
+  return p;
+}
+/** Who acts next on a session (the same placement the inbox sections use). */
+export function sessionWorkState(s: InboxSession, now = Date.now()): WorkState {
+  return sessionPlacement(s, now).work_state;
+}
+export function classifySession(s: InboxSession, now = Date.now()): SessionVerdict {
+  const p = sessionPlacement(s, now);
+  let c = _classifyCache.get(p);
+  if (!c) {
+    c = verdictOfWorkState(p.work_state);
+    _classifyCache.set(p, c);
+  }
+  return c;
+}
+
+export function getSessionRenderKey(
+  session: Pick<InboxSession, "_id" | "session_id"> | null | undefined,
+): string | null {
+  if (!session) return null;
+  return (session as InboxSession).session_id || session._id;
+}
+
+// Sole consumer: the waiting chime (hooks/useSyncInboxSessions.ts). A true
+// mirror of convex/notifications.ts checkNeedsInput's two stand-downs — reason
+// "subagent" (isSubagentConversation: is_subagent / parent link) and reason
+// "agent_spawned" (isAgentSpawnedConversation: spawned_by, non-lead agent
+// identity, workflow subs, parentless subagents) — built from the same two
+// shared predicates the server calls. The server's third stand-down
+// (agent_task_id → "schedule_run") has no chime counterpart: a schedule run
+// is never in the inbox as a waiting card. A worktree_name is a
+// LOCATION, not a parent: a human-started --isolated / cloud / path-stamped
+// session chimes like any other card. Machine-initiated rows — Task
+// subagents, workflow subs, cast-spawn fan-out with a spawner, agent-team
+// members other than the lead — stay silent, as they already do for the push.
+// The one caveat, same as the server: `cast spawn` from a plain terminal
+// records no spawner and so is treated as human-started.
+export function isSub(s: InboxSession): boolean {
+  return isSubagentConversation(s) || isAgentSpawnedConversation(s);
+}
+
+export function isFork(s: InboxSession): boolean {
+  return !!s.forked_from;
+}
+
+// Group key for a session running in an isolated worktree (an orchestration
+// worker), or null for an ordinary checkout. Workers spawned for a plan/task
+// land in `.codecast/worktrees/<name>` (or `.conductor/<name>` for the `wt`
+// helper); we cluster them under that name in the inbox so a fan-out reads as
+// one collapsible group instead of N loose top-level cards. Prefers the
+// explicit worktree_name, falling back to parsing the project path.
+const WORKTREE_PATH_RE = /\/\.(?:codecast\/worktrees|conductor)\/([^/]+)/;
+export function worktreeKeyOf(s: InboxSession): string | null {
+  if (s.worktree_name) return s.worktree_name;
+  const path = s.project_path || s.git_root || "";
+  const m = path.match(WORKTREE_PATH_RE);
+  return m ? m[1] : null;
+}
+
+// Display label for a session's plan (or worktree) grouping, used by the
+// "By plan" view's section headings, or null if the session carries neither.
+// Prefers the PLAN — the reliable, persisted signal (active_plan) — and falls
+// back to the worktree for an isolated session without a plan. The label
+// doubles as the group's identity (plan short_id keeps distinct plans apart).
+export function orchestrationGroupLabelOf(s: InboxSession): string | null {
+  if (s.active_plan) {
+    const title = s.active_plan.title?.trim();
+    return title ? `${s.active_plan.short_id} · ${title}` : s.active_plan.short_id;
+  }
+  const wt = worktreeKeyOf(s);
+  return wt ? `⑂ ${wt}` : null;
+}
+
+// Structural signature of a session for inbox bucketing + ordering. It MUST fold
+// in every field that decides which section/position a row lands in — so it is
+// built FROM sessionSortRank (the order tuple, which already folds in
+// classifySession's idle/waiting verdict) plus the grouping/visibility flags
+// placeInboxRows splits on. Building it this way means it can't drift from
+// the categorizer. It deliberately OMITS updated_at / last_heartbeat /
+// last_message_at and the raw message_count (only the message_count===0 boundary,
+// carried inside the rank tuple, changes a bucket): a heartbeat or a streamed
+// token must not move anything, so it must not change this signature.
+//
+// The in-bucket sort key (sessionSortKey) stays OUT for the same reason: it is
+// time-driven, its idle class reads updated_at, and every stamp that moves it
+// without changing the rank tuple (a second turn ending under an unchanged
+// status) rides the coarse ticker the placement call already takes (ct-49550).
+//
+// Subscribe a list/sidebar to sessionsWakeSig(s.sessions) instead of the raw
+// `s.sessions` map and it wakes only on real structural change, not on every
+// liveness tick. The TIME-driven reclassification placeInboxRows performs
+// (the trust-TTL sweep that retires a stale "working" to needs-input) is NOT a
+// field change — drive that with a coarse re-render ticker (useCoarseNow), never
+// by widening this signature. See store/wakeSig.ts.
+// A conversation's sharing fields live on three rows of the draft: the inbox
+// session, the opened conversation's meta row, and every team feed cache that
+// holds the row. A share or hide patches all three, so the team feed reads the
+// change back in the same tick instead of after the server's next push.
+// The inbox session takes only the fields its row carries (INBOX_ROW_FIELDS,
+// absent spelled null as the server spells it): a field no inbox feeder
+// writes would be removed again by the next list or byIds push.
+// A foreign-run cached row that claims the viewer as an owner: the rows a
+// disown can change (my own runs keep their stamps; another user's ownership
+// is server truth about them).
+export function claimsViewer(s: { user_id?: string | null; owned_by_me?: boolean; owner_user_id?: string | null }, meId: string): boolean {
+  if (!s.user_id || s.user_id === meId) return false;
+  return !!s.owned_by_me || s.owner_user_id === meId;
+}
+
+function patchConversationRows(draft: { sessions: any; conversations: any; feedConversations?: any }, id: string, apply: (row: any) => void) {
+  const session = draft.sessions[id];
+  if (session) {
+    const patch: Record<string, any> = {};
+    apply(patch);
+    for (const [k, v] of Object.entries(patch)) if (isInboxRowField(k)) session[k] = v ?? null;
+  }
+  if (!draft.conversations[id]) draft.conversations[id] = { _id: id };
+  apply(draft.conversations[id]);
+  for (const rows of Object.values(draft.feedConversations ?? {}) as any[][]) {
+    const row = rows?.find((c: any) => c?._id === id);
+    if (row) apply(row);
+  }
+}
+
+export function sessionStructuralSig(s: InboxSession): string {
+  return [
+    s._id,
+    s.agent_status === "hibernated" ? 1 : 0,
+    sessionSortRank(s).join(","),
+    isSessionHidden(s) ? 1 : 0,
+    isSessionDismissed(s) ? 1 : 0,
+    s.inbox_stashed_at ? 1 : 0,
+    isSessionKilled(s) ? 1 : 0,
+    s.inbox_snoozed_until ?? 0,
+    // Deferred rows order by defer time, so a re-defer must re-sort.
+    s.is_deferred ? s.inbox_deferred_at ?? 0 : 0,
+    nestParentIdOf(s) || "",
+    s.forked_from || "",
+    orchestrationGroupLabelOf(s) || "",
+    // Presence of an unacked assignment flips the row's prominent treatment.
+    // Changes only on assign/ack, never on heartbeats.
+    s.assigned_ping ? 1 : 0,
+    // WHO OWNS IT decides whose inbox it is in (isForeignRow →
+    // isAssignedAwayFromViewer): a session I run and hand to a teammate leaves
+    // my scope entirely. Written by an ownership change alone, never by a
+    // heartbeat — and without it here the placement memo would keep serving
+    // the pre-handoff answer until some other row happened to move.
+    s.owner_user_id || "",
+    s.owned_by_me ? 1 : 0,
+    // WHICH ROLE LOOKS AFTER IT decides whether it is a card or a small row
+    // under the role's standing session (isUnderRole): a session under a role
+    // rides the role's card and never counts toward the person's needs input.
+    // Written by a reparent alone, never by a heartbeat.
+    s.org_role_id || "",
+    s.standing_role_id || "",
+    // Harness loop state decides trigger-set membership and absorption
+    // (partitionTriggerInbox reads it off this same subscription). Distilled to
+    // the fields that change rows; stamps once per turn end/wakeup, never on
+    // heartbeats.
+    s.loop_state ? `${s.loop_state.status}:${s.loop_state.wakeup_at}` : "",
+    // Structural placement inputs the rank tuple doesn't fold in: an armed
+    // inject trigger and the machine-delivered-last-turn bit park a settled
+    // row as DORMANT in the shared placement (placeInboxRows). Both change on
+    // rare data writes (arm/cancel, a new turn), never on heartbeats.
+    s.armed_trigger_kind || "",
+    // The PR chip on the card: its state is what the reader acts on, so a
+    // change of state must wake the card. The rest of pr_status cannot change
+    // without it (a new PR carries a new number and a new state).
+    s.pr_status ? `${s.pr_status.number}:${s.pr_status.state}` : "",
+    // An agent's pane offer paints the card's globe glyph. Written once by
+    // `cast browser pane` and once more when the reader acts on it — never on
+    // heartbeats.
+    s.browser_pane_offer ? `${s.browser_pane_offer.offered_at}:${s.browser_pane_offer.opened_at ?? 0}` : "",
+    s.git_remote_url || "",
+    s.git_branch || "",
+    s.worktree_branch || "",
+    s.owner_device_id || "",
+    s.cloud_placement || "",
+    s.cloud_workspace || "",
+    s.cloud_seed?.base || "",
+    s.local_mirror ? `${s.local_mirror.device_id}:${s.local_mirror.status}:${s.local_mirror.last_landed_at ?? 0}:${s.local_mirror.files?.length ?? 0}` : "",
+    s.migration_batch_id || "",
+    rowLastTurnAllowsPark(s) ? 1 : 0,
+    // Row thumbnail (inbox_image_thumbs pref). Changes only when a NEW image
+    // lands in the session — never on heartbeats — so folding it in is cheap
+    // and keeps the thumb from waiting on the coarse ticker.
+    s.image_preview_url || "",
+    // The agent's pinned thread state replaces the card's summary line. The
+    // TIMESTAMP stands in for the text: every write stamps a new one, so the
+    // signature stays short while still waking the card on a rewrite. Set by
+    // `cast state` only — a few times per session, never on heartbeats.
+    s.thread_state_at || 0,
+    // Open teammate-comment threads — the card's comment chip. Changes only
+    // when a human posts/resolves a comment, never on heartbeats. Paints a
+    // chip; never moves a row between buckets, so it stays out of sortRank.
+    // last_comment_at stands in for the author/excerpt text (every comment
+    // write stamps a new timestamp), the same trick thread_state_at uses.
+    s.open_comment_threads || 0,
+    s.last_comment_at || 0,
+  ].join("\x1f");
+}
+
+// Collection wake signature over the whole session map (memoized by map ref).
+export const sessionsWakeSig = makeCollectionSig<InboxSession>(sessionStructuralSig);
+// The team feed lists the viewer's own sessions by team and sharing; those
+// fields change on a share, a hide or a team restamp, never on a heartbeat.
+export const ownTeamRowsSig = makeCollectionSig<InboxSession>(
+  (s) => `${s._id}|${s.team_id ?? ""}|${s.is_private === undefined ? "" : s.is_private ? 1 : 0}|${s.team_visibility ?? ""}|${s.user_id ?? ""}`,
+);
+
+// Membership signature over pending sends, memoized by the pendingMessages ref.
+// pendingMessages mutates on every send-lifecycle tick, but placeInboxRows
+// only cares WHICH conversations have an unconfirmed send — subscribe to this
+// instead of the raw map and a badge/panel wakes only when that set changes.
+let _pendingSendSigRef: unknown;
+let _pendingSendSig = "";
+export function pendingSendWakeSig(pendingMessages: Record<string, Message[]>): string {
+  if (pendingMessages === _pendingSendSigRef) return _pendingSendSig;
+  const ids: string[] = [];
+  for (const id in pendingMessages) {
+    if (convHasPendingSend(pendingMessages[id])) ids.push(id);
+  }
+  _pendingSendSigRef = pendingMessages;
+  _pendingSendSig = ids.sort().join(",");
+  return _pendingSendSig;
+}
+
+// ── THE PLACEMENT CHOKEPOINT (sync-convergence C5) ───────────────────────────
+//
+// ONE function places the replica's rows for EVERY surface — the inbox panel,
+// the sidebar/dock badges, the active-agents pill, the fleet board, thread
+// cards, the palette, and the mobile inbox. It runs the SHARED projection
+// (selectWorkingSet → computeFold → placeProjectableRow, the same bytes the
+// server executes) over the scoped session cache, applies exactly the declared
+// overlays (store/inboxOverlays), and derives the rendered section arrays from
+// the per-row placements. The former client-only passes are gone as passes:
+//   question lift      → the `questions` bucket (asking is a placement input)
+//   trigger absorption → the armed_trigger_kind / loop_state FACTS reach the
+//                        classifier as data, identically on every replica
+//   revive handling    → the bounded `revive` overlay (needs_input → working)
+//   trust-TTL sweep    → the staleness adaptation in projectableRowOf (the
+//                        client mirror of the server's trustedAgentStatus)
+// A source guard (lib/__tests__/inboxPlacementGuards.guard.test.ts) bans the
+// deleted classifiers (categorizeSessions / categorizeMineSessions /
+// partitionOldSessions / liftQuestions) outside this chokepoint.
+//
+// INCREMENTAL, verified against the full computation: per-row placements are
+// cached by row OBJECT identity (the sync layer preserves refs for unchanged
+// rows) plus the row's time bits, so a real recompute re-derives only changed
+// rows; membership keeps its own memo (computeInboxMembership: wake signature
+// + minute-grain activity + epoch). The whole result is memoized per (scope,
+// focus) slot on the COLLECTION IDENTITY plus a placement key (wake
+// signatures, the deadline heap folded to a string by placementDeadlineSig,
+// the overlay inputs). The memoization contract every consumer relies on:
+//   fresh rows   — a call after any store write hands back the CURRENT row
+//                  refs (the recent view sorts on updated_at; a heartbeat-old
+//                  row is last minute's activity), never a frozen snapshot;
+//   stable refs  — when nothing MOVED (placements, tallies, section
+//                  membership and order unchanged) the returned objects are
+//                  the previous ones, so downstream memos hold across a
+//                  heartbeat; a coarse tick that crosses no deadline returns
+//                  the exact previous result.
+// Time-driven flips (trust TTL, revive expiry, bucket_stale_at, the epoch)
+// enter only through `now`: consumers pass a coarse clock (useCoarseNow) and
+// the deadline signature decides whether anything can have moved. In dev, a
+// full projectInbox run is asserted equal to the incremental result on every
+// real recompute (assertPlacementParity).
+
+export type InboxRowPlacement = {
+  bucket: InboxBucket;
+  work_state: WorkState;
+  below_fold: boolean;
+};
+
+export type InboxSectionKey = "questions" | "pinned" | "newSessions" | "needsInput" | "done" | "dormant" | "working";
+const SECTION_OF_BUCKET: Partial<Record<InboxBucket, InboxSectionKey>> = {
+  questions: "questions", pinned: "pinned", new: "newSessions", needs_input: "needsInput", done: "done", dormant: "dormant", working: "working",
+};
+export interface PlacedInbox {
+  /** The projection clock this placement was evaluated at (renderInboxEpoch). */
+  epoch: number;
+  scope: "mine" | "team";
+  showOld: boolean;
+  /** The partitioned row set the surfaces render (working set + overlays). */
+  visibleSessions: Record<string, InboxSession>;
+  /** Folded members hidden behind the show-old toggle. */
+  oldCount: number;
+  /** Per-row placement for every top-level real row (members included even
+   *  when the fold hides them from visibleSessions). */
+  placements: Map<string, InboxRowPlacement>;
+  /** Headline tallies over working-set MEMBERS (hidden bucket excluded). */
+  tally: { shown: InboxTally; folded: InboxTally };
+  truncated: InboxTruncation[];
+  /** The replica's own digest over its members' (id, bucket, below_fold)
+   *  triples — the shared digestProjection, so it is comparable byte for byte
+   *  with the server envelope's set_digest at the same epoch. */
+  set_digest: string;
+  /** Rank-ordered active rows (children included) — flat views + walks. */
+  sorted: InboxSession[];
+  // The rendered sections, one per bucket, each in its own stable order.
+  questions: InboxSession[];
+  pinned: InboxSession[];
+  newSessions: InboxSession[];
+  needsInput: InboxSession[];
+  done: InboxSession[];
+  dormant: InboxSession[];
+  working: InboxSession[];
+  stashed: InboxSession[];
+  snoozed: InboxSession[];
+  dismissed: InboxSession[];
+  subsByParent: Map<string, InboxSession[]>;
+  forksByParent: Map<string, InboxSession[]>;
+  /** Membership of the QUESTIONS section (the ask outranks placement). */
+  isQuestion: (s: InboxSession) => boolean;
+  /** Rows placed in each section: flat cards plus members nested under a same-bucket lead — the header number. A role's nested sessions add to none. */
+  counts: Record<InboxSectionKey, number>;
+  /** The role's standing session id → how many of its sessions ride its card (org-staffing.md S23.3): the count pill. The sessions themselves are never rows. */
+  roleSessionsByLead: Map<string, number>;
+}
+
+// The number a section header claims, for every surface that renders those
+// sections (the web panel and the mobile inbox both call this).
+//
+// `counts` is every row PLACED in the bucket — the flat cards plus the members
+// nested under a same-bucket lead. That is the honest number only while those
+// nested rows are on screen. With the subagent toggle off they render nowhere,
+// so the header claimed rows the reader could neither see nor reach: prod on
+// 2026-09-10 showed NEEDS INPUT (121) above 33 cards, while the sidebar badge
+// (flat cards only) said 34. A chip filter narrows a section the same way, so a
+// filtered section always reports the cards it shows.
+export function sectionHeaderCount(
+  shown: readonly InboxSession[],
+  full: readonly InboxSession[],
+  placedCount: number,
+  showSubagents: boolean,
+): number | undefined {
+  if (shown.length !== full.length) return undefined;
+  return showSubagents ? placedCount : shown.length;
+}
+
+// The store-state subset the chokepoint reads. Structural (never the store
+// type itself) so tests and computeVisualOrder's narrowed state can call it.
+export type KilledShelf = {
+  ids: readonly string[];
+  cursor: string | null;
+  /** True once the server reported the last page. */
+  complete: boolean;
+  loading: boolean;
+};
+export const EMPTY_KILLED_SHELF: KilledShelf = { ids: [], cursor: null, complete: false, loading: false };
+
+// How far back the Killed bucket lists kills from THIS replica's cache on its
+// own. A kill is a working-set nonmember on every replica (inWorkingSet mirrors
+// the server's cap exclusion of killed rows), so the bucket reads the stamps
+// the sync log already patched onto cached rows — recent enough to be the
+// kills you just made, bounded so a heavy account's history does not pile up
+// in the sidebar. Older kills page in through the Killed shelf.
+export const KILLED_RECENT_MS = 7 * 24 * 60 * 60 * 1000;
+
+export type PlaceInboxState = {
+  sessions: Record<string, InboxSession>;
+  killedShelf?: Pick<KilledShelf, "ids">;
+  sessionsWithQueuedMessages: Set<string>;
+  pendingMessages: Record<string, Message[]>;
+  clientState: { ui?: { inbox_scope?: "mine" | "team"; inbox_show_old?: boolean } };
+  currentUser?: { _id?: unknown } | null;
+  teamInboxIds?: ReadonlySet<string>;
+  sessionsProjection?: Record<string, { epoch: number; receivedAtMono?: number; stamps?: Record<string, { bucket_stale_at?: number | null }> }>;
+  sessionDecisions?: Record<string, SessionDecisionItem>;
+  questionResolutions?: QuestionResolutions;
+  pendingSessionCreates?: Record<string, unknown>;
+  blockedReviveRequestedAt?: Record<string, number>;
+  currentSessionId?: string | null;
+  /** NEW holds after a first send (newSessionHolds). Presentation only: filing, never placement. */
+  newSessionHolds?: Record<string, number>;
+  /** In-flight field locks (the triage_gesture overlay's input). */
+  pending?: InboxOverlayState["pending"];
+};
+
+// How old the latest overlay payload may be (receipt clock) before the digest
+// compare stops trusting it (INBOX_COMPARE_MAX_PAYLOAD_AGE_MS is this bound)
+// and the stale probe forces a fresh execution within five minutes. Rendering
+// does not gate on it: a row's live fields re-derive from its replicated
+// facts at any instant (deriveLiveAt), payload or no payload.
+export const INBOX_PAYLOAD_FRESH_MS = 90_000;
+
+// InboxSession → the shared ProjectableInboxRow, with the live fields
+// (agent_status, is_idle, is_unresponsive, awaiting_input) taken from `live`:
+// the shared deriveLiveAt over the row's replicated facts at the caller's
+// clock (ct-47609). Fields the server enrichment ships already
+// currency-filtered (user_rest, settle_verdict) are mapped back onto stamps
+// the shared currency rules accept as current.
+function projectableRowOf(s: InboxSession, live: LiveFacts): ProjectableInboxRow {
+  const base = workingSetRowOf(s);
+  return {
+    ...base,
+    inbox_rest: s.inbox_rest ?? s.user_rest ?? null,
+    inbox_rest_at: s.inbox_rest_at ?? (s.user_rest ? (s.updated_at || 1) : null),
+    anchor_id: s.is_anchor ? s._id : null,
+    armed_trigger_kind: s.armed_trigger_kind ?? null,
+    loop_state: s.loop_state ?? null,
+    settle_verdict: s.settle_verdict ?? null,
+    settle_verdict_at: s.settle_verdict ? (s.updated_at || 1) : null,
+    thread_state_status: s.thread_state_status ?? null,
+    pending_api_error: s.pending_api_error === true,
+    session_error: s.session_error ?? null,
+    last_user_message: s.last_user_message ?? null,
+    agent_status: live.agent_status,
+    is_idle: live.is_idle,
+    is_unresponsive: live.is_unresponsive,
+    awaiting_input: live.awaiting_input,
+    last_turn_allows_park: s.last_turn_allows_park ?? null,
+    agent_status_updated_at: s.agent_status_updated_at ?? null,
+    // The settle's own kind: a boundary settle (a resume, a clear, a manual
+    // compact) carries no verdict, so the replica must place it exactly as the
+    // server does (ct-49533).
+    agent_status_boundary: s.agent_status_boundary ?? null,
+    // The stamps the sort time inside a bucket reads (ct-49550).
+    turn_completed_at: s.turn_completed_at ?? null,
+    started_at: s.started_at ?? null,
+    last_heartbeat: s.last_heartbeat ?? null,
+    last_role_is_user: s.last_role_is_user ?? null,
+    auq_open: s.auq_open ?? null,
+    daemon_alive_until: s.daemon_alive_until ?? null,
+    producing_until: s.producing_until ?? null,
+    open_tasks: s.open_tasks ?? null,
+    open_tasks_at: s.open_tasks_at ?? null,
+  };
+}
+
+// Per-row placement cache, keyed by row OBJECT identity (the sync layer keeps
+// a row's ref stable unless a field changed) plus the row's time-driven bits.
+// A real recompute re-derives placement only for rows that changed — the
+// row-level half of the incremental contract. WeakMap so entries die with
+// their row (no leak, no stale key).
+type RowPlacementEntry = { epoch: number; live: string; asking: boolean; bucket: InboxBucket; work_state: WorkState };
+const _rowPlacementCache = new WeakMap<object, RowPlacementEntry>();
+
+
+// The live fields as one cache key: a recompute re-places a row only when a
+// time term moved one of them (the row-level half of the incremental contract).
+function liveKeyOf(live: LiveFacts): string {
+  return `${live.agent_status ?? ""}|${live.is_idle ? 1 : 0}${live.is_unresponsive ? 1 : 0}${live.awaiting_input ? 1 : 0}`;
+}
+function sharedPlacementOf(s: InboxSession, live: LiveFacts, asking: boolean, epoch: number): RowPlacementEntry {
+  const key = liveKeyOf(live);
+  const hit = _rowPlacementCache.get(s);
+  if (hit && hit.epoch === epoch && hit.live === key && hit.asking === asking) return hit;
+  const p = placeProjectableRow(projectableRowOf(s, live), asking, epoch);
+  const entry: RowPlacementEntry = { epoch, live: key, asking, bucket: p.bucket, work_state: p.work_state };
+  _rowPlacementCache.set(s, entry);
+  return entry;
+}
+
+// Structural signature for the pending `cast decide` rows the questions
+// section branches on. Shared by the panel's subscription deps.
+export const placementDecisionsSig = makeCollectionSig((d: any) =>
+  d?.status === "pending" && d.in_queue !== false ? `${d._id}|${d.conversation_id}|${d.blocking}|${d.stack_id ?? ""}` : "");
+
+const EMPTY_PLACEMENT_OBJ: Record<string, never> = {};
+let _placementDeadlineMemo: {
+  sessions: PlaceInboxState["sessions"];
+  revive: PlaceInboxState["blockedReviveRequestedAt"];
+  stamps: NonNullable<PlaceInboxState["sessionsProjection"]>[string]["stamps"] | undefined;
+  now: number;
+  validUntil: number;
+  sig: string;
+} | null = null;
+
+// The DEADLINE signature — the chokepoint's deadline heap, folded to one
+// string. Every TIME-driven placement input is in it: rows past the liveness
+// trust TTL, kept-draft blanks, revive stamps inside their 120s bound, and
+// server bucket_stale_at stamps whose deadline passed (the recompute
+// scheduling hint from the overlay payload). A coarse tick that crosses none
+// of these deadlines leaves the signature byte-identical, so the memo returns
+// the previous refs and nothing downstream re-renders.
+function placementDeadlineSig(state: PlaceInboxState, now: number): string {
+  const revive = state.blockedReviveRequestedAt;
+  const stamps = state.sessionsProjection?.["mine"]?.stamps;
+  const memo = _placementDeadlineMemo;
+  if (memo && memo.sessions === state.sessions && memo.revive === revive && memo.stamps === stamps && now >= memo.now && now < memo.validUntil) {
+    return memo.sig;
+  }
+  let validUntil = Infinity;
+  const passedDeadline = (at: number): boolean => {
+    if (at <= now) return true;
+    if (at < validUntil) validUntil = at;
+    return false;
+  };
+  let h = FNV1A32_OFFSET;
+  let n = 0;
+  const mix = (tag: string, id: string) => {
+    h = fnv1a32Update(h, tag + id);
+    n++;
+  };
+  const sessions = state.sessions;
+  for (const id in sessions) {
+    const row = sessions[id];
+    if (!row || !isMemberCandidate(row)) continue;
+    // The row's passed live deadlines (the SHARED list the server's time flip
+    // reads): the count changes exactly when a time term crosses, so the
+    // signature moves at the same instants the server's stamp would.
+    let passed = 0;
+    for (const d of rowLiveDeadlines(liveFactsOf(row))) if (d != null && passedDeadline(d)) passed++;
+    if (passed > 0) mix(`l${passed}`, id);
+    if (row.inbox_snoozed_until && passedDeadline(row.inbox_snoozed_until)) mix("s", id);
+    if (row._hasDraft) mix("d", id);
+  }
+  if (revive) {
+    for (const id in revive) {
+      if (!passedDeadline(revive[id] + BLOCKED_REVIVE_TTL_MS)) mix("r", id);
+    }
+  }
+  if (stamps) {
+    for (const id in stamps) {
+      const at = stamps[id]?.bucket_stale_at;
+      if (at != null && passedDeadline(at)) mix("b", id);
+    }
+  }
+  const sig = `${n}:${h.toString(16)}`;
+  _placementDeadlineMemo = { sessions, revive, stamps, now, validUntil, sig };
+  return sig;
+}
+
+// The asking derivation (never stored — sync-convergence C3): a pending
+// `cast decide`, an open AskUserQuestion / permission prompt, or an asking
+// child lifting its parent. Over the viewer's own rows UNSCOPED, so a
+// question a lens hides is still their question and the section count
+// always equals the queue badge. Shared by the chokepoint and the pure
+// replica projection (the compare's input) so the two can never disagree on
+// what counts as an ask.
+export type InboxAsking = {
+  mineAll: Record<string, InboxSession>;
+  askingOf: (s: InboxSession) => boolean;
+  ownPromptOnly: (s: InboxSession) => boolean;
+};
+function deriveInboxAsking(
+  state: Pick<PlaceInboxState, "sessions" | "sessionDecisions" | "questionResolutions">,
+  meId: string | null,
+  now: number,
+  mineAll: Record<string, InboxSession> = filterInboxScope(state.sessions, "mine", meId),
+): InboxAsking {
+  const decisions = state.sessionDecisions ?? (EMPTY_PLACEMENT_OBJ as Record<string, SessionDecisionItem>);
+  const pendingDecide = pendingDecisionConvIds(decisions, meId);
+  const asks = (s: InboxSession) => {
+    if (pendingDecide.has(s._id)) return true;
+    // An AskUserQuestion / permission prompt follows the session's owners, not
+    // the account that runs it. A focused deep-link keeps the row in scope, but
+    // it is not this viewer's question.
+    if (meId && isForeignRow(s, meId)) return false;
+    return sessionHasOpenQuestion(s, state.questionResolutions);
+  };
+  const askingChildParents = new Set<string>();
+  // Only lift parents the feed still stands behind — a frozen child snapshot
+  // past its parent's stash/dismiss can claim permission_blocked forever.
+  const liftable = (p: InboxSession | undefined) => !!p && !p.inbox_stashed_at && !p.inbox_dismissed_at && !p.inbox_killed_at;
+  for (const s of Object.values(mineAll)) {
+    // The overlay's child_asking fact: an asking child this replica never
+    // holds (a live pool row outside its window) still lifts the parent,
+    // until that child's ask stops counting (child_asking_until).
+    if (childAskingAt(s, now) && liftable(s)) askingChildParents.add(s._id);
+    if (s.inbox_killed_at) continue;
+    // The shared rollup rule (rollupParentIdOf): the same grouping the server
+    // pool applies, so a parent is lifted on both sides or neither.
+    const parent = rollupParentIdOf(s);
+    if (!parent || !asks(s)) continue;
+    if (!liftable(mineAll[parent])) continue;
+    askingChildParents.add(parent);
+  }
+  const askingOf = (s: InboxSession) => asks(s) || askingChildParents.has(s._id);
+  // An ask a SEND answers: the row's own open prompt (AskUserQuestion,
+  // permission). A pending `cast decide` or a child's ask is not answered by
+  // typing into the parent, so those keep the row in QUESTIONS.
+  const ownPromptOnly = (s: InboxSession) =>
+    !pendingDecide.has(s._id) && !askingChildParents.has(s._id) && !(meId && isForeignRow(s, meId))
+    && sessionHasOpenQuestion(s, state.questionResolutions);
+  return { mineAll, askingOf, ownPromptOnly };
+}
+
+// The PURE replica projection: the shared projectInbox over this replica's
+// adapted rows at an explicit epoch — no memo, no row cache, no overlays.
+// Two callers, both checks: the dev parity assertion (the incremental
+// chokepoint must equal it; it passes the render clock) and the digest
+// compare (sync-convergence C6), which evaluates AT THE PAYLOAD'S EPOCH and
+// must pass `now: epoch` too: the server applied the trust decay at that
+// epoch, so a device clock (up to a minute plus the payload's age later)
+// must never re-apply it — a quiet "waiting" row crossing the hour inside
+// that window would otherwise read as a bucket delta. `nowMono` bounds
+// overlay coverage only. `scoped` / `askingOf` let a caller that already
+// filtered the scope hand the same maps in.
+export function projectReplicaInbox(
+  state: PlaceInboxState,
+  ctx: {
+    scope: "mine" | "team"; focusedId: string | null; epoch: number; now: number;
+    scoped?: Record<string, InboxSession>; askingOf?: (s: InboxSession) => boolean;
+  },
+): {
+  proj: ReturnType<typeof projectInbox<ProjectableInboxRow>>;
+  /** The scoped top-level store rows by id. */
+  rowById: Map<string, InboxSession>;
+  /** The same rows as the shared module saw them (pre-cap eligibility input). */
+  adapted: Map<string, ProjectableInboxRow>;
+} {
+  const meId = state.currentUser?._id?.toString?.() ?? null;
+  const scoped = ctx.scoped ?? filterInboxScope(state.sessions, ctx.scope, meId, state.teamInboxIds ?? EMPTY_TEAM_INBOX_IDS, ctx.focusedId);
+  const askingOf = ctx.askingOf ?? deriveInboxAsking(state, meId, ctx.now).askingOf;
+  const adapted = new Map<string, ProjectableInboxRow>();
+  const rowById = new Map<string, InboxSession>();
+  for (const s of Object.values(scoped)) {
+    if (!isMemberCandidate(s)) continue;
+    rowById.set(s._id, s);
+    adapted.set(s._id, projectableRowOf(s, deriveLiveAt(liveFactsOf(s), ctx.now)));
+  }
+  const proj = projectInbox(adapted.values(), ctx.epoch, {
+    asking: (id) => {
+      const row = rowById.get(id);
+      return row ? askingOf(row) : false;
+    },
+  });
+  return { proj, rowById, adapted };
+}
+
+// Result memo, one slot per (scope, focus) so the badges' forced-"mine" call
+// and the panel's scoped call don't evict each other on alternating renders.
+// `sessions` is the collection identity the fast path checks alongside the
+// placement key; `val` also seeds the stable-ref reuse below.
+const _placedMemo = new Map<string, { key: unknown[]; sessions: Record<string, InboxSession>; val: PlacedInbox }>();
+const PLACED_MEMO_CAP = 8;
+const EMPTY_TRUNCATED: InboxTruncation[] = [];
+
+// Stable-ref helpers: hand back the PREVIOUS object when the new one is
+// content-identical, so a recompute that moved nothing costs downstream memos
+// nothing. Element identity is the test for row arrays (the sync layer keeps
+// an unchanged row's ref), field equality for placements and tallies.
+function reuseArray<T>(prev: readonly T[] | undefined, next: T[]): T[] {
+  if (!prev || prev.length !== next.length) return next;
+  for (let i = 0; i < next.length; i++) if (prev[i] !== next[i]) return next;
+  return prev as T[];
+}
+function reuseArrayMap<T>(prev: Map<string, T[]> | undefined, next: Map<string, T[]>): Map<string, T[]> {
+  if (!prev || prev.size !== next.size) return next;
+  for (const [k, arr] of next) {
+    const p = prev.get(k);
+    if (!p || reuseArray(p, arr) !== p) return next;
+  }
+  return prev;
+}
+function samePlacements(a: Map<string, InboxRowPlacement>, b: Map<string, InboxRowPlacement>): boolean {
+  if (a === b) return true;
+  if (a.size !== b.size) return false;
+  for (const [id, p] of b) {
+    const q = a.get(id);
+    if (!q || q.bucket !== p.bucket || q.work_state !== p.work_state || q.below_fold !== p.below_fold) return false;
+  }
+  return true;
+}
+function sameCounts(a: Map<string, number>, b: Map<string, number>): boolean {
+  if (a.size !== b.size) return false;
+  for (const [k, n] of b) if (a.get(k) !== n) return false;
+  return true;
+}
+function sameTally(a: PlacedInbox["tally"], b: PlacedInbox["tally"]): boolean {
+  for (const lane of ["shown", "folded"] as const) {
+    for (const bucket in b[lane]) {
+      if (a[lane][bucket as InboxBucket] !== b[lane][bucket as InboxBucket]) return false;
+    }
+  }
+  return true;
+}
+
+function questionPredicate(ids: ReadonlySet<string>): (session: InboxSession) => boolean {
+  return (session) => ids.has(session._id);
+}
+
+// Tests build value-equal fixtures whose wake signatures collide with the
+// previous call's; clearing the slot memo keeps assertions on fresh refs.
+export function __resetInboxPlacementCacheForTests(): void {
+  _placedMemo.clear();
+  _lastParityCheckAt = 0;
+  _placementDeadlineMemo = null;
+  _membershipKey = null;
+  _membershipVal = null;
+  _visibleMemo.clear();
+}
+// Dev-only parity throttle (assertPlacementParity below).
+let _lastParityCheckAt = 0;
+
+export function placeInboxRows(
+  state: PlaceInboxState,
+  opts: { focusedId?: string | null; scope?: "mine" | "team"; now?: number; nowMono?: number } = {},
+): PlacedInbox {
+  const now = opts.now ?? Date.now();
+  const scope = opts.scope ?? state.clientState.ui?.inbox_scope ?? "mine";
+  const showOld = resolveShowOld(state.clientState.ui);
+  const meId = state.currentUser?._id?.toString?.() ?? null;
+  const focusedId = opts.focusedId ?? null;
+  const epoch = renderInboxEpoch(state.sessionsProjection, now);
+  const teamInboxIds = state.teamInboxIds ?? EMPTY_TEAM_INBOX_IDS;
+  const pendingCreates = state.pendingSessionCreates ?? EMPTY_PLACEMENT_OBJ;
+  const decisions = state.sessionDecisions ?? (EMPTY_PLACEMENT_OBJ as Record<string, SessionDecisionItem>);
+  const slot = `${scope}\x1f${focusedId ?? ""}`;
+  // The PLACEMENT key: every input a verdict, the membership or the fold can
+  // depend on, heartbeat-blind. Equal keys mean nothing can have moved.
+  const key = [
+    sessionsWakeSig(state.sessions),
+    membershipTimeSig(state.sessions),
+    placementDeadlineSig(state, now),
+    showOld, meId, teamInboxIds, epoch,
+    state.sessionsWithQueuedMessages,
+    pendingSendWakeSig(state.pendingMessages),
+    Object.keys(pendingCreates).sort().join(","),
+    placementDecisionsSig(decisions),
+    state.questionResolutions,
+    state.newSessionHolds,
+    state.killedShelf?.ids,
+  ];
+  const memo = _placedMemo.get(slot);
+  const sameKey = memo != null && memo.key.length === key.length && key.every((v, i) => Object.is(v, memo.key[i]));
+  // Fast path needs the COLLECTION IDENTITY too: a heartbeat mints a new
+  // sessions ref without touching the placement key, and the contract is
+  // fresh rows — so the walk below re-runs (cheap: per-row placements hit the
+  // identity cache) and only the placement half is reused by content.
+  if (memo && sameKey && memo.sessions === state.sessions) return memo.val;
+
+  // 1. Declared-overlay inputs (store/inboxOverlays — the ONLY local passes),
+  // resolved ONCE; every keep / in-flight / engaged rule below derives from
+  // overlaysAffecting over these deps, the same predicate the compare reads.
+  const deps = collectInboxOverlayDeps(
+    {
+      sessions: state.sessions,
+      pending: state.pending ?? {},
+      pendingMessages: state.pendingMessages,
+      pendingSessionCreates: pendingCreates,
+      currentSessionId: focusedId,
+      sessionsWithQueuedMessages: state.sessionsWithQueuedMessages,
+      blockedReviveRequestedAt: state.blockedReviveRequestedAt ?? {},
+    },
+    now,
+  );
+  const inFlight = (id: string) => wearsAny(id, deps, IN_FLIGHT_OVERLAYS);
+
+  // 2. Membership: scope → the shared working-set selection → fold (C4).
+  const { visibleSessions, oldCount, membership, scoped } = computeInboxVisible(
+    state as Parameters<typeof computeInboxVisible>[0],
+    { focusedId, scope, now, deps },
+  );
+
+  // 3. The asking derivation (never stored — sync-convergence C3). In the
+  // personal scope `scoped` IS the viewer's own map, so it is reused.
+  const { mineAll, askingOf, ownPromptOnly } = deriveInboxAsking(state, meId, now, scope === "mine" ? scoped : undefined);
+
+  // The one row → placement path: the shared module, then the bounded local
+  // overlays. A queued/pending send or a fresh revive stamp is the user having
+  // ALREADY acted, so a settled verdict yields to WORKING until the echo lands.
+  const belowFold = membership?.belowFold ?? (new Set<string>() as ReadonlySet<string>);
+  const placeRowWithOverlays = (s: InboxSession): InboxRowPlacement => {
+    const base = sharedPlacementOf(s, deriveLiveAt(liveFactsOf(s), now), askingOf(s), epoch);
+    let bucket = base.bucket;
+    let work_state = base.work_state;
+    if ((bucket === "needs_input" || bucket === "done" || bucket === "dormant") && !s.inbox_snoozed_until && inFlight(s._id)) {
+      bucket = "working";
+      work_state = "working";
+    } else if (bucket === "questions" && inFlight(s._id) && ownPromptOnly(s)) {
+      // The user answered the prompt (free text into the poll, a permission
+      // reply): the send is in flight, so the row reads WORKING with its
+      // pending pill until the echo clears awaiting_input.
+      bucket = "working";
+      work_state = "working";
+    } else if (bucket === "new" && deps.pendingSendIds.has(s._id)) {
+      bucket = "working";
+      work_state = "working";
+    }
+    return { bucket, work_state, below_fold: belowFold.has(s._id) };
+  };
+
+  // 4. Place every member — the visible rows and the folded members the tally
+  // still counts — on its own facts, then riders take their lead's bucket
+  // (the shared rideLeadPlacements; the fold rode inside computeFold). One
+  // walk over the visible rows then splits active / set-aside by the FINAL
+  // placement, so a teammate under a stashed lead is stashed with it.
+  const placements = new Map<string, InboxRowPlacement>();
+  for (const s of Object.values(visibleSessions)) {
+    if (isMemberCandidate(s)) placements.set(s._id, placeRowWithOverlays(s));
+  }
+  if (membership) {
+    for (const id of membership.members) {
+      const row = placements.has(id) ? undefined : scoped[id];
+      if (row) placements.set(id, placeRowWithOverlays(row));
+    }
+  }
+  rideLeadPlacements(placements, (id) => scoped[id]);
+  const activeKeyed: RankedSession[] = [];
+  const dismissed: InboxSession[] = [];
+  const stashed: InboxSession[] = [];
+  const snoozed: InboxSession[] = [];
+  for (const s of Object.values(visibleSessions)) {
+    const p = placements.get(s._id) ?? null;
+    // A placed row files by its placement; a stub or child row by its own
+    // stamps. An anchor's standing thread lives in its own space unless hard
+    // blocked — the shared `hidden` bucket, never rendered here.
+    const subagent = isOrphanOrSubagent(s);
+    const hidden = subagent
+      ? !!s.inbox_killed_at || !!s.inbox_stashed_at || (s.inbox_snoozed_until ?? 0) > now
+      : isSessionHidden(s);
+    const setAside = p ? p.bucket === "dismissed" || p.bucket === "stashed" || p.bucket === "snoozed" || p.bucket === "hidden" : hidden;
+    // The rank reads the SAME verdict the section files under (rankVerdictOf).
+    if (!setAside) activeKeyed.push({ s, rank: sessionSortRank(s, p), key: sessionSortKey(s, p, now) });
+    if (p ? p.bucket === "dismissed" : !subagent && isSessionDismissed(s)) dismissed.push(s);
+    if (p ? p.bucket === "stashed" : isSessionStashed(s)) stashed.push(s);
+    if (p?.bucket === "snoozed") snoozed.push(s);
+  }
+  activeKeyed.sort(compareRankedSessions);
+  const sorted = activeKeyed.map((x) => x.s);
+  // Kills are working-set nonmembers on every replica (inWorkingSet mirrors the
+  // server's cap exclusion of killed rows), so none of them reached the loop
+  // above — the Killed bucket would list only pinned kills and plain
+  // dismissals. List them from this replica's own cached stamps instead:
+  // recent kills by kill time, plus whatever the Killed shelf paged in.
+  // Presentation only — membership, the tally and the digest are untouched.
+  // Subagent children keep nesting under their parent as everywhere else.
+  const listedDismissed = new Set(dismissed.map((s) => s._id));
+  const listKilled = (s: InboxSession | undefined) => {
+    if (!s?.inbox_killed_at || listedDismissed.has(s._id) || isOrphanOrSubagent(s)) return;
+    listedDismissed.add(s._id);
+    dismissed.push(s);
+  };
+  const killedHorizon = now - KILLED_RECENT_MS;
+  for (const s of Object.values(scoped)) if ((s.inbox_killed_at ?? 0) >= killedHorizon) listKilled(s);
+  for (const id of state.killedShelf?.ids ?? []) listKilled(scoped[id]);
+  const retiredAt = (s: InboxSession) => s.inbox_dismissed_at || s.inbox_killed_at || 0;
+  dismissed.sort((a, b) => retiredAt(b) - retiredAt(a));
+  stashed.sort((a, b) => (b.inbox_stashed_at || 0) - (a.inbox_stashed_at || 0));
+  snoozed.sort((a, b) => (a.inbox_snoozed_until || 0) - (b.inbox_snoozed_until || 0));
+  const allIds = new Set(sorted.map((s) => s._id));
+
+  // 5. Nesting (both child kinds — see nestParentIdOf) and fork grouping.
+  // A subagent is never its own member and always rides its present parent.
+  // An agent-team teammate is a member that RIDES its lead's bucket (the
+  // shared rideLeadPlacements), so the two share a section and the teammate
+  // nests there; the header count is the rows placed in the section, nested
+  // ones included, the number the tally and the CLI report. The one teammate
+  // that keeps its own bucket is one the viewer pinned, stashed or dismissed
+  // on its own (RIDE_KEEPS_OWN): it files where that act put it and never
+  // nests under a lead in another section.
+  // A role's session is the role's (org-staffing.md S23.3): it rides its
+  // role's standing session, which the shared ride already filed it with, but
+  // it is never a row under the card. The card carries a count that opens the
+  // role's page, where the sessions are the panel's business. A retired role
+  // (dismissed card) triages nothing, so its sessions stand on their own facts.
+  const nestParentOf = inboxNestParentOf(sorted);
+  const subsByParent = new Map<string, InboxSession[]>();
+  const roleSessionsByLead = new Map<string, number>();
+  const roleRidden = new Set<string>();
+  for (const s of sorted) {
+    const nestParent = nestParentOf(s);
+    if (!nestParent || !allIds.has(nestParent)) continue;
+    // A role's session is a subagent row under the role's card, whatever
+    // bucket it would file in alone; the card carries the count too.
+    if (isUnderRole(s)) {
+      if (placements.get(nestParent)?.bucket === "dismissed") continue;
+      roleRidden.add(s._id);
+      roleSessionsByLead.set(nestParent, (roleSessionsByLead.get(nestParent) ?? 0) + 1);
+    } else if (isMemberCandidate(s)) {
+      const own = placements.get(s._id)?.bucket;
+      const lead = placements.get(nestParent)?.bucket;
+      if (own !== lead) continue;
+    }
+    if (!subsByParent.has(nestParent)) subsByParent.set(nestParent, []);
+    subsByParent.get(nestParent)!.push(s);
+  }
+  for (const subs of subsByParent.values()) {
+    subs.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  }
+  const forksByParent = new Map<string, InboxSession[]>();
+  for (const s of sorted) {
+    if (s.forked_from && allIds.has(s.forked_from)) {
+      if (!forksByParent.has(s.forked_from)) forksByParent.set(s.forked_from, []);
+      forksByParent.get(s.forked_from)!.push(s);
+    }
+  }
+  for (const forks of forksByParent.values()) {
+    forks.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  }
+  const subsWithParent = nestedSessionIds(subsByParent);
+  const isTop = (s: InboxSession) => !subsWithParent.has(s._id) && !roleRidden.has(s._id);
+  // A child row (never its own member — the shared isOrphanOrSubagent) whose
+  // parent did not nest above it rides that absent parent, never a loose
+  // flat card (it would ignore membership and the fold). A MEMBER whose nest
+  // parent is absent (a plan handoff under a dismissed planner) renders flat,
+  // exactly as the server lists it.
+  const isOrphanSubagent = (s: InboxSession) => isOrphanOrSubagent(s) && !subsWithParent.has(s._id);
+  // A team worker whose lead is not on this list is not an inbox card.
+  // Promoting it was the "loose ↳ in Done" leak: the lead finished or aged
+  // out and every leftover reviewer became its own Done row. Same display
+  // rule as a Task subagent. A pin on the worker itself is the viewer's act
+  // to keep it visible.
+  const isLooseTeamWorker = (s: InboxSession) =>
+    isAgentTeamWorker(s) && !subsWithParent.has(s._id) && !s.is_pinned;
+  const isFlat = (s: InboxSession) => isTop(s) && !isOrphanSubagent(s) && !isLooseTeamWorker(s);
+
+  // 6. Tallies over working-set MEMBERS only — the client twin of the server
+  // envelope's tally. Members the fold dropped from visibleSessions still
+  // count (folded lane), so they are placed here too.
+  const tally = { shown: emptyInboxTally(), folded: emptyInboxTally() };
+  if (membership) {
+    for (const id of membership.members) {
+      const p = placements.get(id);
+      if (!p || p.bucket === "hidden") continue;
+      (p.below_fold ? tally.folded : tally.shown)[p.bucket]++;
+    }
+  }
+
+  // The replica's own digest: the shared digestProjection over its members'
+  // triples, comparable with the server envelope at the same epoch.
+  const digestEntries: Array<readonly [string, InboxBucket, boolean]> = [];
+  if (membership) {
+    for (const id of membership.members) {
+      const p = placements.get(id);
+      if (p) digestEntries.push([id, p.bucket, p.below_fold]);
+    }
+  }
+  const set_digest = digestProjection(digestEntries);
+
+  // 7. Sections from the placements, each with its stable order. An engaged
+  // blank wears the focused or draft_blank overlay, or has its create in
+  // flight (the create_stub overlay's pending half).
+  const isEngagedBlank = (s: InboxSession) =>
+    deps.pendingCreateIds.has(s._id) || overlaysAffecting(s._id, deps).some((o) =>
+      (o === "focused" && !(s._landing && !isConvexId(s._id))) || o === "draft_blank");
+  const holds = state.newSessionHolds ?? EMPTY_PLACEMENT_OBJ as Record<string, number>;
+  const questions: InboxSession[] = [];
+  const pinned: InboxSession[] = [];
+  const newSessions: InboxSession[] = [];
+  const needsInput: InboxSession[] = [];
+  const done: InboxSession[] = [];
+  const dormant: InboxSession[] = [];
+  const working: InboxSession[] = [];
+  for (const s of sorted) {
+    if (!isFlat(s)) continue;
+    let b: InboxBucket | null = placements.get(s._id)?.bucket ?? null;
+    if (b === null) {
+      // Optimistic create stub (the create_stub overlay): a send in flight or
+      // any content files it under WORKING; an engaged blank renders in NEW.
+      if (isConvexId(s._id)) continue;
+      b = (s.message_count ?? 0) > 0 || deps.pendingSendIds.has(s._id) ? "working" : "new";
+    }
+    // A session the person just started stays where they put it for a moment
+    // after the first send, then moves on (NEW_SESSION_HOLD_MS). Filing only:
+    // the placement, the tally and the digest keep the row's real bucket.
+    if ((holds[s._id] ?? 0) > now && HELD_IN_NEW.has(b)) {
+      newSessions.push(s);
+      continue;
+    }
+    switch (b) {
+      case "questions": questions.push(s); break;
+      case "pinned": pinned.push(s); break;
+      case "new":
+        // A never-engaged blank is pre-warm infrastructure, not work: it stays
+        // in the cache for palette reuse but renders (and walks) nowhere.
+        if (isEngagedBlank(s)) newSessions.push(s);
+        break;
+      case "needs_input": needsInput.push(s); break;
+      case "done": done.push(s); break;
+      case "dormant": dormant.push(s); break;
+      case "working": working.push(s); break;
+      default: break; // hidden / dismissed / stashed / idle never render here
+    }
+  }
+  // The QUESTIONS lift from outside the rendered set: the decision queue is
+  // user-scoped and membership-blind, so an ask on a row the scope, the fold
+  // or a stash hides is still the viewer's question. Killed and dismissed rows
+  // are the exception (the queue's tier-2 case); nested children lift their
+  // parent instead (askingChildParents above).
+  const questionIds = new Set(questions.map((s) => s._id));
+  for (const s of Object.values(mineAll)) {
+    if (questionIds.has(s._id) || allIds.has(s._id)) continue;
+    if (!askingOf(s)) continue;
+    if (s.inbox_killed_at || s.inbox_dismissed_at || s.inbox_snoozed_until) continue;
+    if (rollupParentIdOf(s)) continue;
+    // A role's session asks its role first: it rides the role's standing
+    // session and never lifts itself in front of the person from outside the
+    // list. The role raises what it cannot answer in its own thread.
+    if (isUnderRole(s)) continue;
+    questionIds.add(s._id);
+    questions.push(s);
+  }
+  const isQuestion = questionPredicate(questionIds);
+  // Section header counts: every row PLACED in the bucket, flat or nested
+  // under a same-bucket lead (grouping never crosses a section, so a nested
+  // member always belongs to the section it nests inside). This is the number
+  // the tally and the CLI report; the arrays above hold only the flat cards.
+  const counts: Record<InboxSectionKey, number> = {
+    questions: questions.length, pinned: pinned.length, newSessions: newSessions.length,
+    needsInput: needsInput.length, done: done.length, dormant: dormant.length, working: working.length,
+  };
+  // A role's sessions are the role's to triage, so they add to no header:
+  // the number beside a section is what the person looks after there, and the
+  // role's card is one thing however many sessions nest under it (R1, S23.3).
+  for (const id of subsWithParent) {
+    if (roleRidden.has(id)) continue;
+    const b = placements.get(id)?.bucket;
+    const k = b ? SECTION_OF_BUCKET[b] : undefined;
+    if (k) counts[k]++;
+  }
+  // Pinning is manual curation: stable order by pin time, oldest first, so
+  // existing pins keep their place when a new one lands.
+  pinned.sort((a, b) => {
+    const at = a.inbox_pinned_at ?? 0;
+    const bt = b.inbox_pinned_at ?? 0;
+    if (at !== bt) return at - bt;
+    return a._id < b._id ? -1 : a._id > b._id ? 1 : 0;
+  });
+  newSessions.sort((a, b) => (a.is_connected ? 1 : 0) - (b.is_connected ? 1 : 0));
+  // The section sorts read the same per-class stamps the rank did (one cached
+  // computation per row): `at` for the queues that keep their own direction,
+  // `key` where the freshest belongs on top.
+  const sortTimeOf = (s: InboxSession) => sessionSortTime(s, placements.get(s._id) ?? null, now).at;
+  const sortKeyOf = (s: InboxSession) => sessionSortTime(s, placements.get(s._id) ?? null, now).key;
+  // Queues you clear top-down: oldest first; defer sinks below the group. The
+  // time is the CLASS's own event stamp (shared inboxSortTime, ct-49550) — when
+  // a needs-input row started needing you, when a done row's turn ended — not
+  // conversations.updated_at, which a late-syncing message or a heartbeat moves
+  // long after the row settled.
+  const settledQueueOrder = (a: InboxSession, b: InboxSession) =>
+    compareDeferred(a, b) || sortTimeOf(a) - sortTimeOf(b);
+  questions.sort(settledQueueOrder);
+  needsInput.sort(settledQueueOrder);
+  done.sort(settledQueueOrder);
+  // When it parked, oldest first (shared inboxSortTime).
+  dormant.sort(settledQueueOrder);
+
+  // Stable refs: reuse the previous slot's objects wherever the new content
+  // is identical (the "nothing moved" half of the memoization contract).
+  const prev = memo?.val;
+  const placementsOut = prev && samePlacements(prev.placements, placements) ? prev.placements : placements;
+  const tallyOut = prev && sameTally(prev.tally, tally) ? prev.tally : tally;
+  const val: PlacedInbox = {
+    epoch, scope, showOld, visibleSessions, oldCount,
+    placements: placementsOut,
+    tally: tallyOut,
+    truncated: reuseArray(prev?.truncated, membership?.truncated ?? EMPTY_TRUNCATED),
+    set_digest,
+    sorted: reuseArray(prev?.sorted, sorted.filter(s => !isOrphanSubagent(s) && !isLooseTeamWorker(s))),
+    questions: reuseArray(prev?.questions, questions),
+    pinned: reuseArray(prev?.pinned, pinned),
+    newSessions: reuseArray(prev?.newSessions, newSessions),
+    needsInput: reuseArray(prev?.needsInput, needsInput),
+    done: reuseArray(prev?.done, done),
+    dormant: reuseArray(prev?.dormant, dormant),
+    working: reuseArray(prev?.working, working),
+    stashed: reuseArray(prev?.stashed, stashed),
+    snoozed: reuseArray(prev?.snoozed, snoozed),
+    dismissed: reuseArray(prev?.dismissed, dismissed),
+    subsByParent: reuseArrayMap(prev?.subsByParent, subsByParent),
+    forksByParent: reuseArrayMap(prev?.forksByParent, forksByParent),
+    isQuestion,
+    counts,
+    roleSessionsByLead: prev && sameCounts(prev.roleSessionsByLead, roleSessionsByLead) ? prev.roleSessionsByLead : roleSessionsByLead,
+  };
+
+  // 8. Dev-only convergence check (C5): the full shared computation over the
+  // same adapted rows must equal the incremental result. Throttled — it doubles
+  // the work, and one run per few seconds is plenty to catch a drifted cache.
+  if (process.env.NODE_ENV !== "production" && membership && now - _lastParityCheckAt > 5_000) {
+    _lastParityCheckAt = now;
+    assertPlacementParity(state, { scope, focusedId, epoch, now, scoped, askingOf, inFlight, placements, membership });
+  }
+
+  _placedMemo.set(slot, { key, sessions: state.sessions, val });
+  if (_placedMemo.size > PLACED_MEMO_CAP) {
+    const first = _placedMemo.keys().next().value;
+    if (first !== undefined && first !== slot) _placedMemo.delete(first);
+  }
+  return val;
+}
+
+// The dev assertion behind the incremental contract: run the PURE shared
+// projection (projectInbox — no caches, no memo) over the same adapted inputs
+// and compare per-row buckets and fold bits, skipping ids a declared overlay
+// touches (those deviate on purpose). A mismatch means the row cache or the
+// deadline signature failed to invalidate — exactly the bug class this exists
+// to catch before the digest compare (C6) reports it as drift.
+function assertPlacementParity(
+  state: PlaceInboxState,
+  ctx: {
+    scope: "mine" | "team"; focusedId: string | null;
+    epoch: number; now: number;
+    scoped: Record<string, InboxSession>;
+    askingOf: (s: InboxSession) => boolean;
+    inFlight: (id: string) => boolean;
+    placements: Map<string, InboxRowPlacement>;
+    membership: InboxMembership;
+  },
+): void {
+  try {
+    const { proj } = projectReplicaInbox(state, { scope: ctx.scope, focusedId: ctx.focusedId, epoch: ctx.epoch, now: ctx.now, scoped: ctx.scoped, askingOf: ctx.askingOf });
+    // An in-flight row deviates on purpose, and its riders follow it there:
+    // give each in-flight row its overlay bucket and ride again, so a teammate
+    // of an in-flight lead is compared against the same ride, not skipped.
+    const pure = new Map<string, { bucket: InboxBucket; below_fold: boolean }>();
+    for (const [id, p] of proj.placements) {
+      const overlay = ctx.inFlight(id) ? ctx.placements.get(id) : undefined;
+      pure.set(id, { bucket: overlay?.bucket ?? p.bucket, below_fold: p.below_fold });
+    }
+    rideLeadPlacements(pure, (id) => ctx.scoped[id]);
+    for (const [id, p] of pure) {
+      if (ctx.inFlight(id)) continue; // declared overlay carve-out
+      const mine = ctx.placements.get(id);
+      if (!mine) {
+        if (ctx.membership.members.has(id)) {
+          console.error(`[placeInboxRows] parity: member ${id} missing from incremental placements`);
+        }
+        continue;
+      }
+      if (mine.bucket !== p.bucket || mine.below_fold !== p.below_fold) {
+        console.error(
+          `[placeInboxRows] parity: ${id} incremental=${mine.bucket}/${mine.below_fold} full=${p.bucket}/${p.below_fold}`,
+        );
+      }
+    }
+  } catch (e) {
+    console.error("[placeInboxRows] parity check failed to run", e);
+  }
+}
+
+// The "your move" rows (Ctrl+I, queue advance): questions, NEEDS INPUT and
+// DONE, plus a fresh start held in NEW whose turn has settled on the person.
+export function yourMoveOf(placed: PlacedInbox): (s: InboxSession) => boolean {
+  const keep = new Set([...placed.needsInput, ...placed.done].map((s) => s._id));
+  for (const s of placed.newSessions) {
+    const ws = placed.placements.get(s._id)?.work_state;
+    if (ws === "needs_input" || ws === "done") keep.add(s._id);
+  }
+  return (s) => placed.isQuestion(s) || keep.has(s._id);
+}
+
+/** Hosted mode's Assistant scope reads whose move it is in three words, so
+ *  a row moves once, from "Working on it" to "Your turn" or Done: an
+ *  approval (the questions bucket) is the person's turn like a reply is, a
+ *  new conversation is already being worked on, and Done reads newest first.
+ *  A presentation fold of the placed buckets, shared by the panel and the
+ *  keyboard walk (visualOrderSessions), so the two cannot disagree. */
+/** A conversation nothing was sent in yet: a draft, not work in progress.
+ *  `sending` is true while its first message is queued or optimistic: the
+ *  stub has no message_count or last_user_message until the server echoes,
+ *  yet it is plainly running from the first frame. */
+export function isUnsentConversation(s: { message_count?: number; last_user_message?: string | null }, sending = false): boolean {
+  return !sending && !(s.message_count ?? 0) && !s.last_user_message;
+}
+
+/** Hosted sections that never fold: New holds the results the Inbox count
+ *  counts, so a fold an old click stored is ignored by the render and the
+ *  keyboard walk alike. */
+export const HOSTED_UNFOLDABLE_SECTIONS: ReadonlySet<string> = new Set(["new_results"]);
+
+export function hostedStatusSections<T extends { _id: string; updated_at?: number; message_count?: number; last_user_message?: string | null }>(placed: {
+  pinned: T[]; questions: T[]; needsInput: T[]; newSessions: T[]; working: T[]; done: T[]; dormant: T[];
+}, awaitsOk: (id: string) => boolean = () => false, sending: (id: string) => boolean = () => false, unread: (id: string) => boolean = () => false): Array<[T[], "pinned" | "needs_input" | "working" | "new_results" | "done" | "drafts"]> {
+  // A conversation with a pending decision row (awaitingOkIds) is the
+  // person's turn from the moment the row lands, whatever bucket the
+  // placement has caught up to.
+  const waiting = (rows: T[]) => rows.filter((s) => awaitsOk(s._id));
+  const rest = (rows: T[]) => rows.filter((s) => !awaitsOk(s._id));
+  // A new conversation with nothing sent is a draft: the assistant is not
+  // working on it, so it waits in its own quiet line under Done.
+  const fresh = rest(placed.newSessions);
+  // Nothing waits "for later" in hosted mode: a routine's answer files like
+  // any turn (projection v20), and the Routines page says what is scheduled,
+  // so any other parked row reads as finished. Finished work splits on
+  // whether the person has read it: New (every row shown) above Earlier.
+  const finished = [...rest(placed.done), ...rest(placed.dormant)].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  // Your turn is one queue gathered from several buckets, cleared top-down:
+  // oldest first by the time each row shows, never bucket by bucket.
+  const yourTurn = [...placed.questions, ...waiting(placed.newSessions), ...waiting(placed.working), ...waiting(placed.done), ...waiting(placed.dormant), ...placed.needsInput]
+    .sort((a, b) => (a.updated_at ?? 0) - (b.updated_at ?? 0));
+  return [
+    [placed.pinned, "pinned"],
+    [yourTurn, "needs_input"],
+    [[...fresh.filter((s) => !isUnsentConversation(s, sending(s._id))), ...rest(placed.working)], "working"],
+    [finished.filter((s) => unread(s._id)), "new_results"],
+    [finished.filter((s) => !unread(s._id)), "done"],
+    [fresh.filter((s) => isUnsentConversation(s, sending(s._id))), "drafts"],
+  ];
+}
+
+export function visualOrderSessions(
+  placed: PlacedInbox,
+  projectFilters?: readonly ProjectFilterTerm[],
+  opts: {
+    // Active bucket chips: scope keyboard nav / advance to the focused labels,
+    // mirroring the project filter (chipBucketFilters + convBucketMap).
+    bucketFilters?: readonly BucketFilterTerm[];
+    bucketByConv?: Record<string, string | undefined>;
+    // Grouped-view collapse: sessions inside a collapsed status section are
+    // skipped, so Ctrl+J/K only walks cards the panel actually renders.
+    collapsedSections?: Record<string, boolean>;
+    // Narrow the walk to the "your move" rows: questions, NEEDS INPUT and DONE
+    // exactly as the chokepoint files them (Ctrl+I, queue advance).
+    yourMove?: boolean;
+    // Hosted mode's assistant-only inbox (hostedOnlyInbox).
+    hostedOnly?: boolean;
+    // Which rows wait on a pending decision (awaitingOkIds), for the hosted fold.
+    awaitsOk?: (id: string) => boolean;
+    // Which rows have a first message on its way (pendingSendIdsOf).
+    sending?: (id: string) => boolean;
+    // Which rows hold a result the person has not read (sessionUnreadMap).
+    unread?: (id: string) => boolean;
+  } = {},
+): InboxSession[] {
+  const collapsed = opts.collapsedSections;
+  // Same order the status view renders: questions, pinned, new, needs input,
+  // done, working, dormant — the chokepoint's own sections, so the walk and
+  // the render can never disagree.
+  const sections: Array<[InboxSession[], string]> = opts.hostedOnly ? hostedStatusSections(placed, opts.awaitsOk, opts.sending, opts.unread) : [
+    [placed.questions, "questions"], [placed.pinned, "pinned"], [placed.newSessions, "new"],
+    [placed.needsInput, "needs_input"], [placed.done, "done"],
+    [placed.working, "working"], [placed.dormant, "dormant"],
+  ];
+  const result: InboxSession[] = [];
+  for (const [section, key] of sections) {
+    if (collapsed?.[key] && !(opts.hostedOnly && HOSTED_UNFOLDABLE_SECTIONS.has(key))) continue;
+    for (const s of section) {
+      // The shared predicate (chipMatchesSession) so the walk and the render
+      // can never disagree — including the mid-create stub carve-out.
+      if (
+        (projectFilters?.length || opts.bucketFilters?.length || opts.hostedOnly) &&
+        !chipMatchesSession(s, {
+          projectFilters,
+          bucketFilters: opts.bucketFilters,
+          bucketByConv: opts.bucketByConv ?? {},
+          hostedOnly: opts.hostedOnly,
+        })
+      ) continue;
+      result.push(s);
+    }
+  }
+  if (opts.yourMove) {
+    return result.filter(yourMoveOf(placed));
+  }
+  return result;
+}
+
+// Canonical label ordering — ONE comparator drives the chip row, the "by
+// label" view's sections, the overflow popover, and keyboard order. Explicit
+// sort_order first (drag-reorder writes it), name as the stable tiebreak for
+// never-ordered labels.
+export function sortLabels(buckets: Record<string, BucketItem>): BucketItem[] {
+  return (Object.values(buckets) as BucketItem[])
+    .filter((b) => !b.archived_at)
+    .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+}
+
+// Label/project view counts over the panel's "active" sessions. ONE source for
+// every surface that lists the views (the session-panel chip row, the palette
+// view switcher) so they can never disagree about what each view contains.
+export function computeChipCounts(
+  activeSessions: InboxSession[],
+  bucketByConv: Record<string, string | undefined>,
+): {
+  bucketCounts: Record<string, number>;
+  projectCounts: Array<[string, number]>;
+  projectPathByName: Record<string, string>;
+} {
+  const bucketCounts: Record<string, number> = {};
+  const projCounts: Record<string, number> = {};
+  const projectPathByName: Record<string, string> = {};
+  for (const s of activeSessions) {
+    const b = bucketByConv[s._id];
+    if (b) bucketCounts[b] = (bucketCounts[b] || 0) + 1;
+    const name = getProjectName(s.git_root, s.project_path);
+    if (name !== "unknown") {
+      projCounts[name] = (projCounts[name] || 0) + 1;
+      if (!projectPathByName[name]) projectPathByName[name] = s.git_root || s.project_path || "";
+    }
+  }
+  return {
+    bucketCounts,
+    projectCounts: Object.entries(projCounts).sort((a, b) => b[1] - a[1]),
+    projectPathByName,
+  };
+}
+
+// Default project for a brand-new session seeded from the compose popup. A
+// caller-supplied context (doc review passes the doc's own project) wins — it's
+// the explicit target. A session started for a team's room (a huddle agent)
+// then takes that team's most used shared repo: recentProjects is already
+// ranked by use, limited to my machines, and tagged with the team each folder
+// shares into, so it is the first entry shared with that team. Otherwise the current conversation's project — except
+// that an active project-filter chip is an explicit "I'm working in this
+// project" (same rule as Ctrl+N's resolveNewSessionContext in DashboardLayout):
+// the conversation only seeds the default when it lives inside the filtered
+// project; otherwise the filter's own path wins. Then the most recent project.
+// Can resolve to nothing — the daemon starts in $HOME and the null-state
+// ProjectSwitcher lets the user pick before send.
+//
+// The conversation being viewed can be a TEAMMATE's (team inbox/feed), whose
+// checkout lives on a machine none of the user's devices has — a new session
+// can't start there, so its path never seeds (pathOnMyMachines against the
+// device roster; unloaded roster doesn't filter).
+export function resolveComposeProjectPath(opts: {
+  context?: { projectPath?: string; gitRoot?: string };
+  conversation: { projectPath?: string; gitRoot?: string };
+  activeProjectFilter?: string | null;
+  activeProjectPath?: string | null;
+  // Exclude-mode chip: "everything but this project" expresses no preference
+  // for where a NEW session should live, so the filter neither vetoes the
+  // conversation's path nor seeds its own.
+  chipFilterExclude?: boolean;
+  recentProjects?: Array<{ path: string; team_id?: string | null }>;
+  machineRoster?: Array<Pick<MachineCandidate, "local_project_roots">>;
+  teamId?: string | null;
+}): string | undefined {
+  const { context, conversation, recentProjects, machineRoster, teamId } = opts;
+  const teamPath = teamId
+    ? recentProjects?.find((p) => p.team_id != null && String(p.team_id) === teamId && (!machineRoster || pathOnMyMachines(machineRoster, p.path)))?.path
+    : undefined;
+  const activeProjectFilter = opts.chipFilterExclude ? null : opts.activeProjectFilter;
+  const activeProjectPath = opts.chipFilterExclude ? null : opts.activeProjectPath;
+  const rawConvPath =
+    !activeProjectFilter || getProjectName(conversation.gitRoot, conversation.projectPath) === activeProjectFilter
+      ? conversation.projectPath || conversation.gitRoot
+      : undefined;
+  // The viewed session may run in a worktree; a new session starts from its checkout.
+  const convPath =
+    rawConvPath && (!machineRoster || pathOnMyMachines(machineRoster, rawConvPath)) ? projectRootOf(rawConvPath) : undefined;
+  const chipPath = ownCheckoutPath(activeProjectPath, { name: activeProjectFilter, recentProjects, machineRoster });
+  const recentPath = recentProjects?.find((p) => !machineRoster || pathOnMyMachines(machineRoster, p.path))?.path;
+  return context?.projectPath || context?.gitRoot || teamPath || convPath || chipPath || recentPath || undefined;
+}
+
+// A filter path names a project, not a place a new session can start: a chip's
+// path comes from whichever visible session carried that project, which in a
+// team inbox can be a teammate's checkout (/Users/<them>/src/app) that no
+// machine of mine has. A daemon handed that path refuses the start and the
+// first message waits forever. Keep the path when one of my machines has it,
+// else my own checkout of the same project, else nothing.
+export function ownCheckoutPath(
+  path: string | null | undefined,
+  opts: {
+    name?: string | null;
+    sessions?: Record<string, InboxSession>;
+    recentProjects?: Array<{ path: string }>;
+    machineRoster?: Array<Pick<MachineCandidate, "local_project_roots">>;
+  },
+): string | undefined {
+  if (!path) return undefined;
+  if (!opts.machineRoster || pathOnMyMachines(opts.machineRoster, path)) return path;
+  return findProjectPathByName(opts.name || getProjectName(path), opts);
+}
+
+/** Where a session the web starts on its own lands when the caller has no
+ *  folder of its own: the compose default, read off the live store. */
+export function defaultNewSessionPath(st: {
+  currentConversation: { projectPath?: string; gitRoot?: string };
+  activeProjectFilter?: string | null;
+  activeProjectPath?: string | null;
+  chipFilterExclude?: boolean;
+  recentProjects?: Array<{ path: string; team_id?: string | null }>;
+  machineRoster?: Array<Pick<MachineCandidate, "local_project_roots">>;
+}, teamId?: string | null): string | undefined {
+  return resolveComposeProjectPath({
+    teamId,
+    conversation: st.currentConversation,
+    activeProjectFilter: st.activeProjectFilter,
+    activeProjectPath: st.activeProjectPath,
+    chipFilterExclude: st.chipFilterExclude,
+    recentProjects: st.recentProjects,
+    machineRoster: st.machineRoster,
+  });
+}
+
+// The directory a label filter implies for a NEW session. Labels carry no
+// project of their own (inbox_buckets has no path), so derive one from the
+// label's members: the most recently updated session filed under it whose
+// checkout lives on one of my machines. Only an INCLUDE chip seeds — an
+// exclude chip ("everything but X") is a hide, not a place to start work.
+export function bucketProjectPath(state: {
+  activeBucketFilter: string | null;
+  chipFilterExclude: boolean;
+  sessions: Record<string, InboxSession>;
+  bucketAssignments: Record<string, BucketAssignmentItem>;
+  machineRoster?: Array<Pick<MachineCandidate, "local_project_roots">>;
+}): string | undefined {
+  if (!state.activeBucketFilter || state.chipFilterExclude) return undefined;
+  const bucketByConv = convBucketMap(state.bucketAssignments);
+  let best: InboxSession | undefined;
+  for (const s of Object.values(state.sessions)) {
+    if (bucketByConv[s._id] !== state.activeBucketFilter) continue;
+    const p = s.git_root || s.project_path;
+    if (!p || (state.machineRoster && !pathOnMyMachines(state.machineRoster, p))) continue;
+    if (!best || s.updated_at > best.updated_at) best = s;
+  }
+  return best ? best.git_root || best.project_path : undefined;
+}
+
+// Find a checkout of a project by name among everything we know about —
+// recent projects first (the user's own machines, freshest), then session
+// rows, then the machine roster's project roots. Paths a machine of mine
+// doesn't have are skipped (same roster rule as resolveComposeProjectPath).
+// The error toast uses this to pin "Just fix" sessions to the codecast repo:
+// those errors are crashes of the codecast client itself, so the fix belongs
+// there no matter what project the user happens to be viewing.
+export function findProjectPathByName(
+  name: string,
+  opts: {
+    sessions?: Record<string, InboxSession>;
+    recentProjects?: Array<{ path: string }>;
+    machineRoster?: Array<Pick<MachineCandidate, "local_project_roots">>;
+  },
+): string | undefined {
+  const { sessions, recentProjects, machineRoster } = opts;
+  const onMine = (p: string) => !machineRoster || pathOnMyMachines(machineRoster, p);
+  const recent = recentProjects?.find((r) => getProjectName(r.path) === name && onMine(r.path));
+  if (recent) return recent.path;
+  for (const s of Object.values(sessions ?? {})) {
+    const p = s.git_root || s.project_path;
+    if (p && getProjectName(s.git_root, s.project_path) === name && onMine(p)) return p;
+  }
+  for (const d of machineRoster ?? []) {
+    const root = d.local_project_roots?.find((r) => getProjectName(r) === name);
+    if (root) return root;
+  }
+  return undefined;
+}
+
+// Drag-reorder math. Express the drop as "move ordered[fromIndex] so it ends
+// up at finalIndex", and return the minimal sort_order writes that realize it.
+// Fractional midpoints keep a typical reorder to ONE write; the first-ever
+// reorder (labels still on the name-tiebreak with no explicit orders) and
+// float-precision collapse renumber the whole list onto a fresh ladder.
+const SORT_GAP = 1024;
+export function computeReorderUpdates(
+  ordered: BucketItem[],
+  fromIndex: number,
+  toIndex: number,
+): Array<{ id: string; sort_order: number }> {
+  if (fromIndex < 0 || fromIndex >= ordered.length) return [];
+  const moved = ordered[fromIndex];
+  const rest = ordered.filter((_, i) => i !== fromIndex);
+  const finalIndex = Math.max(0, Math.min(toIndex, rest.length));
+  const result = [...rest.slice(0, finalIndex), moved, ...rest.slice(finalIndex)];
+  if (result.every((b, i) => b._id === ordered[i]._id)) return [];
+  const needsInit = ordered.some((b) => typeof b.sort_order !== "number");
+  if (!needsInit) {
+    const before = result[finalIndex - 1]?.sort_order;
+    const after = result[finalIndex + 1]?.sort_order;
+    const newOrder = before == null
+      ? (after as number) - SORT_GAP
+      : after == null
+        ? before + SORT_GAP
+        : (before + after) / 2;
+    if (Number.isFinite(newOrder) && newOrder !== before && newOrder !== after) {
+      return [{ id: moved._id, sort_order: newOrder }];
+    }
+  }
+  return result.map((b, i) => ({ id: b._id, sort_order: (i + 1) * SORT_GAP }));
+}
+
+// The within-group order shared by every grouping below: pinned rows lead
+// (a pin is the user's "keep this on top", in whichever group it lands), then
+// newest activity first. NB: keyed on updated_at, which the inbox's wake signature deliberately omits —
+// so a re-sort here rides the panel's coarse clock (useCoarseNow), not a sig flip.
+export const byPinThenActivity = (a: InboxSession, b: InboxSession) =>
+  Number(!!b.is_pinned) - Number(!!a.is_pinned) || (b.updated_at ?? 0) - (a.updated_at ?? 0);
+
+// Project-fallback groups, biggest first with "other" last — the auto-derived
+// label tier every view falls back to for items that carry no primary key.
+function buildProjectGroups(byProject: Map<string, InboxSession[]>): Array<{ name: string; items: InboxSession[] }> {
+  return Array.from(byProject.entries())
+    .map(([name, list]) => ({ name, items: list.sort(byPinThenActivity) }))
+    .sort((a, b) =>
+      (a.name === "other" ? 1 : 0) - (b.name === "other" ? 1 : 0) || b.items.length - a.items.length);
+}
+
+// The grouping skeleton shared by the label and plan views: dedup the input, bin
+// each session under its primary key (keyOf) or — when it has none (keyOf → null)
+// — under its project, then hand the primary bins to the caller to order/shape as
+// it sees fit. Owns the dedup loop, the project fallback, and the project-group
+// build so the two views don't each re-implement them.
+export function groupSessionsBy<G>(
+  items: InboxSession[],
+  keyOf: (s: InboxSession) => string | null,
+  buildPrimary: (byPrimary: Map<string, InboxSession[]>) => G[],
+): { primaryGroups: G[]; projectGroups: Array<{ name: string; items: InboxSession[] }> } {
+  const byPrimary = new Map<string, InboxSession[]>();
+  const byProject = new Map<string, InboxSession[]>();
+  const seen = new Set<string>();
+  for (const sess of items) {
+    if (seen.has(sess._id)) continue;
+    seen.add(sess._id);
+    const k = keyOf(sess);
+    if (k !== null) {
+      if (!byPrimary.has(k)) byPrimary.set(k, []);
+      byPrimary.get(k)!.push(sess);
+    } else {
+      const project = getProjectName(sess.git_root, sess.project_path);
+      const pkey = project === "unknown" ? "other" : project;
+      if (!byProject.has(pkey)) byProject.set(pkey, []);
+      byProject.get(pkey)!.push(sess);
+    }
+  }
+  return { primaryGroups: buildPrimary(byPrimary), projectGroups: buildProjectGroups(byProject) };
+}
+
+// The "by label" grouping, shared by the session panel's render AND keyboard
+// order (visualOrder) so Ctrl+J/K walks exactly what's on screen: manual-label
+// groups first (label sort order), then per-project groups for unlabeled
+// sessions (projects are auto-derived labels; biggest first, "other" last),
+// newest-activity first within every group.
+export function groupSessionsForLabelView(
+  items: InboxSession[],
+  buckets: Record<string, BucketItem>,
+  bucketByConv: Record<string, string | undefined>,
+): {
+  labelGroups: Array<{ bucket: BucketItem; items: InboxSession[] }>;
+  projectGroups: Array<{ name: string; items: InboxSession[] }>;
+} {
+  const { primaryGroups, projectGroups } = groupSessionsBy(
+    items,
+    // An assigned, non-archived bucket is the primary key; everything else falls
+    // through to the project tier.
+    (sess) => {
+      const b = bucketByConv[sess._id];
+      return b && buckets[b] && !buckets[b].archived_at ? b : null;
+    },
+    // Label groups follow the explicit label sort order, empties dropped.
+    (byBucket) => sortLabels(buckets)
+      .map((bucket) => ({ bucket, items: (byBucket.get(bucket._id) ?? []).sort(byPinThenActivity) }))
+      .filter((g) => g.items.length > 0),
+  );
+  return { labelGroups: primaryGroups, projectGroups };
+}
+
+// "By plan" lens: the sibling of groupSessionsForLabelView, keyed on the
+// session's plan instead of a manual label. EVERY plan gets its own section —
+// even a plan of one — because this view's whole job is to show a plan's
+// sessions together. This lens is the ONLY place the inbox groups by plan; the
+// status view keeps every session in its status bucket. Sessions with no plan
+// fall to project groups, exactly as unlabeled sessions do in the label view.
+// Plans sort by size then label so the busiest run leads.
+export function groupSessionsByPlan(
+  items: InboxSession[],
+): {
+  planGroups: Array<{ key: string; label: string; items: InboxSession[] }>;
+  projectGroups: Array<{ name: string; items: InboxSession[] }>;
+} {
+  const { primaryGroups, projectGroups } = groupSessionsBy(
+    items,
+    (sess) => sess.active_plan?.short_id ?? null,
+    // All members of a plan share its label; derive it once from the first.
+    (byPlan) => Array.from(byPlan.entries())
+      .map(([key, list]) => ({ key, label: orchestrationGroupLabelOf(list[0])!, items: list.sort(byPinThenActivity) }))
+      .sort((a, b) => b.items.length - a.items.length || a.label.localeCompare(b.label)),
+  );
+  return { planGroups: primaryGroups, projectGroups };
+}
+
+export { ORG_LENS_MODES, groupSessionsForOrgLens, isOrgLensMode, orgLensAvailable, orgLensSourcesOf, orgLensWakeSig, sessionProjectId, type OrgLensGroup, type OrgLensMode, type OrgLensSources } from "./orgLens";
+import { inboxViewModes } from "./inboxViewModes";
+import { ORG_LENS_MODES, isOrgLensMode, groupSessionsForOrgLens, orgLensAvailable, orgLensSourcesOf, type OrgLensMode, type OrgLensSources, type OrgLensState } from "./orgLens";
+
+// Thin InboxSession synthesized from a `favorites` list entry (listFavorites) for
+// a kept session that isn't in the cache — an old favorite the inbox window never
+// loaded. Enough for the shelf row + navigation; clicking hydrates the rest.
+function synthesizeFavoriteRow(fav: any): InboxSession {
+  return {
+    _id: fav._id,
+    session_id: fav.session_id ?? "",
+    title: fav.title,
+    updated_at: fav.updated_at ?? 0,
+    message_count: fav.message_count ?? 0,
+    agent_type: fav.agent_type ?? "claude_code",
+    is_favorite: true,
+    is_idle: true,
+    has_pending: false,
+  } as InboxSession;
+}
+
+// Whether a conversation is favorited, read one way by every star and by the
+// toggle that flips it: the first row carrying the flag wins, and list
+// membership answers for rows without one. The session row is live; the
+// conversations row is a stub or the last page visit's copy, so it only
+// answers when there is no session row.
+export function resolveFavorite(
+  rows: readonly ({ is_favorite?: boolean } | undefined)[],
+  inList: () => boolean,
+): boolean {
+  for (const row of rows) if (typeof row?.is_favorite === "boolean") return row.is_favorite;
+  return inList();
+}
+
+export function isFavoriteInStore(
+  state: { conversations: Record<string, any>; sessions: Record<string, any>; favorites?: any[] },
+  id: string,
+): boolean {
+  return resolveFavorite(
+    [state.sessions[id], state.conversations[id]],
+    () => (state.favorites ?? []).some((f) => f?._id === id),
+  );
+}
+
+// The favorites list with `id` in or out of it; the same list when it already agrees.
+function withFavoriteMembership(list: any[], id: string, on: boolean, entry: any): any[] {
+  const idx = list.findIndex((f) => f?._id === id);
+  if (on === (idx !== -1)) return list;
+  return on ? [...list, { ...entry, _id: id }] : list.filter((_, i) => i !== idx);
+}
+
+// A favorites push that predates an in-flight toggle would undo it (the list
+// replaces wholesale). The toggle's own field lock on conversations.is_favorite
+// says what membership should be until the server echoes it.
+function reconcileFavoritesWithLocks(list: any[], state: any): any[] {
+  let out = list;
+  for (const [key, lock] of Object.entries(state.pending ?? {}) as [string, any][]) {
+    if (lock?.type !== "field" || !key.startsWith("conversations:") || !key.endsWith(":is_favorite")) continue;
+    const id = key.slice("conversations:".length, -":is_favorite".length);
+    out = withFavoriteMembership(out, id, !!lock.value, state.conversations?.[id]);
+  }
+  return out;
+}
+
+// The Favorites set, driven off the authoritative `favorites` membership list
+// (listFavorites) — NOT the per-row `is_favorite` flag. Two reasons:
+//   • The flag arrives on cache rows via whichever channel synced them; web and
+//     Convex deploy independently, so a row can be present without the flag set
+//     (root of "badge says 13, shelf shows 0/9"). Membership is reliable.
+//   • Deliberately ignores isSessionHidden — a favorite is dismissed/stashed from
+//     the ACTIVE inbox as it ages; the shelf exists precisely to keep it.
+// Prefers the rich cached row; falls back to a thin synthesized row so an old,
+// never-loaded favorite still appears. Optional project chip inherited free.
+export function selectFavoriteSessions(
+  sessions: Record<string, InboxSession>,
+  projectFilters?: readonly ProjectFilterTerm[],
+  favoritesList?: any[],
+): InboxSession[] {
+  const matchesProject = (s: InboxSession) =>
+    passesFilterTerms(projectFilters, getProjectName(s.git_root, s.project_path));
+  const out: InboxSession[] = [];
+  const seen = new Set<string>();
+  for (const fav of favoritesList ?? []) {
+    const id = fav?._id;
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const sess = sessions[id] ?? synthesizeFavoriteRow(fav);
+    if (matchesProject(sess)) out.push(sess);
+  }
+  // Belt and suspenders: any cached row that DOES carry the flag but isn't in the
+  // list yet (list still loading) still shows.
+  for (const sess of Object.values(sessions)) {
+    if (!sess.is_favorite || seen.has(sess._id)) continue;
+    seen.add(sess._id);
+    if (matchesProject(sess)) out.push(sess);
+  }
+  return out;
+}
+
+// Favorites order AS RENDERED: grouped by project (the shelf's default
+// organization — answers "what is it about", not "what needs me now"), pinned
+// favorites first. Reuses the bucket view's project grouping with no label tier
+// so keyboard nav (visualOrder) walks exactly the on-screen order.
+export function favoritesVisualOrder(
+  sessions: Record<string, InboxSession>,
+  projectFilters?: readonly ProjectFilterTerm[],
+  favoritesList?: any[],
+): InboxSession[] {
+  const favs = selectFavoriteSessions(sessions, projectFilters, favoritesList);
+  const pinned = favs.filter((s) => s.is_pinned).sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  const rest = favs.filter((s) => !s.is_pinned);
+  const { projectGroups } = groupSessionsForLabelView(rest, {}, {});
+  return [...pinned, ...projectGroups.flatMap((g) => g.items)];
+}
+
+// The panel→store bridge for schedule-derived nav data. Trigger rows live in a
+// per-component Convex subscription (agentTasks.webList), so the panel
+// publishes the projections nav needs: the absorbed set (status view) and the
+// trigger view's ordered groups (session ids per trigger, roster order).
+export type ScheduleNavSets = {
+  absorbed: ReadonlySet<string>;
+  triggerOrder?: Array<{ key: string; ids: string[] }>;
+};
+
+// The style on screen. Hosted mode (ui.lane "simple") is always Minimal; any
+// other viewer gets their own pick. Every reader of the style goes through
+// here, so hosted mode reaches the shell, the layout defaults and the feed.
+export function resolveVisualStyle(ui: { visual_style?: "classic" | "minimal"; hosted_visual_style?: "classic" | "minimal"; lane?: string } | undefined): "classic" | "minimal" {
+  // Hosted mode is always Minimal: the family look is the product's identity
+  // there, so a stored hosted_visual_style (an older Style pick) is ignored.
+  if (isHostedUi(ui)) return "minimal";
+  return ui?.visual_style === "minimal" ? "minimal" : "classic";
+}
+
+// Simple view is a preference in Classic and a given in Minimal: the Minimal
+// style has no dense variant, so it never reads the toggle. Every reader goes
+// through here so the shell class, the feed density and the settings row agree.
+export function resolveSimpleView(ui: { simple_view?: boolean; visual_style?: "classic" | "minimal"; hosted_visual_style?: "classic" | "minimal"; lane?: string } | undefined): boolean {
+  return resolveVisualStyle(ui) === "minimal" || ui?.simple_view !== false;
+}
+
+// One line per session. The person's own choice wins in either style, and
+// with no choice made, Minimal lists compactly and Classic keeps its full
+// cards. Hosted mode keeps its own choice (hosted_inbox_compact) and starts
+// compact, so a pick in one mode never moves the other.
+export function resolveInboxCompact(ui: { inbox_compact?: boolean; hosted_inbox_compact?: boolean; visual_style?: "classic" | "minimal"; hosted_visual_style?: "classic" | "minimal"; lane?: string } | undefined): boolean {
+  if (isHostedUi(ui)) return ui?.hosted_inbox_compact ?? true;
+  return ui?.inbox_compact ?? resolveVisualStyle(ui) === "minimal";
+}
+
+// Resolve the active inbox view mode from client UI state. Shared by the
+// inboxViewMode getter and computeVisualOrder so every consumer agrees on
+// which ordering is on screen.
+export function resolveInboxViewMode(ui: { inbox_view_mode?: InboxViewMode; inbox_flat_view?: boolean } | undefined): InboxViewMode {
+  return ui?.inbox_view_mode ?? (ui?.inbox_flat_view ? "time" : "grouped");
+}
+
+// Resolve the "show old sessions" toggle from client UI state. Shared by the
+// panel, the sidebar/dashboard badges, keyboard nav and mobile so every
+// consumer hides exactly the same rows. On by default: a new user sees their
+// whole history and hides the aged-out rows by choice. Reads ONLY inbox_show_old — the legacy
+// show_old_sessions key (stale `true` values still linger in server client_state
+// docs from its pre-LWW era) must stay unread forever, or the permanent
+// cruft-mode bug resurrects.
+export function resolveShowOld(ui: { inbox_show_old?: boolean } | undefined): boolean {
+  return ui?.inbox_show_old ?? true;
+}
+
+// What a cloud worktree starts from, as the composer last picked it: the
+// laptop checkout (default) or origin/main. One reader (the composer, the
+// create payload) so the two cannot disagree.
+export function resolveCloudStartFrom(ui: { cloud_start_from?: "checkout" | "origin_main" } | undefined): "checkout" | "origin_main" {
+  return ui?.cloud_start_from === "origin_main" ? "origin_main" : "checkout";
+}
+
+// Resolve what the inbox opens on when no conversation is selected: the fleet
+// board (default) or the chronological feed. Shared by the boot adoption below
+// and the inbox stage so they can't land on different surfaces.
+// Hosted mode's home (the assistant's start, with what waits on the person)
+// is a place the person asks for: an explicit /inbox URL with no ?s= link
+// opens it rather than the last conversation. A bare app open (/) still comes
+// back to where they were.
+export function hostedHomeAsked(ui: { lane?: string } | undefined, path?: string): boolean {
+  if (!isHostedUi(ui)) return false;
+  if (path === undefined) {
+    if (typeof window === "undefined" || !window.location) return false;
+    path = window.location.pathname + window.location.search;
+  }
+  const [page, query = ""] = path.split("#")[0].split("?");
+  return page.replace(/\/+$/, "") === "/inbox" && !new URLSearchParams(query).has("s");
+}
+
+/** Asking for the inbox from inside it shows its home (the board, or hosted
+ *  mode's start) with nothing open. The Inbox nav row and hosted Cmd+1 share it. */
+export function showInboxHome(): void {
+  const st = useInboxStore.getState();
+  st.setShowMySessions(true);
+  st.clearSelection();
+}
+
+export function resolveInboxHome(ui: { inbox_home?: "board" | "feed" } | undefined): "board" | "feed" {
+  return ui?.inbox_home ?? "board";
+}
+
+// A session's creation-time sort key for the "time" view: started_at, falling
+// back to updated_at only when a session has no creation stamp.
+const creationKey = (s: InboxSession) => s.started_at ?? s.updated_at ?? 0;
+
+// Newest-first comparator for the two flat views. "recent" ranks by last
+// activity (updated_at), so the list reshuffles as sessions work; "time" ranks
+// by creation (started_at), a stable chronology. In "time", an optional
+// manualOrder map overrides a row's key (drag-to-reorder); because those keys
+// share the epoch-ms space of started_at, dragged and un-dragged rows sort on
+// one continuous scale. The _id tiebreak keeps equal keys from jittering.
+// Shared by computeVisualOrder (keyboard nav) and the panel's flat render so
+// both agree on row order.
+export function flatViewComparator(mode: "time" | "recent", manualOrder?: Record<string, number>) {
+  return (a: InboxSession, b: InboxSession) => {
+    if (mode === "recent") {
+      return (b.updated_at ?? b.started_at ?? 0) - (a.updated_at ?? a.started_at ?? 0)
+        || b._id.localeCompare(a._id);
+    }
+    const ka = manualOrder?.[a._id] ?? creationKey(a);
+    const kb = manualOrder?.[b._id] ?? creationKey(b);
+    return kb - ka || b._id.localeCompare(a._id);
+  };
+}
+
+// One term of the label filter: a label id plus polarity. The active filter is
+// an ordered list of these — head = (activeBucketFilter, chipFilterExclude),
+// tail = extraBucketFilters (shift-added chips). The list is assembled at read
+// time by chipBucketFilters, never stored twice.
+export type BucketFilterTerm = { id: string; exclude: boolean };
+
+// The full label filter as a list. Invariant (kept by the setters): the tail
+// is nonempty only while a head exists, so single-chip readers that only know
+// activeBucketFilter (label inheritance on create, workbench capture, project
+// seeding) keep meaning "the focused chip" untouched.
+export function chipBucketFilters(state: {
+  // Optional to match every caller's narrowed state shape (computeVisualOrder
+  // declares both as optional); absent reads the same as "no chip focused".
+  activeBucketFilter?: string | null;
+  chipFilterExclude?: boolean;
+  extraBucketFilters?: readonly BucketFilterTerm[];
+}): BucketFilterTerm[] {
+  if (!state.activeBucketFilter) return [];
+  return [{ id: state.activeBucketFilter, exclude: !!state.chipFilterExclude }, ...(state.extraBucketFilters ?? [])];
+}
+
+// One term of the project filter: the project NAME is the id (what the chip
+// shows and what sessions match on), plus the directory the chip resolved to
+// so a focused project can seed new sessions. Same head/tail shape as labels —
+// head = (activeProjectFilter, activeProjectPath, chipFilterExclude), tail =
+// extraProjectFilters.
+export type ProjectFilterTerm = BucketFilterTerm & { path: string | null };
+
+// The full project filter as a list — the project twin of chipBucketFilters,
+// with the same head invariant (the tail is nonempty only while a head exists).
+export function chipProjectFilters(state: {
+  activeProjectFilter?: string | null;
+  activeProjectPath?: string | null;
+  chipFilterExclude?: boolean;
+  extraProjectFilters?: readonly ProjectFilterTerm[];
+}): ProjectFilterTerm[] {
+  if (!state.activeProjectFilter) return [];
+  return [
+    { id: state.activeProjectFilter, path: state.activeProjectPath ?? null, exclude: !!state.chipFilterExclude },
+    ...(state.extraProjectFilters ?? []),
+  ];
+}
+
+// One shift-click step over a (head, tail) term list — the same arithmetic for
+// both chip axes. Same id + same polarity = remove; same id + other polarity =
+// flip in place; new id = append to the tail. Removing the head promotes the
+// first tail term so the head invariant holds (extras never outlive the head).
+export function toggleFilterTerm<T extends BucketFilterTerm>(
+  head: T,
+  extras: readonly T[],
+  term: T,
+): { head: T | null; extras: T[] } {
+  if (head.id === term.id) {
+    if (head.exclude === term.exclude) {
+      const [next, ...rest] = extras;
+      return { head: next ?? null, extras: rest };
+    }
+    return { head: term, extras: [...extras] };
+  }
+  const at = extras.findIndex((t) => t.id === term.id);
+  if (at < 0) return { head, extras: [...extras, term] };
+  if (extras[at].exclude === term.exclude) return { head, extras: extras.filter((t) => t.id !== term.id) };
+  return { head, extras: extras.map((t) => (t.id === term.id ? term : t)) };
+}
+
+// Does `id` pass a polarity-carrying term list? With any include terms the id
+// must be one of them (a session has ONE label and ONE project, so includes
+// are a union); with only excludes it must miss every one. An empty list
+// passes everything. ONE predicate for labels and projects alike.
+export function passesFilterTerms(terms: readonly BucketFilterTerm[] | undefined, id: string | undefined): boolean {
+  if (!terms?.length) return true;
+  let hasInclude = false;
+  let matchedExclude = false;
+  for (const term of terms) {
+    if (!term.exclude) {
+      hasInclude = true;
+      if (term.id === id) return true;
+    } else if (term.id === id) {
+      matchedExclude = true;
+    }
+  }
+  return hasInclude ? false : !matchedExclude;
+}
+
+// Does a session pass the active project/bucket chips? ONE predicate behind both
+// the panel's filterByChip and the flat-view keyboard order so a chip narrows
+// the rendered list and Ctrl+J/K identically. A mid-create stub (non-Convex id)
+// always passes the bucket chips — the session you just summoned inside a focused
+// bucket must stay reachable before its assignment syncs (an excluded label
+// never files new sessions, see beginOptimisticSession). Both axes are term
+// lists with per-term polarity, judged by passesFilterTerms.
+/** Hosted mode's inbox shows only the assistant's conversations unless the
+ *  person widened it to everything. A view filter like a chip: the panel and
+ *  Ctrl+J/K both read it through chipMatchesSession, so keyboard triage never
+ *  walks into a developer session the panel hides. */
+export function hostedOnlyInbox(ui: ScopeUi): boolean {
+  return assistantScopeOnly(ui);
+}
+
+/** The chip filters (and hosted mode's scope) off a store snapshot, as
+ *  chipMatchesSession takes them. */
+export function chipFilterOpts(
+  state: Parameters<typeof chipProjectFilters>[0] & Parameters<typeof chipBucketFilters>[0] & { clientState: { ui?: { lane?: string; hosted_inbox_everything?: boolean } } },
+  bucketByConv: Record<string, string | undefined>,
+): ChipFilterOpts {
+  return { projectFilters: chipProjectFilters(state), bucketFilters: chipBucketFilters(state), bucketByConv, hostedOnly: hostedOnlyInbox(state.clientState.ui) };
+}
+
+export type ChipFilterOpts = { projectFilters?: readonly ProjectFilterTerm[]; bucketFilters?: readonly BucketFilterTerm[]; bucketByConv: Record<string, string | undefined>; hostedOnly?: boolean };
+
+export function chipMatchesSession(
+  s: InboxSession,
+  opts: ChipFilterOpts,
+): boolean {
+  // Mid-create stubs get the same carve-out on both axes: the session you
+  // just summoned must stay reachable no matter which chip is focused — under
+  // a project EXCLUDE, Ctrl+N from a focused session in that project would
+  // otherwise navigate you onto a card the panel refuses to render.
+  if (!isConvexId(s._id)) return true;
+  if (opts.hostedOnly && !inAssistantScope(s.agent_type)) return false;
+  if (opts.projectFilters?.length && !passesFilterTerms(opts.projectFilters, getProjectName(s.git_root, s.project_path))) return false;
+  return passesFilterTerms(opts.bucketFilters, opts.bucketByConv[s._id]);
+}
+
+// Subagent/teammate rows never float at their own slot in a flat list — they
+// render directly under their parent whenever the parent is in the list. The
+// view comparator places a child wherever ITS OWN activity lands, which strands
+// it between unrelated cards while its (recently-active) parent sorts far away
+// — three ↳-styled rows adrift in the middle of the inbox. Children keep the
+// comparator's relative order among siblings and follow chains (a child's own
+// children ride along). A teammate whose lead didn't make the list is dropped
+// (dropOrphanSubagents), same as a parentless Task subagent — leftover
+// reviewers must not become their own Done cards.
+function hoistNestedUnderParent(list: InboxSession[]): InboxSession[] {
+  const present = new Set(list.map((s) => s._id));
+  const nestParentOf = inboxNestParentOf(list);
+  const nestedHere = (s: InboxSession) => {
+    const p = nestParentOf(s);
+    return p && p !== s._id && present.has(p) ? p : null;
+  };
+  const kidsByParent = new Map<string, InboxSession[]>();
+  for (const s of list) {
+    const p = nestedHere(s);
+    if (!p) continue;
+    if (!kidsByParent.has(p)) kidsByParent.set(p, []);
+    kidsByParent.get(p)!.push(s);
+  }
+  if (kidsByParent.size === 0) return list;
+  const out: InboxSession[] = [];
+  const emitted = new Set<string>();
+  const emit = (s: InboxSession) => {
+    if (emitted.has(s._id)) return;
+    emitted.add(s._id);
+    out.push(s);
+    for (const kid of kidsByParent.get(s._id) ?? []) emit(kid);
+  };
+  for (const s of list) if (!nestedHere(s)) emit(s);
+  // A parent-link cycle would leave its members un-emitted above (each waits on
+  // the other) — append them in sort order rather than dropping rows.
+  for (const s of list) emit(s);
+  return out;
+}
+
+// The flat (time / recent) view's session list AS RENDERED — the single builder
+// behind BOTH the panel's render and computeVisualOrder (keyboard nav), so the
+// two can never drift. This is the crux of "Ctrl+J/K skips New Session cards
+// outside grouped view": the grouped/bucket views render only the categorized
+// status buckets, which deliberately drop never-engaged pre-warm blanks, but the
+// flat views list EVERY non-hidden session (sortedSessions) — so nav has to walk
+// that same full set or it steps over the blanks the panel is showing. Drops
+// nested subagents when the toggle is off (always keeping the focused one),
+// sorts by the view comparator, applies the chip predicate, then hoists each
+// remaining subagent/teammate row under its parent (hoistNestedUnderParent).
+// A Task subagent or team worker whose parent is NOT in the final list is
+// dropped, exactly as placeInboxRows' isOrphanSubagent / isLooseTeamWorker:
+// it rides its parent (a hidden anchor's worker, a parent that aged out, was
+// dismissed, or fails the chip). Left in, it floats at its own creation slot
+// wearing the ↳ arrow and reads as a child of whatever unrelated card sorts
+// above it.
+export function flatViewSessions(
+  sortedSessions: InboxSession[],
+  subsByParent: Map<string, InboxSession[]>,
+  opts: {
+    mode: "time" | "recent";
+    showSubagents: boolean;
+    focusedId?: string | null;
+    manualOrder?: Record<string, number>;
+    chipMatches?: (s: InboxSession) => boolean;
+    // "recent" only: when set, hold the rows in this frozen id order instead of
+    // the live updated_at sort (see recentFreezeOrder). Sessions absent from the
+    // snapshot — new arrivals — fall to the end in live-recent order; removed
+    // ones simply drop out. Both the panel render and computeVisualOrder pass it,
+    // so the list the user navigates stops moving under the cursor.
+    freezeOrder?: string[] | null;
+  },
+): InboxSession[] {
+  const subIds = opts.showSubagents
+    ? null
+    : nestedSessionIds(subsByParent);
+  const list = subIds
+    ? sortedSessions.filter((s) => !subIds.has(s._id) || s._id === opts.focusedId)
+    : [...sortedSessions];
+  list.sort(flatViewComparator(opts.mode, opts.mode === "time" ? opts.manualOrder : undefined));
+  let ordered = list;
+  if (opts.mode === "recent" && opts.freezeOrder?.length) {
+    const byId = new Map(list.map((s) => [s._id, s]));
+    const frozen = opts.freezeOrder.map((id) => byId.get(id)).filter(Boolean) as InboxSession[];
+    const frozenIds = new Set(opts.freezeOrder);
+    const fresh = list.filter((s) => !frozenIds.has(s._id)); // new since the snapshot, still in live order
+    ordered = [...frozen, ...fresh];
+  }
+  return hoistNestedUnderParent(dropOrphanSubagents(opts.chipMatches ? ordered.filter(opts.chipMatches) : ordered, opts.focusedId));
+}
+
+function nestedSessionIds(subsByParent: Map<string, InboxSession[]>): Set<string> {
+  const ids = new Set<string>();
+  for (const sessions of subsByParent.values()) {
+    for (const session of sessions) ids.add(session._id);
+  }
+  return ids;
+}
+
+// Drop Task subagents and team workers whose nest parent didn't make `list`
+// (see flatViewSessions). The focused row always renders; a pinned one is an
+// explicit "keep visible".
+function dropOrphanSubagents(list: InboxSession[], focusedId?: string | null): InboxSession[] {
+  const present = new Set(list.map((s) => s._id));
+  const nestParentOf = inboxNestParentOf(list);
+  return list.filter((s) => {
+    if (s._id === focusedId || s.is_pinned) return true;
+    // A role's session is a subagent of the role's card.
+    if (!isSubagentConversation(s) && !isAgentTeamWorker(s) && !isUnderRole(s)) return true;
+    const p = nestParentOf(s);
+    return !!p && p !== s._id && present.has(p);
+  });
+}
+
+// Which row a session nests under in a session list, over the rows present:
+// the shared child kinds (nestParentIdOf: a Task subagent, an agent-team
+// teammate) and a role's session under its role's standing session
+// (isUnderRole, org-roles-run-work.md R1). The ONE resolver every web nesting
+// computation calls, so the sections, the flat view, the set aside buckets and
+// the keyboard order cannot disagree about where a role's session sits.
+export function inboxNestParentOf(rows: Iterable<InboxSession>): (s: InboxSession) => string | null {
+  const byId = new Map<string, InboxSession>();
+  for (const r of rows) byId.set(r._id, r);
+  const roleLeads = roleLeadIdsOf(byId.keys(), (id) => byId.get(id));
+  return (s) => nestParentIdOf(s) ?? (isUnderRole(s) && s.org_role_id ? roleLeads.get(s.org_role_id) ?? null : null);
+}
+
+// The manual sort key to give a row dropped at `insertIndex` among `orderedKeys`
+// — the effective keys (manual or creation) of the OTHER rows, newest-first,
+// with the dragged row already removed. A midpoint between its new neighbors
+// keeps a reorder to one write; at either end it steps a gap past the edge row.
+// How long after the last Ctrl+J/K before the "recent" view's live updated_at
+// sort resumes (recentFreezeOrder clears). Long enough to span a burst of j/k,
+// short enough that the list feels live again the moment you stop.
+const RECENT_FREEZE_THAW_MS = 1800;
+let recentThawTimer: ReturnType<typeof setTimeout> | null = null;
+
+const MANUAL_ORDER_GAP = 60_000; // 1 minute, in the started_at epoch-ms space
+export function computeManualSortKey(orderedKeys: number[], insertIndex: number): number {
+  const before = orderedKeys[insertIndex - 1]; // the row above (larger key)
+  const after = orderedKeys[insertIndex];      // the row below (smaller key)
+  if (before == null) return (after ?? 0) + MANUAL_ORDER_GAP; // dropped at the very top
+  if (after == null) return before - MANUAL_ORDER_GAP;        // dropped at the very bottom
+  return (before + after) / 2;
+}
+
+// The session order AS RENDERED, re-shuffled for the active view mode. Accepts
+// the live store state or a mutative action draft, so keyboard nav (visualOrder)
+// and the dismiss/kill advance-to-next paths (hideSessionInDraft, markKilling)
+// all walk exactly the list the user is looking at. The grouped and bucket views
+// render only the categorized status buckets, which drop never-engaged pre-warm
+// blanks (currentSessionId keeps the one you're sitting on navigable); the flat
+// (time / recent) views instead list EVERY non-hidden session — blanks included
+// — so those branches build from the same flatViewSessions the panel renders, or
+// Ctrl+J/K would step over the "New Session" cards on screen.
+// The view inputs that decide WHICH rows the rendered order holds (not their
+// churn): view mode, the show-old fold, scope, the chip filters. A change here
+// is what re-plans the inbox warm loop (hooks/inboxWarm.ts). Lives beside the
+// chokepoint so the synced view keys are read inside the store, nowhere else.
+export function visualOrderViewSig(state: {
+  clientState: { ui?: { inbox_view_mode?: InboxViewMode; inbox_flat_view?: boolean; show_subagents?: boolean; inbox_scope?: "mine" | "team"; inbox_show_old?: boolean; lane?: string; hosted_inbox_everything?: boolean } };
+  activeProjectFilter?: string | null;
+  activeBucketFilter?: string | null;
+  chipFilterExclude?: boolean;
+  extraBucketFilters?: readonly BucketFilterTerm[];
+  extraProjectFilters?: readonly ProjectFilterTerm[];
+  showFavorites?: boolean;
+  teamInboxIds?: Set<string>;
+}): string {
+  const ui = state.clientState.ui;
+  const terms = (list?: readonly BucketFilterTerm[]) => (list ?? []).map((t) => `${t.exclude ? "-" : "+"}${t.id}`).join(",");
+  return [
+    resolveInboxViewMode(ui), resolveShowOld(ui), ui?.inbox_scope ?? "mine", ui?.show_subagents ?? true,
+    state.activeProjectFilter ?? "", state.activeBucketFilter ?? "", !!state.chipFilterExclude,
+    terms(state.extraBucketFilters), terms(state.extraProjectFilters), !!state.showFavorites, state.teamInboxIds?.size ?? 0,
+    hostedOnlyInbox(ui),
+  ].join("|");
+}
+
+export function computeVisualOrder(state: {
+  sessions: Record<string, InboxSession>;
+  sessionsWithQueuedMessages: Set<string>;
+  blockedReviveRequestedAt?: Record<string, number>;
+  activeProjectFilter?: string | null;
+  activeProjectPath?: string | null;
+  extraProjectFilters?: readonly ProjectFilterTerm[];
+  pendingMessages: Record<string, any[]>;
+  currentSessionId?: string | null;
+  pendingSessionCreates: Record<string, unknown>;
+  activeBucketFilter?: string | null;
+  chipFilterExclude?: boolean;
+  extraBucketFilters?: readonly BucketFilterTerm[];
+  bucketAssignments: Record<string, BucketAssignmentItem>;
+  buckets: Record<string, BucketItem>;
+  showFavorites?: boolean;
+  favorites?: any[];
+  teamInboxIds?: Set<string>;
+  // Overlay projection envelopes (renderInboxEpoch reads the mine epoch).
+  sessionsProjection?: Record<string, { epoch: number }>;
+  currentUser?: { _id?: string } | null;
+  recentFreezeOrder?: string[] | null;
+  collapsedSections?: Record<string, boolean>;
+  // What the org lenses group by (orgLensSourcesOf); optional for callers
+  // (tests) that model no org.
+} & Partial<Omit<OrgLensState, "sessions" | "currentUser">> & {
+  // Ephemeral schedule projection published by GlobalSessionPanel (see
+  // setScheduleNavSets) so grouped-mode nav skips sessions absorbed behind
+  // TRIGGERS rows, and so trigger-mode nav walks the panel's trigger-group
+  // order (trigger data lives in a component Convex subscription, never the
+  // store). Null until the panel has schedule data.
+  scheduleNavSets?: ScheduleNavSets | null;
+  // Pending `cast decide` rows — with the viewer's own sessions they define the
+  // status view's QUESTIONS section (the questions bucket). Optional for callers
+  // (tests) that model no questions.
+  sessionDecisions?: Record<string, SessionDecisionItem>;
+  // Local answered/dismissed marks — same map the panel renders with, so nav
+  // walks exactly the QUESTIONS section on screen.
+  questionResolutions?: QuestionResolutions;
+  // Read marks, for hosted mode's New and Earlier (sessionUnreadMap).
+  sessionReads?: Record<string, SessionReadItem>;
+  _lastViewedAt?: Record<string, number>;
+  clientState: { ui?: { inbox_view_mode?: InboxViewMode; inbox_flat_view?: boolean; inbox_manual_order?: Record<string, number>; show_subagents?: boolean; inbox_scope?: "mine" | "team"; inbox_show_old?: boolean; lane?: string; hosted_inbox_everything?: boolean } };
+}, opts: {
+  // Only the rows that are the user's move (questions, NEEDS INPUT, DONE), in
+  // the same on-screen order — see visualOrderSessions. Every mode honors it,
+  // so Ctrl+I lands on the first such card the user can see, whatever lens or
+  // flat view is up.
+  yourMove?: boolean;
+} = {}): InboxSession[] {
+  // Favorites view walks its own project-grouped order so Ctrl+J/K moves through
+  // the shelf, not the active desk underneath it.
+  // ONE placement for every branch below: the chokepoint (placeInboxRows) is
+  // membership, fold, sections and the questions predicate in one call —
+  // exactly what the panel renders, so nav can never walk a row the render
+  // dropped (with "show old sessions" off a folded row is hidden on screen,
+  // and Ctrl+J/K must skip it too).
+  const focusedId = state.currentSessionId ?? null;
+  const placed = placeInboxRows(state as PlaceInboxState, { focusedId });
+  // Favorites view walks its own project-grouped order so Ctrl+J/K moves through
+  // the shelf, not the active desk underneath it.
+  if (state.showFavorites) {
+    const order = favoritesVisualOrder(state.sessions, chipProjectFilters(state), state.favorites);
+    if (!opts.yourMove) return order;
+    return order.filter(yourMoveOf(placed));
+  }
+  const bucketByConv = convBucketMap(state.bucketAssignments);
+  const mode = resolveInboxViewMode(state.clientState.ui);
+  const collapsed = state.collapsedSections ?? {};
+  if (mode === "time" || mode === "recent") {
+    // The flat views render under a single collapsible "All" section; collapsing
+    // it hides every card, so nav must walk nothing (else it lands on a hidden
+    // row and the panel's auto-reveal effect force-expands the section).
+    if (collapsed["all"]) return [];
+    const flat = flatViewSessions(placed.sorted, placed.subsByParent, {
+      mode,
+      showSubagents: state.clientState.ui?.show_subagents ?? true,
+      focusedId,
+      manualOrder: state.clientState.ui?.inbox_manual_order,
+      freezeOrder: mode === "recent" ? state.recentFreezeOrder : null,
+      chipMatches: (s) => chipMatchesSession(s, chipFilterOpts(state, bucketByConv)),
+    });
+    if (!opts.yourMove) return flat;
+    // A flat card still wears the bucket verdict (its badge reads from the same
+    // placement), so "your move" is the same membership walked in flat order.
+    return flat.filter(yourMoveOf(placed));
+  }
+  // Grouped and the lenses: the placed status sections over the SAME visible
+  // set; the lens branches below regroup all of it, pinned rows included (each
+  // leads its own group: byPinThenActivity), by label, plan or org.
+  const base = visualOrderSessions(placed, chipProjectFilters(state), {
+    bucketFilters: chipBucketFilters(state),
+    bucketByConv,
+    collapsedSections: mode === "grouped" ? collapsed : undefined,
+    yourMove: opts.yourMove,
+    hostedOnly: hostedOnlyInbox(state.clientState.ui),
+    awaitsOk: (id) => awaitingOkIds(state.sessionDecisions).has(id),
+    sending: (() => { const ids = pendingSendIdsOf(state); return (id: string) => ids.has(id); })(),
+    unread: (() => {
+      if (!state.sessionReads || !state._lastViewedAt) return undefined;
+      const map = sessionUnreadMap({ sessions: state.sessions, sessionReads: state.sessionReads, _lastViewedAt: state._lastViewedAt });
+      return (id: string) => !!map[id];
+    })(),
+  });
+  if (mode === "bucket") {
+    const { labelGroups, projectGroups } = groupSessionsForLabelView(base, state.buckets, bucketByConv);
+    return [
+      ...labelGroups.flatMap((g) => (collapsed[`bucket_${g.bucket._id}`] ? [] : g.items)),
+      ...projectGroups.flatMap((g) => (collapsed[`bucketproj_${g.name}`] ? [] : g.items)),
+    ];
+  }
+  if (mode === "plan") {
+    const { planGroups, projectGroups } = groupSessionsByPlan(base);
+    return [
+      ...planGroups.flatMap((g) => (collapsed[`plan_${g.key}`] ? [] : g.items)),
+      ...projectGroups.flatMap((g) => (collapsed[`planproj_${g.name}`] ? [] : g.items)),
+    ];
+  }
+  if (isOrgLensMode(mode)) {
+    const { groups, projectGroups } = groupSessionsForOrgLens(mode, base, orgLensSourcesOf(state));
+    return [
+      ...groups.flatMap((g) => (collapsed[`${mode}_${g.key}`] ? [] : g.items)),
+      ...projectGroups.flatMap((g) => (collapsed[`${mode}proj_${g.name}`] ? [] : g.items)),
+    ];
+  }
+  if (mode === "trigger") {
+    // Trigger-first: walk the panel's published group order (the grouping needs
+    // the trigger subscription only the panel has — see ScheduleNavSets). No
+    // absorption in this mode: a trigger's sessions render under its row, so
+    // nav walks them there. Two tiers only — no pinned/status chrome: pinned
+    // sessions flow into groups or the project fallthrough like everything
+    // else. Trigger groups don't collapse; the project tier does. Before the
+    // panel publishes, fall back to base.
+    const groups = state.scheduleNavSets?.triggerOrder;
+    if (!groups) return base;
+    const byId = new Map(base.map((s) => [s._id, s]));
+    const walked: InboxSession[] = [];
+    const grouped = new Set<string>();
+    for (const g of groups) {
+      for (const id of g.ids) {
+        const sess = byId.get(id);
+        if (sess && !grouped.has(id)) {
+          grouped.add(id);
+          walked.push(sess);
+        }
+      }
+    }
+    const { projectGroups } = groupSessionsForLabelView(
+      base.filter((s) => !grouped.has(s._id)), {}, {},
+    );
+    return [
+      ...walked,
+      ...projectGroups.flatMap((g) => (collapsed[`trigproj_${g.name}`] ? [] : g.items)),
+    ];
+  }
+  return base;
+}
+
+// Advance past a removed set: the first session below the current one in the
+// on-screen order, wrapping to the top when the current row was last.
+function nextSessionPastRemoved(ordered: InboxSession[], currentId: string, removed: ReadonlySet<string>): InboxSession | undefined {
+  const idx = ordered.findIndex((s) => s._id === currentId);
+  return ordered.slice(idx + 1).find((s) => !removed.has(s._id))
+    ?? ordered.find((s) => !removed.has(s._id));
+}
+
+// Quick-create pre-warms a server conversation (and a daemon agent) per summon;
+// without reuse, every abandoned summon strands an empty "New Session" row in
+// the inbox forever. Reusing the existing blank session for the same
+// project+agent makes repeated open/abandon cycles converge on ONE pre-warmed
+// session — and resurfaces its draft. The server GC
+// (cleanup.gcEmptyConversations) sweeps what reuse misses. The window stays
+// well inside the GC's 24h grace so a reused id can never be a row the sweep
+// is about to delete.
+// The fresh-launch landing blank before its first send: still a local stub
+// with no create in flight. Once the send materializes it, it is an ordinary
+// new session again.
+export function isIdleLandingStub(
+  state: { sessions: Record<string, InboxSession>; pendingSessionCreates: Record<string, unknown> },
+  id: string | null | undefined,
+): boolean {
+  if (!id || isConvexId(id) || state.pendingSessionCreates[id]) return false;
+  return !!state.sessions[id]?._landing;
+}
+
+export const BLANK_SESSION_REUSE_WINDOW_MS = 12 * 60 * 60 * 1000;
+
+export function findReusableBlankSession(
+  state: {
+    sessions: Record<string, InboxSession>;
+    pendingMessages: Record<string, any[]>;
+    pendingSessionCreates: Record<string, Promise<string>>;
+    currentUser?: any;
+  },
+  opts: { agentType: string; projectPath?: string; gitRoot?: string },
+  now: number = Date.now(),
+): string | null {
+  const me = state.currentUser?._id?.toString?.();
+  const wantPath = opts.projectPath || opts.gitRoot;
+  if (!wantPath) return null;
+  let best: InboxSession | null = null;
+  let bestBorn = 0;
+  for (const s of Object.values(state.sessions)) {
+    if ((s.message_count ?? 0) !== 0 || s.has_pending) continue;
+    // A local stub is ours by construction but only trustworthy while its
+    // create is in flight; an orphaned stub (create failed) must not be reused.
+    if (!isConvexId(s._id) && !state.pendingSessionCreates[s._id]) continue;
+    if (state.pendingMessages[s._id]?.length) continue;
+    // Dismissing OR stashing a blank REAPS it server-side (dispatch.applyPatches
+    // tears down the pre-warm agent on the hide transition, then the conv is
+    // deleted) — so a hidden row here is a corpse awaiting the ghost sweep,
+    // never a reuse candidate. The next summon mints a fresh pre-warm instead.
+    if (s.inbox_dismissed_at || s.inbox_stashed_at || s.inbox_snoozed_until || s.is_pinned) continue;
+    if (s.is_subagent || s.parent_conversation_id || s.worktree_name || s.workflow_run_id) continue;
+    if (s.active_task || s.active_plan) continue;
+    if (s.agent_type !== opts.agentType) continue;
+    if ((s.project_path || s.git_root) !== wantPath) continue;
+    // Teammate sessions can be injected into this cache — only reuse our own.
+    if (s.user_id && (!me || s.user_id.toString() !== me)) continue;
+    const born = s.started_at ?? s.updated_at ?? 0;
+    if (!born || now - born > BLANK_SESSION_REUSE_WINDOW_MS) continue;
+    if (born > bestBorn) {
+      best = s;
+      bestBorn = born;
+    }
+  }
+  return best?._id ?? null;
+}
+
+// -- Store interface --
+
+/** The flags a person toggles from inside a huddle: one `callRooms` row per
+ *  live room, keyed by room_key. calls.getLiveRooms carries them and
+ *  useCallSync files them here, apart from the roster (`liveRooms`). */
+export type CallRoomFlags = {
+  _id: string;
+  /** The room's door, as a fact about the ROOM: what the lock glyph paints. */
+  locked: boolean;
+  /** The huddle turned transcription off (calls.setRoomTranscribeOff) — what
+   *  keeps every seated client's auto-scribe from starting it again. */
+  transcribe_off: boolean;
+  /** When the opt-out was switched on; null while transcription is on. */
+  transcribe_off_at: number | null;
+  /** The live record's public link is on: the transcript reaches anyone
+   *  holding it as it is written. Absent on rows from an older server. */
+  words_public?: boolean;
+  /** The room is being recorded on LiveKit's servers (callRecordings): a run
+   *  is starting or filming. What every call surface's red mark paints, for
+   *  everyone in the room. Absent on rows from a server that predates it. */
+  recording?: boolean;
+};
+
+/** One live huddle as calls.getLiveRooms projects it, minus the room flags
+ *  (those live in `callRooms`). A room the viewer may not see the anchor of
+ *  arrives `redacted` with no title — the room is still joinable (the team
+ *  wall holds), only its name is withheld. */
+export type LiveRoom = {
+  room_key: string;
+  team_id: string;
+  /** May THIS viewer walk in right now — the server's own authorizeRoom answer.
+   *  A lock shuts the open door only, so a member of the room or a guest
+   *  holding a live grant is still true here while `locked` is too. This, never
+   *  `locked`, decides Join versus Knock. */
+  can_join: boolean;
+  redacted: boolean;
+  title?: string;
+  members: { user_id: string; user_name?: string; user_image?: string; muted?: boolean }[];
+  /** People from outside the team let in on a guest link (callGuests).
+   *  Their own list, never mixed into `members`: a member is a users id every
+   *  reader resolves, a guest is `identity` (`guest:<id>`) and a typed name. */
+  guests?: LiveRoomGuest[];
+};
+
+/** A guest waiting on one of MY links at a room nobody is in
+ *  (callGuests.listGuestsWaiting). `present_until` is where their lease ends
+ *  as of their last beat: a row past it is somebody who closed the page. */
+export type GuestWaiting = {
+  guest_id: string;
+  name: string;
+  room_key: string;
+  /** The meeting as the guest's link names it; null when it has no name. */
+  title: string | null;
+  knocked_at: number;
+  present_until: number;
+};
+
+/** A guest inside a live room, as calls.getLiveRooms projects them. */
+export type LiveRoomGuest = { guest_id: string; identity: string; name: string; joined_at: number };
+
+/** Someone waiting at the door of the room I'm in (calls.getRoomKnocks). A
+ *  teammate's knock is answered with a ring; a guest's (`kind: "guest"`,
+ *  `from_user` is their `guest:<id>` identity, never a users id) with
+ *  callGuests.admitGuest. */
+/** Take a guest's knock off the door on a draft (the store's guest answers). */
+function dropGuestKnock(draft: any, guestId: string): void {
+  const knocks: RoomKnock[] = draft.roomKnocks ?? [];
+  if (knocks.some((k) => k.guest_id === guestId)) draft.roomKnocks = knocks.filter((k) => k.guest_id !== guestId);
+}
+
+export type RoomKnock = {
+  from_user: string;
+  from_name: string;
+  from_image?: string;
+  created_at: number;
+  kind?: "person" | "guest";
+  /** May THIS viewer answer the door (the inviter rule); no buttons if not. */
+  can_answer?: boolean;
+  guest_id?: string;
+  link_id?: string;
+  /** People already turned away or put out from the same link: past one,
+   *  the door offers to turn the link off. */
+  link_turned_away?: number;
+  /** Whose link brought a guest (a teammate's name), and whether it is the
+   *  viewer's own: the door says "via Sam's link". */
+  link_by?: string;
+  link_mine?: boolean;
+};
+
+// RegisteredCollectionSlots: every collection in CLIENT_SYNC_REGISTRY gets a
+// typed `Record<string, any>` slot here by registration alone; the explicit
+// fields below narrow the ones with a real row type.
+interface InboxStoreState extends ChatSliceState, OrgSliceState, InitiativeSliceActions, ProjectUpdatesSliceActions, LineWorkflowSliceActions, LineSliceActions, TrialSliceActions, ExpectationsSliceActions, OpsSliceActions, ComposeSliceState, Omit<RegisteredCollectionSlots, keyof ChatSliceState | keyof OrgSliceState> {
+  sessions: Record<string, InboxSession>;
+  pending: Record<string, PendingEntry>;
+  currentSessionId: string | null;
+  // This client's OWN last-focused conversation — persisted locally (IDB meta),
+  // never synced. The boot-restore source of truth; see
+  // recordCurrentConversationPointer for why it exists alongside the per-user
+  // synced pointer.
+  lastFocusedConversationId: string | null;
+  showDismissed: boolean;
+  collapsedSections: Record<string, boolean>;
+  // "recent" view only: a frozen snapshot of the row order, set while the user is
+  // navigating with Ctrl+J/K and cleared after a short idle. Recent sorts by
+  // updated_at, which working sessions bump every heartbeat — without this the
+  // list re-sorts under the cursor and j/k steps through a moving target. null =
+  // live (re-sorts freely). Ephemeral: never persisted or synced.
+  recentFreezeOrder: string[] | null;
+  // Schedule projection for keyboard nav (standing sessions + runs collapsed
+  // under a schedule group row, and the trigger view's group order), published
+  // by GlobalSessionPanel from its agentTasks.webList subscription. Ephemeral:
+  // never persisted or synced.
+  scheduleNavSets: ScheduleNavSets | null;
+  // One-shot request aimed at the trigger strip above a conversation. A
+  // trigger row click (dock row, bar under a card) names its trigger and asks
+  // for it expanded, so navigating FROM a trigger lands on that trigger's
+  // detail even when the conversation carries several; a card click names no
+  // trigger and returns the strip to its all-triggers view. Nonce-keyed: the
+  // strip consumes each nonce at most once, so a stale request is inert.
+  // Ephemeral.
+  triggerStripRequest: TriggerStripRequest | null;
+  // One-shot composer seed from a `?prefill=` deep link, published by the
+  // /conversation/<id> page before it redirects to the inbox. It cannot ride the
+  // URL: that redirect drops the query, and the inbox canonicalizes the address
+  // again once the session resolves. Keyed by conversation so only that
+  // session's composer takes it, and consumed there at most once. Ephemeral.
+  composerPrefill: { convId: string; text: string } | null;
+  viewingDismissedId: string | null;
+  // The conversation the active inbox pane holds on screen in place of
+  // currentSessionId: a link target not yet in `sessions` (loading, or a
+  // teammate's share) or one the server refused. Published by that pane
+  // (QueuePageClient) so per-session chords act on what is shown, never on the
+  // session hidden behind it. Ephemeral.
+  heldViewId: string | null;
+  pendingNavigateId: string | null;
+  renamingSessionId: string | null;
+  pendingScrollToMessageId: string | null;
+  // The bookmarked message's known timestamp, carried alongside the scroll
+  // target so the conversation view can open the window AROUND it on first
+  // paint (the prefetched getMessagesAroundTimestamp is centered on this same
+  // value) instead of loading the live tail first and jumping afterward.
+  pendingScrollToMessageTimestamp: number | null;
+  pendingHighlightQuery: string | null;
+  showMySessions: boolean;
+  setShowMySessions: (show: boolean) => void;
+  // The session-list panel is showing the Favorites view (a long-term kept set,
+  // grouped by project) instead of the active inbox. Reuses the same panel,
+  // rows, keyboard nav and project filter — only the source set and grouping
+  // differ. Mutually exclusive with the feed (showMySessions).
+  showFavorites: boolean;
+  setShowFavorites: (show: boolean) => void;
+  // Ids the LIVE listInboxSessions subscription (show_all:false) currently
+  // returns. NOT a counting gate anymore (sync-convergence C4 deleted that
+  // role — membership is computeInboxMembership over the replica's rows). Two
+  // jobs remain: leaving this set is when this client asks byIds whether a
+  // foreign row it owns was disowned (settleDisownClaims), and until the warm loop publishes the
+  // on-screen set it is the boot fallback for message-eviction protection
+  // (evictInactiveMessages).
+  liveInboxIds: Set<string>;
+  // Ids of the rows ON SCREEN in the rendered order, published by the warm loop
+  // (hooks/inboxWarm.ts) each pass. What message eviction protects: the rows
+  // the user can click must keep their cached tail so the click is instant,
+  // whatever view, scope or filter produced them. EPHEMERAL — never persisted.
+  warmProtectedIds: Set<string>;
+  // ── The projection stamp buffer (sync-convergence C1/C6) ──
+  // Per-scope checking data from the liveness overlay: the server's run of the
+  // shared module over canonical state. Keyed "mine" | `team:<teamId>` so the
+  // personal and team overlays NEVER share a slot. EPHEMERAL — never persisted,
+  // never merged onto session rows, read ONLY by the digest compare and the
+  // recompute scheduler (a source guard bans every other reader). Facts from
+  // the same payload merge onto rows; stamps land here and nowhere else.
+  sessionsProjection: Record<string, SessionsProjectionSlot>;
+  // The one applier for a sessionsLiveness / teamSessionsLiveness payload:
+  // splits facts (INBOX_FACT_FIELDS → merged onto session rows) from stamps
+  // (INBOX_PROJECTION_FIELDS → the scope's buffer) and records the envelope
+  // with a receipt time from the monotonic clock (payload age never trusts a
+  // server timestamp or the device wall clock).
+  applyInboxLivenessPayload: (scopeKey: string, payload: any) => void;
+  // The host's projection slots, arriving over cross-window replication. The
+  // receipt clock is re-stamped here: performance.now() is per window, so the
+  // host's value means nothing to a follower.
+  applyReplicatedProjection: (slots: Record<string, SessionsProjectionSlot>) => void;
+  // A follower window's optimistic write, applied on the host. The host holds
+  // the same field locks the follower holds, so a stale server push cannot
+  // undo the write on the host before the server echoes it — the follower's
+  // dispatch is the one server write; the host only mirrors its intent.
+  protectReplicatedWrite: (key: string, entries: Array<{ id: string; field: string; value: unknown; ts?: number; ack?: unknown }>) => void;
+  // A follower window's field writes (its action's exact patches), applied on
+  // the host: the value lands on the row this window holds, under the same
+  // field lock the follower holds, until the server echoes it. Rows this
+  // window does not hold are skipped (the mut ships those whole).
+  applyReplicatedFields: (key: string, fields: Record<string, Record<string, unknown>>, ts?: number, release?: Record<string, Record<string, unknown>>) => void;
+  // Team-mode active set: the ids the team board is currently showing (own +
+  // teammates' team-visible), fed by the listTeamInboxSessions subscription.
+  // The analogue of liveInboxIds for inbox_scope "team" — the panel gates the
+  // visible set on this instead of liveInboxIds while team mode is on. Empty in
+  // "mine" mode. Rows themselves live in the shared (never-prune) sessions cache;
+  // this is only the membership set for the current team view.
+  teamInboxIds: Set<string>;
+  // Persisted twin of liveInboxIds (plain array: the native store JSON-serializes
+  // meta blobs and generic hydration merges don't understand Sets). Written only
+  // by setLiveInboxIds, hydrated manually at boot into liveInboxIds — so the FIRST
+  // painted frame already renders the last-known authoritative set instead of
+  // flashing the whole never-prune cache until the live payload lands.
+  liveInboxIdList: string[];
+  // Persisted twin of teamInboxIds, keyed by the team it belongs to. Seeded at
+  // boot (seedTeamInboxIdsFromCache) ONLY when the client is in team scope and
+  // the active team matches — so the first painted team-board frame shows the
+  // last-known membership instead of falling back to the "mine" filter for a
+  // second until the team subscription answers.
+  teamInboxIdSnapshot: { team_id: string | null; ids: string[] } | null;
+  // Replace the authoritative active-inbox set (both twins) from a server
+  // payload. sync(): persists, never dispatches — this is server truth.
+  setLiveInboxIds: (ids: string[]) => void;
+  // Team-mode analogue; teamId keys the persisted snapshot.
+  setTeamInboxIds: (ids: string[], teamId: string | null) => void;
+  // Clear stale ownership claims from cached foreign-run rows the live payload
+  // no longer returns. Disowning is communicated only by ABSENCE (the server
+  // stops returning the row rather than pushing an updated one), so the
+  // never-prune cache keeps the last-seen version claiming owned_by_me forever —
+  // which defeats the "mine" scope filter and, with show-old on, renders the
+  // disowned session as a normal inbox card. Run on EVERY live payload.
+  clearDisownedClaims: (ids: string[]) => void;
+  // "Show old sessions" — a sticky per-user view preference. Lives in
+  // clientState.ui.inbox_show_old (read via resolveShowOld) so it survives
+  // reloads and follows the user across devices. It was ephemeral for a while:
+  // the ORIGINAL synced flag merged local_wins, so one browse click became a
+  // permanent all-clients cruft mode (the OFF could never propagate). The key
+  // is now stamped per-key LWW (STAMPED_UI_KEYS + mergeStampedBagLww), so
+  // turning it off anywhere turns it off everywhere — sticky without stuck.
+  setShowOldSessions: (show: boolean) => void;
+  // MRU "entered at" per session — bumped only when you switch INTO a session.
+  // Drives the Tab switcher order + message eviction. Kept separate from
+  // _seenUpToAt so the current session is always strictly the most recent (no
+  // ties with the session you just left). Persisted so it survives a refresh.
+  _lastViewedAt: Record<string, number>;
+  // "Seen up to" per session — advanced only when you LEAVE a session. The
+  // Slack-style "New" divider sits above the first message newer than this.
+  // Because it only moves on leave, it stays constant for the whole visit, so
+  // the line holds its position while you read. Persisted so reopening the app
+  // still shows what arrived while you were gone.
+  _seenUpToAt: Record<string, number>;
+  // "Seen message_count" per session — the conversation's message_count at the
+  // moment you LEFT it (same leave-time semantics as _seenUpToAt). Powers the
+  // unread badge on branch chips, where the fork's own messages aren't loaded:
+  // unread = message_count - max(seenCount, fork_copied). Absent (never opened)
+  // falls back to fork_copied, so the whole post-fork branch reads as unread.
+  _seenMessageCount: Record<string, number>;
+
+  messages: Record<string, Message[]>;
+  pendingMessages: Record<string, Message[]>;
+  pagination: Record<string, PaginationState>;
+  conversations: Record<string, ConversationMeta>;
+  userMessages: Record<string, UserMessage[]>;
+
+  clientState: ClientState;
+  clientStateInitialized: boolean;
+  /** This device's last known mode (components/simple/laneBoot.ts), read
+   *  only while `clientState.ui.lane` is unknown (lib/surfaces isHostedMode). */
+  laneHint: LaneHint | null;
+
+  drafts: Record<string, Record<string, any>>;
+
+  // Queued messages (Ctrl+Enter while the agent is busy): the texts waiting to
+  // be auto-sent when the agent next reaches "needs input". Persisted exactly
+  // like drafts (registered in CLIENT_SYNC_REGISTRY) so they survive navigation
+  // and reload — a user message must never be lost. Keyed by conversation id.
+  queuedMessages: Record<string, string[]>;
+
+  // -- Inline review (quote / comment on assistant message blocks) --
+  // Ephemeral UI state: which message is in keyboard/inline-review mode, the
+  // highlighted block within it, and which note editor is open. Never synced
+  // or persisted.
+  reviewMessageId: string | null;
+  reviewActiveBlock: number;
+  reviewEditingId: string | null;
+  // The batch of pending quotes + notes per conversation (or `doc:<id>`). A
+  // note is a draft of the user's next message, so it persists exactly like
+  // `drafts` (registered as a local IDB meta key, written through sync()):
+  // navigation and reload never lose it. Cleared only when the batch is taken
+  // into a message or the user removes the quote.
+  reviewComments: Record<string, PendingComment[]>;
+  setReviewTarget: (messageId: string | null, blockIndex?: number) => void;
+  setReviewActiveBlock: (blockIndex: number) => void;
+  setReviewEditingId: (id: string | null) => void;
+  addReviewComment: (conversationId: string, comment: PendingComment) => void;
+  commitReviewComment: (conversationId: string, id: string, body: string) => void;
+  removeReviewComment: (conversationId: string, id: string) => void;
+  clearReviewComments: (conversationId: string) => void;
+  getReviewComments: (conversationId: string) => PendingComment[];
+
+  // ── Comment rail (ephemeral UI; teammate comment thread on the right) ──
+  commentRailAnchor: string | null;           // a pending anchored thread (messageId) to focus
+  commentRailNonce: number;                   // bump to re-trigger focus/scroll to the anchor
+  commentRailWidth: Record<string, number>;   // reserved width (px) per conversation; published by the rail, read by the layout
+  setCommentRailOpen: (open: boolean | null) => void;
+  openCommentThread: (messageId?: string | null) => void;
+  closeCommentRail: () => void;
+  setCommentRailWidth: (conversationId: string, w: number) => void;
+
+  // ── Threads page: per-card open state (ephemeral UI, raw set — the same
+  // class as the palette toggle). Keyed by card id; the resolution rules
+  // (default-open on unread, a user collapse holding until newer unread)
+  // live in lib/threadCards. ──
+  threadsCursor: ThreadsCursor;
+  setThreadsCursor: (cursor: ThreadsCursor) => void;
+
+  currentConversation: CurrentConversationContext;
+  isolatedWorktreeMode: boolean;
+  setIsolatedWorktreeMode: (val: boolean) => void;
+  // Mirror of the composer's DERIVED cloud mode (ProjectSwitcher writes it
+  // from `isCloudHost(routedMachine)` and resets it on unmount). Read by
+  // nothing load-bearing: the create decides cloud-ness from the machine
+  // stamped on the stub, never from this flag.
+  cloudSessionMode: boolean;
+  setCloudSessionMode: (val: boolean) => void;
+  // While cloud mode is on, the isolated toggle drives THIS flag instead of
+  // isolatedWorktreeMode: off = the session runs in the host's main checkout
+  // (cloud_workspace "shared"), on (default) = its own worktree there. Reset
+  // whenever cloud mode is toggled either way, so isolated is the default on
+  // entering cloud mode and leaving it clears the choice; never persisted.
+  cloudSharedCheckout: boolean;
+  setCloudSharedCheckout: (val: boolean) => void;
+  // The "start from" pick (clientUI.cloud_start_from, read through
+  // resolveCloudStartFrom): the preparing laptop's checkout or origin/main.
+  setCloudStartFrom: (val: "checkout" | "origin_main") => void;
+
+  // -- Unified command palette --
+  palette: { open: boolean; targets: any[]; targetType: 'task' | 'doc' | 'plan' | 'session' | 'project' | 'trigger' | null; initialMode: string; initialQuery?: string; pick?: PalettePick };
+  // Follow mode (hooks/useFollowMode), ephemeral and per window: the teammate
+  // this window mirrors, whether their view is somewhere this person cannot
+  // open, who mirrors this window, and this window's place in a transcript
+  // (written only while followed).
+  followLeaderId: string | null;
+  followBlocked: boolean;
+  followedBy: FollowerRow[];
+  viewAnchor: ViewAnchor | null;
+  setFollowLeader: (id: string | null, opts?: { fromBridge?: boolean }) => void;
+  setFollowBlocked: (blocked: boolean) => void;
+  setFollowedBy: (rows: FollowerRow[]) => void;
+  setViewAnchor: (anchor: ViewAnchor | null) => void;
+  // `pick` opens the palette as an entity chooser (see lib/palettePick.ts):
+  // the caller's title/extras on top, the usual recents + search below, and
+  // the choice returned through `pick.onPick` instead of navigating.
+  openPalette: (opts?: { targets?: any[]; targetType?: 'task' | 'doc' | 'plan' | 'session' | 'project' | 'trigger'; mode?: string; initialQuery?: string; pick?: PalettePick }) => void;
+  openSessionRename: (session: any) => void;
+  closePalette: () => void;
+  togglePalette: () => void;
+
+  // -- New-session composers: store/composeSlice.ts (ComposeSliceState) --
+
+  // -- Create modal --
+  createModal: CreateModalKind | null;
+  /** Fields the create modal should open pre-filled with — how a scoped
+   *  surface (a project's task list) makes "new task" mean "new task here". */
+  createModalDefaults: { project_id?: string; plan_id?: string } | null;
+  openCreateModal: (type: CreateModalKind, defaults?: { project_id?: string; plan_id?: string }) => void;
+  closeCreateModal: () => void;
+
+  // -- Close-guard: one shared dialog for "close a parent with open subtasks".
+  // Any surface (list, kanban, palette, plan board, detail) sets this via
+  // closeTaskWithGuard; a single CloseGuardDialog in DashboardLayout renders it.
+  // Every parent a close is waiting on, in the order the gesture named them:
+  // a bulk close asks once for all of them.
+  taskCloseGuard: TaskCloseGuard | null;
+  setTaskCloseGuard: (g: TaskCloseGuard | null) => void;
+
+  // -- Fork navigation --
+  // Forks are first-class conversations; we navigate to them by URL. No overlay state.
+  optimisticForkChildren: ForkChild[];
+
+  // -- Dispatch (provided by middleware) --
+  _setDispatch: (
+    fn: ((action: string, args: any, patches?: any, result?: any) => Promise<any>) | null,
+    options?: { owner?: object },
+  ) => void;
+  _clearDispatch: (owner: object) => void;
+  _setDispatchError: (fn: (action: string, error: unknown, args?: unknown) => void) => void;
+  _setStorageHealth: (fn: ((healthy: boolean, elapsedMs: number) => void) | null) => void;
+  _dispatch: (action: string, args: any, patches?: any, result?: any) => Promise<any>;
+  _handleReceiptRejection: (
+    actionName: string,
+    localResult: unknown,
+  ) => string[] | false;
+  _handleReceiptAcknowledgement: (
+    actionName: string,
+    continuation: DurableCreateContinuation,
+    serverResult: unknown,
+    commandId: string,
+  ) => void;
+  _clearPostCreateBucketIntent: (conversationId: string, bucketId: string) => void;
+  dispatchErrors: number;
+  // Why durable IndexedDB writes are not landing, or false while they are.
+  // "stalled": a write sat past the enqueue watchdog with nothing the user can
+  // do about it. "blocked": the schema upgrade is waiting on another window,
+  // which the user CAN end by closing or reloading it. Delivery is unaffected
+  // either way; the banner tells the user durability is degraded.
+  storageDegraded: false | "stalled" | "blocked";
+  // Cross-window replication role (store/syncReplication.ts). "host" mounts the
+  // global feeders and owns IDB write-through; "follower" receives the shared
+  // slice from the host instead. Defaults to host: a window with no transport
+  // (mobile, SSR, share pages) or no living host behaves exactly as today.
+  syncRole: "host" | "follower";
+  _applyReplicatedRemovals: (key: string, ids: string[]) => void;
+  // Last PERMANENT dispatch rejection (server ran the write and refused it) —
+  // ephemeral, raw-set by the dispatch error handler; a platform-specific
+  // surface (web: toast bridge in providers.tsx) turns it into user feedback.
+  // Transient failures never land here: the outbox keeps re-driving those.
+  lastDispatchFailure: { action: string; args: unknown; message: string; at: number } | null;
+
+  // -- Wrapped actions (middleware creates aliases from do_* -> *) --
+  stashSession: (id: string, opts?: { hidden?: boolean }) => void;
+  killSession: (id: string) => void;
+  deleteSession: (id: string) => void;
+  killSessions: (ids: string[]) => void;
+  markSessionsDismissed: (ids: string[]) => void;
+  markBlockedAcknowledged: (ids: string[]) => void;
+  markBlockedReviveRequested: (ids: string[]) => void;
+  clearBlockedReviveRequested: (ids: string[]) => void;
+  restoreSession: (id: string) => void;
+  deferSession: (id: string) => void;
+  setSessionRest: (id: string, rest: UserRest) => void;
+  snoozeSession: (id: string, until: number) => void;
+  wakeSnoozedSession: (id: string) => void;
+  pinSession: (id: string) => void;
+  renameSession: (id: string, title: string) => void;
+  setSessionCharacter: (id: string, next: { avatar?: string | null; name?: string | null }) => void;
+  setSessionCharacters: (entries: Array<{ id: string; avatar?: string | null; name?: string | null }>) => void;
+  switchProject: (convId: string, path: string) => void;
+  patchConversation: (id: string, fields: Record<string, any>) => void;
+  flushResolvedSessionFields: (id: string, fields: Record<string, any>) => void;
+  applyUndoPatches: (patches: Record<string, Record<string, Record<string, any>>>) => void;
+  toggleFavorite: (id: string) => void;
+  setPrivacy: (id: string, isPrivate: boolean) => void;
+  /** "Anyone with the link" on (a freshly minted token) or off (null). */
+  setShareLink: (id: string, token: string | null) => void;
+  setObjectShareLink: (kind: PublicShareKind, id: string, token: string | null) => void;
+  dismissBrowserPaneOffer: (id: string, at: number) => void;
+  setTeamVisibility: (id: string, visibility: "summary" | "full" | null) => void;
+  /** My level for a whole team. `mode` matters only when the level goes up:
+   *  "going_forward" pins sessions started before now at the level they had. */
+  setTeamMembershipVisibility: (teamId: string, visibility: TeamVisibilityLevel, mode?: VisibilityChangeMode) => void;
+  toggleBookmark: (conversationId: string, messageId: string) => void;
+  /** Approve or deny one tool-permission request; the card leaves at once. */
+  resolvePermission: (permissionId: string, status: "approved" | "denied") => void;
+  /** Answer a workflow run's open gate (a choice key or free text). */
+  respondToGate: (runId: string, response: string) => void;
+  setMyStatus: (status: "available" | "busy" | "away") => void;
+  updateMyProfile: (patch: MyProfilePatch) => void;
+  setActiveTeamPointer: (teamId: string | null) => void;
+  setWalkiePref: (pref: "team" | "off") => void;
+  adoptTimezone: (timezone: string) => void;
+  setCloudSessionSync: (source: CloudSessionSource, enabled: boolean) => void;
+  snoozeWalkie: (until: number) => number;
+  markNotificationRead: (id: string) => void;
+  markAllNotificationsRead: () => void;
+  // force: "Send anyway" on a message held for a dialog (delivery_force).
+  retryPendingMessage: (convId: string, ref: { messageId?: string; clientId?: string; force?: boolean }) => Promise<string>;
+  cancelPendingMessage: (convId: string, ref: { messageId?: string; clientId?: string }) => Promise<string>;
+  queueMessage: (convId: string, content: string, clientId: string) => void;
+  releaseQueued: (convId: string) => void;
+  reorderQueued: (convId: string, messageId: string, beforeId: string | null) => void;
+  mergeQueued: (convId: string, messageId: string, intoId: string) => void;
+  sendMessage: (convId: string, content: string, imageIds?: string[], clientId?: string) => void;
+  // sendMessage for a conversation that may still be a local stub (a session
+  // started a moment ago): resolves the real id first, then sends under the
+  // same client id as the optimistic bubble.
+  sendMessageWhenReady: (convId: string, content: string, imageIds?: string[], clientId?: string) => void;
+  resumeSession: (convId: string) => Promise<any>;
+  sendEscape: (convId: string) => Promise<any>;
+  startResourceOffload: (args: ResourceOffloadIntent) => Promise<any>;
+  cancelResourceOffload: (batchId: string) => Promise<any>;
+  setSessionBackground: (deviceId: string, sessionId: string, background: boolean) => Promise<any>;
+  hibernateSession: (requestId: string, convId: string, sessionId: string, ownerDeviceId: string) => Promise<any>;
+  // Daemon commands tracked as sessionCommands rows keyed by requestId (see
+  // lib/sessionCommands): the row paints on the call and the echo settles it.
+  restartSession: (requestId: string, convId: string, ghost?: Record<string, unknown>, repair?: boolean) => Promise<any>;
+  moveSessionToDevice: (requestId: string, convId: string, toDeviceId: string, toRemote: boolean, toLabel?: string) => Promise<any>;
+  requestAccountSwitch: (requestId: string, args: AccountSwitchArgs, intent?: { profile?: string; email?: string }) => Promise<any>;
+  // Local bookkeeping on a command row: the session was seen back (restart) or
+  // the account confirmed (switch); dismiss drops a settled row from view.
+  confirmSessionCommand: (requestId: string) => void;
+  dismissSessionCommand: (requestId: string) => void;
+  convCommand: (convId: string, command: string, extraArgs?: Record<string, any>, optimistic?: Record<string, any>) => Promise<any>;
+  createSession: (opts: { agent_type: string; project_path?: string; git_root?: string; session_id?: string; linked_object?: { type: string; id: string }; model?: string; effort?: string; isolated?: boolean; worktree_name?: string; stable_mode?: string; stable_exclude?: string[]; target_device_id?: string; cloud_device_id?: string; cloud_workspace?: "isolated" | "shared"; cloud_start_from?: "checkout" | "origin_main"; agent_definition?: string; private?: boolean; first_message?: string; first_message_client_id?: string }) => Promise<any>;
+  // Create the server session for a DEFERRED stub, sourcing project + agent from
+  // the LIVE stub row (the new-session pickers write it via updateSessionProject /
+  // setConversationAgent) rather than a begin-time closure. This is what makes a
+  // project/agent switch made BEFORE the first send actually stick. Also stamps
+  // the live `isolatedWorktreeMode` so the "isolated worktree" toggle takes effect
+  // at create. `fallback` covers a stub that was somehow never seeded. Pairs with
+  // beginOptimisticSession({ deferCreate })'s materialize() AND the in-app
+  // self-heal create (ensureSessionCreated routes through it too).
+  createSessionFromStub: (stubId: string, fallback?: { agentType?: string; projectPath?: string; gitRoot?: string; private?: boolean; model?: string; targetDeviceId?: string; firstMessage?: { content: string; clientId: string } }) => Promise<any>;
+  /** Puts the person in hosted mode, or takes them out of it. */
+  setLane: (lane: "simple" | "full") => void;
+  /** Keeps the device's lane hint in step with a client state that has
+   *  arrived from the server. */
+  noteLaneHint: (ui: { lane?: string } | null | undefined) => void;
+  // The one true path for optimistically creating a session: stubs a local
+  // conversation synchronously and rekeys it to the real Convex id when `create`
+  // resolves. Every new-session entry point funnels through this so a first
+  // message can never be left non-optimistic. Returns the stub id (navigate to it
+  // immediately) and the in-flight create promise (await for the real id).
+  // `reuse` makes repeated summons converge on the existing blank session for the
+  // same project+agent instead of minting (and pre-warming) a new conversation
+  // per summon — see findReusableBlankSession.
+  // `deferCreate` seeds the local stub (so the popup can render + bind a draft)
+  // but does NOT fire `create` until the returned `materialize()` runs — the
+  // new-session popup uses it so merely opening doesn't strand a conversation on
+  // Escape. `materialize()` is idempotent and returns the same `ready` promise.
+  // `resumeStubId` picks an existing never-created stub (a kept compose draft)
+  // back up instead of seeding a new one; its row already carries the project,
+  // agent and draft.
+  beginOptimisticSession: (opts: { agentType: string; projectPath?: string; gitRoot?: string; reuse?: boolean; deferCreate?: boolean; landing?: boolean; resumeStubId?: string; create: (stubId: string) => Promise<string> }) => { stubId: string; ready: Promise<string>; materialize: () => Promise<string> };
+  // Ghost removal: hard-drop cached session rows nothing will re-deliver
+  // (orphaned optimistic stubs). Plants the exclude pending entries that
+  // authorize the IDB row delete and block re-adds.
+  // serverDeleted: the server proved the conversation gone (coverage poll's
+  // "missing"), so unsettled local messages no longer protect the row.
+  pruneGhostSessions: (ids: string[], opts?: { serverDeleted?: boolean }) => void;
+  // Receiver for the cross-window gesture bridge — see gestureBridge.ts.
+  applyGestureBridge: (msg: GestureMessage) => void;
+  pruneFeedEntities: (collection: FeedCollection, ids: string[]) => void;
+  clearFeedExcludes: (collection: FeedCollection, ids: string[]) => void;
+  releaseSettledFieldLocks: (ids: string[]) => void;
+  applyHealedSessions: (ids: string[], rows: InboxSession[]) => void;
+  markServerDeleted: (convId: string) => void;
+  // -- Sync-log write acks (docs/architecture/sync-log-migration.md D8) --
+  stampSyncAck: (patches: any, ack: Array<{ scope_key: string; position: number }>, sentAt: number, opts?: { local?: boolean }) => void;
+  retireAckedPending: (scopeKey: string, upTo: number, opts?: { restore?: boolean }) => void;
+  /** A follower's own write echoed by the host: its locks on these cells (and on every field of these rows) forget the host rows they recorded before. */
+  forgetLockSeen: (keys: string[], rowPrefixes?: string[]) => void;
+  // Scope lifecycle (D5): purge a revoked team's rows from the workspace-scoped
+  // collections and drop its log cursor.
+  purgeTeamScopeRows: (teamId: string) => void;
+  clearSyncMeta: (key: string) => void;
+  clearCrawlMetaForScope: (scopeKey: string) => void;
+  // Sync-log cargo (sync-log-cargo E6): merge a patch's fields onto an existing
+  // row through the pending-aware per-field merge, then drop `unset` keys. For
+  // `sessions` the same fields land on the `conversations` meta twin when it
+  // exists. Returns false when no base row exists (caller falls back to byIds).
+  applyCargoFields: (coll: CargoCollection, id: string, fields: Record<string, any>, unset: string[]) => boolean;
+  applyCargoBatch: (items: CargoItem[]) => boolean[];
+  // Ephemeral per-run counters for the sync pill's detail panel and the
+  // synclog_apply metric: how many actions applied directly vs went to byIds.
+  syncLogApplyStats: { direct: number; refetch: number };
+  noteSyncLogApply: (direct: number, refetch: number) => void;
+  // Scope keys whose log cursor the applier stamped THIS page session (value:
+  // when). The bootstrap floors wait for the scopes their args resolve to
+  // (sync-log-cargo E8 / D9): a floor cut before its scope's cursor is stamped
+  // can miss a write that commits between the floor's query and the heads
+  // capture. Per scope, not global: a membership acquired mid-session has no
+  // cursor until the next heads pass, and a global flag would let its floor
+  // through early (review). Dropped with the cursor (clearSyncMeta). Ephemeral.
+  syncLogScopeStamps: Record<string, number>;
+  stampSyncLogScope: (scopeKey: string) => void;
+  // Bumped when the floors' contract is voided for the page session — a
+  // retention resync restamped a cursor at a later head, a team scope was
+  // (re)added — so every mounted one-shot floor recuts. Monotonic across a
+  // sign-out (clearProtectedInboxMemory), so a floor cut for the previous
+  // principal can never apply into the next one's store. Ephemeral.
+  syncLogFloorEpoch: number;
+  bumpSyncLogFloorEpoch: () => void;
+  // Lift the excludes purgeTeamScopeRows planted for one scope (a rejoin): the
+  // recut floor's rows would otherwise be dropped by every delta merge.
+  liftScopeExcludes: (scopeKey: string) => void;
+
+  // -- Generic sync --
+  syncTable: (field: string, incoming: any, opts?: SyncOpts) => void;
+  applySyncTableRows: (field: string, incoming: any, opts?: SyncOpts) => void;
+  syncRecord: (field: string, id: string, record: any) => void;
+  applySyncRecordRow: (field: string, id: string, record: any) => void;
+  // The detail query answered null for a doc we have cached: it was deleted or
+  // access was revoked — drop the cached body so the page shows "not found"
+  // instead of stale content forever.
+  dropDocDetail: (id: string) => void;
+  // Local-first clear of a row's "assigned to you" ping (paired with the
+  // ackSessionAssignment mutation, which the caller fires separately).
+  clearAssignedPing: (conversationId: string) => void;
+  syncOverlay: (field: string, overlayById: Record<string, Record<string, any>>) => void;
+  syncMentionIndex: (kind: "tasks" | "docs" | "plans", items: any[]) => void;
+  // -- Incremental-sync watermark (IDB-persisted, keyed by "<namespace>:<wsKey>") --
+  // The durable memory that makes sync local-first: `cursor` is the highest
+  // `updated_at` we've synced for a workspace (the delta channels resume from it
+  // instead of re-snapshotting), and `backfilledAt` records when the full
+  // reconcile crawl last completed (so it runs once, then incrementally — not a
+  // 4,529-row sweep on every launch). See useSyncTasks / reconcileCrawl.
+  syncMeta: Record<string, { cursor?: number; backfilledAt?: number; resumeCursor?: string | null; resumeAt?: number }>;
+  recordSyncMeta: (key: string, patch: { cursor?: number; backfilledAt?: number; resumeCursor?: string | null; resumeAt?: number }) => void;
+  // -- Team activity-feed cache (IDB-persisted, keyed by team+dir) --
+  feedConversations: Record<string, any[]>;
+  feedHasMore: Record<string, boolean>;
+  // Server-issued continuation cursor per feed key: string = resume point for
+  // the next older page, null = the server confirmed true end-of-history,
+  // absent = unknown (fall back to the oldest cached row).
+  feedCursors: Record<string, string | null>;
+  mergeFeedConversations: (key: string, convs: any[]) => void;
+  // The team feed cache only grows, so removals reach it from the sync log:
+  // a member's departure (their rows leave every remaining member's cache)
+  // and a scope the log can no longer vouch for (revoked, or resynced past
+  // retention: the whole team's cache goes and refills from the server).
+  purgeMemberTeamRows: (teamId: string, userId: string) => void;
+  dropTeamFeedCache: (teamId: string) => void;
+  setFeedHasMore: (key: string, hasMore: boolean) => void;
+  setFeedCursor: (key: string, cursor: string | null) => void;
+  sortedSessions: () => InboxSession[];
+  visualOrder: () => InboxSession[];
+  // The on-screen rows that are the user's move (questions, NEEDS INPUT, DONE)
+  // in render order — what Ctrl+I and the queue's advance walk. Same verdicts
+  // as the panel, so the first entry is always the first such card visible.
+  yourMoveOrder: () => InboxSession[];
+
+  // -- Navigation --
+  advanceToNext: () => void;
+  navigateUp: () => void;
+  navigateDown: () => void;
+  // Snapshot the live "recent" order on the first Ctrl+J/K and re-arm a thaw
+  // timer on each; a no-op outside recent mode. Keeps the list from re-sorting
+  // mid-navigation. See recentFreezeOrder.
+  freezeRecentForNav: () => void;
+  thawRecentOrder: () => void;
+  setCurrentSession: (id: string, source?: ViewNavSource) => void;
+  clearSelection: () => void;
+  toggleCollapsedSection: (key: string) => void;
+  // Publish the schedule projection (standing sessions, runs grouped under a
+  // schedule row) for keyboard nav. Ephemeral raw-set state — the schedule data
+  // itself lives in the agentTasks.webList Convex subscription, never the store.
+  setScheduleNavSets: (sets: ScheduleNavSets | null) => void;
+  setTriggerStripRequest: (req: TriggerStripRequest | null) => void;
+  setComposerPrefill: (req: { convId: string; text: string } | null) => void;
+  setViewingDismissedId: (id: string | null) => void;
+  getCurrentSession: () => InboxSession | null;
+  injectSession: (session: InboxSession) => void;
+  seedSession: (session: InboxSession) => void;
+  preloadForkSessions: (forks: ForkChild[], forkedFrom?: string) => void;
+  updateSessionProject: (id: string, projectPath: string) => void;
+  setSessionTargetDevice: (id: string, deviceId: string | null) => void;
+  patchSession: (id: string, fields: Partial<InboxSession>) => void;
+  setConversationAgent: (id: string, agentType: string) => void;
+  /** Blank session: the definition it launches as (compose "as" pill). */
+  setConversationAgentDefinition: (id: string, name: string | null) => void;
+  switchAgent: (currentId: string, targetAgentType: string) => string;
+  // Local-only optimistic model/effort stamp (header picker / new-session
+  // picker). The durable value arrives via the server: rollup echo for
+  // in-place switches, reconfigure/create stamps for launches.
+  setConversationModel: (id: string, opts: { model?: string | null; effort?: string | null }) => void;
+  // Stamp per-session stable-context launch prefs on a NEW-session stub row
+  // (local-only; folded into createSession by createSessionFromStub, same
+  // lifecycle as the model/effort stamps). mode: "team" | "solo" | "off";
+  // exclude: conversation ids dropped from the injected feed.
+  setStableContextPrefs: (id: string, prefs: { mode?: string | null; exclude?: string[] | null }) => void;
+  navigateToSession: (id: string, source?: ViewNavSource) => void;
+  requestNavigate: (
+    id: string,
+    opts?: {
+      scrollToMessageId?: string | null;
+      scrollToMessageTimestamp?: number | null;
+      highlightQuery?: string | null;
+      showMySessions?: boolean;
+      source?: ViewNavSource;
+    },
+  ) => void;
+  touchMru: (id: string) => void;
+  markKilling: (id: string) => void;
+
+  // -- Message actions --
+  setMessages: (convId: string, msgs: Message[], meta?: Partial<PaginationState>, source?: "cache") => void;
+  mergeMessages: (convId: string, msgs: Message[], direction: "prepend" | "append", meta?: Partial<PaginationState>) => void;
+  applyTailMessages: (convId: string, anchorTs: number, msgs: Message[], lastTimestamp: number | null) => void;
+  setUserMessages: (convId: string, msgs: UserMessage[], source?: "cache") => void;
+  addOptimisticMessage: (convId: string, content: string, images?: Array<OptimisticImage>, clientId?: string) => string;
+  markOptimisticAsQueued: (convId: string, content: string) => void;
+  markOptimisticAsFailed: (convId: string, clientId: string) => void;
+  markOptimisticAsRetrying: (convId: string, clientId: string) => void;
+  removeOptimisticMessage: (convId: string, clientId: string) => void;
+  settleOptimisticMessage: (convId: string, clientId: string) => void;
+  // Swap an optimistic message's still-uploading images for their resolved
+  // server records (drops the spinner) once a backgrounded upload completes.
+  resolvePendingUploads: (convId: string, clientId: string, images: Array<OptimisticImage>) => void;
+  // Record the exact bytes the durable send dispatched for a pending row (see
+  // Message._dispatchContent) so redrives replay them instead of re-deriving.
+  stampPendingDispatchContent: (convId: string, clientId: string, dispatchContent: string) => void;
+  setPagination: (convId: string, update: Partial<PaginationState>) => void;
+  initPagination: (convId: string) => void;
+
+  // -- Metadata --
+  setCurrentConversation: (ctx: CurrentConversationContext) => void;
+  clearCurrentConversation: () => void;
+
+  // -- Drafts --
+  setDraft: (id: string, fields: Record<string, any>) => void;
+  setSessionHasDraft: (id: string, has: boolean) => void;
+  getDraft: (id: string) => Record<string, any> | undefined;
+  moveDraft: (fromId: string, toId: string) => void;
+  clearDraft: (id: string) => void;
+  clearDraftFinal: (id: string) => void;
+
+  // -- Queued messages --
+  getQueuedMessages: (id: string) => string[];
+  setQueuedMessagesFor: (id: string, list: string[]) => void;
+  takeQueuedMessage: (id: string) => { content: string; clientId: string } | undefined;
+
+  // -- Session ID resolution --
+  resolveSessionId: (sessionId: string, convexId: string) => void;
+  getConvexId: (id: string) => string | undefined;
+  resolveLiveSessionId: (id: string) => string;
+  // Resolve a (possibly still-being-created) session to its real Convex id,
+  // awaiting the in-flight createSession dispatch / polling the rekey. Usable
+  // from non-React code (background senders) since it only reads store state.
+  awaitConvexId: (id: string) => Promise<string>;
+  // In-memory map: stub id → in-flight createSession dispatch promise. Lets
+  // consumers await rekey directly instead of polling. Not synced/persisted.
+  pendingSessionCreates: Record<string, Promise<string>>;
+  // In-memory, this window only: session id → when its NEW hold ends. The
+  // first send into a blank session stamps it (appendOptimisticMessage) and an
+  // expired hold deletes itself (releaseExpiredNewSessionHolds). Not synced/persisted.
+  newSessionHolds: Record<string, number>;
+  trackSessionCreate: (stubId: string, promise: Promise<string>) => void;
+  awaitSessionCreate: (stubId: string) => Promise<string> | undefined;
+  // Re-create a stub whose createSession was given up (outbox cap / lost to a
+  // reload), reusing the stub row's own fields. Idempotent client- and
+  // server-side; returns the resolved real id.
+  ensureSessionCreated: (id: string) => Promise<string>;
+  // Re-create a stranded stub AND re-send the messages queued into it while it
+  // had no server conversation. Returns the real id, or null if the create
+  // still hasn't landed. Drives the heal-on-load sweep.
+  healStrandedStub: (stubId: string) => Promise<string | null>;
+  // Hydration safety net for the tiny crash window after a stub rekeyed but
+  // before its first-message fallback could enqueue. Safe on every boot because
+  // sendMessage is idempotent on the persisted client id.
+  redrivePendingMessages: () => Promise<void>;
+  resumePostCreateSessionIntents: () => void;
+
+  // -- Fork navigation --
+  addOptimisticFork: (fork: ForkChild) => void;
+  pruneOptimisticForks: (serverIds: Set<string>) => void;
+  resolveForkSessionId: (sessionId: string, convexId: string) => void;
+  // Roll back a locally seeded fork stub after the server fork failed: drops the
+  // stub's rows and returns focus to the parent conversation.
+  discardForkStub: (stubId: string, parentId?: string) => void;
+
+  // -- Client prefs (mutative actions -> auto-dispatch) --
+  updateClientUI: (partial: Partial<ClientUI>) => void;
+  updateClientLayout: (key: keyof ClientLayouts, value: any) => void;
+  updateClientDismissed: (key: keyof ClientDismissed, value: any) => void;
+  updateClientTips: (partial: Partial<ClientTips>) => void;
+
+  // -- Saved views --
+  createSavedView: (opts: { name: string; page: "tasks" | "docs" | "plans" | "workspace"; prefs: any; shared?: boolean; icon?: string; client_key?: string; team_id?: string }) => any;
+  updateSavedView: (id: string, fields: Record<string, any>) => void;
+  deleteSavedView: (id: string) => void;
+  /** Turn a mod on or off (lib/mods). The running set follows the row at once. */
+  setModEnabled: (id: string, enabled: boolean) => void;
+  setModLocalDevice: (id: string, device: string, on: boolean) => void;
+  /** Create an object of a mod-declared kind; a stub row renders at once and the server row supersedes it. */
+  createModObject: (opts: { prefix: string; title: string; status?: string; fields?: Record<string, unknown>; body?: string; team_id?: string; client_key?: string }) => any;
+  updateModObject: (id: string, patch: { title?: string; status?: string; fields?: Record<string, unknown>; body?: string; archived?: boolean }) => void;
+
+  // -- Tabs --
+  tabs: AppTab[];
+  activeTabId: string | null;
+  openTab: (opts: { path: string; title: string; sessionId?: string; makeActive?: boolean }) => string;
+  closeTab: (id: string) => void;
+  switchTab: (id: string) => void;
+  updateTab: (id: string, patch: Partial<AppTab>) => void;
+  saveCurrentTabState: (patch?: Partial<AppTab>) => void;
+
+  // -- Stage splits (active tab only: drops, focus and closes happen on the
+  //    visible stage; background tabs keep their layout frozen) --
+  /** Insert `path` as a pane beside `target` (or along a stage edge). Returns
+   *  the new leaf id, or null (cap reached / target gone). */
+  stageInsertLeaf: (target: SplitTarget, edge: SplitEdge, path: string, opts?: StageInsertOpts) => string | null;
+  /** Point an existing pane at a different route (pane-local navigation). */
+  stageSetLeafPath: (leafId: string, path: string) => void;
+  stageFocusLeaf: (leafId: string) => void;
+  /** Close a pane; the last survivor collapses the tab back to a plain path. */
+  stageCloseLeaf: (leafId: string) => void;
+  /** This pane takes the whole stage: layout dissolves into a plain tab. */
+  stageExpandLeaf: (leafId: string) => void;
+  /** Rearrange: move an existing pane beside a sibling (or a stage edge) as
+   *  ONE tree operation — identity preserved, no collapse in between. */
+  stageMoveLeaf: (leafId: string, target: SplitTarget, edge: SplitEdge) => void;
+  stageSetSizes: (branchId: string, sizes: number[]) => void;
+
+  // -- Recent projects cache --
+  recentProjects: Array<{ path: string; count: number; lastActive: number; team_id?: string | null }>;
+  setRecentProjects: (projects: Array<{ path: string; count: number; lastActive: number; team_id?: string | null }>) => void;
+
+  // Per-machine folder lists (the device-scoped getRecentProjectPaths results),
+  // so the new-session picker paints a machine's folders from cache instantly
+  // instead of waiting on the scoped query round-trip. Safe to serve stale: a
+  // device's cache only ever holds that same device's prior answer, so it can
+  // never offer a path the target machine lacks.
+  recentProjectsByDevice: Record<string, Array<{ path: string; count: number; lastActive: number; suggested?: boolean }>>;
+  setRecentProjectsForDevice: (deviceId: string, projects: Array<{ path: string; count: number; lastActive: number; suggested?: boolean }>) => void;
+
+  // -- Machine roster (non-persisted; mirrors the live devices query) --
+  // Only exists so the create path can re-check, at the moment it fires, whether
+  // a picked machine is still the one routing would choose anyway. Deliberately
+  // NOT persisted: a stale roster from a previous session would make that check
+  // worse than not having it.
+  machineRoster: MachineCandidate[];
+  // True once a LIVE listDevices push has landed this page load. The persisted
+  // roster serves display at boot; the path-seeding gate (pathOnMyMachines)
+  // reads the roster only when this is true, so a stale cache can never veto
+  // a freshly cloned path.
+  machineRosterLive: boolean;
+  // The machine this window runs on, as its daemon answered the local probe
+  // (hooks/useLocalDeviceId), keyed by the viewer it was found for. Per
+  // window and never persisted: another window may sit on another machine.
+  localDevice: { viewer: string; deviceId: string } | null;
+  setMachineRoster: (devices: MachineCandidate[]) => void;
+  /** Drop machines from the roster (Settings > Machines). The server refuses
+   *  an online machine, whose next heartbeat would list it again. */
+  removeMachines: (deviceIds: string[]) => void;
+  /** Open one of your machines to exactly these teams (empty = private).
+   *  Settings > Machines; the server home is device_shares. */
+  setDeviceShares: (deviceId: string, teamIds: string[]) => void;
+  setDeviceSnippet: (deviceId: string, change: DeviceSnippetChange) => Promise<unknown>;
+  setProviderKey: (deviceId: string, change: ProviderKeyCommand) => Promise<{ command_id?: string } | undefined>;
+  /** Start, stop or adjust keeping a cloud session's folder in step with a laptop copy (dispatch setLocalMirror → cloud_live_sync on that laptop): a mode, a conflict pick, or watch-only's overwrite. */
+  setLocalMirror: (conversationId: string, enable: boolean, deviceId?: string, opts?: { overwrite?: boolean; mode?: import("@codecast/shared/contracts").LocalMirrorMode; resolve?: import("@codecast/shared/contracts").MirrorResolve }) => void;
+  /** Wake, sleep, apply setup, save or delete an image on a cloud host, or launch another like it (dispatch cloudHostAction → cloud_host_action on the laptop that manages it). `arg`: the image to delete, or the new host's size. */
+  cloudHostAction: (hostDeviceId: string, action: import("@codecast/shared/contracts").CloudHostAction, arg?: string) => void;
+  /** Autoscale on or off with this Linux host as the template (dispatch setCloudAutoscale; the preparing laptop reads it). */
+  setCloudAutoscale: (hostDeviceId: string, policy: { enabled: boolean; max_extra: number; size: import("@codecast/shared/contracts").CloudHostSize }) => void;
+
+  // -- Tier-2 store-fed surfaces (see clientSyncRegistry) --
+  // Crosstalk graph snapshot (sessionThreads.listSessionThreads).
+  sessionThreads: { links: any[]; nodes: any[] } | null;
+  // The hosted assistant's wallet (wallet.mine); null until it first syncs.
+  wallet: import("@codecast/convex/convex/lib/wallet").WalletSummary | null;
+  // Aggregate fleet CPU/memory samples over the last 2h.
+  sessionMetricsAggregate: Array<{ collected_at: number; cpu: number; memory: number; pid_count: number }> | null;
+  migrationCandidates: import("../lib/migrationPlan").MigrationCandidate[] | null;
+  migrationBatches: import("../lib/migrationPlan").MigrationBatch[] | null;
+  // Trigger verbs. Local-first: flip the agent_tasks row on the draft, ride a
+  // named dispatch side effect to the real mutation.
+  triggerAction: (
+    taskId: string,
+    verb: "pause" | "resume" | "runNow" | "cancel" | "reactivate",
+    /** runNow only: a focus for that one run (orgReview.ts ORG_REVIEW_FOCUSES). */
+    focus?: string,
+  ) => void;
+  deleteTrigger: (taskId: string) => void;
+  /** A hosted conversation's Stop: the row settles at once, and the engine
+   *  ends its running turn (dispatch stopHostedTurn). */
+  stopHostedTurn: (conversationId: string) => void;
+  // A recurring trigger's cadence, changed in place (the org page's area rows
+  // and the Head of People's review, org-staffing.md S29): the row's interval
+  // flips on the draft, the named side effect runs agentTasks.webUpdate.
+  setTriggerInterval: (taskId: string, intervalMs: number) => void;
+  // The triggers page's edit form: prompt, title and schedule in one gesture.
+  // False when the trigger already ran or ended (the server refuses those).
+  editTrigger: (taskId: string, fields: TriggerEdit) => boolean;
+  // Remove rows from a NON-localFirst collection without planting tombstones —
+  // for transient per-scope collections whose server answer of "nothing" is
+  // itself the deletion (pendingMessageStatus). A localFirst collection must
+  // delete through an action() so the exclude tombstone lands.
+  dropRows: (key: string, ids: string[]) => void;
+
+  // -- Active project scope (non-persisted, resets on reload) --
+  // The project filter is a LIST like the label filter: this head chip plus
+  // the shift-added tail (see chipProjectFilters). Mutually exclusive with the
+  // label axis — the chip row is ONE filter.
+  activeProjectPath: string | null;
+  activeProjectFilter: string | null;
+  setActiveProjectFilter: (name: string | null, path?: string | null, exclude?: boolean, extras?: ProjectFilterTerm[]) => void;
+  // Shift-added project terms beyond the head chip, each with its own polarity.
+  // Invariant: nonempty only while activeProjectFilter is set (the setters
+  // keep it), so head-only readers never see a filter they can't represent.
+  extraProjectFilters: ProjectFilterTerm[];
+  // The shift-click gesture on a project chip — the twin of toggleBucketFilterTerm.
+  toggleProjectFilterTerm: (name: string, path: string | null, exclude: boolean) => void;
+  // Whether the HEAD chip (project or bucket) is in exclude mode —
+  // "everything but this" instead of "only this". Click toggles include;
+  // exclude is entered only via ⌥/Alt-click or the chip's context menu.
+  chipFilterExclude: boolean;
+
+  // -- Capability library --
+  // What every machine reports it has (fleet mirror, server truth).
+  capabilityState: Record<string, any>;
+  // What the user wants where (bindings). Optimistic: setCapabilityBinding
+  // writes the draft and rides dispatch to the named server side effect, which
+  // calls the same upsert the CLI does.
+  capabilityBindings: Record<string, CapabilityBindingRow>;
+  setCapabilityBinding: (opts: {
+    capability_slug: string;
+    scope_kind: string;
+    scope_key?: string;
+    enabled: boolean;
+    team_id?: string;
+    client_key?: string;
+  }) => void;
+
+  // -- Decision queue (cast decide) --
+  sessionDecisions: Record<string, SessionDecisionItem>;
+  decisionStacks: Record<string, DecisionStackItem>;
+  handledDecisions: Record<string, HandledDecisionItem>;
+  decisionDetails: Record<string, DecisionDetailItem>;
+  decisionDiscussions: Record<string, DecisionDiscussionItem>;
+  // Local echoes of discussDecision, by decision id. Ephemeral like
+  // questionResolutions: a reload reads server truth.
+  discussionSends: Record<string, DecisionDiscussionSend[]>;
+  // A person's words to the session that owns a decision (decisionDiscussion.ts).
+  // Resolves with the server's answer; a refusal comes back as { error } (sendDiscussion).
+  discussDecision: (decisionId: string, text: string, clientId: string) => Promise<unknown>;
+  // Takes back a local echo the server refused.
+  dropDiscussionSend: (decisionId: string, clientId: string) => void;
+  // Resolve a decision locally (status flips instantly; patch rides the
+  // outbox) and, for answers, send the chosen option into the session as a
+  // normal user message. `text` is the free-form escape hatch. The promise is
+  // the dispatch's: a card that held its buttons reads a refusal from it.
+  answerDecision: (decisionId: string, answer: DecisionAnswerInput) => Promise<unknown>;
+  adoptDecision: (decisionId: string) => void;
+  startShip: (target: { kind: "task" | "conversation" | "pull_request"; id: string }, clientKey: string, decisionId?: string) => void;
+  // "Disagree and reopen" (D2): the row goes back to pending held by the
+  // viewer, leaves "Handled without you", and the reopenDecision side effect
+  // does the server write.
+  reopenDecision: (decisionId: string) => void;
+  // Hands an open question to a teammate (it leaves this viewer's queue) or a
+  // role (it stays here, held by the role); the passDecision side effect.
+  passDecision: (decisionId: string, to: { kind: "user" | "role"; id: string }) => void;
+  unassignDecision: (decisionId: string) => void;
+  // Stack verbs (D5): the draft moves first, named side effects follow.
+  reorderStack: (stackId: string, decisionIds: string[]) => void;
+  removeFromStack: (stackId: string, decisionId: string) => void;
+  // The stack's policy (D5, the-line.md L10): auto default, due, delegate.
+  // One write path for the stack page's controls; the draft paints the
+  // policy the server will write, the setStackPolicy side effect writes it.
+  // The mutation refuses with { error } instead of throwing (an unknown
+  // delegate handle, a due in the past), so the caller awaits the result.
+  setStackPolicy: (stackId: string, args: StackPolicyPatch) => Promise<{ error?: string } | null | undefined>;
+  // "Group into a stack": a stub row keyed by client_key (altKey supersedes
+  // when the server row syncs) and stack_id stamped on the members.
+  createStackWith: (input: { title: string; decision_ids: string[]; team_id?: string; client_key: string }) => void;
+  // Local marks that a session's open AskUserQuestion / permission ask was
+  // handled here (answered, dismissed, or evicted). Ephemeral by design — not
+  // persisted, so a reload re-reads server truth. Every question surface reads
+  // it through sessionHasOpenQuestion so none can disagree (lib/decisionQueue).
+  questionResolutions: QuestionResolutions;
+  // `sends` = how many messages the resolving gesture itself puts into the
+  // conversation (1 for an answer, 0 for a dismissal/eviction), so the mark
+  // doesn't expire on its own echo.
+  resolveSessionQuestion: (convId: string, opts?: { sends?: number }) => void;
+
+  // -- Manual session buckets --
+  buckets: Record<string, BucketItem>;
+  bucketAssignments: Record<string, BucketAssignmentItem>;
+  // Mutually exclusive with activeProjectFilter: the chip row is ONE filter
+  // axis. The label filter itself is a LIST — this head chip plus the
+  // shift-added tail below (see chipBucketFilters).
+  activeBucketFilter: string | null;
+  setActiveBucketFilter: (bucketId: string | null, exclude?: boolean, extras?: BucketFilterTerm[]) => void;
+  // Shift-added label terms beyond the head chip, each with its own polarity.
+  // Invariant: nonempty only while activeBucketFilter is set (the setters keep
+  // it), so head-only readers never see a filter they can't represent.
+  extraBucketFilters: BucketFilterTerm[];
+  // The shift-click gesture: toggle one label term in/out of the filter list.
+  // No active label filter → behaves like a plain click (becomes the head).
+  toggleBucketFilterTerm: (bucketId: string, exclude: boolean) => void;
+  // Panel view mode with back-compat for the pre-bucket inbox_flat_view bool.
+  inboxViewMode: () => InboxViewMode;
+  setInboxViewMode: (mode: InboxViewMode) => void;
+  cycleInboxViewMode: () => void;
+  // Drag-to-reorder in the "time" view: pin `id` at `key` (epoch-ms space).
+  setSessionManualOrder: (id: string, key: number) => void;
+  /** Several cards' sort keys in one write: one drag, one undo entry. */
+  setSessionManualOrders: (keys: Record<string, number>) => void;
+  // Forget all manual pins — the "time" view returns to pure creation order.
+  clearManualOrder: () => void;
+
+  // -- Recently visited (sessions, chip views, pages) — newest first --
+  recentVisits: RecentVisit[];
+  recordRecentVisit: (visit: Omit<RecentVisit, "ts">) => void;
+  /** The Threads page's session read mark: "seen up to the current message
+   *  count". Local only — a session's read state never dispatches. */
+  markSessionSeen: (id: string) => void;
+
+  // -- Session unread (server-backed, per viewer) --
+  /** The viewer's read marks, keyed by row id (sessionReads.listMine). Unread
+   *  is derived from these against each session's updated_at, never stored. */
+  sessionReads: Record<string, SessionReadItem>;
+  /** "I am looking at this session now." Called only while the conversation is
+   *  the active view AND the reader is present (useAckActiveConversation);
+   *  `at` is the session's own updated_at so the optimistic mark is exactly
+   *  what the server writes. Clears any manual unread flag. */
+  ackSessionRead: (conversationId: string, at?: number) => void;
+  /** "Leave this one lit." Survives every later change; the next presence ack
+   *  is what clears it. */
+  markSessionUnread: (conversationId: string) => void;
+  /** The dispatching halves of the two above. Called only by them — the guards
+   *  live in the plain wrappers so a no-op never reaches the outbox. */
+  writeSessionAck: (conversationId: string, stamp: number) => void;
+  writeSessionUnread: (conversationId: string) => void;
+  createBucket: (opts: { name: string; color?: string }, continuation?: DurableCreateContinuation) => Promise<{ bucketId: string }>;
+  /** Local-first team create: a stub team row and the active team switch land
+   *  in the same tick; resolves the REAL team id once the server answers, and
+   *  rolls the stub and the active team back if it refuses. */
+  createTeam: (opts: { name: string; icon?: string; icon_color?: string; discoverable?: boolean }) => Promise<string>;
+  dispatchCreateTeam: (stubId: string, opts: { name: string; icon?: string; icon_color?: string; discoverable?: boolean }) => Promise<string>;
+  resolveTeamStub: (stubId: string, teamId: string) => void;
+  discardTeamStub: (stubId: string, previousActiveTeamId: string | undefined) => void;
+  deleteTeam: (teamId: string, confirmName: string) => Promise<void>;
+  dispatchDeleteTeam: (teamId: string, confirmName: string, fallbackTeamId: string | undefined) => Promise<unknown>;
+  restoreTeamRow: (team: any, previousActiveTeamId: string | undefined) => void;
+  /** Team settings and membership, painted on the teams / teamMembers rows at
+   *  once; each resolves (or rejects) with the server's answer. */
+  renameTeam: (teamId: string, name: string) => Promise<unknown>;
+  updateTeamIcon: (teamId: string, fields: { icon?: string; icon_color?: string }) => Promise<unknown>;
+  updateTeamTaskStatuses: (teamId: string, statuses: { id: string; name: string; category: string; color?: string }[]) => Promise<unknown>;
+  setTeamMemberRole: (teamId: string, userId: string, role: "member" | "admin") => Promise<unknown>;
+  removeTeamMember: (teamId: string, userId: string) => Promise<unknown>;
+  updateBucket: (id: string, fields: { name?: string; color?: string; sort_order?: number; archived_at?: number | null }) => void;
+  assignSessionToBucket: (conversationId: string, bucketId: string | null) => void;
+
+  // Teammate comment actions (optimistic → dispatch side-effect → live-query reconcile).
+  addComment: (conversationId: string, content: string, opts?: { messageId?: string; parentCommentId?: string; filePath?: string; lineNumber?: number; anchorLines?: CodeAnchorText }) => Promise<unknown>;
+  editComment: (commentId: string, content: string) => Promise<unknown>;
+  deleteComment: (commentId: string) => Promise<unknown>;
+  askAgentInThread: (conversationId: string, opts?: { messageId?: string; filePath?: string; lineNumber?: number }) => Promise<unknown>;
+  resolveCommentThread: (conversationId: string, anchor: { messageId?: string; filePath?: string; lineNumber?: number }, resolved: boolean) => void;
+  resolveCodeCommentThread: (commentIds: string[], resolved: boolean) => void;
+  /** Bind (or wake, or put to sleep) the session that owns a pull request
+   *  (prShepherd.setShepherd), painted on the pullRequests row at once. */
+  setPrShepherd: (prId: string, conversationId: string | undefined, enabled: boolean) => void;
+  /** Start an agent session on a task (tasks.assignToAgent); resolves to the spawn. */
+  assignTaskToAgent: (shortId: string, agentType: string, initialMessage?: string) => Promise<unknown>;
+  editCodeComment: (commentId: string, content: string) => void;
+  deleteCodeComment: (commentId: string) => void;
+
+  // -- Sidebar nav expanded sections --
+  sidebarNavExpanded: Record<string, boolean>;
+  toggleSidebarNav: (section: string) => void;
+  // Mark a live subscription's cold-open first-load (see `liveLoading`).
+  setLiveLoading: (scope: string, loading: boolean) => void;
+  // Sync-log catch-up distance per scope: head position minus applied cursor,
+  // written by the applier (useSyncChangeFeed) at each heads fetch and zeroed
+  // as each scope is replayed. Ephemeral, never persisted — a reload re-derives
+  // it. With the log, THIS is what "not caught up" means on a warm cache; the
+  // live first-load (`liveLoading`) only matters while a collection is cold.
+  syncLogLag: Record<string, number>;
+  setSyncLogLag: (scope: string, lag: number) => void;
+
+  // Teammate comments — a synced collection (live query → syncTable), so reads
+  // are instant from cache and writes render optimistically like everything else.
+  comments: Record<string, CommentRow>;
+
+  // -- Task / Doc / Plan / Project state --
+  tasks: Record<string, TaskItem>;
+  taskActiveSessions: Record<string, any>;
+  // Dormant origin-session badges keyed by conversation id, fetched one-shot by
+  // useSyncTasks (tasks.webTaskOrigins). Task rows no longer carry origin_session
+  // from the server — the tasks page derives it from this map at render.
+  taskOriginBadges: Record<string, NonNullable<TaskItem["origin_session"]> & { agent_type?: string }>;
+  // Progress of the full reconcile crawls (useSyncTasks / useSyncDocs), keyed by
+  // scope ("tasks" | "docs"). Ephemeral UI state so any list view can show a
+  // subtle "syncing N" badge and never imply the list is complete while pages
+  // are still streaming in. `loaded` counts rows crawled so far this run;
+  // `loading` is true until the final page lands.
+  syncProgress: Record<string, { loading: boolean; loaded: number }>;
+  // The Killed shelf: kills paged in on demand by the sidebar's "Load more"
+  // (hooks/killedShelf.ts, listKilledSessions). Rows land in the never-prune
+  // sessions cache; this holds only WHICH ids the shelf lists plus the paging
+  // cursor. Ephemeral and per window — it is a reading position, not state.
+  killedShelf: KilledShelf;
+  // First-load state of the LIVE data subscriptions (sessions / docs / tasks),
+  // keyed by scope. Deliberately separate from `syncProgress`, which tracks the
+  // background reconcile crawl: that crawl pages through EVERY row at a throttled
+  // pace and can run for minutes, so gating the header spinner on it kept it lit
+  // ~forever. `liveLoading[scope]` is true only until the subscription delivers
+  // its first payload on a cold open, then false — so the header SyncStatusChip
+  // reflects "the data I'm looking at is still loading", not housekeeping.
+  liveLoading: Record<string, boolean>;
+  docs: Record<string, DocItem>;
+  plans: Record<string, PlanItem>;
+  projects: Record<string, ProjectItem>;
+  savedViews: Record<string, SavedViewRow>;
+  notifications: Record<string, any>;
+  docProjectPaths: string[];
+  docDetails: Record<string, DocDetail>;
+  // Cross-team mention index — lightweight per-record snapshots loaded once
+  // at the app shell so @-search works for every team the user belongs to,
+  // without colliding with the active-team `tasks`/`docs`/`plans` collections
+  // that page views depend on.
+  mentionIndex: {
+    tasks: Record<string, MentionTaskItem>;
+    docs: Record<string, MentionDocItem>;
+    plans: Record<string, MentionPlanItem>;
+  };
+  taskFilter: { status: string };
+  docFilter: { type: string; query: string; project: string; scope: string };
+  planFilter: { status: string };
+
+  setTaskFilter: (filter: Partial<{ status: string }>) => void;
+  setDocFilter: (filter: Partial<{ type: string; query: string; project: string; scope: string }>) => void;
+  setPlanFilter: (filter: Partial<{ status: string }>) => void;
+
+  // -- Message queue --
+  sessionsWithQueuedMessages: Set<string>;
+  setSessionHasQueuedMessages: (sessionId: string, hasQueued: boolean) => void;
+
+  // Blocked-banner revive stamps: session id → when a continue/switch was
+  // requested. Local + persisted, never synced (the server's pending_api_error
+  // only clears when the agent actually resumes and its output syncs back).
+  blockedReviveRequestedAt: Record<string, number>;
+
+  // -- Shortcuts panel --
+  shortcutsPanelOpen: boolean;
+  toggleShortcutsPanel: () => void;
+  /** A navigation waiting for the user to pick WHICH split pane it opens in
+   *  (components/stage/StagePickLayer). Ephemeral gesture — raw set. */
+  stagePick: { path: string; title?: string } | null;
+  setStagePick: (pick: { path: string; title?: string } | null) => void;
+  // The tour that is running (tours/): which one, which step, and whether a
+  // person asked for it (a replay) or it started itself. Ephemeral modal
+  // state; whether a tour has been SEEN is durable, in clientState.tips
+  // (tours/seen.ts). The Tours panel lists every tour.
+  tour: TourRun | null;
+  setTour: (run: TourRun | null) => void;
+  toursPanelOpen: boolean;
+  setToursPanelOpen: (open: boolean) => void;
+  // The global anchor panel: a slide-over holding one anchor's conversation,
+  // reachable from every page. Ephemeral (a modal toggle, never persisted).
+  // `anchorId` is the LAST anchor shown, so re-opening lands where you were.
+  // `target` is what the panel shows: a standing agent by its anchors row, or
+  // any pinned session by its conversation (org-staffing.md S30); null means
+  // the first header pin. It is the LAST target shown, so re-opening lands
+  // where you were.
+  anchorPanel: { open: boolean; target: AnchorPanelTarget | null };
+  openAnchorPanel: (target?: AnchorPanelTarget | null) => void;
+  closeAnchorPanel: () => void;
+  toggleAnchorPanel: () => void;
+
+  // -- Settings modal --
+  settingsModalSection: SettingsSectionId | null;
+  openSettingsModal: (section?: SettingsSectionId) => void;
+  closeSettingsModal: () => void;
+
+  // -- The people wall, over the main window --
+  // The same wall the people window shows, thrown over whatever you were doing
+  // for as long as it takes to hold one face. Ephemeral (a modal toggle, never
+  // persisted): which window you are in is not a preference.
+  peopleWallOpen: boolean;
+  openPeopleWall: () => void;
+  // -- The wide leaf (components/org/OrgPage, components/stage) --
+  // The stage leaf that takes its tab's width while it is mounted: its
+  // sibling panes and the session rail fold to a thin rail, and come back when
+  // the leaf leaves or the rail is clicked. `leafId` is null for a plain
+  // (unsplit) tab. Ephemeral, per window (never persisted or replicated): the
+  // arrangement underneath is not rewritten, so leaving restores it exactly.
+  stageWide: { tabId: string; leafId: string | null } | null;
+  setStageWide: (wide: { tabId: string; leafId: string | null } | null) => void;
+  // -- Saved-account sign-in dialog (components/ProfileSignInDialog) --
+  // Window level, not inside the hover panel that opens it: the sign-in
+  // happens in a browser, and the panel closes the moment the pointer leaves.
+  // Ephemeral (a modal toggle, never persisted).
+  profileSignIn: { deviceId: string; profile: string; start?: boolean } | null;
+  openProfileSignIn: (target: { deviceId: string; profile: string; start?: boolean }) => void;
+  closeProfileSignIn: () => void;
+  closePeopleWall: () => void;
+  togglePeopleWall: () => void;
+
+  // -- Side panel --
+  // -- Workspace slots (see store/workspace.ts + WORKSPACE_SLOTS.md) --
+  // The layout as data: fixed slots, at most one pane each. Regions migrate
+  // onto this one at a time; the legacy flags below disappear as they land.
+  workspace: WorkspaceState;
+  wsShow: (slot: SlotId, pane: Pane, opts?: { presentation?: Presentation }) => void;
+  wsHide: (slot: SlotId, opts?: { remember?: boolean }) => void;
+  wsToggle: (slot: SlotId, pane: Pane) => void;
+  wsSetPresentation: (slot: SlotId, presentation: Presentation) => void;
+  /** Restore a saved arrangement wholesale — every slot, plus zen and the chip
+   *  filter. `id` stamps which saved workbench this is, so the rail can keep it
+   *  highlighted (and offer "update") while you adjust panels away from it.
+   *  `pathname` is the surface the switch LANDS on, so a filter that evicts the
+   *  focused session moves whichever pointer that surface highlights. */
+  applyWorkbench: (snap: WorkbenchSnapshot, id?: string, pathname?: string | null) => void;
+  /** The saved workbench the chrome was last switched to. Ephemeral bookkeeping
+   *  for the rail's highlight/update affordance — cleared on plain boots. */
+  activeWorkbenchId: string | null;
+  /** Name the current arrangement and persist it as a saved view. */
+  saveWorkbench: (name: string, path?: string) => any;
+  /** Overwrite a saved workbench with the CURRENT arrangement — the way an
+   *  existing workbench is adjusted: switch to it, move panels, update. */
+  updateWorkbench: (id: string, path?: string) => void;
+  setNavCollapsed: (collapsed: boolean) => void;
+  /** Zen hides the sidebar; this opens it anyway until zen is left. Ephemeral. */
+  zenNavOpen: boolean;
+  setZenNavOpen: (open: boolean) => void;
+  setDockOpen: (open: boolean) => void;
+  wsSetSize: (slot: SlotId, size: number) => void;
+
+
+  sidePanelSessionId: string | null;
+  openSidePanel: (sessionId: string) => void;
+  closeSidePanel: () => void;
+  clearSidePanelSession: () => void;
+  toggleSidePanel: () => void;
+  selectPanelSession: (sessionId: string | null) => void;
+
+
+  // -- Task / Doc mutations (action + side effect) --
+  updateTaskStatus: (shortId: string, status: string, subtaskResolution?: "cascade" | "only_parent") => Promise<any>;
+  updateTask: (shortId: string, fields: { status?: string; status_id?: string; priority?: string; title?: string; description?: string; labels?: string[]; triage_status?: string; assignee?: string; execution_status?: string; project_id?: string; project_path?: string; parent?: string; sort_order?: number; duplicate_of?: string; from_call?: string; readiness?: string; readiness_note?: string; subtask_resolution?: "cascade" | "only_parent" }) => Promise<any>;
+  // The task graph (docs/architecture/task-graph.md TG12): the task page's
+  // Blocked by row and the add-blocker palette. Each paints every row the
+  // edge lives on; a refusal (a loop, a PR codecast cannot see) rolls back.
+  addBlocker: (shortId: string, blocker: string) => Promise<any>;
+  removeBlocker: (shortId: string, blocker: string, forms?: string[]) => Promise<any>;
+  removeBlocks: (shortId: string, dependent: string) => Promise<any>;
+  addWait: (shortId: string, input: TaskWaitInput) => Promise<any>;
+  /** A refused addWait: its painted wait off, what it displaced back (lib/dispatchBinding). */
+  rollbackWait: (shortId: string, waitId: string) => void;
+  removeWait: (shortId: string, waitId: string) => Promise<any>;
+  relateTasks: (shortId: string, other: string) => Promise<any>;
+  unrelateTasks: (shortId: string, other: string) => Promise<any>;
+  createTask: (opts: { title: string; description?: string; task_type?: string; priority?: string; status?: string; status_id?: string; project_id?: string; labels?: string[]; assignee?: string; plan_id?: string; team_id?: string; workspace?: string; project_path?: string; parent?: string; client_key?: string; from_call?: string }) => Promise<any>;
+  clearTombstones: (table: "savedViews" | "signals") => void;
+  removeTaskStub: (clientKey: string) => void;
+  createDoc: (opts: { title: string; content?: string; doc_type?: string; parent_id?: string; labels?: string[]; workspace?: "personal" | "team"; team_id?: string }, continuation?: DurableCreateContinuation) => Promise<any>;
+  createPlan: (opts: { title: string; body?: string; goal?: string; acceptance_criteria?: string[]; status?: string; source?: string; project_id?: string; model_stylesheet?: string; fidelity?: string; join_policy?: string; join_k?: number; workspace?: "personal" | "team"; team_id?: string }, continuation?: DurableCreateContinuation) => Promise<any>;
+  createProject: (opts: { title: string; description?: string; status?: string; color?: string; icon?: string; workspace?: "personal" | "team"; team_id?: string; client_key?: string }, continuation?: DurableCreateContinuation) => Promise<any>;
+  promoteDocToPlan: (docId: string) => Promise<any>;
+  ensurePlanDoc: (planShortId: string) => Promise<any>;
+  publishToDirectory: (opts: { conversation_id: string; title: string; description?: string; tags?: string[] }) => Promise<any>;
+  moveDoc: (id: string, parentId?: string, sortOrder?: number) => Promise<any>;
+  // Charter fields (components/charter/charterMeta CharterPatch): null clears
+  // a scalar, an empty array is a value.
+  updatePlan: (shortId: string, fields: { title?: string; project_id?: string; goal?: string; acceptance_criteria?: string[]; status?: string; task_ids?: string[]; context_pointers?: Array<{ label: string; path_or_url: string }>; success_metrics?: string[]; priority?: "p0" | "p1" | "p2" | "p3" | null; owner_role_id?: string | null; non_goals?: string[] }) => void;
+  /** Name (or clear) a project's lead; adds the project to the role's scope when it is missing. */
+  setProjectLead: (projectId: string, roleId: string | null, opts?: { leave_sessions?: boolean }) => Promise<{ scope?: string; took_over?: string } | null | undefined>;
+  updateProject: (id: string, fields: { title?: string; description?: string; status?: string; color?: string; icon?: string; target_date?: number | null; goal?: string; success_metrics?: string[]; priority?: "p0" | "p1" | "p2" | "p3" | null; owner_role_id?: string | null; non_goals?: string[]; risks?: string[]; budget?: { tokens_per_day?: number; hands_per_day?: number } | null; project_path?: string | null }) => void;
+
+  // -- Issue sync sources (docs/architecture/issue-sync.md S1.3) --
+  addIssueSyncSource: (opts: { provider: "linear" | "github"; kind: "linear_project" | "linear_team" | "github_repo"; external_id: string; external_key?: string; name: string; url?: string; project_id?: string; project_name?: string }) => Promise<any>;
+  updateIssueSyncSource: (id: string, fields: { status?: "active" | "paused"; delegate_label?: string; delegate_assignee?: string; auto_spawn?: boolean; push_new_tasks?: boolean }) => void;
+  removeIssueSyncSource: (id: string) => void;
+
+  // -- Agent definitions and chains (settings > Agent library; cast agent) --
+  upsertAgentDefinition: (fields: Partial<AgentDefinitionSpec> & { name: string; description: string; _id?: string }) => Promise<any>;
+  removeAgentDefinition: (id: string) => void;
+  upsertAgentChain: (fields: Partial<AgentChainSpec> & { name: string; description: string; _id?: string }) => Promise<any>;
+  removeAgentChain: (id: string) => void;
+
+  addTaskComment: (shortId: string, text: string, commentType?: string, imageIds?: string[]) => Promise<any>;
+  updateDoc: (id: string, fields: { content?: string; title?: string; doc_type?: string; labels?: string[]; overflow?: string }) => void;
+  pinDoc: (id: string, pinned: boolean) => Promise<any>;
+  archiveDoc: (id: string) => Promise<any>;
+  restoreArchivedDoc: (id: string) => void;
+
+  // -- Cached query data (local-first) --
+  currentUser: any | null;
+  teams: any[];
+  teamMembers: any[];
+  // Huddles (calls.ts). myCalls syncs the ring pipeline's whole world in one
+  // singleton: invites ringing at me, my outbound ring, my room membership.
+  // callOccupancy maps room_key → live roster for chips. Neither persists —
+  // a reload re-derives both from the subscription (a stale ring replayed
+  // from IDB would be a phantom ring).
+  myCalls: { incoming: any[]; outgoing: any[]; membership: any | null };
+  callOccupancy: Record<string, any[]>;
+  callConfig: { enabled: boolean; url?: string } | null;
+  // Every huddle running right now in one of my teams (calls.getLiveRooms) —
+  // what makes an occupied room visible from anywhere: the sidebar's Live now
+  // cluster, /calls' Happening now, the lock state of the room I'm in. Live
+  // occupancy is ephemeral by nature, so like myCalls it never persists: a
+  // reload re-derives it, and a room replayed from IDB would be a ghost.
+  liveRooms: LiveRoom[];
+  // People waiting at MY door (calls.getRoomKnocks) — only ever the room I am
+  // seated in, since a knock is a gesture at one door.
+  roomKnocks: RoomKnock[];
+  // Guests waiting on my links at rooms nobody is in (GuestWaiting).
+  guestsWaiting: GuestWaiting[];
+  // Rooms I have knocked at, key → when. Two jobs: the "knocked" confirmation
+  // on the row I clicked, and the auto-accept in useCallRing — the admit ring
+  // for a door I knocked on must not ask me to answer it.
+  callKnocked: Record<string, number>;
+  callRooms: Record<string, CallRoomFlags>;
+  noteKnock: (roomKey: string) => void;
+  clearKnock: (roomKey: string) => void;
+  setRoomLocked: (roomKey: string, locked: boolean) => void;
+  setTeamFeature: (teamId: string, feature: string, enabled: boolean) => void;
+  setTeamBudget: (teamId: string, capUsd: number) => void;
+  setDefaultModel: (agentClient: string, model: string | null) => void;
+  updateNotificationSettings: (patch: { notifications_enabled?: boolean; notification_preferences?: Record<string, any>; muted_members?: string[]; machine_wide_presence?: boolean }) => void;
+  setAgentPermissionModes: (modes: { claude?: string; codex?: string; gemini?: string; muse?: string }) => void;
+  setAgentDefaultParams: (agent: string, params: Record<string, string>) => void;
+  setPinnedAgents: (agents: string[]) => void;
+  /** Resolves once the server holds the flag: switching transcription back on
+   *  must land before the scribe asks transcripts.start, which refuses a room
+   *  that is still opted out. The switch itself paints synchronously. */
+  setRoomTranscribeOff: (roomKey: string, off: boolean) => Promise<unknown>;
+  /** Start or stop recording the room (callRecordings.startRecording /
+   *  stopRecording). Rejects with the server's reason when refused. */
+  setRoomRecording: (roomKey: string, on: boolean, pressedAt: number, runId?: string) => Promise<unknown>;
+  undoRoomRecordingPress: (roomKey: string, on: boolean) => void;
+  /** The room's answers to a guest at the door (callGuests.admitGuest /
+   *  denyGuest): the knock leaves roomKnocks at once. `name` is the name the
+   *  door showed (a guest who renamed since is asked about again). Rejects
+   *  with the server's reason, and the knock comes back. */
+  admitGuestKnock: (guestId: string, name: string) => Promise<unknown>;
+  denyGuestKnock: (guestId: string, revokeLink?: boolean) => Promise<unknown>;
+  /** Put a guest out (callGuests.removeGuest), optionally closing the link
+   *  they came in on: they leave the live room's guests at once. */
+  removeCallGuest: (roomKey: string, guestId: string, revokeLink?: boolean) => Promise<unknown>;
+  /** Put back a guest a refused removal took off the live room. */
+  restoreCallGuest: (roomKey: string, guest: { identity: string; name: string; joined_at?: number }) => void;
+  /** Delete a whole recording run (the room's file and its screen files),
+   *  named by any one of its files (callRecordings.deleteRecording). The rows
+   *  leave `callRecordings` at once; a refusal puts them back and rejects
+   *  with the server's reason. */
+  deleteCallRecording: (recordingId: string) => Promise<unknown>;
+  /** Drop the exclude tombstones of recording rows a push no longer sends. */
+  settleCallRecordingTombstones: (released: string[], collection?: "callRecordings" | "callFrameShares") => void;
+  /** Take a picture of a call off its public link (callRecordings
+   *  .deleteCallFrameShare): the row leaves on the press. */
+  deleteCallFrameShare: (shareId: string) => Promise<unknown>;
+  /** Whether the call's share link hands out the room's video
+   *  (callRecordings.setCallShareVideo). Rejects with the server's reason,
+   *  and the switch falls back with it. */
+  setCallShareVideo: (transcriptId: string, include: boolean) => Promise<unknown>;
+  /** Whether an agent in a live call shows as a video avatar
+   *  (transcripts.setAgentFace). Rejects with the server's reason, and the
+   *  toggle falls back with it. */
+  setCallAgentFace: (transcriptId: string, target: string, face: boolean) => Promise<unknown>;
+  // Ephemeral media-plane state, written only by lib/calls/callManager. The
+  // dock renders from THIS synchronously (local-first: joining paints
+  // "connecting" before any server or SFU round-trip).
+  call: {
+    phase: "idle" | "ringing_out" | "connecting" | "connected" | "error";
+    roomKey: string | null;
+    muted: boolean;
+    /** The microphone could not be opened for this seat — denied, blocked, or
+     *  no device. A seat like that still HEARS the room; it publishes nothing.
+     *  Implies `muted`, and it is the difference between a person who chose
+     *  silence and one who has no choice, which is the whole of what the strip
+     *  and the dock have to say honestly. */
+    micDenied: boolean;
+    camera: boolean;
+    sharing: boolean;
+    speaking: string[];
+    error: string | null;
+    /** When `error` is a device that could not be opened, the OS permission
+     *  behind it — so the notice can carry the fix (lib/osPermissions). It is
+     *  always a grant this app holds itself; the codecast computer grants have
+     *  no part in a call. */
+    errorFix: AppPermissionKind | null;
+    /** The media is gone and coming back under a seat that never moved:
+     *  LiveKit retrying its own connection, or the call manager joining the
+     *  room again after LiveKit gave up. `phase` stays "connected" through it
+     *  (a drop is not the call ending); this is what the surfaces show. */
+    reconnecting?: boolean;
+    /** The room this window last hung up on, and when. The server's seat and
+     *  rings for it outlive the press by a round trip; the face row reads
+     *  them as gone from here (lib/faces/faceRow `leftRoom`). */
+    left?: { roomKey: string; at: number } | null;
+  };
+  setCallState: (patch: Partial<InboxStoreState["call"]>) => void;
+  teamUnreadCount: number | null;
+  favorites: any[];
+  bookmarks: any[];
+
+  // -- Selectors --
+  getSession: (id: string) => InboxSession | undefined;
+}
+
+const DEFAULT_PAGINATION: PaginationState = {
+  lastTimestamp: null,
+  oldestTimestamp: null,
+  hasMoreAbove: false,
+  hasMoreBelow: false,
+  isLoadingOlder: false,
+  isLoadingNewer: false,
+  jumpMode: null,
+  loadedStartIndex: 0,
+  isSearchingForTarget: false,
+  initialized: false,
+};
+
+function stripImageRef(s: string): string {
+  return s.replace(/\[Image[:\s][^\]]*\]/gi, "").trim();
+}
+
+// The newest message the view would render: the conversation view puts every
+// unconfirmed pending line after the server tail (mergeUnconfirmedMessages in
+// hooks/useConversationMessages), so the last thing on screen is the pending
+// tail when there is one, else the server tail.
+function lastTimelineMessage(draft: Draft, convId: string): Message | undefined {
+  const pending = draft.pendingMessages[convId]?.findLast((m) => !m._isLocalQueue && !m._isFailed);
+  return pending ?? draft.messages[convId]?.at(-1);
+}
+
+export function appendOptimisticMessage(draft: Draft, convId: string, content: string, images?: OptimisticImage[], clientId?: string): string {
+  // A caller-supplied clientId lets a DIFFERENT window (the compose popup) seed
+  // an optimistic bubble in this window that still dedupes against the server
+  // echo of the send the popup already dispatched — the echo's client_id matches
+  // this _clientId. Idempotent on that id so a re-delivered cross-window
+  // broadcast (or a racing server echo) can't double-insert.
+  const id = clientId ?? `optimistic_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  if (clientId && draft.pendingMessages[convId]?.some((m) => m._clientId === clientId)) return id;
+  const msg: Message = {
+    _id: id,
+    role: "user",
+    content,
+    timestamp: Date.now(),
+    _isOptimistic: true,
+    ...(isInterruptControlMessage(content) ? {} : { _clientId: id }),
+    // Snapshot the conversation's current server updated_at so the absence-prune
+    // can later tell "server has processed my send" from "stale pre-send snapshot."
+    _sentBaselineTs: isInterruptControlMessage(content)
+      ? Math.max(draft.sessions[convId]?.updated_at ?? 0, draft.messages[convId]?.at(-1)?.timestamp ?? 0)
+      : draft.sessions[convId]?.updated_at,
+    ...(images && images.length > 0 ? { images } : {}),
+  };
+  if ((draft.sessions[convId]?.message_count ?? 0) === 0 && !draft.pendingMessages[convId]?.length && !isInterruptControlMessage(content)) {
+    holdInNew(draft, convId);
+  }
+  if (!draft.pendingMessages[convId]) draft.pendingMessages[convId] = [];
+  draft.pendingMessages[convId].push(msg);
+  return id;
+}
+// The org slice's reply bubble (orgSlice sayInThread) is this same row; the
+// slice cannot import this module (it is spread into the store below), so it
+// takes the writer here.
+bindOptimisticMessageWriter(appendOptimisticMessage);
+
+// How long a just-started session stays in NEW after its first send before it
+// moves to the section its state names. Long enough to add a thought or fix
+// the prompt without hunting for the row; short enough that NEW never fills.
+export const NEW_SESSION_HOLD_MS = 30_000;
+const HELD_IN_NEW: ReadonlySet<InboxBucket | null> = new Set<InboxBucket | null>(["working", "needs_input", "done", "dormant"]);
+
+function holdInNew(draft: Draft, convId: string) {
+  const until = Date.now() + NEW_SESSION_HOLD_MS;
+  draft.newSessionHolds[convId] = until;
+  setTimeout(releaseExpiredNewSessionHolds, until - Date.now() + 50);
+}
+
+// Drops every expired hold in one write (ids may have been rekeyed since the
+// timer was armed, so it sweeps rather than naming one). Ephemeral UI state.
+export function releaseExpiredNewSessionHolds() {
+  const holds = useInboxStore.getState().newSessionHolds;
+  const now = Date.now();
+  const live = Object.entries(holds).filter(([, until]) => until > now);
+  if (live.length === Object.keys(holds).length) return;
+  useInboxStore.setState({ newSessionHolds: Object.fromEntries(live) });
+}
+
+function messageReplayKey(message: Message): string | null {
+  if (message._isOptimistic || message._isQueued || message._isFailed) return null;
+  if (message.message_uuid) return `uuid:${message.message_uuid}`;
+  return `exact:${JSON.stringify([
+    message.role,
+    message.timestamp,
+    message.content || "",
+    message.thinking || "",
+    message.tool_calls || null,
+    message.tool_results || null,
+    message.images || null,
+    message.subtype || "",
+  ])}`;
+}
+
+// Prune pending sends confirmed by an incoming server batch: a server user row
+// matching by client_id, or by content within the 120s echo window, retires the
+// optimistic bubble. Shared by setMessages (page/snapshot applies) and
+// applyTailMessages (live tail applies). Only reassigns when something was
+// actually pruned — the filter is a remove-only pass, so equal length means
+// identical contents, and keeping the old reference avoids churning
+// pendingMessages identity on every streaming tick (defeats SessionCard memo).
+function prunePendingEchoes(draft: any, convId: string, incoming: Message[]) {
+  const pending = draft.pendingMessages[convId] || [];
+  if (pending.length === 0) return;
+  const kept = pending.filter((m: Message) => m._isLocalQueue || !pendingSendEchoed(m, incoming));
+  if (kept.length !== pending.length) {
+    draft.pendingMessages[convId] = kept;
+  }
+}
+
+/** Whether the server's copy of a row differs from the local one in what a
+ *  transcript draws from it. */
+function serverRowChanged(local: Message, server: Message): boolean {
+  return local.content !== server.content
+    || local.thinking !== server.thinking
+    || local.subtype !== server.subtype
+    || JSON.stringify(local.tool_calls ?? null) !== JSON.stringify(server.tool_calls ?? null)
+    || JSON.stringify(local.tool_results ?? null) !== JSON.stringify(server.tool_results ?? null)
+    || JSON.stringify(local.images ?? null) !== JSON.stringify(server.images ?? null);
+}
+
+function dedupeReplayedMessages(messages: Message[]): Message[] {
+  const out: Message[] = [];
+  const seen = new Set<string>();
+  for (const message of messages) {
+    const key = messageReplayKey(message);
+    if (key && seen.has(key)) continue;
+    if (key) seen.add(key);
+    out.push(message);
+  }
+  return out;
+}
+
+// Max conversations to keep messages for in the in-memory store. Generous on
+// purpose — instant switching across a lot of recent conversations is the point —
+// but bounded, because the store never prunes and message bodies carry inline
+// images. Evicted conversations stay in IDB and reload instantly.
+export const MAX_IN_MEMORY_CONVERSATIONS = 400;
+
+// Values read inside a draft are draft proxies: rows a merged array carried
+// over from the store, and the pagination object itself when a merge passes
+// it through. mutative revokes them when the draft ends, so the deferred cache
+// write threw when it serialized them. The throw was swallowed, and streamed
+// rows never reached the disk cache on either platform.
+function plain<T>(value: T): T {
+  return isDraft(value) ? (current(value as object) as T) : value;
+}
+function plainMessages(messages: Message[]): Message[] {
+  return messages.some(isDraft) ? messages.map(plain) : messages;
+}
+
+export function evictInactiveMessages(draft: any, activeConvId: string) {
+  const loaded = Object.keys(draft.messages);
+  if (loaded.length <= MAX_IN_MEMORY_CONVERSATIONS) return;
+
+  const currentConvId = draft.currentConversation?.conversationId;
+  // Never evict whatever is actually on screen...
+  const keep = new Set([activeConvId, currentConvId, draft.currentSessionId, draft.sidePanelSessionId, draft.viewingDismissedId].filter(Boolean));
+
+  // ...nor the rows on screen (the warm loop's published set), so switching to
+  // anything the user can see is instant. Before the first warm pass the live
+  // inbox set stands in for it.
+  //
+  // We deliberately do NOT protect every id in draft.sessions. That map never
+  // prunes (a session you've opened stays forever), so keeping messages for all
+  // of them defeated this LRU entirely: every conversation ever opened was pinned
+  // in memory, letting the store balloon to multiple GB over a few days of use.
+  // Nor the whole live inbox set once the on-screen set exists: the live window
+  // outgrew the cap (~870 rows vs 400), so protecting it left zero slack — every
+  // row OUTSIDE it (exactly what the flat "All" view and the show-old fold add)
+  // was evicted the moment the next one loaded, and the All view could never
+  // hold a warm tail. The cap above is the real bound; anything past it reloads
+  // from IDB on click.
+  const shown: Set<string> | undefined = draft.warmProtectedIds?.size ? draft.warmProtectedIds : draft.liveInboxIds;
+  if (shown) for (const id of shown) keep.add(id);
+
+  // Evict least-recently-viewed first
+  // Never evict conversations with pending messages — the user just sent something
+  // and evicting would make it vanish from the UI
+  const viewedAt = draft._lastViewedAt || {};
+  const candidates = loaded
+    .filter((id: string) => !keep.has(id) && !(draft.pendingMessages[id]?.length > 0))
+    .sort((a: string, b: string) => (viewedAt[a] ?? 0) - (viewedAt[b] ?? 0));
+
+  const toEvict = candidates.slice(0, loaded.length - MAX_IN_MEMORY_CONVERSATIONS);
+  for (const id of toEvict) {
+    delete draft.messages[id];
+    // NEVER evict pendingMessages — these are the user's outbound messages
+    // and must survive until confirmed by the server
+    delete draft.pagination[id];
+    delete draft.userMessages[id];
+  }
+}
+
+// Record that the user switched INTO session `id`. The single source of truth
+// for "last viewed", called from EVERY navigation primitive so a visit is
+// recorded no matter how a session was opened (inbox click, deep-link, ?s=,
+// popstate, Tab palette, dedicated session window, desktop window-focus). Must
+// run while `prevId` still holds the session being left (i.e. before the caller
+// reassigns currentSessionId/sidePanelSessionId).
+//
+//   - _lastViewedAt[id] -> now: entered-at, drives MRU order. Only ever bumped
+//     here, so the session you just opened is always strictly the most recent.
+//   - _seenUpToAt[prevId] -> now: leaving the previous session means you've now
+//     seen everything in it; advancing here (and NOT for `id`) is what keeps the
+//     "New" divider for `id` frozen at where you left off last time.
+function recordSessionView(draft: any, id: string, prevId?: string | null) {
+  if (!id) return;
+  const now = Date.now();
+  if (prevId && prevId !== id) {
+    draft._seenUpToAt[prevId] = now;
+    // Snapshot what you'd seen by the time you left, so a branch chip's unread
+    // badge counts only what arrived afterward. Prefer the freshest count we
+    // hold for prevId; if we have none, leave any prior cursor untouched.
+    const seenCount = draft.conversations[prevId]?.message_count
+      ?? draft.sessions[prevId]?.message_count;
+    if (typeof seenCount === "number") draft._seenMessageCount[prevId] = seenCount;
+  }
+  draft._lastViewedAt[id] = now;
+  // Unified recents (header dropdown + palette). Title snapshot is only a
+  // fallback for sessions that later leave the store — display resolves live.
+  const title = draft.sessions[id]?.title ?? draft.conversations[id]?.title;
+  recordVisitInDraft(draft, { kind: "session", key: id, label: title || undefined });
+}
+
+// One ordered list behind every "recently visited" surface: the header
+// dropdown, the command palette's top group. Entries hold ids + a label
+// snapshot; display text resolves live at render (lib/recentVisits).
+//   kind "session" — key is the conversation id
+//   kind "view"    — key "label:<bucketId>" or "project:<name>" (chip filters)
+//   kind "page"    — key "page:<path>" (in-shell tab navigation)
+export type RecentVisit = {
+  kind: "session" | "view" | "page";
+  key: string;
+  ts: number;
+  label?: string;
+  path?: string;
+};
+
+const RECENT_VISITS_CAP = 30;
+
+function recordVisitInDraft(draft: any, visit: Omit<RecentVisit, "ts">) {
+  // History traversal re-applies view filters through the same setters that
+  // record visits — replaying the past must not rewrite the recents order.
+  if (isApplyingViewHistory()) return;
+  const list: RecentVisit[] = draft.recentVisits ?? [];
+  // A page is one place whatever its query says (a search's terms, a
+  // canonicalized deep link): the newest spelling replaces the older.
+  const pageOf = (v: Omit<RecentVisit, "ts">) => (v.kind === "page" ? (v.path ?? v.key.slice(5)).split(/[?#]/)[0] : null);
+  const page = pageOf(visit);
+  const next = list.filter((v) => v.key !== visit.key && (page === null || pageOf(v) !== page));
+  next.unshift({ ...visit, ts: Date.now() });
+  if (next.length > RECENT_VISITS_CAP) next.length = RECENT_VISITS_CAP;
+  draft.recentVisits = next;
+}
+
+// The store's current view settings as a history snapshot (lib/inboxViewHistory).
+function snapshotInboxViewFromDraft(draft: any): InboxViewSnapshot {
+  const ui = draft.clientState?.ui ?? {};
+  // Extras copy to plain objects: the snapshot lands in history.pushState,
+  // which structured-clones — never hand it live draft proxies.
+  const extras: BucketFilterTerm[] = (draft.extraBucketFilters ?? []).map((t: BucketFilterTerm) => ({ id: t.id, exclude: !!t.exclude }));
+  const projectExtras: ProjectFilterTerm[] = (draft.extraProjectFilters ?? []).map((t: ProjectFilterTerm) => ({ id: t.id, path: t.path ?? null, exclude: !!t.exclude }));
+  return {
+    bucket: draft.activeBucketFilter ?? null,
+    project: draft.activeProjectFilter ?? null,
+    projectPath: draft.activeProjectPath ?? null,
+    exclude: !!draft.chipFilterExclude,
+    ...(extras.length ? { extras } : {}),
+    ...(projectExtras.length ? { projectExtras } : {}),
+    mode: ui.inbox_view_mode ?? (ui.inbox_flat_view ? "time" : "grouped"),
+  };
+}
+
+// Index of the timeline row the Slack-style "New" divider sits above, or -1 for
+// none. The unread band is the half-open interval (seenUpToAt, enteredAt]:
+//   - lower bound `seenUpToAt`  — when you last LEFT this session (frozen for
+//     the visit), so the line holds its place while you read.
+//   - upper bound `enteredAt`   — when you last FOCUSED this session (re-stamped
+//     on every entry, incl. window-focus). Anything newer than this arrived
+//     while you were here watching — your own sends, live agent replies — and
+//     must NOT get a "New" line. Without this bound the first live message after
+//     a caught-up entry wrongly anchored the divider.
+// A message you sent yourself (from the terminal, another device, or a send
+// delivered after you left) is never news, and proves you had read everything
+// before it, so the lower bound moves up to your latest own message.
+// timeline is ascending by timestamp, so the first row past that bound is the
+// earliest unseen; we only honor it when it predates `enteredAt`.
+export function computeNewDividerIndex<T extends { timestamp: number }>(
+  timeline: readonly T[],
+  seenUpToAt: number,
+  enteredAt: number,
+  isOwn?: (item: T) => boolean,
+): number {
+  if (!seenUpToAt) return -1;
+  let anchor = seenUpToAt;
+  if (isOwn) {
+    for (let i = timeline.length - 1; i >= 0 && timeline[i].timestamp > anchor; i--) {
+      if (isOwn(timeline[i])) { anchor = timeline[i].timestamp; break; }
+    }
+  }
+  const idx = timeline.findIndex((it) => it.timestamp > anchor);
+  if (idx === -1) return -1;
+  if (enteredAt && timeline[idx].timestamp > enteredAt) return -1;
+  return idx;
+}
+
+// -- Sync infrastructure --
+
+export type MergePolicy = "replace" | "local_wins" | "set_union" | "deep_merge";
+type MergeFn = (local: any, server: any, initialized: boolean) => any;
+export interface MergeSpecMap { [key: string]: MergePolicy | MergeSpecMap | MergeFn }
+export type MergeSpec = MergePolicy | MergeSpecMap | MergeFn;
+
+export type SyncOpts = {
+  kind?: "collection" | "singleton" | "list" | "scalar";
+  // A local-first list's row identity (default `_id`): see RegistrySyncOpts.
+  rowKey?: string;
+  merge?: Record<string, MergeSpec>;
+  altKey?: string;
+  keepSelected?: string;
+  transform?: (draft: any, result: any, incoming: any, initialized: boolean, prev?: any) => void;
+  extra?: Record<string, any>;
+  // When true, `incoming` is treated as a partial set of changed records:
+  // missing rows in `prev` are preserved instead of being dropped. Used for
+  // delta-cursor queries (e.g. tasks.webList with `since`). Soft-deletes
+  // arrive as updated rows; hard deletes are NOT supported in delta mode.
+  isDelta?: boolean;
+  // Perf escape hatch for applySyncTable's identity reuse: by default it compares
+  // ALL scalar fields, so any per-push-churning scalar would re-render the row
+  // every push. List such a field here to exclude it from the version key. Safe
+  // to omit — a mistake here only costs an extra render, never a dropped update.
+  ignoreFields?: string[];
+  // Non-scalar fields the identity reuse compares by content (a server-joined
+  // object that changes with no scalar on the row: projects.task_counts).
+  deepFields?: readonly string[];
+  // Fields owned by a separate overlay channel (syncOverlay), not the base
+  // payload. On a base sync these keep their previous (overlay-set) value rather
+  // than being clobbered by the base's null — so the base list and the liveness
+  // overlay can write the same rows without fighting. See sessions + syncOverlay.
+  preserveFields?: readonly string[];
+  // Fields REMOVED from every incoming row before the merge, whatever channel
+  // delivered it — the single-writer enforcement for fields that must never
+  // land on a row (the sessions projection stamps, sync-convergence C1). The
+  // overlay applier splits them into the stamp buffer instead.
+  stripFields?: readonly string[];
+  // Delta mode normally treats absence as "unchanged", so hard deletes never
+  // propagate. When the payload is the COMPLETE server set for some scope (a
+  // full reconcile crawl of one workspace), pass a predicate for that scope:
+  // in-scope records absent from the payload are removed via an exclude-pending
+  // entry (the deletion contract the IDB diff honors). Per-call only — not for
+  // SYNC_REGISTRY, since scope depends on what was crawled.
+  pruneAbsentScope?: (record: any) => boolean;
+  // Applied to `incoming` before the list/singleton equality bail. Use it to
+  // quantize volatile fields (presence timestamps, streaming counters) whose
+  // per-push value changes defeat the JSON compare even though nothing the UI
+  // shows has changed — teamMembers re-pushed ~every 2s on teammates' heartbeat
+  // and message-count ticks, waking every subscriber of the roster ref.
+  // The second argument is the store draft, for entries that reconcile local
+  // pending state against the payload (teamMembers' status overlay) — running
+  // BEFORE the equality bail, unlike transform, so a protected no-op push
+  // still bails instead of waking every subscriber.
+  normalize?: (incoming: any, draft?: any) => any;
+};
+
+// Per-key last-writer-wins for a flat preference bag whose writes carry a
+// sibling "<key>:ts" timestamp (see updateClientDismissed). The newer side
+// wins each key, so a preference toggled on one device genuinely reaches the
+// others — blanket local_wins made the bag fork per device forever (the
+// "Open links in desktop app" toggle showing ON while the server, and every
+// other client, said OFF). Unstamped keys (legacy bags) keep exact local_wins
+// per-key semantics: a local value beats the server echo (no flicker on a
+// just-made write), a key only the server has flows in.
+export function mergeStampedBagLww(local: any, server: any, initialized: boolean): any {
+  if (!initialized || local == null) return server;
+  if (server == null) return local;
+  const out: Record<string, any> = {};
+  const keys = new Set([...Object.keys(server), ...Object.keys(local)]);
+  for (const k of keys) {
+    if (k.endsWith(":ts")) continue;
+    const lts = typeof local[`${k}:ts`] === "number" ? local[`${k}:ts`] : 0;
+    const sts = typeof server[`${k}:ts`] === "number" ? server[`${k}:ts`] : 0;
+    const src = sts > lts ? server : lts > sts ? local : k in local ? local : server;
+    if (src[k] !== undefined) out[k] = src[k];
+    const ts = src === server ? sts : lts;
+    if (ts) out[`${k}:ts`] = ts;
+  }
+  return out;
+}
+
+// Default: a ui write is stamped and last-writer-wins across devices, so a
+// new preference persists without joining a whitelist. The pin bug (ct-51761)
+// was one missed key on that whitelist — the write painted, then an empty
+// list from another client replaced it.
+//
+// Opt out only for prefs that name THIS window or THIS machine. Stamping those
+// would collapse the laptop's sidebar on the ultrawide, or send a headset id
+// to a phone that cannot open it.
+export const PER_DEVICE_UI_KEYS = new Set([
+  "visual_style",
+  "sidebar_collapsed", "zen_mode", "nav_sections", "workspace",
+  "sticky_headers_disabled", "diff_panel_open",
+  "trigger_prompt_height", "thread_state_collapsed", "calls_list_open", "people_view", "float_face_size",
+  "last_picked_device_id", "call_mic_device_id", "call_camera_device_id",
+  "call_speaker_device_id",
+]);
+
+export function isStampedUiKey(key: string): boolean {
+  return !key.endsWith(":ts") && !PER_DEVICE_UI_KEYS.has(key);
+}
+
+/** @deprecated Use isStampedUiKey. New keys stamp by default; this is not a list. */
+export const STAMPED_UI_KEYS = { has: isStampedUiKey };
+
+function applyMerge(local: any, server: any, spec: MergeSpec, initialized: boolean): any {
+  if (typeof spec === "function") return spec(local, server, initialized);
+  if (typeof spec === "string") {
+    switch (spec) {
+      case "replace": return server;
+      case "local_wins":
+        if (!initialized || local == null) return server;
+        if (typeof local === "object" && typeof server === "object"
+            && !Array.isArray(local) && !Array.isArray(server)) {
+          return { ...server, ...local };
+        }
+        return local;
+      case "set_union":
+        return [...new Set([...(server ?? []), ...(local ?? [])])];
+      case "deep_merge":
+        if (local != null && server != null && typeof local === "object" && typeof server === "object"
+            && !Array.isArray(local) && !Array.isArray(server)) {
+          return { ...local, ...server };
+        }
+        return server ?? local;
+      default: return server;
+    }
+  }
+  const result = { ...server };
+  let allSame = local != null && typeof local === "object";
+  for (const [key, fieldSpec] of Object.entries(spec as Record<string, MergeSpec>)) {
+    result[key] = keepLocalIfEqual(local?.[key], applyMerge(local?.[key], server?.[key], fieldSpec, initialized));
+    if (allSame && result[key] !== local[key]) allSame = false;
+  }
+  if (allSame) {
+    // Every merged sub-bag kept its local identity; the remaining (unspec'd)
+    // keys decide whether the whole doc is a no-op push.
+    for (const key of new Set([...Object.keys(result), ...Object.keys(local)])) {
+      if (key in (spec as object)) continue;
+      if (!valueEqual(result[key], local[key])) { allSame = false; break; }
+    }
+    if (allSame) return local;
+  }
+  return result;
+}
+
+// Merge outputs are freshly built objects even when nothing inside them changed
+// (a clientState push touched current_conversation_id, not ui). Handing back
+// the previous reference for a value-equal sub-bag keeps every `s.clientState.ui`
+// subscriber asleep — the inbox panel re-rendered in full on each such push.
+function valueEqual(a: any, b: any): boolean {
+  if (Object.is(a, b)) return true;
+  if (a == null || b == null || typeof a !== "object" || typeof b !== "object") return false;
+  try { return JSON.stringify(a) === JSON.stringify(b); } catch { return false; }
+}
+function keepLocalIfEqual<T>(local: T, merged: T): T {
+  return local != null && merged !== local && valueEqual(local, merged) ? local : merged;
+}
+
+// Presence-ish timestamps tick every few seconds server-side (daemon heartbeat,
+// teammate activity), but every consumer renders or thresholds them at minute
+// granularity or coarser (isOnline's 5-min window, offlineTierFor's 10-min warn,
+// the profile page's 60s "connected" check). Quantizing them to the minute
+// BEFORE the sync-layer equality bail turns the constant heartbeat re-pushes
+// into value-identical no-ops, so the roster/user refs stay stable and their
+// subscribers stop re-rendering at idle.
+const PRESENCE_QUANTUM_MS = 60_000;
+const PRESENCE_FIELDS = ["daemon_last_seen", "last_heartbeat", "last_seen", "recent_session_updated", "presence_input_at", "viewing_since"];
+// Streaming counters shown only in hover tooltips (a teammate's message count
+// ticks up on every agent turn); step them so the roster ref doesn't churn on
+// each increment.
+const COUNTER_QUANTUM = 16;
+const COUNTER_FIELDS = ["recent_session_messages"];
+function quantizePresence<T>(rec: T): T {
+  if (!rec || typeof rec !== "object") return rec;
+  let out: any = rec;
+  const setQ = (k: string, q: number, v: number) => {
+    if (q !== v) {
+      if (out === rec) out = { ...(rec as any) };
+      out[k] = q;
+    }
+  };
+  for (const k of PRESENCE_FIELDS) {
+    const v = (rec as any)[k];
+    if (typeof v === "number") setQ(k, Math.floor(v / PRESENCE_QUANTUM_MS) * PRESENCE_QUANTUM_MS, v);
+  }
+  for (const k of COUNTER_FIELDS) {
+    const v = (rec as any)[k];
+    if (typeof v === "number") setQ(k, Math.floor(v / COUNTER_QUANTUM) * COUNTER_QUANTUM, v);
+  }
+  return out;
+}
+/** A roster push with its presence fields quantized (quantizePresence per row). */
+export function quantizePresenceList<T>(list: T): T {
+  return (Array.isArray(list) ? list.map(quantizePresence) : list) as T;
+}
+
+// Whether a store key has registered sync opts (store/syncReplication.ts uses
+// this to decide when a replicated value needs a shape-derived kind instead).
+export function hasSyncRegistryEntry(key: string): boolean {
+  return !!SYNC_REGISTRY[key];
+}
+
+// Store-internal sync opts (transforms, merges, normalizers). Each entry is
+// merged OVER the data-only opts registered on the collection itself
+// (clientSyncRegistry `sync`), field by field: an entry here adds or overrides
+// a field, never drops the registry's. A bare `decisionDetails: {}` once
+// replaced its registered isDelta, so each decision a page fed evicted the
+// others and the one on screen stayed "Loading the decision".
+const STORE_SYNC_OPTS: Record<string, SyncOpts> = {
+  sessions: {
+    altKey: "session_id",
+    keepSelected: "currentSessionId",
+    // Liberal cache: the live listInboxSessions window syncs as a DELTA overlay
+    // (like tasks/docs), so a session the server stops returning is NOT pruned
+    // locally — the inbox accumulates across syncs and across cold-open reloads.
+    // Sessions leave only on an explicit gesture: a dismissal (an in-window
+    // update that overlays here, including one made on another device) re-buckets
+    // them, and a kill removes them via an exclude-pending entry. Without this the
+    // snapshot prune mirrored the server's narrow recent-window and evicted older
+    // (especially dismissed) sessions on every sync and every reload.
+    isDelta: true,
+    // Heartbeat-derived FACTS ride the liveness overlay (the one fact writer,
+    // sync-convergence C1); the base channels carry null for them, so preserve
+    // the overlay's value instead of clobbering it between overlay ticks. The
+    // list is DERIVED from the shared INBOX_FACT_FIELDS constant — the server
+    // strip list derives from the same one, and a signature test pins both.
+    preserveFields: SESSIONS_PRESERVE_FIELDS,
+    // The projection stamps never land on a session row from ANY channel; the
+    // overlay applier routes them into sessionsProjection instead.
+    stripFields: SESSIONS_STRIP_FIELDS,
+    transform(draft, table, incoming) {
+      for (const s of incoming as any[]) {
+        if (!draft.conversations[s._id]) draft.conversations[s._id] = { _id: s._id };
+        reconcilePendingSendForSession(
+          draft.pendingMessages,
+          s._id,
+          (table[s._id] as InboxSession | undefined) ?? s,
+          draft.currentSessionId,
+          draft.messages[s._id],
+          draft,
+        );
+      }
+      if (!draft.currentSessionId && !draft.showMySessions &&
+          Object.keys(table).length > 0 && draft.clientStateInitialized &&
+          !hasViewNavigated() && !freshHomeLaunchPending()) {
+        // A URL that names a conversation owns the view (bootLinkTarget).
+        const linked = bootLinkTarget(table);
+        if (linked !== undefined) {
+          if (linked) {
+            declareViewNav("adopt");
+            draft.currentSessionId = linked;
+          }
+          return;
+        }
+        // The fleet board is the home surface: when it's the resolved inbox
+        // home, boot lands on the board (showMySessions) instead of adopting a
+        // conversation — "what is happening" before "where was I". A deep link
+        // or any real navigation still wins (hasViewNavigated above).
+        if (resolveInboxHome(draft.clientState.ui) === "board" || hostedHomeAsked(draft.clientState.ui)) {
+          draft.showMySessions = true;
+          return;
+        }
+        // Prefer this client's OWN last position. The per-user synced pointer
+        // is consulted only by a client that has never had one (fresh
+        // profile): any other client — another device, an agent-driven tab —
+        // can move the synced value, so adopting it on a client with history
+        // is the "jumps to a random session" bug. A client whose own position
+        // is gone from the table falls to the top of the inbox, never to the
+        // synced pointer.
+        const persisted = draft.lastFocusedConversationId
+          ?? draft.clientState.current_conversation_id;
+        const sorted = sortSessions(table as Record<string, InboxSession>);
+        const only = assistantScopeOnly(draft.clientState.ui);
+        declareViewNav("adopt");
+        draft.currentSessionId = (persisted && restorableIn(only, table[persisted] as InboxSession | undefined))
+          ? persisted : (sorted.find((row) => restorableIn(only, row))?._id ?? null);
+      }
+    },
+  },
+  // Liberal cache for the big id-keyed collections, same rule as sessions: every
+  // write is a DELTA overlay. The live window AND the reconcile crawl both only
+  // ADD/UPDATE — neither prunes. A row the server stops returning is never wiped
+  // locally; deletions arrive as deltas (status="dropped" etc.) and are hidden by
+  // read-time filters. This is the systemic guarantee that nothing can snapshot-
+  // gut the cache — the root of the "tasks vanish then stream back" collapses.
+  // altKey "client_key" supersedes an optimistic create-stub: the quick-add
+  // writes a stub keyed by a non-Convex id carrying a minted client_key, and
+  // when the server row syncs back with the same client_key the delta rekeys
+  // the stub onto the real _id and drops the stub (moving its pending tombstone
+  // too). webCreate is idempotent on client_key, so a retry never doubles the
+  // server row either. Replaces the manual stub-adopt path.
+  tasks: {
+    isDelta: true,
+    altKey: "client_key",
+    // The detail joins (history, linked sessions, related docs, source
+    // insight) ride only webGetTaskDetail, live while a task is open; the list
+    // channels (webList, webListPaginated, webGetByIds) never carry them.
+    // Preserve them across list deltas so a fetched task's detail renders
+    // instantly from cache on the next open instead of reloading async.
+    // Comments are the exception: every list channel carries them (one row
+    // builder, tasks.ts enrichTasks), so they stay list-authoritative like
+    // creator, assignee_info and plan. They stay preserved so a row without
+    // them (an older server's list, the create stub's rekey) keeps the cached
+    // thread.
+    preserveFields: ["comments", "history", "linked_conversations", "related_docs", "source_insight", "graph_missing", "graph_status"],
+  },
+  // The decision queue. NOT delta: listForUser returns the complete visible
+  // window (pending + 24h of resolved) on every push, so absence means the
+  // row aged out — delta mode would pin cleared decisions in the queue
+  // forever. localFirst pending-protection covers the answer flip until the
+  // server echo confirms it.
+  sessionDecisions: {},
+  decisionStacks: {},
+  handledDecisions: {},
+  decisionDetails: {},
+  // NOT delta: savedViews.webList returns the complete visible set on every
+  // push, so absence means removed. Delta mode would treat a deleted or
+  // un-shared view as "unchanged" and leave it on the rail forever.
+  savedViews: { altKey: "client_key" },
+  // NOT delta: modObjects.webList is the complete visible set. altKey retires
+  // an optimistic create stub when the server row with its client_key lands.
+  modObjects: { altKey: "client_key" },
+  // altKey supersede for optimistic create-stubs: the incoming server row with
+  // the same name rekeys the stub away (names are per-user and practically
+  // unique; a rare duplicate-name create just retires the stub onto the older
+  // row while the new server row arrives alongside).
+  buckets: { isDelta: true, altKey: "name" },
+  // Optimistic first-assignments add a local stub row keyed `bucketassign-<convId>`;
+  // altKey rekeys that stub onto the server's real (user, conversation) row when
+  // it syncs — the same supersede machinery session create-stubs ride.
+  bucketAssignments: { isDelta: true, altKey: "conversation_id" },
+  // Teammate comments per conversation. isDelta so syncing one conversation's
+  // thread never prunes another's; altKey "client_id" rekeys an optimistic stub
+  // onto its real server row (the stub carries client_id === its own stub id).
+  comments: { isDelta: true, altKey: "client_id" },
+  // Team chat. Same delta rule as everything above — syncing one channel's page
+  // never prunes another's, and a thread's replies survive a channel sync. See
+  // store/chatSlice.ts for why these collections carry no pending protection.
+  ...CHAT_SYNC_REGISTRY,
+  // Org tree singleton (store/orgSlice.ts): strips generated_at before compare.
+  ...ORG_SYNC_REGISTRY,
+  // capabilityState / capabilityBindings: registered on the collection.
+  // Crosstalk graph: the server stamps generatedAt on every execution, which
+  // would defeat the singleton's equality bail and wake subscribers on every
+  // no-op push. Strip it before the compare.
+  sessionThreads: {
+    kind: "singleton",
+    normalize: (v: any) => (v && typeof v === "object" ? { links: v.links ?? [], nodes: v.nodes ?? [] } : v),
+  },
+  clientState: {
+    kind: "singleton",
+    merge: {
+      // Per-key LWW: stamped keys (the default) take the newer write;
+      // PER_DEVICE_UI_KEYS stay unstamped local_wins so this window's chrome
+      // does not follow the user. Blanket local_wins forked the bag per
+      // device forever — a pref changed on any other device never reached a
+      // client that already held the key.
+      ui: mergeStampedBagLww,
+      layouts: "local_wins",
+      dismissed: mergeStampedBagLww,
+      drafts: "local_wins",
+      tabs: "deep_merge",
+      activeTabId: "deep_merge",
+      tips: {
+        seen: "set_union",
+        dismissed: "set_union",
+        completed: "set_union",
+        level: "local_wins",
+        _inlineSuppressed: "local_wins",
+      },
+    },
+    transform(draft, result, incoming, initialized) {
+      if (!incoming.ui) {
+        const compat = { sidebar_collapsed: incoming.sidebar_collapsed, zen_mode: incoming.zen_mode };
+        result.ui = result.ui ? { ...compat, ...result.ui } : compat;
+      }
+      if (!incoming.layouts && incoming.layout) {
+        result.layouts = { ...(result.layouts || {}), dashboard: incoming.layout };
+      }
+      // Hydrate tabs from server on first sync
+      if (incoming.tabs && Array.isArray(incoming.tabs) && draft.tabs.length === 0) {
+        draft.tabs = healTabPaths(incoming.tabs);
+      }
+      if (incoming.activeTabId && !draft.activeTabId) {
+        draft.activeTabId = incoming.activeTabId;
+      }
+      if (!initialized) {
+        if (incoming.drafts) {
+          for (const [k, v] of Object.entries(incoming.drafts)) {
+            if (v && typeof v === "object" && !draft.drafts[k]) {
+              draft.drafts[k] = v as Record<string, any>;
+            }
+          }
+        }
+        // Deliberately NO position restore here. This branch runs only when a
+        // server sync beats IDB hydration, and the synced per-user pointer is
+        // writable by every client (other devices, agent-driven tabs) — a
+        // boot pull from it teleported the desktop into random sessions
+        // (ct-36620, ct-36951). Restore lives in the hydration block (own
+        // local position first) and the sessions-sync fallback (synced
+        // pointer only for clients with no history); both select, neither
+        // navigates.
+      }
+    },
+  },
+  // localFirst (clientSyncRegistry): a field an action set (status, walkie
+  // pref, cloud sync switches) holds over pushes until the server echoes it.
+  currentUser: { ...REGISTRY_SYNC_OPTS.currentUser, normalize: quantizePresence },
+  // The calls list prunes the window each answer covers (useCallList), which
+  // leaves a tombstone; a call the server lists again (a recording shared
+  // back, a team rejoined) lifts it, the same rule as a chat room.
+  callList: { ...REGISTRY_SYNC_OPTS.callList, transform: liftExcludesForIncoming("callList") },
+  // Server-authoritative call state: wholesale replace (no local edits to
+  // protect — the optimistic layer for calls is the ephemeral `call` slice,
+  // not these rows). Timestamps are bucketed server-side (calls.ts), so
+  // no-change pushes bail on the JSON compare.
+  // One exception: a stub ring the engine put up from the press stands
+  // until the server lists the person (lib/calls/ringStubs).
+  myCalls: { kind: "singleton", merge: { outgoing: (local, server) => carryRingStubs(local, server) } },
+  callOccupancy: { kind: "singleton" },
+  callConfig: { kind: "singleton" },
+  // Live huddles, wholesale-replaced on every push (the server sorts rooms
+  // and rosters and buckets timestamps, so a heartbeat that changed nothing
+  // bails on the JSON compare). Nothing local to protect: the flags a person
+  // flips live in `callRooms`, which useCallSync splits off this feed.
+  liveRooms: { kind: "list" },
+  // teams, teamMembers and bookmarks are localFirst lists (clientSyncRegistry
+  // carries their kind, row identity and altKey): an action's change to a row
+  // or to membership holds over pushes until the server agrees. teamMembers
+  // adds presence quantization on top.
+  teamMembers: { ...REGISTRY_SYNC_OPTS.teamMembers, normalize: quantizePresenceList },
+  teamUnreadCount: { kind: "scalar" },
+  favorites: { kind: "list", normalize: (list: any, state: any) => reconcileFavoritesWithLocks(list ?? [], state) },
+  // Run feeds overlay with different session budgets: a bare node keeps the
+  // session another feed attached (lib/workflowRun carryNodeSessions).
+  workflowRuns: { ...REGISTRY_SYNC_OPTS.workflowRuns, normalize: (rows: any, state: any) => carryNodeSessions(rows, state?.workflowRuns) },
+};
+
+const SYNC_REGISTRY: Record<string, SyncOpts> = Object.fromEntries(
+  [...new Set([...Object.keys(REGISTRY_SYNC_OPTS), ...Object.keys(STORE_SYNC_OPTS)])].map((key) => [
+    key,
+    { ...REGISTRY_SYNC_OPTS[key], ...STORE_SYNC_OPTS[key] } as SyncOpts,
+  ]),
+);
+
+// Rename pending protection entries from oldId → newId so field
+// overrides survive the stub-to-Convex ID transition.
+function rekeyPending(pending: Record<string, any>, oldId: string, newId: string): void {
+  for (const key of Object.keys(pending)) {
+    const entry = pending[key];
+    if (entry.type === "field" && entry.value === oldId &&
+      (key.endsWith(":bucket_id") || key.endsWith(":_postCreateBucketId"))) {
+      pending[key] = { ...entry, value: newId };
+    }
+    const newKey = key.replace(`:${oldId}`, `:${newId}`);
+    if (newKey !== key) {
+      pending[newKey] = pending[key];
+      delete pending[key];
+    }
+  }
+  // A goal's list that holds the stub follows it to the real id.
+  if (oldId !== newId) moveProjectInLocks(pending, oldId, newId);
+}
+
+type SessionLaunchSnapshot = {
+  agent_type?: string;
+  project_path?: string;
+  git_root?: string;
+  model?: string | null;
+  effort?: string | null;
+  stable_mode?: string;
+  stable_exclude?: string[];
+};
+
+function launchSnapshotFromRow(row: any): SessionLaunchSnapshot {
+  return {
+    agent_type: row?.agent_type,
+    project_path: row?.project_path,
+    git_root: row?.git_root,
+    model: row?.model,
+    effort: row?.effort,
+    stable_mode: row?.stable_mode,
+    stable_exclude: Array.isArray(row?.stable_exclude) ? [...row.stable_exclude] : undefined,
+  };
+}
+
+function launchSnapshotsEqual(a: SessionLaunchSnapshot, b: SessionLaunchSnapshot): boolean {
+  return a.agent_type === b.agent_type
+    && a.project_path === b.project_path
+    && a.git_root === b.git_root
+    && a.model === b.model
+    && a.effort === b.effort
+    && a.stable_mode === b.stable_mode
+    && JSON.stringify(a.stable_exclude ?? []) === JSON.stringify(b.stable_exclude ?? []);
+}
+
+function pendingLaunchReconfigure(row: any): Record<string, any> | null {
+  const requested = row?._launchSnapshot as SessionLaunchSnapshot | undefined;
+  if (!requested) return null;
+  const latest = launchSnapshotFromRow(row);
+  if (launchSnapshotsEqual(requested, latest)) return null;
+  const agentType = latest.agent_type || requested.agent_type || "claude_code";
+  const model = modelOptionKey(latest.model ?? undefined, agentType);
+  return {
+    agent_type: agentType,
+    ...(latest.project_path !== undefined ? { project_path: latest.project_path } : {}),
+    ...(latest.git_root !== undefined ? { git_root: latest.git_root } : {}),
+    // Explicit defaults clear a launch pin that was selected when the parked
+    // create was first enqueued and then removed on the still-local stub.
+    model,
+    effort: latest.effort || "default",
+    ...(latest.stable_mode ? { stable_mode: latest.stable_mode } : {}),
+    ...(latest.stable_exclude?.length ? { stable_exclude: latest.stable_exclude } : {}),
+  };
+}
+
+// Coalesce the normal caller continuation with the rekey safety net. The
+// caller sends in a promise microtask after resolveSessionId; the fallback runs
+// on the next task. A short in-memory window prevents a second outbox entry in
+// that healthy path, while a reload intentionally forgets it and safely
+// re-drives by client_id (the server deduplicates that id).
+const recentlyRequestedPendingMessages = new Map<string, number>();
+const PENDING_MESSAGE_REDRIVE_COALESCE_MS = 5_000;
+const resolvedSessionPreparations = new Map<string, Promise<void>>();
+
+function notePendingMessageSendRequested(clientId?: string): void {
+  if (!clientId) return;
+  const now = Date.now();
+  recentlyRequestedPendingMessages.set(clientId, now);
+  if (recentlyRequestedPendingMessages.size <= 500) return;
+  for (const [id, at] of recentlyRequestedPendingMessages) {
+    if (now - at > PENDING_MESSAGE_REDRIVE_COALESCE_MS) {
+      recentlyRequestedPendingMessages.delete(id);
+    }
+  }
+}
+
+// The send args a pending optimistic row stands for, for any path that re-issues
+// its send (rekey redrive, boot redrive, the bubble's Retry). Replays the exact
+// bytes the original send dispatched: the server dedupes this client id by
+// argument fingerprint, so a rebuilt payload (raw content without the
+// mention-expansion context, or the same text without its images) is refused
+// as COMMAND_ID_REUSED. `uploading` means an image has no storage id yet: the
+// detached upload task that owns the row sends it once the upload settles, so
+// no other path may send first — the server keeps the first row per client id,
+// and a send that beats the upload lands the message without its image for good.
+export function pendingRowSendArgs(message: Message): { content: string; imageIds: string[] | undefined; uploading: boolean } {
+  const content = message._dispatchContent || message.content || "";
+  const images = message.images || [];
+  const imageIds = images
+    .map((image: any) => image?.storage_id)
+    .filter((id: unknown): id is string => typeof id === "string");
+  return {
+    content,
+    imageIds: imageIds.length ? imageIds : undefined,
+    uploading: images.some((image: any) => image?.uploading),
+  };
+}
+
+/** How a retry of one pending send came out: `uploading` (an image is still
+ *  on its way, so the upload task owns the send), `unavailable` (the server
+ *  gave no answer, or the conversation could not be created), `resent` (the
+ *  server no longer held the send, so it went out again; also a stub that was
+ *  created and replayed), `restarted` (a hosted conversation with no server
+ *  row started again from its first words), or the server's own word for a
+ *  row it still holds (`pending`, `delivered`, `injected`, `cancelled`). */
+export type PendingRetryStatus = "uploading" | "unavailable" | "resent" | "restarted" | (string & {});
+
+/** The one rule for sending a pending bubble again, shared by the web's
+ *  bubble and the phone's. It replays the row's own send args under the same
+ *  client id (pendingRowSendArgs: a rebuilt payload is refused as
+ *  COMMAND_ID_REUSED), asks the server to retry the row it holds, and sends
+ *  again when the server holds none. A failed bubble reads as on its way from
+ *  the tap, and goes back to failed when the retry could not be made or the
+ *  send was cancelled. A conversation whose create never landed has no server
+ *  row to retry: a hosted one starts again from its first words
+ *  (retryHostedStart), and any other re-creates its stub and replays what
+ *  waits on it (healStrandedStub). Each surface keeps only how it reports the
+ *  status. */
+export async function retryPendingSend(convId: string, clientId: string, fallbackContent: string): Promise<PendingRetryStatus> {
+  const store = useInboxStore.getState();
+  const row = (store.pendingMessages[convId] ?? []).find((m: Message) => m._clientId === clientId || m._id === clientId);
+  const send = row ? pendingRowSendArgs(row) : { content: fallbackContent, imageIds: undefined, uploading: false };
+  if (send.uploading) return "uploading";
+  const wasFailed = !!row?._isFailed;
+  const failAgain = () => { if (wasFailed) useInboxStore.getState().markOptimisticAsFailed(convId, clientId); };
+  if (!isConvexId(convId)) {
+    const stub = store.sessions[convId] ?? store.conversations[convId];
+    if (isHostedAgentType(stub?.agent_type)) {
+      retryHostedStart(convId, clientId, send.content || fallbackContent);
+      return "restarted";
+    }
+    if (wasFailed) store.markOptimisticAsRetrying(convId, clientId);
+    if (await store.healStrandedStub(convId)) return "resent";
+    failAgain();
+    return "unavailable";
+  }
+  if (wasFailed) store.markOptimisticAsRetrying(convId, clientId);
+  let status: string | undefined;
+  try {
+    status = await store.retryPendingMessage(convId, { clientId });
+  } catch (error) {
+    failAgain();
+    throw error;
+  }
+  if (!status) {
+    failAgain();
+    return "unavailable";
+  }
+  if (status === "not_found") {
+    useInboxStore.getState().sendMessage(convId, send.content || fallbackContent, send.imageIds, clientId);
+    return "resent";
+  }
+  if (status === "cancelled") failAgain();
+  return status;
+}
+
+export function redrivePendingMessagesFor(convexId: string, messages?: Message[]): void {
+  const store = useInboxStore.getState();
+  for (const message of messages ?? store.pendingMessages[convexId] ?? []) {
+    if (message._isFailed || message._isSettled || message._isLocalQueue) continue;
+    // The interruption line an Escape paints is display only, never a send:
+    // redriven, it reached the agent as a prompt (a Cursor Cloud agent opened
+    // on "[Request interrupted by user]", 2026-09-29).
+    if (isInterruptControlMessage(message.content)) continue;
+    const clientId = message._clientId || message._id;
+    const requestedAt = recentlyRequestedPendingMessages.get(clientId);
+    if (requestedAt && Date.now() - requestedAt < PENDING_MESSAGE_REDRIVE_COALESCE_MS) continue;
+    const { content, imageIds, uploading } = pendingRowSendArgs(message);
+    if (uploading) continue;
+    if (!content.trim() && !imageIds) continue;
+    store.sendMessage(convexId, content, imageIds, clientId);
+  }
+}
+
+function assignSessionBucketDraft(draft: Draft, conversationId: string, bucketId: string | null, deferred = !isConvexId(conversationId)) {
+  const now = Date.now();
+  if (deferred) {
+    for (const row of [draft.sessions[conversationId], draft.conversations[conversationId]] as any[]) {
+      if (!row) continue;
+      if (bucketId) row._postCreateBucketId = bucketId;
+      else delete row._postCreateBucketId;
+    }
+  }
+  // A create-time focused-bucket marker is only a fallback until the first
+  // authoritative filing. A later explicit move/unfile is newer user intent
+  // and must survive reload; clear the old marker in the same local commit.
+  // Assigning the marker's own bucket keeps it until server echo, preserving
+  // crash-after-enqueue recovery for the automatic filing.
+  const clearSupersededIntent = (row: any) => {
+    if (
+      row?._postCreateBucketId &&
+      row._postCreateBucketId !== bucketId
+    ) {
+      delete row._postCreateBucketId;
+    }
+  };
+  clearSupersededIntent(draft.sessions[conversationId]);
+  clearSupersededIntent(draft.conversations[conversationId]);
+  const existing = (Object.values(draft.bucketAssignments) as BucketAssignmentItem[])
+    .find(a => a.conversation_id === conversationId);
+  const previous = existing
+    ? {
+        rowId: String(existing._id),
+        bucketId: existing.bucket_id ?? null,
+        updatedAt: existing.updated_at,
+      }
+    : null;
+  if (existing) {
+    existing.bucket_id = bucketId ?? undefined;
+    existing.updated_at = now;
+  } else {
+    const stubId = `bucketassign-${conversationId}`;
+    draft.bucketAssignments[stubId] = {
+      _id: stubId,
+      conversation_id: conversationId,
+      bucket_id: bucketId ?? undefined,
+      updated_at: now,
+    };
+  }
+  return {
+    conversationId,
+    bucketId,
+    previous,
+    optimisticRowId: String(existing?._id ?? `bucketassign-${conversationId}`),
+  };
+}
+
+function resumePostCreateBucketIntentFor(
+  convexId: string,
+  explicitBucketId?: string,
+): void {
+  if (!isConvexId(convexId)) return;
+  const store = useInboxStore.getState();
+  const bucketId = store.sessions[convexId]?._postCreateBucketId
+    ?? (store.conversations[convexId] as any)?._postCreateBucketId;
+  if (!bucketId) return;
+  if (!isConvexId(bucketId)) return;
+  // A Promise continuation captured when the session was first summoned can
+  // run after the user has moved it elsewhere (or a later summon superseded
+  // the focused bucket). The persisted marker is the current intent; never let
+  // a stale closure recreate an older filing after that marker changed.
+  if (explicitBucketId && explicitBucketId !== bucketId) return;
+
+  const assignment = (Object.values(store.bucketAssignments) as BucketAssignmentItem[])
+    .find((row) => row.conversation_id === convexId);
+  if (assignment && isConvexId(String(assignment._id))) {
+    // Any authoritative row is newer proof than this create-time marker. It may
+    // match the original bucket, or it may represent a later manual move/unfile
+    // from this or another client. In either case the one-shot intent is spent.
+    store._clearPostCreateBucketIntent(convexId, bucketId);
+    return;
+  }
+  // The assignment action is durable and the server upsert is idempotent. Keep
+  // the marker until an authoritative (Convex-id-keyed) assignment echo lands,
+  // so a crash between this call and its outbox commit merely retries. The
+  // filing replays the create's intent, not a gesture: nothing to undo.
+  withoutUndo(() => store.assignSessionToBucket(convexId, bucketId));
+}
+
+function scheduleResolvedSessionContinuations(
+  convexId: string,
+  launchReconfigure: Record<string, any> | null,
+): void {
+  const prepare = new Promise<void>((resolve) => {
+    setTimeout(() => {
+      void (async () => {
+        // If the user changed launch controls after createSession was durably
+        // parked, its frozen outbox args are stale. Reconfigure the still-blank
+        // real session before releasing any first-message waiter.
+        if (launchReconfigure) {
+          try {
+            await useInboxStore.getState().convCommand(
+              convexId,
+              "reconfigureSession",
+              launchReconfigure,
+            );
+          } catch (error) {
+            if (!isParkedDispatchError(error)) {
+              console.error("[sync] failed to reconcile parked session launch preferences", error);
+            }
+          }
+        }
+
+        // Generic action() edits made while the row still had a stub id were
+        // protected in `pending`, but groupPatchesByTable correctly refused to
+        // send a non-Convex document id. Flush those exact latest values now
+        // through a named durable action (the old raw _dispatch could vanish).
+        const state = useInboxStore.getState();
+        resumePostCreateBucketIntentFor(convexId);
+        const prefix = `conversations:${convexId}:`;
+        const fields: Record<string, any> = {};
+        for (const [key, entry] of Object.entries(state.pending || {})) {
+          if ((entry as any).type !== "field" || !key.startsWith(prefix)) continue;
+          fields[key.slice(prefix.length)] = (entry as any).value;
+        }
+        if (Object.keys(fields).length > 0) {
+          state.flushResolvedSessionFields(convexId, fields);
+        }
+      })().finally(() => {
+        resolve();
+        // A create dispatched while unwired rejects its in-memory Promise
+        // honestly, so a caller may have stopped awaiting before the
+        // by_session_id row arrived. Run the persisted-message fallback one
+        // task AFTER preparation: a healthy awaitConvexId caller resumes in the
+        // intervening microtask, sends normally, and records its clientId.
+        setTimeout(() => {
+          redrivePendingMessagesFor(convexId);
+        }, 0);
+      });
+    }, 0);
+  });
+  resolvedSessionPreparations.set(convexId, prepare);
+  void prepare.then(() => {
+    if (resolvedSessionPreparations.get(convexId) === prepare) {
+      resolvedSessionPreparations.delete(convexId);
+    }
+  });
+}
+
+async function awaitResolvedSessionPreparation(convexId: string): Promise<void> {
+  await resolvedSessionPreparations.get(convexId);
+}
+
+/**
+ * A channel create has just been superseded by its server row. Anything typed
+ * into the channel while the create was in flight was dispatched with the STUB
+ * channel id, and the dispatch handler refuses a stub — a refusal the outbox
+ * reads as success, so it retired the entry and nothing will ever re-drive it.
+ * The message would sit on screen as "pending" forever.
+ *
+ * Same hook, same shape and the same reason as scheduleResolvedSessionContinuations:
+ * a timer, so the continuation observes the rekeyed store and dispatch stays out
+ * of the incoming-data transaction. retryChatSend re-dispatches under the SAME
+ * client id, which chat.sendMessage dedupes on, so a message that did somehow
+ * land cannot double-post.
+ */
+function scheduleResolvedChatChannelSends(channelId: string): void {
+  setTimeout(() => {
+    const state = useInboxStore.getState();
+    const messages = state.chatMessages || {};
+    for (const id in messages) {
+      const row = messages[id];
+      if (!row || row.channel_id !== channelId || isConvexId(row._id)) continue;
+      state.retryChatSend(row._id);
+    }
+    // The read row was written under the stub too, so the server has never been
+    // told this viewer joined and read the channel they just created.
+    const marker = selectChannelReadMarker(state as any, channelId);
+    state.markChannelRead(channelId, marker?._id);
+  }, 0);
+}
+
+// A draft lives in `drafts` and its clientState mirror; a null in the mirror
+// is the tombstone that keeps a merge from bringing it back.
+function dropDraft(draft: Draft, id: string) {
+  delete draft.drafts[id];
+  if (!draft.clientState.drafts) draft.clientState.drafts = {};
+  draft.clientState.drafts[id] = null;
+}
+
+function rekeyId(draft: any, oldId: string, newId: string) {
+  if (oldId === newId) return;
+  // Undo entries recorded on the stub follow it to the server id, as the
+  // engine's own syncTable rekey does (spec undo-history 3.7).
+  rekeyUndoIds(oldId, newId);
+  if (draft.newSessionHolds?.[oldId]) {
+    draft.newSessionHolds[newId] = draft.newSessionHolds[oldId];
+    delete draft.newSessionHolds[oldId];
+  }
+  if (draft.sessions[oldId]) {
+    draft.sessions[newId] = { ...draft.sessions[oldId], _id: newId };
+    delete draft.sessions[oldId];
+  }
+  if (draft.messages[oldId]) {
+    draft.messages[newId] = draft.messages[oldId];
+    delete draft.messages[oldId];
+  }
+  if (draft.pendingMessages[oldId]) {
+    const combined: Message[] = [...(draft.pendingMessages[newId] ?? []), ...draft.pendingMessages[oldId]];
+    const merged = [...new Map(combined.map((message) => [message._clientId || message._id, message])).values()];
+    draft.pendingMessages[newId] = merged;
+    delete draft.pendingMessages[oldId];
+    const queued = merged.filter(message => message._isLocalQueue)
+      .sort((a, b) => (a._queuePosition ?? 0) - (b._queuePosition ?? 0))
+      .map(message => message.content ?? "");
+    if (queued.length) draft.queuedMessages[newId] = queued;
+    delete draft.queuedMessages[oldId];
+  }
+  if (draft.pagination[oldId]) {
+    draft.pagination[newId] = draft.pagination[oldId];
+    delete draft.pagination[oldId];
+  }
+  if (draft.drafts[oldId]) {
+    draft.drafts[newId] = draft.drafts[oldId];
+    delete draft.drafts[oldId];
+  }
+  if (draft.clientState.drafts?.[oldId]) {
+    draft.clientState.drafts[newId] = draft.clientState.drafts[oldId];
+    draft.clientState.drafts[oldId] = null;
+  }
+  if (draft.reviewComments[oldId]) {
+    draft.reviewComments[newId] = draft.reviewComments[oldId];
+    delete draft.reviewComments[oldId];
+  }
+  if (draft.conversations[oldId]) {
+    draft.conversations[newId] = { ...draft.conversations[oldId], _id: newId };
+    delete draft.conversations[oldId];
+  }
+  if (draft.currentSessionId === oldId) {
+    // Same logical conversation under its server-assigned id — not a jump.
+    declareViewNav("rekey");
+    draft.currentSessionId = newId;
+  }
+  // Pure id correction (stub → real), not a position move: bypasses the
+  // foreground gate but only ever rewrites a pointer already at oldId.
+  if (draft.clientState.current_conversation_id === oldId) {
+    draft.clientState.current_conversation_id = newId;
+  }
+  if (draft.lastFocusedConversationId === oldId) {
+    draft.lastFocusedConversationId = newId;
+  }
+  if (draft.currentConversation?.conversationId === oldId) {
+    draft.currentConversation.conversationId = newId;
+  }
+  if (draft.sidePanelSessionId === oldId) {
+    draft.sidePanelSessionId = newId;
+  }
+  // Label filing follows the conversation across the rekey: the assignment row
+  // is what groups the session in the bucketed list, and the altKey supersede
+  // matches on conversation_id — a row left pointing at the dead stub id would
+  // ungroup the session AND orphan as an immortal stub.
+  for (const row of Object.values(draft.bucketAssignments || {}) as BucketAssignmentItem[]) {
+    if (row.conversation_id === oldId) row.conversation_id = newId;
+    if (row.bucket_id === oldId) row.bucket_id = newId;
+  }
+  // A project stub listed under a goal: the list follows the project when its
+  // server row supersedes the stub. The lock on the list moves in rekeyPending,
+  // which owns the pending map syncTable commits.
+  if (draft.initiatives) moveProjectInGoals(draft.initiatives, oldId, newId);
+  if (draft.buckets[oldId]) {
+    for (const row of [...Object.values(draft.sessions), ...Object.values(draft.conversations)] as any[]) {
+      if (row._postCreateBucketId === oldId) row._postCreateBucketId = newId;
+    }
+  }
+  // A tab persists its session as a `?s=<id>` path (and AppTab.sessionId). Left
+  // pointing at the dead stub, the inbox's re-assert effect would chase a session
+  // that no longer exists — the same param/currentSession drift, just born from a
+  // create instead of an in-pane click.
+  for (const t of draft.tabs) {
+    if (t.sessionId === oldId) t.sessionId = newId;
+    if (t.path === `/inbox?s=${oldId}`) t.path = `/inbox?s=${newId}`;
+    else if (t.path === `/conversation/${oldId}`) t.path = `/conversation/${newId}`;
+    // A newly created channel is navigated to by its stub id, because the rail
+    // can select it before the server has answered. The tab path is the app's
+    // real router (TabContent), and TabPane re-stamps window.location from it,
+    // so rewriting it here is what stops the reader sitting on a dead
+    // /chat/chatstub-… while their channel lives beside it under its real id.
+    else if (t.path === `/chat/${oldId}` || t.path.startsWith(`/chat/${oldId}?`)) {
+      t.path = `/chat/${newId}${t.path.slice(`/chat/${oldId}`.length)}`;
+    }
+  }
+  // The parent's branch-map chip for an optimistic fork follows the rekey too.
+  // This matters on the altKey-supersede path (a parked fork create that lands
+  // via the outbox never runs resolveForkSessionId): left keyed by the dead
+  // stub id, the chip can't be pruned against server fork_children and
+  // dead-ends when clicked.
+  if (Array.isArray(draft.optimisticForkChildren)) {
+    for (const f of draft.optimisticForkChildren) {
+      if (f._id === oldId) f._id = newId;
+    }
+  }
+  // Chat rows point at each other by id: messages and reactions name their
+  // channel, replies name their thread root. When a channel stub or a message
+  // stub is superseded by its server row, everything pointing at the dead stub id
+  // has to follow, or the messages typed while the create was in flight orphan
+  // under an id no query will ever return. Same rule as the bucket assignment
+  // above, applied to the three chat collections that carry a reference.
+  if (draft.chatMessages) {
+    for (const id in draft.chatMessages) {
+      const row = draft.chatMessages[id];
+      if (row.channel_id === oldId) row.channel_id = newId;
+      if (row.thread_root_id === oldId) row.thread_root_id = newId;
+    }
+  }
+  if (draft.chatReactions) {
+    for (const id in draft.chatReactions) {
+      if (draft.chatReactions[id].channel_id === oldId) draft.chatReactions[id].channel_id = newId;
+    }
+  }
+  if (draft.chatReads) {
+    for (const id in draft.chatReads) {
+      if (draft.chatReads[id].channel_id === oldId) draft.chatReads[id].channel_id = newId;
+    }
+  }
+}
+
+// Record "where the user is" in two places with one gate:
+//
+// - `lastFocusedConversationId` — THIS client's own memory, persisted locally
+//   (IDB meta), never synced. It is the boot-restore source: each client
+//   returns to its own last position, so no other client can teleport it.
+// - `clientState.current_conversation_id` — the per-user synced pointer, one
+//   value raced by every client (other devices, agent-driven tabs). Consulted
+//   only by clients with no local history (fresh profile), where adopting a
+//   wrong value is harmless.
+//
+// Only a client the user is actually looking at may write either. Restore and
+// navigation funnel through the same actions, so an unfocused client
+// (vite-reloaded background tab, agent/automation-driven tab) would otherwise
+// echo whatever it restored; with N background tabs that outvotes the user's
+// real position after every dev-server reload. Focus is not a perfect "real
+// user" signal — an agent driving a frontmost Chrome window passes it — which
+// is exactly why restore prefers the local field (the desktop app's Electron
+// profile shares nothing with Chrome). The palette popup is its own
+// always-focused window, so it is excluded explicitly — summoning it must not
+// repoint the user's other clients at the pre-warmed blank session. On native
+// (no `document`) the running app is by definition what the user is looking at.
+function recordCurrentConversationPointer(
+  draft: {
+    clientState: { current_conversation_id?: string };
+    lastFocusedConversationId?: string | null;
+  },
+  id: string | undefined,
+) {
+  if (typeof document !== "undefined") {
+    if (typeof document.hasFocus === "function" && !document.hasFocus()) return;
+    if (typeof window !== "undefined" && window.location?.pathname?.startsWith("/palette")) return;
+  }
+  draft.clientState.current_conversation_id = id;
+  draft.lastFocusedConversationId = id ?? null;
+}
+
+// Keep the active inbox tab's stored `?s=` in lockstep with the session it shows.
+// That path is the source of `paramSessionId` in the inbox (QueuePageClient reads
+// it through the per-tab navigation context). In-pane session selection used to
+// write currentSessionId + the browser URL but NEVER the tab path, so the two
+// drifted; the inbox's "re-assert my tab's session" effect then snapped the view
+// back to the stale param on every sessions heartbeat (~4s). Aligning the path
+// here makes that effect a no-op and lets a tab remember an in-pane navigation
+// across a tab switch. Only inbox tabs carry `?s=`; /tasks, /docs, etc. are left
+// untouched.
+function syncActiveInboxTabPath(draft: Draft, id: string | null) {
+  const tabId = draft.activeTabId;
+  if (!tabId) return;
+  const tab = draft.tabs.find((t) => t.id === tabId);
+  if (!tab || tab.path.split("?")[0] !== "/inbox") return;
+  // A null selection (dismissed the last session) clears the param to a bare
+  // /inbox, so the re-assert effect reads no target instead of `?s=null`.
+  const next = id ? `/inbox?s=${id}` : "/inbox";
+  if (tab.path === next) return;
+  // Through withTabPath, like every path write: a raw write here left a split
+  // tab's focused inbox LEAF on the old ?s= while tab.path moved on, and the
+  // pane's re-assert effect then snapped the view back to the stale session —
+  // the very drift this function exists to prevent.
+  draft.tabs = draft.tabs.map((t) => (t.id === tabId ? withTabPath(t, next) : t));
+}
+
+// The single "I am now viewing `id`" commit, shared by every navigation primitive
+// (setCurrentSession / injectSession / navigateToSession). Records the view for
+// the new-divider anchor, moves the current pointer, drops any dismissed-peek,
+// mirrors the per-user pointer, and keeps the active inbox tab's param aligned.
+// Callers still own declareViewNav() — the view-nav source differs per path.
+// Put a session row in the store without moving the view. Never DOWNGRADE a
+// cached row: callers build payloads from narrow projections (deep link,
+// palette, a pane loading a teammate's session), so an existing row is the
+// richer record — keep its values and let the payload only fill gaps. Writing
+// the thin payload over a synced row is how a stashed/pinned session loses its
+// triage stamps and flashes into the inbox as an active card at boot
+// (ct-42666).
+function seedSessionRow(draft: Draft, session: InboxSession): InboxSession {
+  const existing = draft.sessions[session._id];
+  const merged: InboxSession = { ...session };
+  if (existing) {
+    for (const k of Object.keys(existing) as (keyof InboxSession)[]) {
+      if (existing[k] !== undefined) (merged as any)[k] = existing[k];
+    }
+  }
+  draft.sessions[session._id] = merged;
+  return merged;
+}
+
+function commitCurrentSession(draft: Draft, id: string) {
+  recordSessionView(draft, id, draft.currentSessionId);
+  draft.currentSessionId = id;
+  draft.viewingDismissedId = null;
+  recordCurrentConversationPointer(draft, id);
+  syncActiveInboxTabPath(draft, id);
+}
+
+// The view-only peek at a hidden (stashed, dismissed) session, or null to end
+// it. The tab path follows what is shown, as commitCurrentSession's does: a
+// peek the path never named left a split's inbox pane on its old `?s=` (a fork
+// chip's switch to a stashed branch snapped back to the origin, and stopped
+// following the branch, once the pane lost focus).
+function setDismissedView(draft: Draft, id: string | null) {
+  // Peeking at a stashed/dismissed session is viewing it: record it like any
+  // other entry so it reaches recents and Ctrl+Tab. What's being left is the
+  // previous peek, else the current session.
+  if (id && id !== draft.viewingDismissedId) {
+    recordSessionView(draft, id, draft.viewingDismissedId ?? draft.currentSessionId);
+  }
+  draft.viewingDismissedId = id;
+  syncActiveInboxTabPath(draft, id ?? draft.currentSessionId);
+}
+
+// HIDDEN_OVERRIDE_SETTLE_MS lives in ./inboxOverlays (the `triage_gesture`
+// overlay's bound) and is re-exported above.
+
+function clearSessionSnoozeInDraft(draft: Draft, id: string) {
+  for (const row of [draft.sessions[id], draft.conversations[id]]) {
+    if (row?.inbox_snoozed_until) row.inbox_snoozed_until = null;
+  }
+}
+
+function setSessionSnoozeInDraft(draft: Draft, id: string, until: number) {
+  if (!Number.isFinite(until) || until <= 0) throw new Error("Invalid snooze time");
+  const session = draft.sessions[id] ?? draft.conversations[id];
+  if (!session || session.inbox_killed_at || !isConvexId(id)
+    || isForeignSession(session, draft.conversations[id], draft.currentUser?._id?.toString())) return false;
+  for (const row of [draft.sessions[id], draft.conversations[id]]) {
+    if (!row) continue;
+    row.inbox_snoozed_until = until;
+    row.inbox_stashed_at = null;
+    row.inbox_dismissed_at = null;
+    row.inbox_pinned_at = null;
+    if ("is_pinned" in row) row.is_pinned = false;
+  }
+  return true;
+}
+
+// Shared body of stashSession/killSession: hide `id` (and its nested
+// children) out of the active buckets, advancing the current selection past the
+// removed set. Stash writes inbox_stashed_at; dismiss writes inbox_dismissed_at
+// and clears any stash (the row MOVES to Dismissed — the buckets are exclusive).
+//
+// Returns the two resolved id sets so the calling action can announce them on
+// the cross-window gesture bridge (gestureBridge.ts): `hidden` are the rows
+// that got a hide timestamp, `forgotten` the rows deleted outright. Only this
+// function knows the cascade (nested children) and which members turned out to
+// be stubs/foreign, so returning them is the least invasive way to surface it —
+// the action body must NOT return them onward, since an action()'s return value
+// becomes its server dispatch payload.
+//
+// `now` is the gesture's timestamp. Bulk kill passes ONE for the whole sweep so
+// every row it stamps carries the same value its single broadcast does — a
+// per-row Date.now() drifts across a long sweep, and a receiver's field lock
+// holding a value the server never echoes back never retires.
+//
+// The team feed caches are keyed `<teamId>|<directoryFilter>` (TeamFeed in
+// ActivityFeed.tsx), so one team owns every key under its prefix.
+function teamFeedKeys(draft: { feedConversations: Record<string, any[]> }, teamId: string): string[] {
+  const prefix = `${teamId}|`;
+  return Object.keys(draft.feedConversations ?? {}).filter((k) => k.startsWith(prefix));
+}
+
+export type CargoCollection = "sessions" | "tasks" | "docs" | "plans" | "projects";
+export type CargoItem = { coll: CargoCollection; id: string; fields: Record<string, any>; unset: string[] };
+
+// Merge one sync-log cargo patch into a held row. False when the row is not
+// held (the caller refetches through byIds); true when it merged or an exclude
+// blocks it.
+function applyCargoIn(draft: Draft, { coll, id, fields, unset }: CargoItem): boolean {
+  // Only the collection itself: the `conversations` meta twin is fed by the
+  // per-view code with its own field shape (review) and never by the inbox
+  // row shape a cargo patch carries.
+  const collection = (draft as any)[coll] as Record<string, any> | undefined;
+  const existing = collection?.[id];
+  if (!existing) return false;
+  // An exclude (kill/prune) blocks the whole row; the log's own lifecycle
+  // lifts it (clearFeedExcludes) before an authorized upsert, never here.
+  if (draft.pending[`${coll}:${id}`]?.type === "exclude") return true;
+  // The collection's single-writer strip list (the sessions projection
+  // stamps) applies to every channel, this one included (review).
+  const strip = SYNC_REGISTRY[coll]?.stripFields;
+  const stripSet = strip?.length ? new Set(strip) : null;
+  // Partial-patch pending protection: locks for fields the patch omits are
+  // untouched (a local clear is a lock with value undefined — applySyncRecord
+  // would retire it against the omitted key); a named field's lock wins
+  // until its value echoes (review blocker).
+  const { fields: protectedFields, unset: keptUnset, pending } = applySyncPatch(coll, id, fields, unset, draft.pending);
+  draft.pending = pending as any;
+  let changed = false;
+  for (const [k, v] of Object.entries(protectedFields)) {
+    if (stripSet?.has(k)) continue;
+    if (!Object.is(existing[k], v)) { existing[k] = v; changed = true; }
+  }
+  for (const k of keptUnset) {
+    if (stripSet?.has(k)) continue;
+    if (coll === "sessions") { if (existing[k] !== null) { existing[k] = null; changed = true; } }
+    else if (k in existing) { delete existing[k]; changed = true; }
+  }
+  // The convergence compare's quiescence clock must see this apply like any
+  // other row channel's (sync-convergence C6 gate 4).
+  if (changed && SYNC_ACTIVITY_FIELDS.has(coll)) noteSyncApply();
+  return true;
+}
+
+// Forget one team's feed cache: the rows, the paging state, and the covered
+// watermark the absence catch-up stands on, so the next view refills from the
+// server as a cold cache would.
+function dropTeamFeedCacheIn(
+  draft: { feedConversations: Record<string, any[]>; feedHasMore: Record<string, any>; feedCursors: Record<string, any>; syncMeta: Record<string, any> },
+  teamId: string,
+): void {
+  for (const key of teamFeedKeys(draft, teamId)) {
+    delete draft.feedConversations[key];
+    delete draft.feedHasMore[key];
+    delete draft.feedCursors[key];
+    delete draft.syncMeta[feedCoverMetaKey(key)];
+  }
+}
+
+type HideResult = {
+  hidden: string[];
+  forgotten: string[];
+  /** Per hidden id, the bridged fields the gesture wrote and their values. */
+  writes: Record<string, Partial<Record<BridgedField, number | boolean | null>>>;
+  ts: number;
+};
+
+// `stashHidden` is the stash's mode ("Stash and hide": survives trigger wakes).
+// Every stash writes inbox_stash_hidden explicitly — true or null — so a
+// re-stash never inherits the previous gesture's mode; a kill clears it with
+// the stash stamp.
+function hideSessionInDraft(
+  draft: any,
+  id: string,
+  mode: "stash" | "kill",
+  now: number = Date.now(),
+  stashHidden = false,
+): HideResult {
+  const field = mode === "kill" ? "inbox_dismissed_at" : "inbox_stashed_at";
+  const stashHiddenValue = mode === "stash" && stashHidden ? true : null;
+  const sessionValues = Object.values(draft.sessions) as InboxSession[];
+  // The removed set must match what the card visually contains, so the sweep
+  // uses the SAME nesting definition the renderer does (nestParentIdOf): Task
+  // subagents (parent_conversation_id) AND agent-team teammates (spawned_by +
+  // team). Sweeping only parent_conversation_id left a killed lead's teammates
+  // behind as loose top-level needs-input cards — a teammate with an absent
+  // lead deliberately floats first-class, so the categorizer can't hide it;
+  // the cascade is the only place the group can be taken down together.
+  const childIds = sessionValues
+    .filter((s) => s._id !== id && nestParentIdOf(s) === id)
+    .map((s) => s._id);
+  const allIds = [id, ...childIds];
+  // The viewer. A session whose user_id isn't ours was injected into this cache
+  // by viewing/searching a TEAMMATE's session — we can't durably hide it.
+  const me = draft.currentUser?._id?.toString?.();
+  const hidden: string[] = [];
+  const forgotten: string[] = [];
+  const writes: HideResult["writes"] = {};
+  const newSessionId = sessionPastRemoved(draft, allIds);
+  for (const sid of allIds) {
+    // A local-only stub (optimistic create that never landed server-side)
+    // can't be hidden durably: the server never knew it, so the reconcile's
+    // CLEAR pass would un-hide it on every crawl once the pending lock is
+    // lost (it's clobbered wholesale by other windows sharing the IDB).
+    // Hiding it honestly means deleting it — store + IDB (the auto-generated
+    // exclude pending persists the row delete, as with kills).
+    //
+    // A TEAMMATE'S session is the same situation locally: the server's
+    // applyPatches owner-gate (dispatch.ts) DROPS a hide patch on a conversation
+    // we don't own, so its stamps never persist and the row is deleted here
+    // instead (the exclude pending keeps this cache from re-adding it). The
+    // durable half is server-side: the same dispatch (stashSession / killSession
+    // / killSessions by action name) records the viewer's hide in inbox_hides,
+    // and the team scan skips it, so the team board on every device drops the
+    // row on its next push rather than feeding it back. `cast restore` (or the
+    // restoreSession dispatch) deletes that record. Ownership MUST resolve
+    // through isForeignSession: a thin injected row often carries no user_id at
+    // all, and only conversations[sid].is_own knows whose it is.
+    const ownerSess = draft.sessions[sid];
+    const isForeign = !!ownerSess && isForeignSession(ownerSess, draft.conversations[sid], me);
+    if (!isConvexId(sid) || isForeign) {
+      delete draft.sessions[sid];
+      delete draft.conversations[sid];
+      delete draft.messages[sid];
+      forgotten.push(sid);
+      continue;
+    }
+    hidden.push(sid);
+    const sess = draft.sessions[sid];
+    const wasPinned = sess?.is_pinned;
+    // The bridged fields this gesture writes on either twin, with their exact
+    // values: a sibling locks these and nothing else (applyGestureInDraft), so
+    // every lock it holds is one this write's acknowledgement retires.
+    const wrote: Partial<Record<BridgedField, number | boolean | null>> = { [field]: now };
+    if (sess) {
+      sess[field] = now;
+      if (sess.inbox_snoozed_until) sess.inbox_snoozed_until = null;
+      if (mode === "kill" && sess.inbox_stashed_at) { sess.inbox_stashed_at = null; wrote.inbox_stashed_at = null; }
+      if (mode === "stash" || sess.inbox_stash_hidden) { sess.inbox_stash_hidden = stashHiddenValue; wrote.inbox_stash_hidden = stashHiddenValue; }
+      if (wasPinned) {
+        sess.is_pinned = false;
+        sess.inbox_pinned_at = null;
+        wrote.is_pinned = false;
+        wrote.inbox_pinned_at = null;
+      }
+    }
+    const conv = draft.conversations[sid];
+    if (conv) {
+      conv[field] = now;
+      if (conv.inbox_snoozed_until) conv.inbox_snoozed_until = null;
+      if (mode === "kill" && conv.inbox_stashed_at) { conv.inbox_stashed_at = null; wrote.inbox_stashed_at = null; }
+      if (mode === "stash" || conv.inbox_stash_hidden) { conv.inbox_stash_hidden = stashHiddenValue; wrote.inbox_stash_hidden = stashHiddenValue; }
+      if (wasPinned) { conv.inbox_pinned_at = null; wrote.inbox_pinned_at = null; }
+    }
+    // A kill has the server stamp inbox_killed_at again, so a lock still
+    // holding a clear of it (an undone kill's, until its acknowledgement
+    // retires it) now asserts the opposite of this write. It goes here: on a
+    // follower the acknowledgement retires locks only after the page that
+    // carries the new stamp has landed, and the lock would have held it off.
+    if (mode === "kill") {
+      for (const coll of ["sessions", "conversations"]) {
+        const key = `${coll}:${sid}:inbox_killed_at`;
+        const lock = draft.pending[key];
+        if (lock?.type === "field" && lock.value == null) delete draft.pending[key];
+      }
+    }
+    writes[sid] = wrote;
+  }
+  advanceSelection(draft, newSessionId);
+  return { hidden, forgotten, writes, ts: now };
+}
+
+// The session to show once `removedIds` leave the list: the current one if it
+// survives, else the next in the order the user is LOOKING at (active view
+// mode, same as j/k), not the default grouped layout's order.
+function sessionPastRemoved(draft: any, removedIds: string[]): string | null {
+  if (!draft.currentSessionId || !removedIds.includes(draft.currentSessionId)) return draft.currentSessionId;
+  const next = nextSessionPastRemoved(computeVisualOrder(draft), draft.currentSessionId, new Set(removedIds));
+  return next?._id ?? null;
+}
+
+// Move the selection after a user removed rows (stash, kill, dismiss, delete):
+// gesture-class navigation. The active inbox tab's `?s=` moves in lockstep, as
+// commitCurrentSession does for normal navigation; otherwise the tab path stays
+// on the removed session and the inbox's re-assert effect snaps the view back
+// onto it the next time it runs (e.g. when the tab is re-activated).
+function advanceSelection(draft: any, newSessionId: string | null) {
+  declareViewNav("gesture");
+  draft.currentSessionId = newSessionId;
+  recordCurrentConversationPointer(draft, newSessionId ?? undefined);
+  syncActiveInboxTabPath(draft, newSessionId);
+}
+
+// The focused session fell out of the list the panel renders — a filter changed
+// under it, so nothing was hidden, the view simply stopped containing it. The
+// highlight cannot stay on a row that isn't there, so it lands on the top of the
+// new order: the row Ctrl+J would walk to first. An emptied order clears the
+// pointer the same way a dismiss-and-advance with nothing left to advance to
+// does. WHICH pointer is the rail's own three-way answer (sessionFocusKind) —
+// the working pages highlight currentSessionId like the inbox, so treating them
+// as "not the inbox" wrote the dead sidePanelSessionId and left the highlighted
+// row stranded outside the list.
+function evictFocusOutsideOrderInDraft(draft: Draft, focusKind: SessionFocusKind) {
+  const usesPanel = focusKind === "panel";
+  const focusedId = usesPanel ? draft.sidePanelSessionId : (draft.viewingDismissedId ?? draft.currentSessionId);
+  if (!focusedId) return;
+  const ordered = computeVisualOrder(draft);
+  if (ordered.some((s) => s._id === focusedId)) return;
+  const top = ordered[0]?._id ?? null;
+  if (usesPanel) {
+    draft.sidePanelSessionId = top;
+    return;
+  }
+  declareViewNav("gesture");
+  if (top) {
+    commitCurrentSession(draft, top);
+    return;
+  }
+  draft.currentSessionId = null;
+  draft.viewingDismissedId = null;
+  recordCurrentConversationPointer(draft, undefined);
+  syncActiveInboxTabPath(draft, null);
+}
+
+// The surface on screen, as the store can see it: the active tab's path is what
+// usePathname() reports inside the shell; outside tab routing (a detached
+// window) it is the real location. Lets the chip setters evict focus without
+// every caller threading a pathname through.
+export function mountedPathname(draft: { activeTabId: string | null; tabs: Pick<AppTab, "id" | "path">[] }): string | undefined {
+  const tab = draft.activeTabId ? draft.tabs.find((t) => t.id === draft.activeTabId) : undefined;
+  // Tab paths keep their query (/inbox?s=…); the surface helpers want the bare
+  // pathname, as usePathname reports it.
+  if (tab) return tab.path.split("?")[0];
+  // React Native defines `window` but not `window.location` (same trap as
+  // stampedTabPath): a bare typeof check passes and the property read throws,
+  // which took down the mobile inbox on every label/project chip tap.
+  return typeof window !== "undefined" ? window.location?.pathname : undefined;
+}
+
+// One chip filter changed: record it for Back, and if the focused session just
+// left the rendered list, move focus the same way a layout switch does — the
+// two are the same gesture at different sizes, so they must not disagree.
+function commitChipFilterChange(draft: Draft, prev: InboxViewSnapshot) {
+  const next = snapshotInboxViewFromDraft(draft);
+  if (sameInboxView(prev, next)) return;
+  pushInboxViewHistory(prev, next);
+  evictFocusOutsideOrderInDraft(draft, sessionFocusKind(mountedPathname(draft), draft.currentConversation?.source));
+}
+
+// Replace the label filter's head chip — the body behind setActiveBucketFilter,
+// shared with toggleBucketFilterTerm's first-term branch (an action can't call
+// a sibling action synchronously, so both route through this draft helper).
+function setBucketFilterHeadInDraft(draft: Draft, bucketId: string | null, exclude?: boolean, extras?: BucketFilterTerm[]) {
+  const prev = snapshotInboxViewFromDraft(draft);
+  draft.activeBucketFilter = bucketId;
+  // A plain/alt click REPLACES the whole filter: shift-added terms drop. The
+  // extras param exists for history restore, which re-applies a full list.
+  draft.extraBucketFilters = bucketId && extras ? extras : [];
+  // Mirror of setActiveProjectFilter: don't clobber a project exclusion.
+  draft.chipFilterExclude = bucketId ? !!exclude : draft.activeProjectFilter ? draft.chipFilterExclude : false;
+  if (bucketId) {
+    draft.activeProjectFilter = null;
+    draft.activeProjectPath = null;
+    draft.extraProjectFilters = [];
+    if (!exclude) recordVisitInDraft(draft, { kind: "view", key: `label:${bucketId}`, label: (draft.buckets as any)[bucketId]?.name });
+  }
+  commitChipFilterChange(draft, prev);
+}
+
+// Replace the project filter's head chip — the body behind
+// setActiveProjectFilter, shared with toggleProjectFilterTerm's first-term
+// branch (same reason as setBucketFilterHeadInDraft).
+function setProjectFilterHeadInDraft(draft: Draft, name: string | null, path?: string | null, exclude?: boolean, extras?: ProjectFilterTerm[]) {
+  const prev = snapshotInboxViewFromDraft(draft);
+  draft.activeProjectFilter = name;
+  draft.activeProjectPath = path ?? null;
+  // A plain/alt click REPLACES the whole filter: shift-added terms drop. The
+  // extras param exists for history restore, which re-applies a full list.
+  draft.extraProjectFilters = name && extras ? extras : [];
+  // The exclude flag belongs to whichever chip is active. Clearing THIS axis
+  // only resets it when the other axis isn't holding a filter — otherwise a
+  // stray setActiveProjectFilter(null) would flip a bucket EXCLUSION into a
+  // bucket include ("hide L" → "only L") without a click.
+  draft.chipFilterExclude = name ? !!exclude : draft.activeBucketFilter ? draft.chipFilterExclude : false;
+  // The chip row is ONE filter: picking a project clears any bucket focus,
+  // shift-added label terms included.
+  if (name) {
+    draft.activeBucketFilter = null;
+    draft.extraBucketFilters = [];
+    // An exclusion isn't a "view" you revisit — only include mode records.
+    if (!exclude) recordVisitInDraft(draft, { kind: "view", key: `project:${name}`, label: name, path: path ?? undefined });
+  }
+  commitChipFilterChange(draft, prev);
+}
+
+// The signed-in user, as the gesture bridge stamps it on outbound messages and
+// matches it on inbound ones. The undo binding (mutativeMiddleware afterReplay)
+// stamps it on the reverted values it broadcasts (an un-announced undo leaves a
+// sibling holding the pre-undo row — see gestureBridge.ts).
+export function bridgeUserId(state: any): string | null {
+  return myUserId(state);
+}
+
+/** The signed-in user's id as a string, or null while signed out: the one
+ *  way a surface asks "is this me?". A scalar, so a component subscribed
+ *  through useMyUserId re-renders only when the person changes. */
+export function myUserId(state: any): string | null {
+  return state.currentUser?._id?.toString?.() ?? null;
+}
+
+export const useMyUserId = (): string | null => useInboxStore(myUserId);
+
+// The bridged subset of a generic field patch, or null if it touches none of
+// them. Values pass through verbatim so the receiver's planted locks hold
+// exactly what the sender dispatched (see applyGestureInDraft's `write`).
+function pickBridgedFields(
+  fields: Record<string, any>,
+): Partial<Record<BridgedField, number | boolean | null>> | null {
+  let out: Partial<Record<BridgedField, number | boolean | null>> | null = null;
+  for (const field of BRIDGED_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(fields, field)) continue;
+    const value = fields[field];
+    if (value !== null && typeof value !== "number" && typeof value !== "boolean") continue;
+    out ??= {};
+    out[field] = value;
+  }
+  return out;
+}
+
+// Sender half for the hide gestures. Called from inside the action body (the
+// mutative recipe), alongside soundDismiss/soundKill — the local mutation is
+// already fully computed on the draft at this point and lands synchronously
+// when the middleware commits it, so a sibling can never observe the broadcast
+// "before" this window's own state change.
+// Stamp the sync-log positions a dispatch landed at onto the pending entries
+// that dispatch created. Keys derive from the dispatched (table-grouped)
+// patches through the registry's table→storeKey mapping — the same rows the
+// engine's auto-pending derived its entries from. Guard: only entries whose
+// `ts` predates the dispatch send get the ack; a newer local write replaced
+// the entry object (auto-pending makes fresh objects), so an older write's
+// ack can never retire it. If the scope cursor already passed the position,
+// retire immediately (the ack raced the applier). Returns whether the ack was
+// well-formed (the caller announces it to sibling windows only then).
+// Enriched twins a triage gesture writes beside the raw field it dispatches
+// (hideSessionInDraft, pinSession): the twin's lock belongs to the same
+// transition and retires with the raw field's acknowledgement — it is never a
+// dispatched field itself, and a row that leaves the live window (a kill)
+// never echoes it.
+const ACK_DERIVED_TWINS: Record<string, string> = CONVERSATION_FIELD_TWINS;
+
+// A field lock retired by its acknowledgement. Rows that reached the window
+// while the lock still held were hidden under it (the lock's `seen`, newest
+// last), and nothing delivers them again: a follower takes the page's rows
+// before the host's cursor, and an ack can arrive after the cursor passed it.
+// So the row takes the newest value the lock hid, unless the field moved on
+// from the lock's own value. The host's log applier retires before it applies
+// a range and passes `restore: false`: that range's rows land unblocked.
+//
+// The lock's time is remembered per field (retiredAckTs): the same write can
+// still reach this window late, as a sibling's replicated mut that waited in
+// the channel, and it must not put its value back over what the server has
+// delivered since, under a lock no acknowledgement covers any more.
+const RETIRED_ACK_LIMIT = 2000;
+const retiredAckTs = new Map<string, number>();
+function noteRetiredAck(key: string, ts: unknown): void {
+  if (typeof ts !== "number") return;
+  if (ts <= (retiredAckTs.get(key) ?? -Infinity)) return;
+  retiredAckTs.delete(key);
+  retiredAckTs.set(key, ts);
+  while (retiredAckTs.size > RETIRED_ACK_LIMIT) retiredAckTs.delete(retiredAckTs.keys().next().value!);
+}
+
+function retireAckedLockInDraft(draft: any, key: string, restore = true): void {
+  const entry = draft.pending[key] as any;
+  delete draft.pending[key];
+  noteRetiredAck(key, entry?.ts);
+  if (!restore || entry?.type !== "field" || !entry.seen?.length) return;
+  const newest = entry.seen[entry.seen.length - 1];
+  if (sameShape(newest, entry.value)) return;
+  const fieldAt = key.lastIndexOf(":");
+  const storeAt = key.indexOf(":");
+  if (storeAt < 0 || fieldAt <= storeAt) return;
+  const row = draft[key.slice(0, storeAt)]?.[key.slice(storeAt + 1, fieldAt)];
+  const field = key.slice(fieldAt + 1);
+  if (!row || typeof row !== "object" || !sameShape(row[field], entry.value)) return;
+  if (newest === undefined) delete row[field];
+  else row[field] = newest;
+}
+
+function stampSyncAckInDraft(
+  draft: any,
+  patches: any,
+  ack: Array<{ scope_key: string; position: number }>,
+  sentAt: number,
+): boolean {
+  if (!patches || typeof patches !== "object" || !Array.isArray(ack) || ack.length === 0) return false;
+  const compact = ack.map((a) => ({ s: a.scope_key, p: a.position }));
+  const stamp = (key: string) => {
+    const entry = draft.pending[key] as any;
+    if (!entry) return;
+    if (compact.some((a) => (draft.syncMeta[syncLogScopeMetaKey(a.s)]?.cursor ?? 0) >= a.p)) {
+      retireAckedLockInDraft(draft, key);
+    } else {
+      entry.ack = compact;
+    }
+  };
+  for (const [table, byId] of Object.entries(patches)) {
+    const storeKeys = TABLE_TO_STORE_KEYS[table];
+    if (!storeKeys || !byId || typeof byId !== "object") continue;
+    for (const [docId, fields] of Object.entries(byId as Record<string, any>)) {
+      if (docId === "_" || !fields || typeof fields !== "object") continue;
+      for (const storeKey of storeKeys) {
+        for (const [field, sentValue] of Object.entries(fields as Record<string, any>)) {
+          const key = `${storeKey}:${docId}:${field}`;
+          const entry = draft.pending[key] as any;
+          if (!entry) continue;
+          // Guard by VALUE, not send-time ordering: an outbox redrive or
+          // retry invokes the binding long after the write was drafted, so a
+          // time guard lets an old write's ack stamp (and retire) the entry
+          // protecting a NEWER local write. The entry corresponds to THIS
+          // dispatch iff it still protects the dispatched value; if a newer
+          // write changed it, values differ and we skip — value-echo
+          // retirement owns that entry. Objects compare by JSON because both
+          // sides may have crossed an IDB structured-clone boundary.
+          const v = entry.value;
+          const same = v === sentValue ||
+            (v !== null && sentValue !== null &&
+             typeof v === "object" && typeof sentValue === "object" &&
+             JSON.stringify(v) === JSON.stringify(sentValue));
+          if (!same || (entry.ts ?? 0) > sentAt) continue;
+          stamp(key);
+          const twin = storeKey === "sessions" ? ACK_DERIVED_TWINS[field] : undefined;
+          if (twin) stamp(`${storeKey}:${docId}:${twin}`);
+        }
+      }
+    }
+  }
+  return true;
+}
+
+/** Writes a character onto both row shapes a session has in the store
+ *  (docs/architecture/session-characters.md S2). A key absent from `next` is
+ *  left alone; an explicit null clears it, which the dispatch rail sends as a
+ *  field removal so the id's hash default returns. */
+function writeCharacterInDraft(draft: Draft, id: string, next: { avatar?: string | null; name?: string | null }) {
+  for (const row of [draft.sessions[id], draft.conversations[id]] as Array<Record<string, unknown> | undefined>) {
+    if (!row) continue;
+    if (next.avatar !== undefined) row.character_avatar = next.avatar;
+    if (next.name !== undefined) row.character_name = next.name;
+  }
+}
+
+function announceHide(
+  draft: any,
+  mode: "stash" | "kill",
+  result: HideResult,
+  stashHidden = false,
+) {
+  if (result.hidden.length === 0 && result.forgotten.length === 0) return;
+  broadcastGesture(
+    {
+      kind: "hide",
+      mode,
+      ...(stashHidden ? { hidden: true } : {}),
+      ids: result.hidden,
+      ...(result.forgotten.length ? { forget: result.forgotten } : {}),
+      writes: result.writes,
+      ts: result.ts,
+    },
+    bridgeUserId(draft),
+  );
+}
+
+// Receiver half of the cross-window gesture bridge (see gestureBridge.ts for
+// the clobber mechanism this defends against). Applies a SIBLING window's
+// gesture to this window's in-memory rows, so this window's next whole-row IDB
+// put carries the gesture instead of writing the pre-gesture row back over it.
+//
+// Deliberately narrow — fields and row removal only. It never touches
+// currentSessionId, the tab path, or any navigation state: the user is looking
+// at THIS window, and a dismiss they made in another one must not move their
+// view here. It runs under sync(), so it neither dispatches nor enqueues an
+// outbox entry; the acting window owns the single server write.
+//
+// Every write is timestamp-guarded so a late, duplicated, or reordered message
+// can never regress newer local state. An absent visible value counts as 0, but
+// a pending field lock still carries the timestamp of a newer restore/unpin.
+function applyGestureInDraft(draft: any, msg: GestureMessage) {
+  // Follow state is ephemeral window state, routed to setFollowLeader by the
+  // bridge receiver (src/providers.tsx); it never touches a row.
+  if (msg.kind === "follow") return;
+  const notNewer = (coll: "sessions" | "conversations", id: string, field: string, current: unknown, ts: number) => {
+    const currentTs = typeof current === "number" ? current : 0;
+    return Math.max(currentTs, fieldLockTs(draft, `${coll}:${id}:${field}`)) <= ts;
+  };
+  // A bridged gesture changes the session row and its conversation twin as one
+  // transition. Accept only when every extant twin agrees it is not older; a
+  // per-twin decision can otherwise leave one row moved and the other behind.
+  const transitionNotNewer = (id: string, fields: string[], ts: number) =>
+    (["sessions", "conversations"] as const).every((coll) => {
+      const row = draft[coll][id];
+      return !row || fields.every((field) => notNewer(coll, id, field, row[field], ts));
+    });
+
+  // Write a field AND plant the pending field lock the sender's action() gets
+  // for free from generateAutoPending (mutativeMiddleware). The lock is not
+  // bookkeeping — it is the only thing that makes the bridged value survive:
+  //   • applySyncTable's applyFieldOverrides re-asserts it over an incoming
+  //     server row (delta mode replaces the row wholesale), and
+  //   • applyHiddenReconcileInDraft's SET/CLEAR passes skip a locked row
+  //     (lockedLocal).
+  // Without it, a sessions crawl already in flight in THIS window — a wake
+  // reconcile pages for seconds — lands the pre-gesture server row, the bridged
+  // hide silently vanishes, and this window's next whole-row put writes the
+  // un-hidden row over the acting window's in shared IDB. That is precisely the
+  // bug the bridge exists to prevent, so an unlocked apply is worse than none.
+  //
+  // This does NOT breach the receiver's no-server-write contract: {type:"field"}
+  // pendings are consumed only by the local sync appliers (applySyncTable,
+  // applySyncRecord, applyHiddenReconcileInDraft). They are never dispatched and
+  // never enqueued — only action()/asyncAction() reach the outbox.
+  //
+  // The planted value must equal the transition's post-state, because the lock
+  // retires only when the server echo matches it (applyFieldOverrides).
+  const write = (
+    coll: "sessions" | "conversations",
+    id: string,
+    field: string,
+    value: any,
+  ) => {
+    const row = draft[coll][id];
+    if (!row) return;
+    if (row[field] !== value) row[field] = value;
+    draft.pending[`${coll}:${id}:${field}`] = { type: "field", value, ts: msg.ts };
+  };
+
+  // An accepted gesture is one causal transition, even if every visible value
+  // already matches.  Record fresh locks for all of its constrained fields
+  // before returning to a branch-specific effect.  Otherwise an undo pin that
+  // restores the old pinnedAt payload, for example, leaves an old visible stamp
+  // and lets a delayed hide incorrectly win.
+  const acceptTransition = (
+    id: string,
+    constrained: string[],
+    changes: {
+      shared?: Record<string, any>;
+      sessions?: Record<string, any>;
+      conversations?: Record<string, any>;
+    },
+    // exact: the message names every field the sender wrote, so the receiver
+    // locks exactly those (the sender's own lock set, each retired by the
+    // write's bridged acknowledgement) and plants no barrier locks.
+    opts: { exact?: boolean } = {},
+  ) => {
+    if (!transitionNotNewer(id, constrained, msg.ts)) return false;
+    for (const coll of ["sessions", "conversations"] as const) {
+      const row = draft[coll][id];
+      if (!row) continue;
+      const next = {
+        ...changes.shared,
+        ...(changes[coll] ?? {}),
+      };
+      // A coupled field the message does not visibly change still takes part
+      // in its ordering barrier. Lock its retained value at this transition's
+      // timestamp so a delayed coupled gesture cannot cross the barrier. A
+      // field nothing dispatched is never acknowledged, so on a row that never
+      // echoes again (a kill) such a lock outlives its settle window: an exact
+      // message skips it.
+      if (!opts.exact) for (const field of constrained) {
+        if (!Object.prototype.hasOwnProperty.call(next, field)) next[field] = row[field];
+      }
+      for (const [field, value] of Object.entries(next)) write(coll, id, field, value);
+    }
+    return true;
+  };
+
+  const forget = (ids: string[], ts: number, scope: "session-row" | "all" = "all") => {
+    for (const fid of ids) {
+      // Mirror ALL of pruneGhostSessions' IN-USE guards, not just the first.
+      // (Its skip for a row this window doesn't hold does NOT carry over: there
+      // the absence means no evidence, here the sender is the evidence, and the
+      // exclude is what stops an in-flight crawl re-adding what it just deleted.)
+      // Declining only ever makes the receiver more conservative — the sender
+      // still owns its own durable delete — while deleting here would destroy
+      // state this window knows about and the sender did not:
+      //   • currentSessionId: the conversation view would blank out mid-read.
+      //   • pendingMessages: unsent user TEXT queued in this window.
+      //   • pendingSessionCreates: a create still in flight, about to rekey.
+      if (draft.currentSessionId === fid) continue;
+      if (draft.pendingMessages[fid]?.length) continue;
+      if (fid in draft.pendingSessionCreates) continue;
+      delete draft.sessions[fid];
+      dropRowFieldLocks(draft, fid, scope === "session-row" ? ["sessions"] : ["sessions", "conversations"]);
+      // The exclude is what authorizes the durable IDB row delete — a bare
+      // store-shrink is ignored by the collection diff (same reason
+      // pruneGhostSessions plants them) — and it also stops a delta crawl from
+      // re-adding the row this window was just told is gone.
+      draft.pending[`sessions:${fid}`] = { type: "exclude", ts };
+      // markKilling drops the inbox CARD but keeps the conversation cached (the
+      // server still has it, marked completed). Mirroring that exactly matters:
+      // an exclude planted here for a conversation that still exists would
+      // blind this window to it on every later crawl.
+      if (scope === "session-row") continue;
+      delete draft.conversations[fid];
+      delete draft.messages[fid];
+      delete draft.pendingMessages[fid];
+      delete draft.pagination[fid];
+      draft.pending[`conversations:${fid}`] = { type: "exclude", ts };
+    }
+  };
+
+  if (msg.kind === "forget") {
+    forget(msg.ids, msg.ts, msg.scope ?? "all");
+    return;
+  }
+
+  if (msg.kind === "unforget") {
+    // An undo put back rows a forget dropped. Lift the exclude the forget
+    // planted (a newer one, from a hide this window saw after the undo,
+    // stands), put the row back, and hold it under the include lock the
+    // acting window holds, until the server lists it.
+    // The forget excluded the conversations twin even when the acting window
+    // held no conversations row to send back, so a sessions row lifts that
+    // exclude too (as clearFeedExcludes does), and the meta feeder refills it.
+    for (const entry of msg.rows) {
+      for (const coll of ["sessions", "conversations"] as const) {
+        const row = entry[coll];
+        const key = `${coll}:${entry.id}`;
+        const lock = draft.pending[key];
+        if (lock?.type === "exclude" && (lock.ts ?? 0) > msg.ts) continue;
+        if (!row) {
+          if (coll === "conversations" && entry.sessions && lock?.type === "exclude") delete draft.pending[key];
+          continue;
+        }
+        if (!draft[coll][entry.id]) draft[coll][entry.id] = row;
+        draft.pending[key] = { type: "include", ts: msg.ts };
+      }
+    }
+    return;
+  }
+
+  if (msg.kind === "hide") {
+    // A mixed cascade (real rows flagged, stubs/foreign rows deleted) rides
+    // ONE message, so the deletions are applied here rather than as a separate
+    // forget broadcast — see gestureBridge.ts.
+    if (msg.forget?.length) forget(msg.forget, msg.ts);
+    const field = msg.mode === "kill" ? "inbox_dismissed_at" : "inbox_stashed_at";
+    const constrained = ["inbox_dismissed_at", "inbox_stashed_at", "inbox_stash_hidden", "inbox_pinned_at"];
+    for (const sid of msg.ids) {
+      const wrote = msg.writes?.[sid];
+      if (wrote) {
+        const { is_pinned, ...shared } = wrote;
+        acceptTransition(sid, constrained, { shared, ...(is_pinned !== undefined ? { sessions: { is_pinned } } : {}) }, { exact: true });
+        continue;
+      }
+      // An older bundle's message names no writes: the full transition.
+      if (!acceptTransition(sid, constrained, {
+        shared: {
+          [field]: msg.ts,
+          ...(msg.mode === "kill" ? { inbox_stashed_at: null } : {}),
+          // The stash mode rides with the stamp (hideSessionInDraft): a kill
+          // clears it, a stash sets it to exactly what the sender chose.
+          inbox_stash_hidden: msg.mode === "stash" && msg.hidden ? true : null,
+          inbox_pinned_at: null,
+        },
+        // Both hide modes move the row out of Pinned. Mirrors
+        // hideSessionInDraft, which clears a pre-existing pin for stash too.
+        sessions: { is_pinned: false },
+      })) continue;
+    }
+    return;
+  }
+
+  if (msg.kind === "restore") {
+    // Un-hiding is un-hiding: all three flags clear, but only if this window's
+    // value is no newer than the restore (a re-kill here must survive).
+    // inbox_killed_at rides along for the same reason the sender clears it
+    // (restoreSession): a command-killed row carries the marker alone, and a
+    // sibling that cleared only the two hide stamps would go on hiding it.
+    for (const sid of msg.ids) {
+      // A no-op restore still carries a newer causal tombstone. Without these
+      // locks, a delayed older kill sees visible nulls and re-applies.
+      acceptTransition(sid, ["inbox_dismissed_at", "inbox_stashed_at", "inbox_stash_hidden", "inbox_killed_at"], {
+        shared: { inbox_dismissed_at: null, inbox_stashed_at: null, inbox_stash_hidden: null, inbox_killed_at: null },
+      });
+    }
+    return;
+  }
+
+  if (msg.kind === "ack") {
+    stampSyncAckInDraft(draft, msg.patches, msg.ack, msg.sentAt);
+    return;
+  }
+
+  if (msg.kind === "fields") {
+    // Verbatim mirror of a patchConversation gesture. patchConversation
+    // Object.assigns the same fields onto BOTH twins, so both get them here.
+    // A fields message is one causal transition: guard all touched hidden/pin
+    // state before writing any subset, so a delayed partial patch cannot leave
+    // conflicting bucket timestamps behind.
+    const fields = Object.entries(msg.fields);
+    const guardFields = [
+      ...(fields.some(([key]) => key === "inbox_dismissed_at" || key === "inbox_stashed_at")
+        ? ["inbox_dismissed_at", "inbox_stashed_at"]
+        : []),
+      ...(fields.some(([key]) => key === "is_pinned" || key === "inbox_pinned_at")
+        ? ["inbox_pinned_at"]
+        : []),
+    ];
+    // is_pinned lives on the sessions twin only (as in the pin branch below):
+    // no conversation feed carries it, so a conversations copy would plant a
+    // lock no echo ever retires.
+    acceptTransition(msg.id, guardFields, {
+      shared: Object.fromEntries(fields.filter(([key]) => key !== "is_pinned")),
+      sessions: Object.fromEntries(fields.filter(([key]) => key === "is_pinned")),
+    }, { exact: msg.exact === true });
+    return;
+  }
+
+  // pin — `pinnedAt` is the sender's exact written value (see gestureBridge.ts:
+  // undo restores the ORIGINAL pin time, so it cannot be re-derived from ts).
+  // Repeated pin messages leave matching rows untouched; an unpin deliberately
+  // plants a null tombstone even when the row already appears unpinned.
+  // Touches pin state ONLY: pin is not an un-kill on the sender (pinSession),
+  // so a sibling window must not become one either.
+  acceptTransition(msg.id, ["inbox_pinned_at"], {
+    shared: { inbox_pinned_at: msg.pinnedAt },
+    sessions: { is_pinned: msg.pinned },
+  });
+}
+
+// Whether a lock's value and a row value are the same write. Objects compare
+// by JSON: both sides may have crossed a structured-clone boundary.
+function sameLockValue(a: unknown, b: unknown): boolean {
+  return a === b || (a !== null && b !== null && typeof a === "object" && typeof b === "object" && JSON.stringify(a) === JSON.stringify(b));
+}
+
+// When this window last wrote a field it still holds a lock on (0 for none):
+// the ordering clock every cross-window write of the field is judged by.
+function fieldLockTs(draft: any, key: string): number {
+  const pending = draft.pending[key];
+  return pending?.type === "field" && typeof pending.ts === "number" ? pending.ts : 0;
+}
+
+// A field lock, carrying the acknowledgement it already holds when it is
+// re-planted (stampSyncAckInDraft writes `ack` onto the entry).
+function fieldLockEntry(value: unknown, ts: number, ack?: unknown): PendingEntry {
+  return (ack ? { type: "field", value, ts, ack } : { type: "field", value, ts }) as PendingEntry;
+}
+
+// A dropped row's field locks (`<coll>:<id>:<field>`) go with it: nothing
+// will ever echo or acknowledge a row this window no longer holds. The row's
+// exclude (`<coll>:<id>`) is not a field lock and is kept.
+function dropRowFieldLocks(draft: any, id: string, colls: readonly ("sessions" | "conversations")[] = ["sessions", "conversations"]): void {
+  const prefixes = colls.map((c) => `${c}:${id}:`);
+  for (const key of Object.keys(draft.pending)) {
+    if (prefixes.some((p) => key.startsWith(p))) delete draft.pending[key];
+  }
+}
+
+// Session ids a server-deleted prune skipped because the conversation was open;
+// retried by the subscription at the end of this module once the view moves.
+// One set per page, not per module evaluation: a hot swap keeps the store and
+// its first subscription, which must keep seeing the set the new config writes.
+const deferredDeletedSessions: Set<string> = ((globalThis as any).__deferredDeletedSessions ??= new Set<string>());
+
+// The one way a cached session row is dropped by hand: its three twins, its
+// pagination, and the excludes that authorize the IDB delete and block a
+// re-add. Shared by the ghost prune and the change-feed prune. An open view or
+// an optimistic create is never dropped. An unsettled local message protects
+// the row unless the server has proven the conversation gone (serverDeleted):
+// then nothing can ever settle it, and keeping it strands a ghost (2026-10-01).
+function dropSessionInDraft(draft: Draft, id: string, now: number, serverDeleted = false): boolean {
+  if (draft.currentSessionId === id) {
+    if (serverDeleted) deferredDeletedSessions.add(id);
+    return false;
+  }
+  if (!serverDeleted && pendingRowsUnsettled(draft.pendingMessages[id])) return false;
+  if (id in draft.pendingSessionCreates) return false;
+  deferredDeletedSessions.delete(id);
+  delete draft.sessions[id];
+  delete draft.conversations[id];
+  delete draft.messages[id];
+  delete draft.pendingMessages[id];
+  delete draft.pagination[id];
+  dropRowFieldLocks(draft, id);
+  draft.pending[`sessions:${id}`] = { type: "exclude", ts: now };
+  draft.pending[`conversations:${id}`] = { type: "exclude", ts: now };
+  return true;
+}
+
+const inboxStoreConfig = (set: any, get: any) => ({
+  // -- Initial state --
+  // Every registered collection starts as {} by registration alone; explicit
+  // slots below only add non-collection state and typed narrowings.
+  ...collectionInitialState(),
+  sessions: {},
+  pending: {},
+  dispatchErrors: 0,
+  storageDegraded: false,
+  syncRole: "host",
+  lastDispatchFailure: null,
+  currentSessionId: null,
+  lastFocusedConversationId: null,
+  showDismissed: false,
+  collapsedSections: {},
+  scheduleNavSets: null,
+  triggerStripRequest: null,
+  composerPrefill: null,
+  recentFreezeOrder: null,
+  viewingDismissedId: null,
+  heldViewId: null,
+  pendingNavigateId: null,
+  renamingSessionId: null,
+  pendingScrollToMessageId: null,
+  pendingScrollToMessageTimestamp: null,
+  pendingHighlightQuery: null,
+  showMySessions: false,
+  setShowMySessions: (show: boolean) => set({ showMySessions: show, ...(show ? { showFavorites: false } : {}) }),
+  showFavorites: false,
+  setShowFavorites: (show: boolean) => set({ showFavorites: show, ...(show ? { showMySessions: false } : {}) }),
+  liveInboxIds: new Set<string>(),
+  warmProtectedIds: new Set<string>(),
+  teamInboxIds: new Set<string>(),
+  liveInboxIdList: [],
+  teamInboxIdSnapshot: null,
+  // Ephemeral by design: not registered for persistence, empty on every boot —
+  // a cold replica has no stamps and the compare gates on that (C6).
+  sessionsProjection: {},
+  // The one applier for an overlay payload ({ liveness, projection }). sync():
+  // fact merges persist through the registered sessions collection; the stamp
+  // buffer itself is unregistered, so it never touches IDB.
+  applyInboxLivenessPayload: sync(function (this: Draft, scopeKey: string, payload: any) {
+    const liveness = payload?.liveness ?? payload;
+    if (!liveness || typeof liveness !== "object") return;
+    const stamps: Record<string, InboxProjectionStamp> = {};
+    const held: Record<string, Record<string, unknown>> = {};
+    const collection = this.sessions;
+    // Plain views of the state as this action found it, for the unchanged-row
+    // check: reading them creates no draft proxies.
+    const baseSessions = (isDraft(collection) ? original(collection) : collection) as Record<string, Record<string, unknown> | undefined>;
+    const lockedIds = sessionIdsWithPending(isDraft(this.pending) ? original(this.pending) : this.pending);
+    for (const id in liveness) {
+      const row = liveness[id];
+      if (!row || typeof row !== "object") continue;
+      // Split the payload row: stamps go to the buffer (member rows only — a
+      // fact-only probed CHILD row carries no bucket key), facts merge onto
+      // the session row field-by-field so unchanged rows keep identity.
+      if (row.bucket !== undefined) {
+        stamps[id] = {
+          bucket: row.bucket,
+          work_state: row.work_state,
+          asking: !!row.asking,
+          below_fold: !!row.below_fold,
+          bucket_stale_at: row.bucket_stale_at ?? null,
+          stale_bucket: row.stale_bucket ?? null,
+        };
+      }
+      // Field-by-field merge over untyped bags: the payload row is unvalidated
+      // wire data and the session row's fact fields are an open set.
+      const base = baseSessions[id];
+      if (base && !lockedIds.has(id) && overlayRowUnchanged(base, row as Record<string, unknown>)) continue;
+      const target = collection[id] as Record<string, unknown> | undefined;
+      if (!target) {
+        // An overlay never creates a row, it only annotates one — hold the
+        // facts for the row's arrival instead of dropping them.
+        held[id] = row as Record<string, unknown>;
+        continue;
+      }
+      this.pending = mergeOverlayFacts(target, row as Record<string, unknown>, this.pending);
+    }
+    _heldOverlayFacts[scopeKey] = held;
+    const projection = payload?.projection;
+    if (projection && typeof projection === "object") {
+      this.sessionsProjection[scopeKey] = {
+        v: typeof projection.v === "number" ? projection.v : 0,
+        epoch: typeof projection.epoch === "number" ? projection.epoch : 0,
+        receivedAtMono: monotonicNow(),
+        tally: projection.tally,
+        set_digest: projection.set_digest ?? null,
+        truncated: Array.isArray(projection.truncated) ? projection.truncated : [],
+        stamps,
+      };
+    }
+  }),
+  applyReplicatedProjection: sync(function (this: Draft, slots: Record<string, SessionsProjectionSlot>) {
+    if (!slots || typeof slots !== "object") return;
+    const receivedAtMono = monotonicNow();
+    for (const scopeKey in slots) {
+      const slot = slots[scopeKey];
+      if (!slot || typeof slot !== "object") continue;
+      this.sessionsProjection[scopeKey] = { ...slot, receivedAtMono };
+    }
+  }),
+  applyReplicatedFields: sync(function (this: Draft, key: string, fields: Record<string, Record<string, unknown>>, ts: number = Date.now(), release?: Record<string, Record<string, unknown>>) {
+    const rows = (this as any)[key] as Record<string, any> | undefined;
+    if (!rows) return;
+    for (const id in fields) {
+      const row = rows[id];
+      if (!row) continue;
+      for (const [field, value] of Object.entries(fields[id])) {
+        // A sibling's refused write, rolled back there: the server never took
+        // `refused`, so no echo will retire the lock this window mirrored on
+        // it. Release that lock and take the rolled-back value without a new
+        // lock. A field holding anything else has moved on since; leave it.
+        if (release?.[id] && field in release[id]) {
+          const refused = release[id][field];
+          const rk = `${key}:${id}:${field}`;
+          const held = this.pending[rk] as any;
+          const mirrored = held?.type === "field" && sameLockValue(held.value, refused);
+          if (!mirrored && (held?.type === "field" || !sameLockValue(row[field], refused))) continue;
+          if (mirrored) delete this.pending[rk];
+          if (value === undefined) delete row[field];
+          else row[field] = value;
+          continue;
+        }
+        // The same write can reach this window twice (the gesture bridge and
+        // the follower's replicated mut), in either order with its server
+        // acknowledgement. A row already holding the value with no lock on it
+        // has had it acknowledged and echoed: a fresh lock there would wait
+        // for an echo that already came. A lock already holding the value
+        // keeps the acknowledgement the bridge stamped on it.
+        //
+        // A write older than this window's own lock on the field is stale: a
+        // mut that waited in the channel while this window wrote the field
+        // again would put back the value the newer write replaced, under a
+        // lock the server, holding the newer write, never echoes.
+        const k = `${key}:${id}:${field}`;
+        const prev = this.pending[k] as any;
+        const locked = prev?.type === "field";
+        if (locked && fieldLockTs(this, k) > ts) continue;
+        // The same write, or an older one, already landed here and was
+        // acknowledged: the row holds the server's state since.
+        if (!locked && (retiredAckTs.get(k) ?? -Infinity) >= ts) continue;
+        // Only the server's kill transition writes inbox_killed_at, so the stamp
+        // a row holds is the newest kill: a sibling's clear made before it (an
+        // undone kill's mut, late behind a redo) is stale, and its lock would
+        // wait for a null echo that kill never sends. A tie is dropped too:
+        // skipping a mirror plants nothing, so the server's own row heals it,
+        // where a stale clear held under a lock never would.
+        if (field === "inbox_killed_at" && value == null && typeof row[field] === "number" && row[field] >= ts) continue;
+        if (!locked && value !== undefined && sameLockValue(row[field], value)) continue;
+        if (value === undefined) delete row[field];
+        else row[field] = value;
+        const ack = locked && prev.ack && sameLockValue(prev.value, value) ? prev.ack : undefined;
+        this.pending[k] = fieldLockEntry(value, ts, ack);
+      }
+    }
+  }),
+  protectReplicatedWrite: sync(function (this: Draft, key: string, entries: Array<{ id: string; field: string; value: unknown; ts?: number; ack?: unknown }>) {
+    const rows = (this as any)[key] as Record<string, any> | undefined;
+    if (!rows) return;
+    const now = Date.now();
+    for (const { id, field, value, ts = now, ack } of entries) {
+      const row = rows[id];
+      if (!row) continue;
+      // Lock only a value that landed: the merge may have kept a fresher
+      // local value (an in-flight write of this window's own).
+      if (!sameLockValue(row[field], value)) continue;
+      // The lock is the one this window held, acknowledgement included: a
+      // re-plant without it waits for an echo a killed row never sends.
+      this.pending[`${key}:${id}:${field}`] = fieldLockEntry(value, ts, ack);
+    }
+  }),
+  // sync(): the id set is server truth (or its persisted snapshot) — persist to
+  // IDB via patches, never dispatch. Both twins move together so the persisted
+  // array can never drift from what the UI filtered against.
+  // Row deletions arriving over cross-window replication. A local include
+  // pending (an optimistic create this window still awaits an ack for) outranks
+  // a peer's delete — the same rule applySyncTable applies to server payloads.
+  _applyReplicatedRemovals: sync(function (this: Draft, key: string, ids: string[]) {
+    const table = (this as any)[key];
+    if (!table) return;
+    for (const id of ids) {
+      if (this.pending[`${key}:${id}`]?.type === "include") continue;
+      if (table[id] !== undefined) delete table[id];
+    }
+  }),
+
+  setLiveInboxIds: sync(function (this: Draft, ids: string[]) {
+    this.liveInboxIds = new Set(ids);
+    this.liveInboxIdList = ids;
+  }),
+  // Team-mode twin of setLiveInboxIds. The snapshot is keyed by team id so a
+  // boot into a DIFFERENT active team can never seed another team's stale
+  // board (seedTeamInboxIdsFromCache checks the key). sync() for the same
+  // reason as above: raw setState would bypass the patch-driven IDB
+  // write-through, leaving the snapshot forever stale.
+  setTeamInboxIds: sync(function (this: Draft, ids: string[], teamId: string | null) {
+    this.teamInboxIds = new Set(ids);
+    this.teamInboxIdSnapshot = { team_id: teamId ?? null, ids };
+  }),
+  // The ids byIds omitted when asked about rows that left the live list while
+  // claiming me (settleDisownClaims): byIds admits the runner and the owner
+  // set, so these are no longer mine, and only the claim clears. The row
+  // stays: a teammate's session may still be on my team board. sync(): the
+  // cleared flags must persist, or the stale claim resurrects from IDB.
+  clearDisownedClaims: sync(function (this: Draft, ids: string[]) {
+    const meId = this.currentUser?._id?.toString?.();
+    if (!meId) return;
+    for (const id of ids) {
+      const s = this.sessions[id];
+      if (!s || !claimsViewer(s, meId)) continue;
+      s.owned_by_me = false;
+      s.owner_user_id = null;
+    }
+  }),
+  setShowOldSessions: (show: boolean) => get().updateClientUI({ inbox_show_old: show }),
+  _lastViewedAt: {},
+  _seenUpToAt: {},
+  _seenMessageCount: {},
+
+  messages: {},
+  pendingMessages: {},
+  pagination: {},
+  conversations: {},
+  userMessages: {},
+  feedConversations: {},
+  feedHasMore: {},
+  feedCursors: {},
+  syncMeta: {},
+  // Seed UI from localStorage so layout-affecting prefs (sidebar collapsed,
+  // zen mode, inbox shortcut bar) are correct on first paint. IDB hydration
+  // fills in everything else and is the source of truth across tabs.
+  clientState: { ui: readCriticalUiPrefs() as ClientUI },
+  clientStateInitialized: false,
+  laneHint: readLaneHint(),
+
+  drafts: {},
+  queuedMessages: {},
+
+  reviewMessageId: null,
+  reviewActiveBlock: 0,
+  reviewEditingId: null,
+  reviewComments: {},
+
+  commentRailAnchor: null,
+  commentRailNonce: 0,
+  commentRailWidth: {},
+  // The comment rail and the session list share the ONE right edge, so opening
+  // comments displaces the rail rather than stacking a second one. Closing
+  // comments hands the edge back to the session list unless you had closed the
+  // rail by hand — the slot's own dismissal answers that, no extra flag.
+  setCommentRailOpen: (open: boolean | null) => {
+    const st = get();
+    const conv = st.currentSessionId ?? st.viewingDismissedId ?? null;
+    if (open === true && conv) st.wsShow("context", { kind: "comments", ref: conv });
+    else if (wsAutoAllowedPure(st.workspace, "context", SESSION_LIST_PANE)) st.wsShow("context", SESSION_LIST_PANE);
+    else st.wsHide("context", { remember: false });
+  },
+  // Focus/expand a message's inline anchored thread (the gutter handle). Doesn't
+  // open the global dock — anchored threads live inline at their message.
+  openCommentThread: (messageId: string | null = null) =>
+    set((s: any) => ({ commentRailAnchor: messageId, commentRailNonce: s.commentRailNonce + 1 })),
+  threadsCursor: { id: null },
+  setThreadsCursor: (cursor: ThreadsCursor) => set({ threadsCursor: cursor }),
+  closeCommentRail: () => get().setCommentRailOpen(false),
+  setCommentRailWidth: (conversationId: string, w: number) =>
+    set((s: any) => {
+      if ((s.commentRailWidth[conversationId] ?? 0) === w) return {};
+      const next = { ...s.commentRailWidth };
+      if (w) next[conversationId] = w;
+      else delete next[conversationId];
+      return { commentRailWidth: next };
+    }),
+
+  setReviewTarget: (messageId: string | null, blockIndex = 0) =>
+    set({ reviewMessageId: messageId, reviewActiveBlock: messageId ? blockIndex : 0 }),
+  setReviewActiveBlock: (blockIndex: number) => set({ reviewActiveBlock: blockIndex }),
+  setReviewEditingId: (id: string | null) => set({ reviewEditingId: id }),
+  // The writers below are sync(): a mutative draft + IDB write-through, no
+  // server dispatch — the same path the composer's drafts take. A raw set()
+  // here would keep the batch in memory only and lose every note on reload.
+  addReviewComment: sync(function (this: Draft, conversationId: string, comment: PendingComment) {
+    (this.reviewComments[conversationId] ??= []).push(comment);
+  }),
+  // Set a comment's note (may be empty → stays a bare quote). This is what the
+  // note editor's "Save" does, and what it does while you type.
+  commitReviewComment: sync(function (this: Draft, conversationId: string, id: string, body: string) {
+    const c = this.reviewComments[conversationId]?.find((c) => c.id === id);
+    if (!c || c.body === body) return;
+    c.body = body;
+  }),
+  removeReviewComment: sync(function (this: Draft, conversationId: string, id: string) {
+    const list = this.reviewComments[conversationId] ?? [];
+    const removed = list.find((c) => c.id === id);
+    if (!removed) return;
+    const next = list.filter((c) => c.id !== id);
+    if (next.length) this.reviewComments[conversationId] = next;
+    else delete this.reviewComments[conversationId];
+    // If the removed comment's editor was open, close it.
+    if (this.reviewEditingId === id) this.reviewEditingId = null;
+    // When the review-target message has no quotes left, drop the target so its
+    // active-block highlight overlay stops painting (handles both the last quote
+    // overall and the last quote on the target message of a multi-message batch).
+    const targetMsg = this.reviewMessageId;
+    if (targetMsg && removed.messageId === targetMsg && !next.some((c) => c.messageId === targetMsg)) {
+      this.reviewMessageId = null;
+      this.reviewActiveBlock = 0;
+      this.reviewEditingId = null;
+    }
+  }),
+  clearReviewComments: sync(function (this: Draft, conversationId: string) {
+    if (!this.reviewComments[conversationId]) return;
+    delete this.reviewComments[conversationId];
+  }),
+  getReviewComments: (conversationId: string) => get().reviewComments[conversationId] ?? [],
+
+  pendingSessionCreates: {},
+  newSessionHolds: {},
+
+  currentConversation: {},
+  isolatedWorktreeMode: false,
+  cloudSessionMode: false,
+  cloudSharedCheckout: false,
+
+  palette: { open: false, targets: [], targetType: null, initialMode: 'root' },
+
+  followLeaderId: null,
+  followBlocked: false,
+  followedBy: [],
+  viewAnchor: null,
+  setFollowLeader: (id: string | null, opts?: { fromBridge?: boolean }) => {
+    const s = useInboxStore.getState();
+    if (s.followLeaderId === id && !s.followBlocked) return;
+    set({ followLeaderId: id, followBlocked: false });
+    // Sibling windows (the huddle window, the main window) mirror the state.
+    if (!opts?.fromBridge) broadcastGesture({ kind: "follow", leaderId: id, ts: Date.now() }, bridgeUserId(s));
+  },
+  setFollowBlocked: (blocked: boolean) => {
+    if (useInboxStore.getState().followBlocked === blocked) return;
+    set({ followBlocked: blocked });
+  },
+  setFollowedBy: (rows: FollowerRow[]) => {
+    if (followersSig(useInboxStore.getState().followedBy) === followersSig(rows)) return;
+    set({ followedBy: rows });
+  },
+  setViewAnchor: (anchor: ViewAnchor | null) => {
+    if (sameViewAnchor(useInboxStore.getState().viewAnchor, anchor)) return;
+    set({ viewAnchor: anchor });
+  },
+
+  openPalette: (opts?: { targets?: any[]; targetType?: 'task' | 'doc' | 'plan' | 'session' | 'project' | 'trigger'; mode?: string; initialQuery?: string; pick?: PalettePick }) => {
+    set({
+      palette: {
+        open: true,
+        targets: opts?.targets || [],
+        targetType: opts?.targetType || null,
+        initialMode: opts?.mode || 'root',
+        initialQuery: opts?.initialQuery,
+        pick: opts?.pick,
+      },
+    });
+  },
+
+  openSessionRename: (session: any) => {
+    get().openPalette({ targets: [session], targetType: 'session', mode: 'rename' });
+  },
+
+  closePalette: () => {
+    set({ palette: { open: false, targets: [], targetType: null, initialMode: 'root' } });
+  },
+
+  togglePalette: () => {
+    const { palette } = get();
+    if (palette.open) {
+      set({ palette: { open: false, targets: [], targetType: null, initialMode: 'root' } });
+    } else {
+      set({ palette: { open: true, targets: [], targetType: null, initialMode: 'root' } });
+    }
+  },
+
+  ...createComposeSlice(set, get),
+
+  createModal: null,
+  createModalDefaults: null,
+  openCreateModal: (type: CreateModalKind, defaults?: { project_id?: string; plan_id?: string }) =>
+    set({ createModal: type, createModalDefaults: defaults ?? null }),
+  closeCreateModal: () => set({ createModal: null, createModalDefaults: null }),
+
+  taskCloseGuard: null,
+  setTaskCloseGuard: (g: TaskCloseGuard | null) => set({ taskCloseGuard: g }),
+
+  optimisticForkChildren: [],
+  recentProjects: [],
+  // Fed by the recent-projects query, so sync(): an action() would dispatch
+  // the server's own answer back to it on every push.
+  setRecentProjects: sync(function (this: Draft, projects: Array<{ path: string; count: number; lastActive: number }>) {
+    this.recentProjects = projects;
+  }),
+  recentProjectsByDevice: {},
+  setRecentProjectsForDevice: sync(function (this: Draft, deviceId: string, projects: Array<{ path: string; count: number; lastActive: number; suggested?: boolean }>) {
+    this.recentProjectsByDevice[deviceId] = projects;
+  }),
+  machineRoster: [],
+  machineRosterLive: false,
+  localDevice: null,
+  setMachineRoster: sync(function (this: Draft, devices: MachineCandidate[]) {
+    this.machineRoster = devices;
+    this.machineRosterLive = true;
+  }),
+  removeMachines: action(function (this: Draft, deviceIds: string[]) {
+    const gone = new Set(deviceIds);
+    this.machineRoster = this.machineRoster.filter((d) => !gone.has(d.device_id));
+  }),
+  setLocalMirror: action(function (this: Draft, conversationId: string, enable: boolean, deviceId?: string, opts?: { overwrite?: boolean; mode?: import("@codecast/shared/contracts").LocalMirrorMode; resolve?: import("@codecast/shared/contracts").MirrorResolve }) {
+    const now = Date.now();
+    for (const row of [this.sessions[conversationId], this.conversations[conversationId]] as any[]) {
+      if (!row) continue;
+      const m = row.local_mirror;
+      // The same rule as the server's: a mode change or a pick on a running sync keeps its state.
+      if (enable && m && m.status !== "stopping" && !opts?.overwrite && (opts?.mode || opts?.resolve)) {
+        const conflicts = opts.resolve ? (opts.resolve.paths ? (m.conflicts ?? []).filter((p: string) => !opts.resolve!.paths!.includes(p)) : []) : m.conflicts;
+        row.local_mirror = { ...m, ...(opts.mode ? { mode: opts.mode } : {}), conflicts, ...(opts.resolve && !conflicts?.length && m.status === "conflict" ? { status: "live" } : {}), at: now };
+        continue;
+      }
+      row.local_mirror = enable
+        ? { ...(m?.device_id === (deviceId ?? m?.device_id) ? m : {}), device_id: deviceId ?? m?.device_id ?? "", status: "starting", ...(opts?.mode ? { mode: opts.mode } : {}), files: undefined, conflicts: undefined, error: undefined, at: now }
+        : m && m.status !== "stopping" ? { ...m, status: "stopping", at: now } : null;
+    }
+  }),
+  cloudHostAction: action(function (this: Draft, hostDeviceId: string, act: import("@codecast/shared/contracts").CloudHostAction, arg?: string) {
+    const row = this.machineRoster.find((d) => d.device_id === hostDeviceId) as any;
+    if (!row?.cloud_host) return;
+    row.cloud_host.last_action = { action: act, status: "running", at: Date.now() };
+    if (act === "delete_image") row.cloud_host.images = row.cloud_host.images.filter((i: { id: string }) => i.id !== arg);
+  }),
+  setCloudAutoscale: action(function (this: Draft, hostDeviceId: string, policy: { enabled: boolean; max_extra: number; size: import("@codecast/shared/contracts").CloudHostSize }) {
+    const row = this.machineRoster.find((d) => d.device_id === hostDeviceId) as any;
+    if (row) row.cloud_autoscale = { ...policy, at: Date.now() };
+  }),
+  setDeviceShares: action(function (this: Draft, deviceId: string, teamIds: string[]) {
+    const row = this.machineRoster.find((d) => d.device_id === deviceId) as any;
+    if (row) row.shared_team_ids = [...teamIds].sort();
+  }),
+  // A snippet or machine setting on one device paints on its roster row; the
+  // setDeviceSnippet side effect sends the device its apply_snippet command.
+  setDeviceSnippet: asyncAction(function (this: Draft, deviceId: string, change: DeviceSnippetChange) {
+    const row = this.machineRoster.find((d) => d.device_id === deviceId) as any;
+    if (row) row.settings = settingsAfterSnippet(row.settings, change);
+  }),
+  // A provider key set or removed on one device paints the roster row's
+  // managed ids (never the key); the setProviderKey side effect sends the
+  // sealed key to the device and answers with the command to watch.
+  setProviderKey: asyncAction(function (this: Draft, deviceId: string, change: ProviderKeyCommand) {
+    const row = this.machineRoster.find((d) => d.device_id === deviceId) as any;
+    if (row) row.managed_provider_ids = managedIdsAfter(row.managed_provider_ids, change);
+  }),
+  sessionThreads: null,
+  wallet: null,
+  sessionMetricsAggregate: null,
+  migrationCandidates: null,
+  migrationBatches: null,
+
+  // Trigger verbs mirror the server's applyPause/Resume/RunNow/Cancel/
+  // Reactivate on the draft; the same-named dispatch side effects run them.
+  // Deleting a row in a localFirst collection auto-plants an exclude
+  // tombstone (mutativeMiddleware), so the next webList snapshot can't
+  // resurrect it before the mutation commits.
+  triggerAction: action(function (
+    this: Draft,
+    taskId: string,
+    verb: "pause" | "resume" | "runNow" | "cancel" | "reactivate",
+    /** runNow only: a focus for that one run (orgReview.ts ORG_REVIEW_FOCUSES). */
+    focus?: string,
+  ) {
+    // A trigger the viewer can manage but does not OWN lives in
+    // foreignTriggers, not agentTasks (see clientSyncRegistry) — the verbs are
+    // the same, so the optimistic flip has to find the row in either.
+    const t = (this.agentTasks as any)[taskId] ?? (this.foreignTriggers as any)[taskId];
+    if (!t) return;
+    const now = Date.now();
+    switch (verb) {
+      case "pause": t.status = "paused"; break;
+      case "resume": t.status = "scheduled"; break;
+      // The request stamps flip here too, so a surface that reads them (the
+      // Head of People's offer) shows the run starting in the same tick.
+      case "runNow": t.status = "scheduled"; t.run_at = now; t.requested_run_source = "manual"; t.requested_run_focus = focus; break;
+      case "cancel": t.status = "completed"; break;
+      case "reactivate":
+        t.status = "scheduled";
+        t.run_at = now + (t.schedule_type === "recurring" && t.interval_ms ? t.interval_ms : 60_000);
+        break;
+    }
+  }),
+  deleteTrigger: action(function (this: Draft, taskId: string) {
+    delete (this.agentTasks as any)[taskId];
+    delete (this.foreignTriggers as any)[taskId];
+  }),
+  stopHostedTurn: action(function (this: Draft, conversationId: string) {
+    const row = (this.sessions as any)[conversationId];
+    if (row) row.agent_status = "idle";
+  }),
+  setTriggerInterval: action(function (this: Draft, taskId: string, intervalMs: number) {
+    const t = (this.agentTasks as any)[taskId] ?? (this.foreignTriggers as any)[taskId];
+    if (!t || t.schedule_type !== "recurring") return;
+    // The next run keeps its place in the old cadence's clock: what the
+    // server's applyTaskUpdate does when the interval changes.
+    const last = typeof t.last_run_at === "number" ? t.last_run_at : Date.now();
+    t.interval_ms = intervalMs;
+    if (t.status === "scheduled") t.run_at = Math.max(Date.now(), last + intervalMs);
+  }),
+  // Mirrors the server's applyTaskUpdate on the draft. The stored
+  // event_filter is the server's to write (it resolves the project's repo),
+  // so an event schedule only clears the cadence fields here.
+  editTrigger: action(function (this: Draft, taskId: string, fields: TriggerEdit) {
+    const t = (this.agentTasks as any)[taskId] ?? (this.foreignTriggers as any)[taskId];
+    if (t && !isTriggerEditable(t.status)) return false;
+    if (!t) return true;
+    if (fields.title !== undefined) t.title = fields.title.trim() || t.title;
+    if (fields.prompt?.trim()) t.prompt = fields.prompt.trim();
+    if (fields.mode !== undefined) t.mode = fields.mode === "apply" ? "apply" : "propose";
+    if (fields.agent_type !== undefined) t.agent_type = fields.agent_type || "claude";
+    if (fields.project_path !== undefined) t.project_path = fields.project_path || undefined;
+    if (fields.schedule_type === "recurring" && fields.interval_ms) {
+      t.schedule_type = "recurring";
+      t.interval_ms = fields.interval_ms;
+      t.run_at = fields.run_at ?? Date.now() + fields.interval_ms;
+    } else if (fields.schedule_type === "event") {
+      t.schedule_type = "event";
+      t.run_at = undefined;
+      t.interval_ms = undefined;
+    } else if (fields.schedule_type === "once") {
+      t.schedule_type = "once";
+      t.run_at = fields.run_at ?? Date.now();
+      t.interval_ms = undefined;
+    } else if (fields.schedule_type === undefined) {
+      if (fields.interval_ms !== undefined) t.interval_ms = fields.interval_ms;
+      if (fields.run_at !== undefined) t.run_at = fields.run_at;
+    }
+    return true;
+  }),
+  dropRows: sync(function (this: Draft, key: string, ids: string[]) {
+    const coll = (this as any)[key];
+    if (!coll) return;
+    for (const id of ids) if (id in coll) delete coll[id];
+  }),
+  activeProjectPath: null,
+  activeProjectFilter: null,
+  chipFilterExclude: false,
+  extraProjectFilters: [],
+  setActiveProjectFilter: action(function (this: Draft, name: string | null, path?: string | null, exclude?: boolean, extras?: ProjectFilterTerm[]) {
+    setProjectFilterHeadInDraft(this, name, path, exclude, extras);
+  }),
+  // Shift-click on a project chip: toggle ONE term of the project filter
+  // without disturbing the rest (toggleFilterTerm has the arithmetic).
+  toggleProjectFilterTerm: action(function (this: Draft, name: string, path: string | null, exclude: boolean) {
+    if (!this.activeProjectFilter) {
+      // First term: identical to a plain/alt click, including clearing the
+      // label axis — the sibling action's exact logic.
+      setProjectFilterHeadInDraft(this, name, path, exclude);
+      return;
+    }
+    const prev = snapshotInboxViewFromDraft(this);
+    const [head] = chipProjectFilters(this);
+    const next = toggleFilterTerm(head, this.extraProjectFilters ?? [], { id: name, path, exclude });
+    this.activeProjectFilter = next.head?.id ?? null;
+    this.activeProjectPath = next.head?.path ?? null;
+    this.chipFilterExclude = next.head ? next.head.exclude : false;
+    this.extraProjectFilters = next.extras;
+    commitChipFilterChange(this, prev);
+  }),
+
+  // -- Capability library --
+  capabilityState: {},
+  capabilityBindings: {},
+  setCapabilityBinding: action(function (this: Draft, opts: {
+    capability_slug: string;
+    scope_kind: string;
+    scope_key?: string;
+    enabled: boolean;
+    team_id?: string;
+    client_key?: string;
+  }) {
+    const scopeKey = opts.scope_key ?? "";
+    // The upsert key mirrors the server's (user, slug, scope_kind, scope_key):
+    // an existing row flips in place, else a stub keyed by client_key lands
+    // and the server row supersedes it on sync (altKey convention).
+    const existing = Object.values(this.capabilityBindings).find(
+      (b) =>
+        b.capability_slug === opts.capability_slug &&
+        b.scope_kind === opts.scope_kind &&
+        (b.scope_key ?? "") === scopeKey,
+    );
+    if (existing) {
+      existing.enabled = opts.enabled;
+      existing.updated_at = Date.now();
+      return;
+    }
+    const clientKey = opts.client_key ?? `cb_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
+    this.capabilityBindings[clientKey] = {
+      _id: clientKey,
+      capability_slug: opts.capability_slug,
+      scope_kind: opts.scope_kind,
+      scope_key: scopeKey,
+      enabled: opts.enabled,
+      team_id: opts.team_id,
+      client_key: clientKey,
+      created_by: "user",
+      updated_at: Date.now(),
+    };
+  }),
+
+  // -- Decision queue (cast decide) --
+  sessionDecisions: {},
+  decisionStacks: {},
+  handledDecisions: {},
+  decisionDetails: {},
+  decisionDiscussions: {},
+  discussionSends: {},
+  questionResolutions: {},
+  // sync(): local-only bookkeeping — the mark never dispatches; server truth
+  // arrives on its own rail (awaiting_input / agent_status) and expires it.
+  resolveSessionQuestion: sync(function (this: Draft, convId: string, opts?: { sends?: number }) {
+    const row = this.sessions[convId];
+    this.questionResolutions[convId] = {
+      at: Date.now(),
+      message_count: (row?.message_count ?? 0) + (opts?.sends ?? 0),
+    };
+  }),
+  answerDecision: action(function (this: Draft, decisionId: string, answer: DecisionAnswerInput) {
+    // Answered from a surface that read the decision's document (a session opened on it, its page): adopt that copy first.
+    adoptDecisionDraft(this, decisionId);
+    answerDecisionDraft(this, decisionId, answer);
+  }),
+  // The words paint at once as a local echo; the discussDecision side effect
+  // delivers them to the owner and records the ask, and the discussion feed's
+  // row carrying the same client id retires the echo (lib/decisionDiscussion).
+  // A refusal (discussCore's { error }) is returned, not thrown, so the caller
+  // awaits it and takes the echo back (lib/decisionDiscussion sendDiscussion).
+  discussDecision: asyncAction(function (this: Draft, decisionId: string, text: string, clientId: string) {
+    const sends = (this.discussionSends[decisionId] ??= []);
+    if (!sends.some((x) => x.client_id === clientId)) sends.push({ client_id: clientId, text: text.trim(), at: Date.now() });
+  }),
+  dropDiscussionSend: sync(function (this: Draft, decisionId: string, clientId: string) {
+    const sends = this.discussionSends[decisionId];
+    if (!sends) return;
+    const kept = sends.filter((x) => x.client_id !== clientId);
+    if (kept.length) this.discussionSends[decisionId] = kept;
+    else delete this.discussionSends[decisionId];
+  }),
+  // A decision the viewer may answer but whose queue row they lack: a role on
+  // its ladder heard it first (org-staffing.md S28), or it was asked of
+  // somebody else, so no inbox row put it in sessionDecisions, yet the server
+  // takes the viewer's answer. The document page's copy becomes the row, here and
+  // not inside answerDecision, because the answer reaches the server only as
+  // field patches on a row that already exists.
+  adoptDecision: sync(function (this: Draft, decisionId: string) {
+    adoptDecisionDraft(this, decisionId);
+  }),
+
+  // One Ship control (docs/architecture/ship.md): every Ship press, the
+  // change card's included. The press paints on the target's shipTargets row
+  // and rides the startShip side effect (convex/ship.ts). A press that answers
+  // a line run's change card answers it here on the decision rail, exactly as
+  // the card's own answer does, and names the card so the server records the
+  // run against it.
+  startShip: action(function (this: Draft, target: { kind: "task" | "conversation" | "pull_request"; id: string }, clientKey: string, decisionId?: string) {
+    if (decisionId) {
+      const row = this.sessionDecisions[decisionId];
+      const ship = row ? cardVerdictIndexes(row.options)?.ship : undefined;
+      if (ship !== undefined) answerDecisionDraft(this, decisionId, { index: ship });
+    }
+    const key = `${target.kind}:${target.id}`;
+    const slot = (this as any).shipTargets as Record<string, any>;
+    const prev = slot[key];
+    slot[key] = {
+      ...(prev ?? { _id: key, target, plan: null, pr_id: null, line: null }),
+      run: { id: clientKey, client_key: clientKey, procedure: prev?.plan?.procedure ?? null, conversation_id: null, short_id: null, decision_id: decisionId ?? null, workflow_run_id: null, created_at: Date.now() },
+    };
+  }),
+
+  reopenDecision: action(function (this: Draft, decisionId: string) {
+    const row = this.sessionDecisions[decisionId];
+    const me = String(this.currentUser?._id ?? "");
+    if (row) {
+      if (row.status !== "answered" || row.answered_by?.kind !== "role") return;
+      row.status = "pending";
+      row.answer_index = undefined;
+      row.answer_text = undefined;
+      row.answer_json = undefined;
+      row.resolved_at = undefined;
+      row.answered_by = undefined;
+      row.reopened_from = row.grant_id ? { grant_id: row.grant_id, answer_index: row.answer_index, at: Date.now() } : row.reopened_from;
+      row.grant_id = undefined;
+      row.holder = { kind: "user", id: me };
+      row.holder_key = `user:${me}`;
+      row.updated_at = Date.now();
+    }
+    delete this.handledDecisions[decisionId];
+    const detail = this.decisionDetails[decisionId];
+    if (detail && row) detail.decision = { ...row };
+  }),
+  passDecision: action(function (this: Draft, decisionId: string, to: { kind: "user" | "role"; id: string }) {
+    const row = this.sessionDecisions[decisionId] ?? this.decisionDetails[decisionId]?.decision;
+    if (!row || row.status !== "pending") return;
+    const now = Date.now();
+    row.passed_to = { kind: to.kind, id: to.id };
+    // Given to a person, it leaves every other queue and enters theirs.
+    if (to.kind === "user") row.in_queue = to.id === String(this.currentUser?._id ?? "");
+    row.holder = { kind: to.kind, id: to.id };
+    row.holder_key = `${to.kind}:${to.id}`;
+    if (to.kind === "user") row.asked_user_ids = [to.id];
+    else if (!(row.hops ?? []).some((h) => h.role_id === to.id)) row.hops = [...(row.hops ?? []), { role_id: to.id, at: now }];
+    row.updated_at = now;
+    const detail = this.decisionDetails[decisionId];
+    if (!detail) return;
+    if (detail.decision !== row) detail.decision = { ...row };
+    if (to.kind === "user") {
+      const m = (this.teamMembers ?? []).find((u: any) => String(u._id) === to.id);
+      detail.asked_users = [{ _id: to.id, name: m?.name ?? m?.email ?? "a teammate" }];
+      return;
+    }
+    const r = this.orgTree?.roles.find((x) => String(x._id) === to.id);
+    const role = r ? { _id: String(r._id), short_id: r.short_id, name: r.name, handle: r.handle, status: r.status } : null;
+    detail.holder_role = role;
+    if (!detail.ladder.some((h) => h.role_id === to.id)) detail.ladder = [...detail.ladder, { role_id: to.id, at: now, role }];
+  }),
+  // A pass taken back (convex unassignCore): nobody holds it, and the server
+  // routes it again; the unassignDecision side effect.
+  unassignDecision: action(function (this: Draft, decisionId: string) {
+    const row = this.sessionDecisions[decisionId];
+    if (!row || row.status !== "pending" || !row.passed_to) return;
+    row.passed_to = null;
+    row.updated_at = Date.now();
+  }),
+  reorderStack: action(function (this: Draft, stackId: string, decisionIds: string[]) {
+    const stack = this.decisionStacks[stackId];
+    if (!stack) return;
+    stack.decision_ids = decisionIds;
+    stack.updated_at = Date.now();
+  }),
+  setStackPolicy: asyncAction(function (this: Draft, stackId: string, args: StackPolicyPatch) {
+    const stack = this.decisionStacks[stackId];
+    if (!stack) return;
+    // Assigning `policy` locks the whole object until the server echoes an
+    // equal one (the engine compares the JSON text). Convex returns objects
+    // with sorted keys and no undefined values, so the painted object is
+    // built the same way; a stale key order would keep the lock forever.
+    // A delegate is a handle the server resolves into delegate_role_id, so
+    // a delegate only write leaves the draft alone and paints from the echo:
+    // locking a policy without the delegate keys would never retire.
+    const next: Record<string, number | string | undefined> = { ...stack.policy };
+    let touched = false;
+    if (args.clear_auto_default) { next.auto_default_after_ms = undefined; touched = true; }
+    else if (args.auto_default_after_ms !== undefined) { next.auto_default_after_ms = args.auto_default_after_ms; touched = true; }
+    if (args.clear_due) { next.due_at = undefined; touched = true; }
+    else if (args.due_at !== undefined) { next.due_at = args.due_at; touched = true; }
+    if (!touched) return;
+    const policy: DecisionStackItem["policy"] = {};
+    for (const key of Object.keys(next).sort()) if (next[key] !== undefined) (policy as any)[key] = next[key];
+    stack.policy = policy;
+  }),
+  removeFromStack: action(function (this: Draft, stackId: string, decisionId: string) {
+    const stack = this.decisionStacks[stackId];
+    if (stack) {
+      stack.decision_ids = stack.decision_ids.filter((id) => id !== decisionId);
+      stack.total = stack.decision_ids.length;
+      stack.pending = Math.max(0, stack.pending - (this.sessionDecisions[decisionId]?.status === "pending" ? 1 : 0));
+      stack.updated_at = Date.now();
+    }
+    const row = this.sessionDecisions[decisionId];
+    if (row && row.stack_id === stackId) row.stack_id = undefined;
+  }),
+  createStackWith: action(function (this: Draft, input: { title: string; decision_ids: string[]; team_id?: string; client_key: string }) {
+    const now = Date.now();
+    const me = String(this.currentUser?._id ?? "");
+    const members = input.decision_ids.filter((id) => this.sessionDecisions[id]);
+    this.decisionStacks[input.client_key] = {
+      _id: input.client_key,
+      client_key: input.client_key,
+      title: input.title,
+      team_id: input.team_id,
+      scope_user_id: input.team_id ? undefined : me,
+      owner_user_id: me,
+      policy: {},
+      status: "open",
+      decision_ids: members,
+      total: members.length,
+      resolved: members.filter((id) => this.sessionDecisions[id]?.status !== "pending").length,
+      pending: members.filter((id) => this.sessionDecisions[id]?.status === "pending").length,
+      created_at: now,
+      updated_at: now,
+    };
+    for (const id of members) this.sessionDecisions[id].stack_id = input.client_key;
+  }),
+
+  // -- Manual session buckets --
+  buckets: {},
+  bucketAssignments: {},
+  activeBucketFilter: null,
+  extraBucketFilters: [],
+  setActiveBucketFilter: action(function (this: Draft, bucketId: string | null, exclude?: boolean, extras?: BucketFilterTerm[]) {
+    setBucketFilterHeadInDraft(this, bucketId, exclude, extras);
+  }),
+  // Shift-click: toggle ONE term of the label filter without disturbing the
+  // rest (toggleFilterTerm has the arithmetic).
+  toggleBucketFilterTerm: action(function (this: Draft, bucketId: string, exclude: boolean) {
+    if (!this.activeBucketFilter) {
+      // First term: identical to a plain/alt click, including clearing the
+      // project axis — the sibling action's exact logic.
+      setBucketFilterHeadInDraft(this, bucketId, exclude);
+      return;
+    }
+    const prev = snapshotInboxViewFromDraft(this);
+    const [head] = chipBucketFilters(this);
+    const next = toggleFilterTerm(head, this.extraBucketFilters ?? [], { id: bucketId, exclude });
+    this.activeBucketFilter = next.head?.id ?? null;
+    this.chipFilterExclude = next.head ? next.head.exclude : false;
+    this.extraBucketFilters = next.extras;
+    commitChipFilterChange(this, prev);
+  }),
+  inboxViewMode: () => resolveInboxViewMode(get().clientState.ui),
+  setInboxViewMode: (mode: InboxViewMode) => {
+    const state = get();
+    const prev = snapshotInboxViewFromDraft(state);
+    // inbox_flat_view stays coherent so existing flat-view readers keep working:
+    // both flat modes ("recent"/"time") flatten for an older reader.
+    state.updateClientUI({ inbox_view_mode: mode, inbox_flat_view: mode === "time" || mode === "recent" });
+    // A frozen recent order is meaningless once you leave recent — drop it so a
+    // later return to recent starts live.
+    if (mode !== "recent") state.thawRecentOrder();
+    pushInboxViewHistory(prev, snapshotInboxViewFromDraft(get()));
+  },
+  cycleInboxViewMode: () => {
+    const state = get();
+    const current = state.inboxViewMode();
+    const hasBuckets = (Object.values(state.buckets) as BucketItem[]).some((b) => !b.archived_at);
+    const hasPlans = (Object.values(state.sessions) as InboxSession[]).some((s) => !!s.active_plan);
+    // Trigger data lives in the panel's Convex subscription; its published nav
+    // bridge is the store's only sight of whether any triggers exist.
+    const hasTriggers = (state.scheduleNavSets?.triggerOrder?.length ?? 0) > 0;
+    const lensSrc = orgLensSourcesOf(state);
+    const lensRows = Object.values(state.sessions) as InboxSession[];
+    const cycle = inboxViewModes({
+      hasLabels: hasBuckets,
+      hasPlans,
+      orgLenses: ORG_LENS_MODES.filter((m) => orgLensAvailable(m, lensRows, lensSrc)),
+      hasTriggers,
+    });
+    state.setInboxViewMode(cycle[(cycle.indexOf(current) + 1) % cycle.length]);
+  },
+  setSessionManualOrder: (id: string, key: number) => get().setSessionManualOrders({ [id]: key }),
+  setSessionManualOrders: (keys: Record<string, number>) => {
+    const current = get().clientState.ui?.inbox_manual_order ?? {};
+    get().updateClientUI({ inbox_manual_order: { ...current, ...keys } });
+  },
+  clearManualOrder: () => {
+    if (!get().clientState.ui?.inbox_manual_order) return;
+    get().updateClientUI({ inbox_manual_order: {} });
+  },
+
+  recentVisits: [],
+  recordRecentVisit: sync(function (this: Draft, visit: Omit<RecentVisit, "ts">) {
+    recordVisitInDraft(this, visit);
+  }),
+
+  // Same cursors recordSessionView writes when LEAVING a session, written
+  // here on demand: expanding a session card on the Threads page is reading
+  // it, so its unread badge (message_count > _seenMessageCount) clears.
+  markSessionSeen: sync(function (this: Draft, id: string) {
+    if (!id) return;
+    const count = this.conversations[id]?.message_count ?? this.sessions[id]?.message_count;
+    if (typeof count === "number") this._seenMessageCount[id] = count;
+    this._seenUpToAt[id] = Date.now();
+  }),
+
+  // -- Session unread --
+  sessionReads: {},
+  // Plain, not an action: an action() always dispatches, and the ack fires on
+  // every presence change and every re-render of the open session. The guard
+  // here is what makes "the agent re-reported the same state" literally free —
+  // no draft, no outbox entry, no mutation.
+  ackSessionRead: (conversationId: string, at?: number) => {
+    if (!conversationId) return;
+    const now = Date.now();
+    // The session's own activity watermark is what the card compares against,
+    // so acknowledging exactly that value is what makes the dot go out. Never
+    // ahead of the clock: a future stamp would swallow turns not yet landed.
+    const stamp = Math.min(at && at > 0 ? at : now, now);
+    const existing = findSessionReadInDraft(get(), conversationId);
+    if (existing && existing.acknowledged_at >= stamp && !existing.manual_unread) return;
+    get().writeSessionAck(conversationId, stamp);
+  },
+  writeSessionAck: action(function (this: Draft, conversationId: string, stamp: number) {
+    const now = Date.now();
+    const existing = findSessionReadInDraft(this, conversationId);
+    if (existing) {
+      if (existing.acknowledged_at < stamp) existing.acknowledged_at = stamp;
+      // Mirror the server's projection exactly (it omits a false flag), so
+      // field protection reconciles by === instead of freezing forever.
+      delete existing.manual_unread;
+      existing.updated_at = now;
+    } else {
+      const stubId = `sessionread-${conversationId}`;
+      this.sessionReads[stubId] = {
+        _id: stubId,
+        conversation_id: conversationId,
+        acknowledged_at: stamp,
+        updated_at: now,
+      };
+    }
+  }),
+  markSessionUnread: (conversationId: string) => {
+    if (!conversationId) return;
+    // Already lit by hand: nothing to say again.
+    if (findSessionReadInDraft(get(), conversationId)?.manual_unread) return;
+    get().writeSessionUnread(conversationId);
+  },
+  writeSessionUnread: action(function (this: Draft, conversationId: string) {
+    const now = Date.now();
+    const existing = findSessionReadInDraft(this, conversationId);
+    if (existing) {
+      existing.manual_unread = true;
+      existing.updated_at = now;
+    } else {
+      const stubId = `sessionread-${conversationId}`;
+      this.sessionReads[stubId] = {
+        _id: stubId,
+        conversation_id: conversationId,
+        acknowledged_at: 0,
+        manual_unread: true,
+        updated_at: now,
+      };
+    }
+  }),
+
+  // =====================
+  // ACTIONS (wrapped by middleware: mutative draft + server dispatch)
+  // =====================
+
+  // Stash = set aside WITHOUT killing (Stashed bucket, agent keeps running).
+  // `hidden` = "Stash and hide": the stash survives trigger wakes; a plain
+  // stash pops back into the inbox on the next one (server rule in
+  // pendingMessages.enqueuePendingMessage, predicate isStashHidden).
+  stashSession: action(function (this: Draft, id: string, opts?: { hidden?: boolean }) {
+    soundDismiss();
+    const hidden = !!opts?.hidden;
+    announceHide(this, "stash", hideSessionInDraft(this, id, "stash", Date.now(), hidden), hidden);
+  }),
+
+  // Kill = done with it. The server tears the agent down on the hide data
+  // transition (dispatch.applyPatches sees inbox_dismissed_at flip), so this
+  // action only has to move the rows; every kill path gets the teardown
+  // without remembering to ask for it. (The persisted field keeps its
+  // historical name inbox_dismissed_at and the UI calls the bucket "Killed";
+  // the server's kill transition additionally stamps inbox_killed_at, which is
+  // what actually marks the row retired.)
+  killSession: action(function (this: Draft, id: string) {
+    soundKill();
+    announceHide(this, "kill", hideSessionInDraft(this, id, "kill"));
+  }),
+
+  // Delete for good (sessionDelete.deleteSession, by action name): the server
+  // tears the agent down, removes the row and its content, and tombstones the
+  // session id so the daemon never recreates it. Owner-only; the menus offer it
+  // only on the viewer's own rows.
+  deleteSession: action(function (this: Draft, id: string) {
+    advanceSelection(this, sessionPastRemoved(this, [id]));
+    delete this.sessions[id];
+    delete this.conversations[id];
+    delete this.messages[id];
+    delete this.pendingMessages[id];
+    delete this.pagination[id];
+    broadcastGesture({ kind: "forget", ids: [id], ts: Date.now() }, bridgeUserId(this));
+  }),
+
+  // Bulk kill ("Kill all" on the Stashed bucket): one action so the patches
+  // ride a single dispatch and the kill sound plays once, not N times. Scale
+  // is the user-curated stash list (tens) — each row NEEDS its own server
+  // patch anyway (the per-conversation hide transition is what enqueues the
+  // agent teardown), so the markSessionsDismissed storm concern doesn't apply.
+  killSessions: action(function (this: Draft, ids: string[]) {
+    if (ids.length === 0) return;
+    soundKill();
+    // "Kill all" is ONE user gesture: one timestamp for every row it stamps and
+    // for the single merged broadcast (the sound plays once for the same reason).
+    // Per-row Date.now() drifts across a long sweep, so the message's timestamp
+    // matched only the last row — every sibling lock planted for an earlier row
+    // held a value the server would never echo, and so would never retire.
+    const now = Date.now();
+    const merged: HideResult = { hidden: [], forgotten: [], writes: {}, ts: now };
+    for (const id of ids) {
+      const r = hideSessionInDraft(this, id, "kill", now);
+      merged.hidden.push(...r.hidden);
+      merged.forgotten.push(...r.forgotten);
+      Object.assign(merged.writes, r.writes);
+    }
+    announceHide(this, "kill", merged);
+  }),
+
+  // Bulk-dismiss a precomputed set of sessions locally (instant, optimistic). A
+  // sync() — NOT action() — on purpose: action() auto-dispatches one server patch
+  // per mutated conversation, so dismissing thousands would be a dispatch storm.
+  // The caller persists authoritatively with ONE paginated server mutation
+  // (conversations.dismissStaleInboxSessions) instead. Skips already-dismissed
+  // rows. Used by the "dismiss old sessions" inbox prompt.
+  markSessionsDismissed: sync(function (this: Draft, ids: string[]) {
+    const now = Date.now();
+    const stamped: string[] = [];
+    for (const id of ids) {
+      const sess = this.sessions[id];
+      if (sess && !sess.inbox_dismissed_at) {
+        sess.inbox_dismissed_at = now;
+        stamped.push(id);
+      }
+      if (this.conversations[id] && !(this.conversations[id] as any).inbox_dismissed_at) {
+        (this.conversations[id] as any).inbox_dismissed_at = now;
+      }
+    }
+    // The bulk sweep is the highest-volume dismissal path there is, and every
+    // row it stamps is one a sibling window would otherwise re-put un-dismissed
+    // — dozens of sessions climbing back into the inbox at once. One message
+    // for the whole sweep, carrying only the ids actually stamped.
+    //
+    // mode:"kill" is the shape (it writes inbox_dismissed_at). The receiver's
+    // kill also clears stash/pin, which this action doesn't — a no-op in
+    // practice, since the caller's stale set already excludes hidden and pinned
+    // rows, and the receiver's ts guard protects a sibling's newer pin anyway.
+    if (stamped.length) {
+      broadcastGesture({ kind: "hide", mode: "kill", ids: stamped, ts: now }, bridgeUserId(this));
+    }
+  }),
+
+  // Optimistic clear of the API-error banner flag — the blocked-sessions
+  // banner's per-row "never restart this" decision. Same shape as
+  // markSessionsDismissed: local sync() for the instant UI, the caller
+  // persists with ONE server mutation (accountSwitch.acknowledgeBlocked).
+  markBlockedAcknowledged: sync(function (this: Draft, ids: string[]) {
+    for (const id of ids) {
+      const sess = this.sessions[id];
+      if (sess) {
+        sess.pending_api_error = false;
+        sess.pending_api_error_kind = null;
+        sess.pending_api_error_at = null;
+      }
+      const conv = this.conversations[id] as any;
+      if (conv) {
+        conv.pending_api_error = false;
+        conv.pending_api_error_kind = null;
+        conv.pending_api_error_at = null;
+      }
+    }
+  }),
+
+  // Optimistic "revive is in flight" stamp for the blocked-sessions banner's
+  // continue/switch actions. pending_api_error is server-derived (it clears
+  // only when the agent resumes and its new output syncs), so a direct clear
+  // here would be stomped by the next session sync. Instead the stamp is a
+  // separate local map that classification (placeInboxRows) and the
+  // banner/pill exclusion read through freshReviveRequestIds — the sessions
+  // move to WORKING instantly, and if the revive never lands the stamp ages
+  // out (BLOCKED_REVIVE_TTL_MS) and the blocked state honestly resurfaces.
+  markBlockedReviveRequested: sync(function (this: Draft, ids: string[]) {
+    const now = Date.now();
+    // Prune expired stamps on write so the map never accumulates.
+    for (const [id, at] of Object.entries(this.blockedReviveRequestedAt)) {
+      if (now - at > BLOCKED_REVIVE_TTL_MS) delete this.blockedReviveRequestedAt[id];
+    }
+    for (const id of ids) this.blockedReviveRequestedAt[id] = now;
+  }),
+
+  // Honest revert when the revive mutation fails outright.
+  clearBlockedReviveRequested: sync(function (this: Draft, ids: string[]) {
+    for (const id of ids) delete this.blockedReviveRequestedAt[id];
+  }),
+
+  // Ghost removal — the sessions cache is never-prune, so a row nothing will
+  // ever re-deliver is dropped by hand: stub ids (orphaned optimistic creates
+  // that never landed server-side, so the server cannot vouch for them; the
+  // caller's age/idleness guards are the safety there) and rows a server-side
+  // deletion left behind before the sync log carried deletes. The planted
+  // excludes are sticky in delta mode, so a wrong delete would blind this
+  // client to a live session — callers never pass a live Convex id. The
+  // excludes are what authorize the IDB row delete (a bare store-shrink is
+  // ignored by the diff). A sync() — never re-dispatched; excludes are planted
+  // manually (only action() auto-plants).
+  pruneGhostSessions: sync(function (this: Draft, ids: string[], opts?: { serverDeleted?: boolean }) {
+    const now = Date.now();
+    const removed: string[] = [];
+    for (const id of ids) {
+      // Nothing here to remove → do nothing at all. Callers re-fire on ids they
+      // already pruned (ConversationView's 3s retry, ComposeView's unmount), and
+      // acting on an absent row is pure downside: the excludes are STICKY, so
+      // planting them for a row this window never held blinds it if that id ever
+      // arrives on a later crawl, and the broadcast would order sibling windows
+      // to drop a row on evidence this window doesn't have.
+      if (!(id in this.sessions) && !(id in this.conversations)) continue;
+      if (dropSessionInDraft(this, id, now, opts?.serverDeleted)) removed.push(id);
+    }
+    // A sibling window still holding the ghost in memory would re-put the whole
+    // row and resurrect it (see gestureBridge.ts). Only the ids actually removed
+    // are announced — the guards above are per-window.
+    if (removed.length) broadcastGesture({ kind: "forget", ids: removed, ts: now }, bridgeUserId(this));
+  }),
+
+  // Apply a gesture a sibling window performed (cross-window gesture bridge).
+  // sync(): purely local convergence — the acting window already dispatched the
+  // single server write, so this must never dispatch or enqueue an outbox entry.
+  // Mechanics and guards in applyGestureInDraft.
+  applyGestureBridge: sync(function (this: Draft, msg: GestureMessage) {
+    applyGestureInDraft(this, msg);
+  }),
+
+  // Change-feed prune: the entity is gone or no longer visible to this user, so
+  // remove it from the never-prune cache and plant an exclude (the exclude is
+  // what authorizes the durable IDB delete; a bare store-shrink is ignored by the
+  // diff and would resurrect on reload). Mirrors pruneGhostSessions' session
+  // guards, generalized to the four feed collections. sync() — applying a
+  // server-side deletion the feed reported; never re-dispatched. The matching
+  // clearFeedExcludes lifts the exclude if the entity ever reappears. See
+  // hooks/useSyncChangeFeed.
+  pruneFeedEntities: sync(function (this: Draft, collection: FeedCollection, ids: string[]) {
+    const now = Date.now();
+    for (const id of ids) {
+      if (collection === "sessions") {
+        dropSessionInDraft(this, id, now);
+      } else {
+        const coll = (this as any)[collection] as Record<string, any> | undefined;
+        if (coll && id in coll) delete coll[id];
+        this.pending[`${collection}:${id}`] = { type: "exclude", ts: now };
+      }
+    }
+  }),
+
+  // Lift any feed-planted exclude for ids the feed is about to re-upsert. Delta
+  // sync SKIPS excluded ids, so without this a re-shared / restored entity that
+  // reappears in a batch-get would be silently dropped forever. Called just
+  // before the feed's syncTable upsert. sync() — local pending bookkeeping only.
+  // Release every pending FIELD lock on these rows that is past the settle
+  // window. A lock protects an in-flight local write until the server echoes
+  // the value; a lock whose echo never comes (the write was superseded — a
+  // remote kill cleared the pin this device had just dispatched, so no later
+  // row ever carried the pinned value back) would re-assert the local value
+  // over every authoritative row forever. Past HIDDEN_OVERRIDE_SETTLE_MS the
+  // compare's carve-out (inboxOverlays) already stops treating the row as an
+  // intentional deviation, so the heal that follows must let the authoritative
+  // row land: same bound, one rule (the hidden reconcile applies it to its own
+  // field in lockedLocal). Found by the two-replica simulation, 2026-09-01.
+  releaseSettledFieldLocks: sync(function (this: Draft, ids: string[]) {
+    const now = Date.now();
+    const wanted = new Set(ids);
+    const pending = (original(this) as InboxStoreState).pending;
+    for (const [key, entry] of Object.entries(pending)) {
+      if ((entry as any)?.type !== "field") continue;
+      const parts = key.split(":");
+      if (parts.length < 3 || !wanted.has(parts[1])) continue;
+      const ts = (entry as any).ts;
+      if (ts == null || now - ts < HIDDEN_OVERRIDE_SETTLE_MS) continue;
+      delete this.pending[key];
+    }
+  }),
+
+  // The digest compare's heal for rows hydrated by id (sync-convergence C7):
+  // a returned row proves it is visible, so lift any planted exclude; release
+  // the settled locks so the authoritative fields win; then the ordinary
+  // delta merge. One applier for the web hook and the simulation.
+  applyHealedSessions: (ids: string[], rows: InboxSession[]) => {
+    const store = get();
+    store.releaseSettledFieldLocks(ids);
+    if (!rows.length) return;
+    store.clearFeedExcludes("sessions", rows.map((r) => String(r._id)));
+    store.syncTable("sessions", rows);
+  },
+
+  clearFeedExcludes: sync(function (this: Draft, collection: FeedCollection, ids: string[]) {
+    for (const id of ids) {
+      if (this.pending[`${collection}:${id}`]?.type === "exclude") delete this.pending[`${collection}:${id}`];
+      if (collection === "sessions" && this.pending[`conversations:${id}`]?.type === "exclude") {
+        delete this.pending[`conversations:${id}`];
+      }
+    }
+  }),
+
+  // Flag a cached conversation whose server row turned out to be deleted (a
+  // dispatch hit "conversation_deleted"). The never-prune cache keeps rendering
+  // it; this flag lets the view say so and offer restore instead of silently
+  // failing. sync() — local bookkeeping only; no server row exists to patch,
+  // and since the server never syncs this conversation again the flag sticks.
+  markServerDeleted: sync(function (this: Draft, convId: string) {
+    const sess = this.sessions[convId] as any;
+    if (sess) sess.server_deleted = true;
+    const conv = this.conversations[convId] as any;
+    if (conv) conv.server_deleted = true;
+  }),
+
+  // ── Sync-log write acks (design D8) ─────────────────────────────────────────
+  // Stamp the sync-log positions a dispatch landed at onto the pending entries
+  // that dispatch created. Keys derive from the dispatched (table-grouped)
+  // patches through the registry's table→storeKey mapping — the same rows the
+  // engine's auto-pending derived its entries from. Guard: only entries whose
+  // `ts` predates the dispatch send get the ack; a newer local write replaced
+  // the entry object (auto-pending makes fresh objects), so an older write's
+  // ack can never retire it. If the scope cursor already passed the position,
+  // retire immediately (the ack raced the applier). sync() — local bookkeeping.
+  //
+  // The ack is also announced on the cross-window gesture bridge: sibling
+  // windows hold mirrored locks for this write (planted by the bridge's own
+  // hide/pin/fields message, or by the host from this window's replicated
+  // rows) and retire them at the same position — they have no dispatch of
+  // their own to be acknowledged. `local` marks the bridged receipt, which
+  // stamps and does not re-announce.
+  stampSyncAck: sync(function (
+    this: Draft,
+    patches: any,
+    ack: Array<{ scope_key: string; position: number }>,
+    sentAt: number,
+    opts?: { local?: boolean },
+  ) {
+    if (!stampSyncAckInDraft(this, patches, ack, sentAt)) return;
+    if (!opts?.local) {
+      broadcastGesture({ kind: "ack", patches, ack, sentAt, ts: Date.now() }, bridgeUserId(this));
+    }
+  }),
+
+  // Retire every pending entry whose ack says its write landed at or below the
+  // position this scope has now applied through. Called by the log applier
+  // BEFORE it overlays the range's stage-two rows, so the authoritative
+  // post-write state lands unblocked (review: retiring after the apply strands
+  // a diverged field with no lock and no re-fetch). sync() — local bookkeeping.
+  //
+  // `restore` (a follower, whose host sends the page's rows before its
+  // cursor): the rows already landed under the lock, so each retired lock
+  // hands its row the newest value it hid (retireAckedLockInDraft).
+  // A follower's own write, echoed back by the host (forgetSeenBeforeOwnEcho
+  // in syncReplication.ts): the host rows its locks recorded before predate
+  // that write, so an acknowledgement must not land one of them.
+  forgetLockSeen: sync(function (this: Draft, keys: string[], rowPrefixes: string[] = []) {
+    const forget = (key: string) => {
+      const entry = this.pending[key] as any;
+      if (entry?.type === "field" && entry.seen) delete entry.seen;
+    };
+    for (const key of keys) forget(key);
+    if (rowPrefixes.length > 0) {
+      for (const key of Object.keys(this.pending)) if (rowPrefixes.some((p) => key.startsWith(p))) forget(key);
+    }
+  }),
+
+  retireAckedPending: sync(function (this: Draft, scopeKey: string, upTo: number, opts?: { restore?: boolean }) {
+    for (const [key, entry] of Object.entries(this.pending)) {
+      const ackList = (entry as any)?.ack as Array<{ s: string; p: number }> | undefined;
+      if (ackList?.some((a) => a.s === scopeKey && a.p <= upTo)) {
+        retireAckedLockInDraft(this, key, !!opts?.restore);
+      }
+    }
+  }),
+
+  // Scope revocation (design D5): the log said this user left a team. Purge the
+  // workspace-scoped collections' rows for that team (access is gone; keeping
+  // them renders data the server would no longer serve) and plant excludes so
+  // the durable IDB rows delete too. Conversations are owner-scoped and
+  // untouched. The caller drops the scope's log cursor separately.
+  purgeTeamScopeRows: sync(function (this: Draft, teamId: string) {
+    const wsKey = `team:${teamId}`;
+    const now = Date.now();
+    for (const coll of ["tasks", "docs", "plans", "projects"] as const) {
+      const rows = (this as any)[coll] as Record<string, any> | undefined;
+      if (!rows) continue;
+      for (const [id, row] of Object.entries(rows)) {
+        if (row?.workspace === wsKey) {
+          delete rows[id];
+          // Tagged with the scope so a rejoin can lift exactly these
+          // (liftScopeExcludes); the rows are gone, so nothing else can name them.
+          this.pending[`${coll}:${id}`] = { type: "exclude", ts: now, scope: wsKey };
+        }
+      }
+    }
+    dropTeamFeedCacheIn(this, teamId);
+  }),
+
+  // A `member`/`scope_removed` row in the team's scope: the departed user's
+  // rows leave the team feed cache for that team. Keyed by the runner
+  // (user_id), the same key the server's team scan uses, so a role's seat row
+  // leaves with its host. A rejoin needs no lifting: the cache has no
+  // excludes, and the live page re-adds the rows the server serves again.
+  purgeMemberTeamRows: sync(function (this: Draft, teamId: string, userId: string) {
+    for (const key of teamFeedKeys(this, teamId)) {
+      const rows = this.feedConversations[key] as any[];
+      const kept = rows.filter((c) => String(c?.user_id) !== userId);
+      if (kept.length !== rows.length) this.feedConversations[key] = kept;
+    }
+  }),
+
+  dropTeamFeedCache: sync(function (this: Draft, teamId: string) {
+    dropTeamFeedCacheIn(this, teamId);
+  }),
+
+  liftScopeExcludes: sync(function (this: Draft, scopeKey: string) {
+    for (const [key, entry] of Object.entries(this.pending)) {
+      if ((entry as any)?.type === "exclude" && (entry as any).scope === scopeKey) delete this.pending[key];
+    }
+  }),
+
+  // Drop a syncMeta key outright (recordSyncMeta only advances). Used for log
+  // cursor resets: scope revocation and retention resync. A scope cursor's
+  // page-session stamp goes with it: the floors must wait for the restamp.
+  clearSyncMeta: sync(function (this: Draft, key: string) {
+    delete this.syncMeta[key];
+    if (key.startsWith(SYNC_LOG_META_PREFIX)) delete this.syncLogScopeStamps[key.slice(SYNC_LOG_META_PREFIX.length)];
+  }),
+
+  applyCargoFields: sync(function (
+    this: Draft,
+    coll: CargoCollection,
+    id: string,
+    fields: Record<string, any>,
+    unset: string[],
+  ): boolean {
+    return applyCargoIn(this, { coll, id, fields, unset });
+  }),
+
+  // A whole sync-log page in one draft. Every action pays for an IDB diff of
+  // each collection it touched and a pass over every store subscriber, both
+  // O(collection), so applying a 500-row page row by row froze the tab for
+  // seconds per page while a backfill restamp drained (2026-10-08: 21 ms a
+  // row against 22k tasks and 18k docs). Returns applyCargoFields' answer per
+  // item, in order.
+  applyCargoBatch: sync(function (this: Draft, items: CargoItem[]): boolean[] {
+    return items.map((item) => applyCargoIn(this, item));
+  }),
+
+  noteSyncLogApply: (direct: number, refetch: number) => {
+    if (!direct && !refetch) return;
+    set((s: any) => ({
+      syncLogApplyStats: { direct: s.syncLogApplyStats.direct + direct, refetch: s.syncLogApplyStats.refetch + refetch },
+    }));
+  },
+
+  // Clear every tasks/docs crawl watermark belonging to one sync-log scope, so
+  // the next crawl runs as a FULL backfill (design D7 resync / D5 scope_added).
+  // Crawl keys are `${ns}:v2:${JSON.stringify(wsArgs)}` — several per scope
+  // (project_path variants) and never byte-reconstructable from a scope key
+  // (object key order), so this parses and matches instead of concatenating.
+  clearCrawlMetaForScope: sync(function (this: Draft, scopeKey: string) {
+    const teamId = scopeKey.startsWith("team:") ? scopeKey.slice(5) : null;
+    const personal = scopeKey.startsWith("user:");
+    // The sessions floor is keyed by the principal (inboxCrawlWsKey), so the
+    // personal scope's resync recuts it — with the warm-cache probe that
+    // carries what left the inbox scan while the log had a hole.
+    if (personal) delete this.syncMeta[`sessions:v2:inbox:${scopeKey.slice(5)}`];
+    for (const key of Object.keys(this.syncMeta)) {
+      const m = /^(tasks|docs):v2:(.*)$/.exec(key);
+      if (!m) continue;
+      try {
+        const ws = JSON.parse(m[2]);
+        const matches = teamId
+          ? ws?.workspace === "team" && String(ws.team_id) === teamId
+          : personal && ws?.workspace === "personal";
+        if (matches) delete this.syncMeta[key];
+      } catch {
+        // not a JSON wsKey (e.g. "skip") — nothing to clear
+      }
+    }
+  }),
+
+  switchAgent: sync(function (this: Draft, currentId: string, targetAgentType: string) {
+    if (this.sessions[currentId]) this.sessions[currentId].agent_type = targetAgentType;
+    if (this.conversations[currentId]) this.conversations[currentId].agent_type = targetAgentType;
+    if (this.currentConversation.conversationId === currentId) {
+      this.currentConversation.agentType = targetAgentType;
+    }
+    return currentId;
+  }),
+
+
+  // Bring a stashed/dismissed session (and its hidden children) back into the
+  // active inbox. Clears ALL THREE hide flags — un-hiding is un-hiding.
+  //
+  // inbox_killed_at has to go with them. Restore is one of the three sanctioned
+  // revivals (with an explicit send and Restart), and it is the only one that
+  // reaches a row killed through the killSession MUTATION (the web's
+  // convCommand("killSession") — the Killed shelf's kill-and-complete, and
+  // older clients), which stamps the marker WITHOUT inbox_dismissed_at.
+  // (`cast kill` and the web's own kill action both write inbox_dismissed_at
+  // too, so those rows were already covered.) The server's un-kill mirror can't
+  // cover a marker-only row for us: it fires only when the patch clears
+  // inbox_dismissed_at on a row that already had it (dispatch.ts
+  // `wasDismissed`), so it would keep being hidden by shouldShowInInbox no
+  // matter how often the user pressed restore. Clearing all three is also
+  // exactly the un-kill SHAPE the dispatch guard demands before it will honor a
+  // kill-clear at all, and what `cast undismiss` writes.
+  restoreSession: action(function (this: Draft, id: string) {
+    const now = Date.now();
+    const childIds = Object.values(this.sessions as Record<string, InboxSession>)
+      .filter((s) => isSessionHidden(s) && s.parent_conversation_id === id)
+      .map((s) => s._id);
+    const allIds = [id, ...childIds];
+    for (const sid of allIds) {
+      if (this.sessions[sid]) {
+        this.sessions[sid].inbox_dismissed_at = null;
+        this.sessions[sid].inbox_stashed_at = null;
+        this.sessions[sid].inbox_snoozed_until = null;
+        this.sessions[sid].inbox_killed_at = null;
+      }
+      const conv = this.conversations[sid] as any;
+      if (conv) {
+        conv.inbox_dismissed_at = null;
+        conv.inbox_stashed_at = null;
+        conv.inbox_snoozed_until = null;
+        conv.inbox_killed_at = null;
+      }
+    }
+    declareViewNav("gesture");
+    this.currentSessionId = id;
+    setDismissedView(this, null);
+    recordCurrentConversationPointer(this, id);
+    // Sibling windows converge on the same clear (gestureBridge.ts) — but only
+    // the flags: the view move above is this window's alone.
+    broadcastGesture({ kind: "restore", ids: allIds, ts: now }, bridgeUserId(this));
+  }),
+
+  snoozeSession: action(function (this: Draft, id: string, until: number) {
+    const ids = [id, ...Object.values(this.sessions).filter((row) => nestParentIdOf(row) === id).map((row) => row._id)];
+    const next = nextSessionPastRemoved(computeVisualOrder(this), id, new Set(ids));
+    if (!setSessionSnoozeInDraft(this, id, until)) return;
+    for (const sid of ids.slice(1)) setSessionSnoozeInDraft(this, sid, until);
+    if (ids.includes(this.currentSessionId ?? "")) {
+      declareViewNav("gesture");
+      this.currentSessionId = next?._id ?? null;
+      recordCurrentConversationPointer(this, next?._id);
+      syncActiveInboxTabPath(this, next?._id ?? null);
+    }
+    if (ids.includes(this.viewingDismissedId ?? "")) setDismissedView(this, null);
+    if (ids.includes(this.sidePanelSessionId ?? "")) this.sidePanelSessionId = next?._id ?? null;
+  }),
+
+  wakeSnoozedSession: action(function (this: Draft, id: string) {
+    const now = Math.floor(Date.now() / 60_000) * 60_000;
+    if (!setSessionSnoozeInDraft(this, id, now)) return;
+    for (const sid of Object.values(this.sessions).filter((row) => nestParentIdOf(row) === id && row.inbox_snoozed_until).map((row) => row._id)) {
+      setSessionSnoozeInDraft(this, sid, now);
+    }
+  }),
+
+  deferSession: action(function (this: Draft, id: string) {
+    const now = Date.now();
+    clearSessionSnoozeInDraft(this, id);
+    if (this.sessions[id]) {
+      this.sessions[id].is_deferred = true;
+      // The server field, on the session row: the sessions→conversations
+      // field-whitelist dispatch carries it even when the conversations meta
+      // row doesn't exist yet (session never opened on this client).
+      this.sessions[id].inbox_deferred_at = now;
+    }
+    if (this.conversations[id]) (this.conversations[id] as any).inbox_deferred_at = now;
+  }),
+
+  // The user files the row themselves: "this is dormant / done / still my
+  // move". Same shape as deferSession: a stamp on the row that any later
+  // activity expires (the server honors it only while >= updated_at, so a
+  // wake un-files it with no clearing write). The row moves into the chosen
+  // section locally at once, whatever the classifier thought.
+  setSessionRest: action(function (this: Draft, id: string, rest: UserRest) {
+    const now = Date.now();
+    clearSessionSnoozeInDraft(this, id);
+    if (this.sessions[id]) {
+      this.sessions[id].user_rest = rest;
+      this.sessions[id].inbox_rest = rest;
+      this.sessions[id].inbox_rest_at = now;
+    }
+    if (this.conversations[id]) {
+      (this.conversations[id] as any).inbox_rest = rest;
+      (this.conversations[id] as any).inbox_rest_at = now;
+    }
+  }),
+
+  pinSession: action(function (this: Draft, id: string) {
+    clearSessionSnoozeInDraft(this, id);
+    const newPinned = !this.sessions[id]?.is_pinned;
+    const now = Date.now();
+    const pinnedAt = newPinned ? now : null;
+    if (this.sessions[id]) {
+      this.sessions[id].is_pinned = newPinned;
+      this.sessions[id].inbox_pinned_at = pinnedAt;
+    }
+    // Pin is a pure ORDERING gesture, never a revival: it leaves
+    // inbox_killed_at (as it already leaves inbox_dismissed_at/inbox_stashed_at)
+    // exactly where it is. The sanctioned revivals are an explicit send,
+    // Restart, and undismiss — and the server's dispatch rail now DROPS a
+    // kill-clear that isn't itself an un-kill, so clearing it optimistically
+    // only bought a flicker of a retired row rendering alive until the
+    // round-trip put it back. A killed row stays reachable while pinned:
+    // shouldShowInInbox keeps `inbox_killed_at && inbox_pinned_at` in the inbox
+    // precisely so pinning is how you hold onto one.
+    if (this.conversations[id]) {
+      (this.conversations[id] as any).inbox_pinned_at = pinnedAt;
+    }
+    // Pin is a TOGGLE read off this window's row, so a sibling that never saw
+    // the flip computes the opposite value from its stale row on the next
+    // toggle (and its whole-row put un-pins what the user just pinned). The
+    // broadcast therefore carries the RESOLVED value, not "toggle".
+    broadcastGesture({ kind: "pin", id, pinned: newPinned, pinnedAt, ts: now }, bridgeUserId(this));
+  }),
+
+  renameSession: action(function (this: Draft, id: string, title: string) {
+    if (this.sessions[id]) this.sessions[id].title = title;
+    if (this.conversations[id]) {
+      this.conversations[id].title = title;
+      this.conversations[id].title_is_custom = true;
+    }
+  }),
+
+  // A session's character (docs/architecture/session-characters.md S2). Both
+  // parts are optional and independent: pass a value to choose it, null to
+  // fall back to the id's hash default. The fields ride the generic
+  // conversation patch rail, so there is no named side effect; the server
+  // normalizes an unknown face key or a blank name to a clear.
+  setSessionCharacter: action(function (this: Draft, id: string, next: { avatar?: string | null; name?: string | null }) {
+    writeCharacterInDraft(this, id, next);
+  }),
+
+  // One gesture over a ticked selection: one action, so N rows ride a single
+  // dispatch. The caller decides the policy (one face for all, or a distinct
+  // face each) and hands over the resolved pairs — this only writes them.
+  setSessionCharacters: action(function (this: Draft, entries: Array<{ id: string; avatar?: string | null; name?: string | null }>) {
+    for (const e of entries) writeCharacterInDraft(this, e.id, e);
+  }),
+
+  switchProject: action(function (this: Draft, convId: string, path: string) {
+    if (this.sessions[convId]) {
+      this.sessions[convId].project_path = path;
+      this.sessions[convId].git_root = path;
+    }
+    if (!this.conversations[convId]) {
+      this.conversations[convId] = { _id: convId } as any;
+    }
+    this.conversations[convId].project_path = path;
+    this.conversations[convId].git_root = path;
+  }),
+
+  // Generic local-first conversation patch. `conversations` is wired into the
+  // server's applyPatches (every non-immutable field round-trips), so writing
+  // here updates the UI instantly AND persists to Convex with no dedicated
+  // side-effect — exactly how renameSession works. Mirrors onto sessions[] so
+  // inbox and conversation views both reflect the change immediately. Fields in
+  // the server's immutable set (is_private/team_visibility/status/agent_type)
+  // are silently ignored server-side — use setPrivacy/setTeamVisibility/etc.
+  patchConversation: action(function (this: Draft, id: string, fields: Record<string, any>) {
+    if (this.sessions[id]) Object.assign(this.sessions[id], fields);
+    if (!this.conversations[id]) this.conversations[id] = { _id: id } as any;
+    Object.assign(this.conversations[id], fields);
+    // Both of this action's real callers are USER GESTURES on the /sessions
+    // surface, and both write the bridged hide/pin fields: handleTogglePin
+    // sends { inbox_pinned_at }, handleToggleDismiss sends { inbox_stashed_at }
+    // or { inbox_dismissed_at: null, inbox_stashed_at: null }. A hidden row
+    // drops out of listInboxSessions, so a sibling inbox window can never learn
+    // about them through the live channel either — its next whole-row put would
+    // strip the flag in shared IDB and the session would climb back out of
+    // Stashed. Announce the exact subset written; a patch touching none of the
+    // four (rename, project switch, …) broadcasts nothing.
+    const bridged = pickBridgedFields(fields);
+    if (bridged) broadcastGesture({ kind: "fields", id, fields: bridged, ts: Date.now() }, bridgeUserId(this));
+  }),
+
+  // Rekey-only durable server flush. Stub writes are protected locally but
+  // cannot be emitted as generic Convex patches until the real document id is
+  // known. The local row already contains these values, so this action is a
+  // deliberate no-op in memory; dispatch.ts validates/applies its explicit
+  // field payload through the same generic conversation patch gate.
+  flushResolvedSessionFields: action(function (
+    _id: string,
+    _fields: Record<string, any>,
+  ) {}),
+
+  _clearPostCreateBucketIntent: sync(function (
+    this: Draft,
+    conversationId: string,
+    bucketId: string,
+  ) {
+    const clear = (row: any) => {
+      if (row?._postCreateBucketId === bucketId) {
+        delete row._postCreateBucketId;
+      }
+    };
+    clear(this.sessions[conversationId]);
+    clear(this.conversations[conversationId]);
+  }),
+
+  // The engine's undo replay (store/undo) writes the prior values through this
+  // action's pipeline, so the draft here stays a no-op: the grouped patches
+  // carry the exact field tombstones/values through the durable outbox, and
+  // dispatch.ts applies them with the ordinary validated patch gate, so a
+  // reload cannot lose the undo's server half.
+  applyUndoPatches: action(function (
+    _patches: Record<string, Record<string, Record<string, any>>>,
+  ) {}),
+
+  // Favorite is a plain conversation flag (server derives the favorites query
+  // from is_favorite), so it rides applyPatches too. We also keep the synced
+  // favorites list in sync optimistically so the sidebar updates without a
+  // round-trip; the server re-derives it on the next sync.
+  toggleFavorite: action(function (this: Draft, id: string) {
+    const next = !isFavoriteInStore(this as any, id);
+    if (this.sessions[id]) (this.sessions[id] as any).is_favorite = next;
+    if (!this.conversations[id]) this.conversations[id] = { _id: id } as any;
+    (this.conversations[id] as any).is_favorite = next;
+    this.favorites = withFavoriteMembership(this.favorites as any[], id, next, this.conversations[id]);
+  }),
+
+  // The reader opened or dismissed an agent's pane offer. Same split as
+  // setPrivacy: the field is immutable in the server's generic patch gate (it
+  // is retired by anyone who can SEE the session, not only its owner), so the
+  // authoritative write is the dismissBrowserPaneOffer side effect and this
+  // patches local state. `at` is passed in rather than read here so the value
+  // the server stores is the one the draft already holds — the field lock
+  // retires on an exact echo.
+  dismissBrowserPaneOffer: action(function (this: Draft, id: string, at: number) {
+    const apply = (c: any) => {
+      if (!c?.browser_pane_offer || c.browser_pane_offer.opened_at) return;
+      c.browser_pane_offer = { ...c.browser_pane_offer, opened_at: at };
+    };
+    apply(this.sessions[id]);
+    apply(this.conversations[id]);
+  }),
+
+  // Privacy/visibility live in the server's immutable applyPatches set because
+  // flipping them re-resolves team sharing. So these actions optimistically
+  // update local state, and the matching dispatch.ts SIDE_EFFECTS do the
+  // authoritative write — same split as switchProject/resumeSession.
+  setPrivacy: action(function (this: Draft, id: string, isPrivate: boolean) {
+    patchConversationRows(this, id, (c) => {
+      c.is_private = isPrivate;
+      if (isPrivate) c.team_visibility = "private";
+    });
+  }),
+
+  // The token is minted by the caller, not here, so the value the server
+  // stores (dispatch setShareLink) is the one the draft already holds. Off
+  // also clears the profile pin, which that token serves.
+  setShareLink: action(function (this: Draft, id: string, token: string | null) {
+    patchConversationRows(this, id, (c) => {
+      c.share_token = token ?? null;
+      if (!token) c.profile_pinned_at = undefined;
+    });
+  }),
+
+  // The same switch for every other shareable kind (convex publicShare.ts),
+  // same caller-minted token. Patches every cached copy of the object
+  // (SHARE_COLLECTIONS); a kind with no cached copy (calls) only dispatches.
+  setObjectShareLink: action(function (this: Draft, kind: PublicShareKind, id: string, token: string | null) {
+    for (const key of SHARE_COLLECTIONS[kind]) {
+      const coll = (this as any)[key] as Record<string, any> | undefined;
+      if (!coll) continue;
+      for (const row of coll[id] ? [coll[id]] : Object.values(coll).filter((r: any) => r?._id === id)) {
+        row.share_token = token ?? undefined;
+      }
+    }
+  }),
+
+  setTeamVisibility: action(function (this: Draft, id: string, visibility: "summary" | "full" | null) {
+    patchConversationRows(this, id, (c) => {
+      c.team_visibility = visibility ?? undefined;
+      c.is_private = false;
+    });
+  }),
+
+  // The row is patched with the same transition the server applies
+  // (teamVisibility.ts); `teams` is a localFirst list, so the change holds
+  // until getUserTeams echoes it and rolls back if the server refuses.
+  setTeamMembershipVisibility: action(function (this: Draft, teamId: string, visibility: TeamVisibilityLevel, mode: VisibilityChangeMode = "everything") {
+    const team = (this.teams as any[]).find((t) => t && String(t._id) === String(teamId));
+    if (!team) return;
+    const next = nextMembershipVisibility(team, visibility, mode, Date.now());
+    team.visibility = next.visibility;
+    team.visibility_history = next.visibility_history;
+  }),
+
+  // `bookmarks` is a localFirst list keyed by message_id: the add or remove
+  // holds until listBookmarks agrees, and the toggleBookmark side effect does
+  // the authoritative add/delete.
+  toggleBookmark: action(function (this: Draft, conversationId: string, messageId: string) {
+    const list = this.bookmarks as any[];
+    const idx = list.findIndex((b) => b.message_id === messageId);
+    if (idx !== -1) list.splice(idx, 1);
+    // Prepend (not push) so a fresh bookmark lands at the top, matching the
+    // server's newest-first ordering — otherwise it would flash at the bottom
+    // until the next sync re-sorts it.
+    else list.unshift({ _id: `temp_${messageId}`, conversation_id: conversationId, message_id: messageId, created_at: Date.now() });
+  }),
+
+  // `pendingPermissions` is localFirst, so removing the row plants an exclude
+  // that holds over pushes racing the write and is released if the server
+  // refuses it. Resolving the conversation's last pending request unblocks
+  // the session, so its question is marked resolved in the same commit. The
+  // resolvePermission side effect runs permissions.updatePermissionStatus.
+  resolvePermission: action(function (this: Draft, permissionId: string, _status: "approved" | "denied") {
+    const row = this.pendingPermissions[permissionId] as any;
+    if (!row) return;
+    delete this.pendingPermissions[permissionId];
+    const convId = row.conversation_id as string | undefined;
+    if (!convId) return;
+    const stillPending = Object.values(this.pendingPermissions).some(
+      (p: any) => p?.conversation_id === convId && p.status === "pending",
+    );
+    if (!stillPending) {
+      this.questionResolutions[convId] = { at: Date.now(), message_count: this.sessions[convId]?.message_count ?? 0 };
+    }
+  }),
+
+  // `workflowRuns` is localFirst: the run reads as running from the press,
+  // and the lock retires when the server's settle echoes the same status.
+  // The respondToGate side effect runs workflow_runs.respondToGate.
+  respondToGate: action(function (this: Draft, runId: string, _response: string) {
+    const run = this.workflowRuns[runId] as any;
+    if (run?.status === "paused") run.status = "running";
+  }),
+
+  // Manual presence status. The roster row is the read path (TeamAvatarBar's
+  // bar + hover card), so patch it in the draft and the pill flips the instant
+  // it's clicked; teamMembers and currentUser are localFirst, so the flip holds
+  // over presence pushes until the server echoes it. The setMyStatus dispatch
+  // side effect runs the authoritative users.updateProfile.
+  setMyStatus: action(function (this: Draft, status: "available" | "busy" | "away") {
+    patchMyProfileInDraft(this, { status });
+  }),
+  // The identity fields (name, title, bio, timezone, status), same two rows
+  // and same authority: the updateMyProfile side effect runs users.updateProfile.
+  updateMyProfile: action(function (this: Draft, patch: MyProfilePatch) {
+    patchMyProfileInDraft(this, patch);
+  }),
+
+  // The walkie door. Local-first for the same reason as the status above, and
+  // one more: useWalkieSync reads walkie_pref straight off currentUser to
+  // decide whether a teammate's burst may play here, so a pref that waited on a
+  // round trip would leave the door in its old state for a beat after somebody
+  // deliberately shut it. currentUser is localFirst, so the pref holds over
+  // presence pushes until the server echoes it.
+  // The canonical workspace pointer (users.active_team_id), written in the
+  // draft so whatever reads it off currentUser agrees in this tick;
+  // currentUser is localFirst, so it holds until the server echoes.
+  // useSwitchWorkspace pairs it with the mirror the UI scopes by.
+  setActiveTeamPointer: action(function (this: Draft, teamId: string | null) {
+    if (this.currentUser) (this.currentUser as any).active_team_id = teamId ?? undefined;
+  }),
+
+  setWalkiePref: action(function (this: Draft, pref: "team" | "off") {
+    if (this.currentUser) (this.currentUser as any).walkie_pref = pref;
+  }),
+
+  // The person's timezone, from the device they use when their profile has
+  // none. A team's Changes day is cut in its admins' zone, and teammates' local
+  // clocks read it too, so an unset zone silently means UTC for everyone. The
+  // adoptTimezone dispatch side effect writes it through users.updateProfile.
+  adoptTimezone: action(function (this: Draft, timezone: string) {
+    if (this.currentUser && !(this.currentUser as any).timezone) (this.currentUser as any).timezone = timezone;
+  }),
+
+  // Cloud session sync (Claude Code, Cursor Cloud). Local-first like the walkie door: the sync
+  // page's switch reads it straight off currentUser, and the setCloudSessionSync
+  // dispatch side effect runs the authoritative users.updateSyncSettings.
+  setCloudSessionSync: action(function (this: Draft, source: CloudSessionSource, enabled: boolean) {
+    if (this.currentUser) (this.currentUser as any)[CLOUD_SESSION_SOURCES[source].field] = enabled;
+  }),
+
+  // Snooze: the shutter under that door. Same local-first reason again, and
+  // more urgently — this is pressed to stop a voice that is playing RIGHT NOW,
+  // so a door that waited on a round trip would let the next burst in.
+  snoozeWalkie: action(function (this: Draft, until: number) {
+    if (this.currentUser) (this.currentUser as any).walkie_snoozed_until = until;
+    return until;
+  }),
+
+  // Notifications are a protected collection: the optimistic `read` flip is
+  // field-protected so the next list sync can't revert it (the badge + bold
+  // state clear instantly). The named side-effects delegate to the existing
+  // notifications mutations.
+  markNotificationRead: action(function (this: Draft, id: string) {
+    const n = this.notifications[id] as any;
+    if (n && !n.read) n.read = true;
+  }),
+
+  markAllNotificationsRead: action(function (this: Draft) {
+    for (const n of Object.values(this.notifications) as any[]) {
+      if (!n.read) n.read = true;
+    }
+  }),
+
+  // Send a user message to Convex through the store's normal sync. As an
+  // action() it rides the same persist + dispatch-outbox pipeline as every
+  // other store mutation: the call is queued in the outbox before firing and
+  // redriven on next load, so a reload mid-send can never drop the message
+  // (dispatch.sendMessage dedups on client_id, making redelivery safe). The
+  // on-screen optimistic copy is added separately via addOptimisticMessage
+  // (kept durable by the persisted pendingMessages map) and pruned once the
+  // server echoes it back. Fire-and-forget — status is read back from the
+  // synced pending_messages row, not a return value. Args mirror the server
+  // handler: [conversation_id, content, image_storage_ids, client_id].
+  retryPendingMessage: asyncAction(function (this: Draft, convId: string, ref: { messageId?: string; clientId?: string; force?: boolean }) {
+    // A retry ends the hold: the card stops saying "held" on the press.
+    const status = (this as any).pendingMessageStatus?.[convId];
+    for (const row of [status, ...(status?.inflight ?? [])]) {
+      if (!row || !((ref.messageId && row.message_id === ref.messageId) || (ref.clientId && row.client_id === ref.clientId))) continue;
+      delete row.hold_reason;
+      delete row.hold_screen;
+    }
+  }),
+
+  // Drop the optimistic bubble (and the conversation's pending-status row if
+  // it is this message) so Cancel is instant, then dispatch the same identity
+  // retry uses. The server marks the row cancelled; the healer never revives it.
+  cancelPendingMessage: asyncAction(function (this: Draft, convId: string, ref: { messageId?: string; clientId?: string }) {
+    const pending = this.pendingMessages[convId];
+    if (pending) {
+      const kept = pending.filter((m) => {
+        if (ref.clientId && (m._clientId === ref.clientId || m._id === ref.clientId)) return false;
+        if (ref.messageId && (m._id === ref.messageId || m._id === `serverpending_${ref.messageId}`)) return false;
+        return true;
+      });
+      if (kept.length !== pending.length) {
+        if (kept.length === 0) delete this.pendingMessages[convId];
+        else this.pendingMessages[convId] = kept;
+      }
+    }
+    const status = (this as any).pendingMessageStatus?.[convId];
+    if (
+      status &&
+      ((ref.messageId && status.message_id === ref.messageId) ||
+        (ref.clientId && status.client_id === ref.clientId))
+    ) {
+      delete (this as any).pendingMessageStatus[convId];
+    }
+  }),
+
+  // A shared session's queue (pendingMessageStatus.inflight, every sender's
+  // waiting rows in queue order), steered by anyone who may send into it.
+  // The draft moves or folds the rows at once; the server's next push of
+  // getConversationPendingMessage is the same order (lib/sessionQueue).
+  // "Queue for later" (⌘↵): a row held on the server for the end of the
+  // agent's turn, in the session's shared queue for everyone in it. The
+  // server releases the row when the turn ends
+  // (managedSessions.applyAgentStatus), or now via releaseQueued.
+  queueMessage: action(function (this: Draft, convId: string, content: string, clientId: string) {
+    // The one home of queue rows is the conversation's pending status row:
+    // the line shows the new entry at once, and the server's push of the
+    // real row replaces it.
+    const me = this.currentUser as any;
+    const status = ((this as any).pendingMessageStatus[convId] ??= { _id: convId, conversation_id: convId });
+    status.inflight = [...(status.inflight ?? []), {
+      message_id: clientId, client_id: clientId, created_at: Date.now(), status: "held", queued: true, content,
+      from_user_id: me?._id ? String(me._id) : undefined, from_name: me?.name || me?.email?.split("@")[0], from_image: me?.image || me?.github_avatar_url,
+    }];
+  }),
+
+  releaseQueued: action(function (this: Draft, convId: string) {
+    const row = (this as any).pendingMessageStatus?.[convId];
+    for (const r of row?.inflight ?? []) if (r.status === "held" && r.queued) r.status = "pending";
+  }),
+
+  reorderQueued: action(function (this: Draft, convId: string, messageId: string, beforeId: string | null) {
+    const row = (this as any).pendingMessageStatus?.[convId];
+    if (row?.inflight) row.inflight = reorderQueueRows(row.inflight, messageId, beforeId);
+  }),
+
+  mergeQueued: action(function (this: Draft, convId: string, messageId: string, intoId: string) {
+    const row = (this as any).pendingMessageStatus?.[convId];
+    if (row?.inflight) row.inflight = mergeQueueRows(row.inflight, messageId, intoId);
+  }),
+
+  sendMessage: action(function (this: Draft, _convId: string, _content: string, _imageIds?: string[], _clientId?: string) {
+    clearSessionSnoozeInDraft(this, _convId);
+    notePendingMessageSendRequested(_clientId);
+    // A message into a session that is asking you something IS the answer —
+    // a poll payload always, free text when the row says awaiting_input. Mark
+    // the question resolved locally in the same commit so every question
+    // surface (queue, rail section, badge) drops it before the server's
+    // awaiting_input/permission_blocked truth round-trips. The mark expires
+    // once the agent speaks again (lib/decisionQueue.questionResolvedLocally);
+    // +1 covers this message's own echo.
+    const row = this.sessions[_convId];
+    const isPollAnswer = _content.startsWith("{") && _content.includes("__cc_poll");
+    if (row && (isPollAnswer || row.awaiting_input)) {
+      this.questionResolutions[_convId] = { at: Date.now(), message_count: (row.message_count ?? 0) + 1 };
+    }
+    // The pinned thread state is the agent's declaration of who acts next;
+    // this message is the human acting, so the pin comes down with it. Here
+    // it drops before any round-trip; the conversations row write also rides
+    // the generic patch rail as a null tombstone (the same clear the panel's
+    // own button makes), and the server's enqueue clears the same fields for
+    // every human send that never touches this store (a detached `cast send`,
+    // the doc review bar). Written as undefined so the pending lock retires
+    // on the server's echo of the absent field. Both rows, since the
+    // conversation view reads whichever it has.
+    for (const target of [row, this.conversations[_convId]]) {
+      if (target && hasThreadState(target)) Object.assign(target, clearedThreadStateFields());
+    }
+    // No other local mutation: durability for the visible message comes from
+    // the persisted pendingMessages map. The middleware dispatches the args to
+    // the server and queues them in the outbox.
+  }),
+
+  // A real id sends now. A stub waits for its create (awaitConvexId heals a
+  // stranded one), because the server cannot address a stub id. A create that
+  // is still on its way (parked, or fenced by a binding rewire) leaves the
+  // bubble pending: the stranded-stub sweep re-creates and re-sends it under
+  // the same client id. Only a refused create fails the bubble.
+  sendMessageWhenReady: (convId: string, content: string, imageIds?: string[], clientId?: string) => {
+    if (isConvexId(convId)) {
+      get().sendMessage(convId, content, imageIds, clientId);
+      return;
+    }
+    void get().awaitConvexId(convId).then(
+      (realId: string) => get().sendMessage(realId, content, imageIds, clientId),
+      (error: unknown) => {
+        if (!isRefusedDispatchError(error)) return;
+        if (clientId) get().markOptimisticAsFailed(convId, clientId);
+        console.error("[store] send into an uncreated session failed", error);
+      },
+    );
+  },
+
+  resumeSession: (convId: string) => get().convCommand(convId, "resumeSession"),
+
+  // The press time rides along so the daemon can tell an Escape aimed at the
+  // previous turn from one for the turn a queued message started after it.
+  sendEscape: (convId: string) => get().convCommand(convId, "sendEscapeToSession", { pressed_at: Date.now() }),
+
+  // Generic local-first session daemon-command. Routes any api.conversations.*
+  // command (kill/restart/repair/reconfigure/rewind/fork/sendKeys/sendEscape)
+  // through the single dispatch pipeline instead of a direct useMutation. The
+  // server side-effect delegates to the existing mutation, so all its dedup /
+  // pending-reset / multi-command logic is preserved (zero duplication). The
+  // optional `optimistic` patch updates sessions[convId] synchronously for an
+  // instant UI; asyncAction returns the server result (e.g. fork's new id), so
+  // callers that await the old mutation are a drop-in swap.
+  startResourceOffload: asyncAction(function (this: Draft, args: ResourceOffloadIntent) {
+    const ids = [...new Set(args.selections.map(s => s.destination_id))].map(destination_id => ({ destination_id, batch_id: `mg-${crypto.randomUUID().replaceAll("-", "")}` }));
+    this.migrationBatches = [...resourceOffloadStubs(args, ids, Date.now(), this.sessions), ...(this.migrationBatches ?? [])];
+    return { batch_ids: ids };
+  }),
+  cancelResourceOffload: asyncAction(function (this: Draft, batchId: string) {
+    const requested_at = Date.now();
+    const batch = this.migrationBatches?.find(b => b.batch_id === batchId);
+    if (batch) cancelResourceBatch(batch, requested_at);
+    return { requested_at };
+  }),
+
+  setSessionBackground: asyncAction(function (this: Draft, deviceId: string, sessionId: string, background: boolean) {
+    const row = Object.values(this.machineResources ?? {}).find((r: any) => r.device_id === deviceId) as any;
+    if (!row) return;
+    const rest = (row.background_sessions ?? []).filter((id: string) => id !== sessionId);
+    row.background_sessions = background ? [...rest, sessionId] : rest;
+  }),
+
+  hibernateSession: asyncAction(function (this: Draft, requestId: string, convId: string, _sessionId: string, _ownerDeviceId: string) {
+    stampSessionCommand(this, { _id: requestId, conversation_id: convId, command: "hibernate_session" });
+  }),
+
+  // Kill + resume (or, with repair, the forced rebuild from history). The row
+  // binds to the resume command, whose outcome is the restart's; a repair is
+  // the restart's escalation, so it keeps the restart's click as started_at.
+  restartSession: asyncAction(function (this: Draft, requestId: string, convId: string, _ghost?: Record<string, unknown>, repair?: boolean) {
+    const prev = Object.values(this.sessionCommands).find((r: any) => r.conversation_id === convId && r.kind === "restart" && !r.confirmed_at);
+    stampSessionCommand(this, {
+      _id: requestId, conversation_id: convId, command: "resume_session", kind: repair ? "repair" : "restart",
+      ...(repair && prev ? { started_at: prev.started_at ?? prev.requested_at } : {}),
+    });
+  }),
+
+  // "Run here" / "Move to <device>": a remote destination binds to the source
+  // daemon's move_to_device, a local one to the resume on that device.
+  moveSessionToDevice: asyncAction(function (this: Draft, requestId: string, convId: string, toDeviceId: string, toRemote: boolean, toLabel?: string) {
+    stampSessionCommand(this, {
+      _id: requestId, conversation_id: convId, command: toRemote ? "move_to_device" : "resume_session", kind: "move",
+      to_device_id: toDeviceId, to_remote: toRemote, to_label: toLabel ?? toDeviceId,
+    });
+  }),
+
+  // A machine's account switch, or a revive scoped to one conversation. The
+  // row binds to the swapping machine's switch_account command.
+  requestAccountSwitch: asyncAction(function (this: Draft, requestId: string, args: AccountSwitchArgs, intent?: { profile?: string; email?: string }) {
+    stampSessionCommand(this, {
+      _id: requestId, command: "switch_account", kind: "switch",
+      device_id: args.device_id ?? null,
+      conversation_id: args.conversation_ids?.length === 1 ? args.conversation_ids[0] : null,
+      profile: intent?.profile ?? args.profile, email: intent?.email ?? args.email,
+    });
+  }),
+
+  confirmSessionCommand: sync(function (this: Draft, requestId: string) {
+    const row = this.sessionCommands[requestId];
+    if (row && !row.confirmed_at) row.confirmed_at = Date.now();
+  }),
+
+  dismissSessionCommand: sync(function (this: Draft, requestId: string) {
+    delete this.sessionCommands[requestId];
+  }),
+
+  convCommand: asyncAction(function (this: Draft, convId: string, command: string, _extraArgs?: Record<string, any>, optimistic?: Record<string, any>) {
+    if (command === "sendEscapeToSession") {
+      // The interruption line paints off whichever row the view holds. The
+      // sessions row is the inbox's windowed copy and is absent for a subagent
+      // or stashed conversation the user is looking at; the conversations row
+      // is seeded by the view itself. A press with no line was the bug
+      // (2026-09-14), so the line never waits on the sessions row.
+      const session = this.sessions[convId];
+      const agentType = session?.agent_type ?? this.conversations[convId]?.agent_type;
+      // The press claims the daemon's own status, the one fact every reader
+      // derives the row's state from, so an overlay push cannot put a working
+      // status back under it while the stop is in flight.
+      if (session) {
+        session.agent_status = "idle";
+        session.is_idle = true;
+      }
+      // One line per interruption, not per press. A second Escape on a turn
+      // that already ended in "user interrupted" (a server echo or the line
+      // this window painted moments ago) still reaches the daemon, which
+      // judges it, but paints nothing: the conversation already ends there.
+      // A cloud agent's mirror is the record of how its turn ended (it says
+      // "Cancelled." for a turn the press stopped), and no echo ever settles
+      // a line painted here: it would stay even when nothing was running.
+      const row = session ?? this.conversations[convId];
+      const cloudAgent = !!row && !!cloudAgentProviderOfConversation(agentType, row.session_id, row.model);
+      if (row && !cloudAgent && !isInterruptControlMessage(lastTimelineMessage(this, convId)?.content)) {
+        appendOptimisticMessage(this, convId, agentType === "codex" ? "<turn_aborted>" : "[Request interrupted by user]");
+      }
+    }
+    if (optimistic && this.sessions[convId]) Object.assign(this.sessions[convId], optimistic);
+  }),
+
+  // first_message/first_message_client_id ride the dispatch only: a hosted
+  // conversation's start queues its first message server side, matched to
+  // the optimistic bubble by its client id.
+  createSession: asyncAction(function (this: Draft, opts: { agent_type: string; project_path?: string; git_root?: string; session_id?: string; linked_object?: { type: string; id: string }; model?: string; effort?: string; isolated?: boolean; worktree_name?: string; stable_mode?: string; stable_exclude?: string[]; target_device_id?: string; cloud_device_id?: string; cloud_workspace?: "isolated" | "shared"; cloud_start_from?: "checkout" | "origin_main"; agent_definition?: string; private?: boolean; first_message?: string; first_message_client_id?: string }) {
+    const sessionId = opts.session_id || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+    if (!opts.session_id) opts.session_id = sessionId;
+    const existing = this.sessions[sessionId];
+    const linkedObject = opts.linked_object ?? existing?._linkedObject;
+    const now = Date.now();
+    // model/effort ride the dispatched args (the Convex createSession handler
+    // forwards them to the daemon's launch flags) AND get stamped on the local
+    // row so the badge keeps the launch picker's choice through the create —
+    // opts.model is the contract option key ("opus"), the row wants the full id.
+    const normalizedModel = opts.model
+      ? (opts.agent_type === "claude_code" ? `claude-${opts.model}` : opts.model)
+      : existing?.model;
+    const nextSession = {
+      ...existing,
+      _id: sessionId,
+      session_id: sessionId,
+      title: stubTitle(opts.agent_type, opts.first_message),
+      updated_at: now,
+      started_at: existing?.started_at ?? now,
+      project_path: opts.project_path,
+      git_root: opts.git_root,
+      agent_type: opts.agent_type,
+      message_count: 0,
+      is_idle: true,
+      has_pending: false,
+      last_user_message: null,
+      ...(linkedObject ? { _linkedObject: linkedObject } : {}),
+      ...(normalizedModel ? { model: normalizedModel } : {}),
+      ...(opts.effort || existing?.effort ? { effort: opts.effort ?? existing?.effort } : {}),
+      ...(opts.stable_mode || existing?.stable_mode ? { stable_mode: opts.stable_mode ?? existing?.stable_mode } : {}),
+      ...(opts.agent_definition || existing?.agent_definition ? { agent_definition: opts.agent_definition ?? existing?.agent_definition } : {}),
+      ...(opts.stable_exclude?.length || existing?.stable_exclude?.length
+        ? { stable_exclude: opts.stable_exclude ?? existing?.stable_exclude }
+        : {}),
+      // A cloud session's owner is the host from t=0, so the header names the
+      // machine it will run on while the local daemon is still preparing it.
+      // The server insert stamps the same pair; placeConversation clears the
+      // placement once the host actually has the worktree.
+      ...(opts.cloud_device_id
+        ? { owner_device_id: opts.cloud_device_id, cloud_placement: "pending" as const, cloud_workspace: opts.cloud_workspace ?? "isolated" }
+        : {}),
+    } as InboxSession;
+    nextSession._launchSnapshot = launchSnapshotFromRow(nextSession);
+    this.sessions[sessionId] = nextSession;
+  }),
+
+  // Read the CURRENT project + agent off the stub row and create the server
+  // session from those. The new-session pickers mutate the stub (updateSessionProject /
+  // setConversationAgent), so the row — not the closure captured when the popup
+  // opened — is the source of truth; a switch made before the first send must be
+  // what we create with. `isolatedWorktreeMode` is the live toggle (global, same
+  // value ProjectSwitcher reads), folded in here so "isolated worktree" applies at
+  // create — the daemon's start_session makes the git worktree up front. Mirrors
+  // ensureSessionCreated's read-fresh logic, but without its pathless guard (the
+  // compose popup intentionally allows a project-less stub → the daemon starts in
+  // $HOME). Tracking + rekey are done by beginOptimisticSession's fire() (or by
+  // ensureSessionCreated), so this only creates.
+  //
+  // A hosted agent (the Codecast assistant) runs in codecast's backend, so its
+  // create carries no project, machine, model or cloud placement: only the
+  // stub id and, when the caller has it, the first message, which the server
+  // queues in the same transaction (`firstMessage.clientId` is the optimistic
+  // bubble's, so the two reconcile).
+  // Entering hosted mode folds the conversations panel away once: a newcomer
+  // starts on the reply they asked for, not beside a list of everything. The
+  // panel's open or closed state stays the one preference it always was, so
+  // opening it again sticks.
+  setLane: (lane: "simple" | "full") => {
+    const s = get();
+    if (lane === "simple" && !simpleModeAllowed(s.currentUser)) return;
+    const entering = lane === "simple" && !isHostedUi(s.clientState.ui);
+    // The assistant files what it makes in the person's Personal workspace,
+    // so hosted mode starts there: its notes and to-dos are on the pages and
+    // in search from the first ask. Both halves of the switch, as
+    // hooks/useSwitchWorkspace writes them (the mirror and the canonical pointer).
+    s.updateClientUI(entering ? { lane, active_team_id: undefined } : { lane });
+    s.noteLaneHint({ lane });
+    if (entering) s.setActiveTeamPointer(null);
+    if (entering && isSessionRailOpen(s.workspace)) s.wsHide("context");
+  },
+
+  noteLaneHint: (ui: { lane?: string } | null | undefined) => {
+    const lane = laneOf(ui);
+    if (get().laneHint === lane) return;
+    writeLaneHint(lane);
+    set({ laneHint: lane });
+  },
+
+  createSessionFromStub: (stubId: string, fallback?: { agentType?: string; projectPath?: string; gitRoot?: string; private?: boolean; model?: string; targetDeviceId?: string; firstMessage?: { content: string; clientId: string } }) => {
+    const s = get();
+    const cur = (s.sessions[stubId] || s.conversations[stubId]) as any;
+    const agentType = cur?.agent_type || fallback?.agentType || defaultAgentType(s);
+    if (isHostedAgentType(agentType)) {
+      // Someone whose first conversation, with no machine, goes to the hosted
+      // assistant is in hosted mode from then on, as /welcome leaves them.
+      // Read here, the one create every entry point reaches (the composer,
+      // Ctrl+N, the palette, the context composer, the self-heal), and before
+      // the caller tracks this create, which would end the first run.
+      if (firstRun(s) === "yes") s.setLane("simple");
+      return s.createSession({
+        agent_type: agentType,
+        session_id: stubId,
+        ...(fallback?.firstMessage
+          ? { first_message: fallback.firstMessage.content, first_message_client_id: fallback.firstMessage.clientId }
+          : {}),
+      });
+    }
+    const projectPath = cur?.project_path ?? fallback?.projectPath;
+    const gitRoot = cur?.git_root ?? fallback?.gitRoot ?? projectPath;
+    // Fold in the blank session's chosen model/effort. The launch picker stamps
+    // these on the stub row (setConversationModel) with no server round-trip;
+    // this is where the choice reaches the daemon's launch flags. The row stores
+    // the full model id ("claude-opus-4-8"); the create wants the contract option
+    // key ("opus") — findModelOption matches on key. A model left on a different
+    // agent's id (after an agent switch) resolves to "default" and is dropped.
+    const modelKey = modelOptionKey(cur?.model ?? fallback?.model, agentType);
+    // The machine shown in the new-session row, passed through verbatim. This
+    // used to be re-checked here and DROPPED when it matched what routing would
+    // pick anyway — an optimization that quietly became a bug: the picker's
+    // default was decided by `last_seen`, which flips between two idle laptops
+    // every ~30s, so a heartbeat landing between the click and the create could
+    // discard an explicit pick and hand the choice back to a server-side
+    // coin flip. The selection is now deterministic and always stamped, so
+    // there is nothing left to second-guess.
+    const targetDeviceId = (cur?.target_device_id ?? fallback?.targetDeviceId) as string | null | undefined;
+    // "Run in the cloud" is decided by the machine STAMPED on the stub, never by
+    // the store flag (a mirror of the composer's derived mode). A stamped
+    // wake-on-use host parks the row unless the folder is one the host already
+    // holds (cloudPlacementFor === "native" — ~/work/<repo> and its worktrees),
+    // in which case it is a plain start there. The same predicate the composer's
+    // reconfigure and the server's start chokepoint apply, so all three agree.
+    const roster: MachineCandidate[] = s.machineRoster;
+    const stamped = targetDeviceId ? roster.find((d: MachineCandidate) => d.device_id === targetDeviceId) : undefined;
+    const locals = roster.filter((d: MachineCandidate) => !d.is_remote);
+    const cloudDevice = stamped && wakesOnUse(stamped)
+      && (!projectPath || cloudPlacementFor({ target: stamped, locals, paths: [gitRoot || projectPath] }) !== "native")
+      ? stamped
+      : undefined;
+    return s.createSession({
+      agent_type: agentType,
+      project_path: projectPath,
+      git_root: gitRoot || undefined,
+      session_id: stubId,
+      ...(fallback?.private ? { private: true } : {}),
+      ...(targetDeviceId ? { target_device_id: targetDeviceId } : {}),
+      ...(cur?._linkedObject?.type && cur?._linkedObject?.id
+        ? { linked_object: cur._linkedObject }
+        : {}),
+      ...(modelKey !== "default" ? { model: modelKey } : {}),
+      ...(cur?.effort ? { effort: cur.effort } : {}),
+      // A cloud session's worktree is made on the HOST, by the daemon that
+      // prepares it — so `isolated` (which asks a local daemon to make one
+      // here) must not ride along with it. The composer's cloud-mode toggle
+      // picks the workspace instead: its own worktree there (isolated, the
+      // default) or the host's main checkout (shared).
+      // The seed choice rides beside the workspace: a shared checkout is
+      // always origin/main, an isolated worktree starts from whatever the
+      // composer last picked (the laptop checkout by default).
+      ...(cloudDevice
+        ? {
+            cloud_device_id: cloudDevice.device_id, target_device_id: cloudDevice.device_id,
+            cloud_workspace: s.cloudSharedCheckout ? "shared" as const : "isolated" as const,
+            cloud_start_from: s.cloudSharedCheckout ? "origin_main" as const : resolveCloudStartFrom(s.clientState.ui),
+          }
+        : {}),
+      ...(s.isolatedWorktreeMode && !cloudDevice ? { isolated: true } : {}),
+      // Stable-context prefs stamped on the stub by the new-session context
+      // picker (setStableContextPrefs) — same lifecycle as model/effort.
+      ...(cur?.stable_mode ? { stable_mode: cur.stable_mode } : {}),
+      ...(cur?.stable_exclude?.length ? { stable_exclude: cur.stable_exclude } : {}),
+      ...(cur?.agent_definition ? { agent_definition: cur.agent_definition } : {}),
+    });
+  },
+
+  // Optimistic session creation, shared by every new-session entry point (the
+  // in-app quick-create, the compose popup, and the New Session modal). Seeds a
+  // local conversation under a non-Convex stub id SYNCHRONOUSLY so the caller can
+  // navigate to it and render the user's first message as pending with zero
+  // network in the critical path, then rekeys stub → real id when `create`
+  // resolves. `create` is injected so callers pick the backend (store.createSession
+  // for normal sessions, the createQuickSession mutation when isolated/worktree
+  // options are needed). The stub uses the same Math.random id scheme as
+  // createSession — never 32 chars, so isConvexId() correctly treats it as local.
+  beginOptimisticSession: (opts: { agentType: string; projectPath?: string; gitRoot?: string; reuse?: boolean; deferCreate?: boolean; landing?: boolean; resumeStubId?: string; create: (stubId: string) => Promise<string> }) => {
+    const store = get();
+    // Only an INCLUDE label chip files new sessions — excluding a label means
+    // "hide it", never "file new work there".
+    const bucketAtCreate = store.chipFilterExclude ? null : store.activeBucketFilter;
+    // Converge on the existing blank session for this project+agent instead of
+    // minting another one — repeated summon/abandon cycles otherwise strand an
+    // empty "New Session" row (and a pre-warmed daemon process) per summon.
+    if (opts.reuse) {
+      const existing = findReusableBlankSession(store as any, opts);
+      if (existing) {
+        const pendingCreate = store.pendingSessionCreates[existing];
+        const ready = pendingCreate ?? Promise.resolve(existing);
+        // A reused blank summoned inside a focused bucket files there too —
+        // unless it was already filed somewhere by hand.
+        const existingAssignment = (
+          Object.values(store.bucketAssignments) as BucketAssignmentItem[]
+        ).find((row) => row.conversation_id === existing);
+        if (bucketAtCreate && !existingAssignment) {
+          const existingSession = store.sessions[existing];
+          const existingConversation = store.conversations[existing];
+          if (existingSession) {
+            store.syncRecord("sessions", existing, {
+              ...existingSession,
+              _postCreateBucketId: bucketAtCreate,
+            });
+          }
+          if (existingConversation) {
+            store.syncRecord("conversations", existing, {
+              ...existingConversation,
+              _postCreateBucketId: bucketAtCreate,
+            });
+          }
+          ready.then((id: string) => {
+            const real = get().getConvexId(id) ?? id;
+            resumePostCreateBucketIntentFor(real, bucketAtCreate);
+          }).catch(() => {});
+        }
+        return { stubId: existing, ready, materialize: () => ready };
+      }
+    }
+    const resume = opts.resumeStubId && store.sessions[opts.resumeStubId] && !store.pendingSessionCreates[opts.resumeStubId]
+      ? opts.resumeStubId
+      : null;
+    const stubId = resume ?? Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    const now = Date.now();
+    if (!resume) {
+      store.syncRecord("conversations", stubId, {
+        _id: stubId, _creationTime: now, user_id: "", agent_type: opts.agentType,
+        session_id: stubId, project_path: opts.projectPath, git_root: opts.gitRoot,
+        started_at: now, updated_at: now, message_count: 0, status: "active",
+        title: stubTitle(opts.agentType), messages: [],
+        ...(bucketAtCreate ? { _postCreateBucketId: bucketAtCreate } : {}),
+        ...(opts.landing ? { _landing: true } : {}),
+      });
+      // Also seed the inbox session row. The conversation page resolves a stub from
+      // sessions[id] (local-first, before the server resolver loads), so without this
+      // a navigate-to-stub would flash a loading skeleton then "Not Found". This mirrors
+      // what store.createSession seeds — callers using the createQuickSession mutation
+      // (which doesn't touch the store) rely on it. session_id === stubId so the server
+      // resolver (by_session_id) also maps the stub once the create lands.
+      store.syncRecord("sessions", stubId, {
+        _id: stubId, session_id: stubId, title: stubTitle(opts.agentType),
+        updated_at: now, started_at: now, project_path: opts.projectPath,
+        git_root: opts.gitRoot, agent_type: opts.agentType, message_count: 0,
+        is_idle: true, has_pending: false, last_user_message: null,
+        ...(bucketAtCreate ? { _postCreateBucketId: bucketAtCreate } : {}),
+        ...(opts.landing ? { _landing: true } : {}),
+      });
+    }
+    // Capture the focused bucket NOW: a session created while a bucket chip is
+    // active belongs to that bucket. Assignment waits for the real id (the
+    // server side effect can't act on stubs).
+    // The actual server create — fired now, or deferred to materialize(). Wrapped
+    // in a once-guard so a deferred stub's create fires exactly once no matter how
+    // many times materialize() is called (e.g. typed-then-sent, or both the draft
+    // and submit triggers racing).
+    let fired = false;
+    let readyPromise: Promise<string> | null = null;
+    const fire = (): Promise<string> => {
+      if (fired) return readyPromise as Promise<string>;
+      fired = true;
+      const ready = opts.create(stubId).then((convexId: string) => {
+        if (convexId) {
+          store.resolveSessionId(stubId, convexId);
+        }
+        return convexId;
+      });
+      store.trackSessionCreate(stubId, ready);
+      // Callers attach their own handling; swallow here so an unobserved create
+      // failure doesn't surface as an unhandled rejection.
+      ready.catch(() => {});
+      readyPromise = ready;
+      return ready;
+    };
+    // Deferred: the stub exists locally but no server conversation is created
+    // until materialize() runs. An abandoned (never-materialized) stub carries no
+    // pendingSessionCreates entry, so pruneGhostSessions can hard-drop it cleanly.
+    const ready = opts.deferCreate ? Promise.resolve(stubId) : fire();
+    return { stubId, ready, materialize: fire };
+  },
+
+  updateClientUI: action(function (this: Draft, partial: Partial<ClientUI>) {
+    // Every key is stamped unless it is in PER_DEVICE_UI_KEYS, so a new
+    // preference persists without joining a whitelist. A caller-supplied
+    // stamp is honored (the hydration gap-fill restores legacy values with
+    // their ORIGINAL write time, so a stale boot can't outrank a genuinely
+    // newer cross-device write).
+    const stamped: Record<string, any> = { ...partial };
+    const now = Date.now();
+    for (const k of Object.keys(partial)) {
+      if (isStampedUiKey(k) && stamped[`${k}:ts`] === undefined) stamped[`${k}:ts`] = now;
+    }
+    if (!this.clientState.ui) this.clientState.ui = {} as ClientUI;
+    Object.assign(this.clientState.ui, stamped);
+    writeCriticalUiPrefs(stamped);
+    // The server-side named handler replays this exact client-stamped payload
+    // even when Object.assign produced no local patch (already-equal state).
+    return stamped;
+  }),
+
+  // Saved views are a server collection now, so they can be shared. All three
+  // writes are local-first: the row renders from the draft immediately and the
+  // server echo reconciles, superseding the stub via the client_key altKey.
+  createSavedView: action(function (this: Draft, opts: {
+    name: string;
+    page: "tasks" | "docs" | "plans" | "workspace";
+    prefs: any;
+    shared?: boolean;
+    icon?: string;
+    client_key?: string;
+    team_id?: string;
+  }) {
+    // MUTATE opts, don't just return the enriched copy: the dispatch forwards
+    // the original args to the server, so anything computed only into the return
+    // value never leaves this machine. That is what made shared views invisible
+    // to teammates — every row reached the server with no team_id, so the
+    // by_team_id query on their side could never find it.
+    if (!opts.client_key) {
+      opts.client_key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const teamId = this.clientState.ui?.active_team_id;
+    if (teamId && opts.team_id === undefined) opts.team_id = teamId;
+    // Sharing needs a team to share with; without one the row stays personal.
+    opts.shared = !!opts.shared && !!opts.team_id;
+    const key = opts.client_key;
+    const stubId = `temp_view_${key}`;
+    this.savedViews[stubId] = {
+      _id: stubId,
+      client_key: key,
+      team_id: opts.team_id,
+      name: opts.name,
+      page: opts.page,
+      prefs: opts.prefs ?? {},
+      shared: opts.shared,
+      icon: opts.icon,
+      is_mine: true,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    } as SavedViewRow;
+    return { ...opts };
+  }),
+
+  updateSavedView: action(function (this: Draft, id: string, fields: Record<string, any>) {
+    const row = (this.savedViews as any)[id];
+    if (row) Object.assign(row, fields, { updated_at: Date.now() });
+  }),
+
+  deleteSavedView: action(function (this: Draft, id: string) {
+    delete (this.savedViews as any)[id];
+  }),
+
+  setModEnabled: action(function (this: Draft, id: string, enabled: boolean) {
+    const row = ((this as any).mods ?? {})[id];
+    if (row) Object.assign(row, { enabled, updated_at: Date.now() });
+  }),
+
+  setModLocalDevice: action(function (this: Draft, id: string, device: string, on: boolean) {
+    const row = ((this as any).mods ?? {})[id];
+    if (!row) return;
+    const rest = (row.local_off ?? []).filter((d: string) => d !== device);
+    row.local_off = on ? rest : [...rest, device];
+  }),
+
+  createModObject: action(function (this: Draft, opts: { prefix: string; title: string; status?: string; fields?: Record<string, unknown>; body?: string; team_id?: string; client_key?: string }) {
+    // Mutate opts: the dispatch forwards these args, so the client_key and the
+    // team must ride to the server, not just the stub (see createSavedView).
+    if (!opts.client_key) opts.client_key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const teamId = this.clientState.ui?.active_team_id;
+    if (teamId && opts.team_id === undefined) opts.team_id = teamId;
+    const userId = String((this as any).currentUser?._id ?? "");
+    const stubId = `temp_obj_${opts.client_key}`;
+    const coll = ((this as any).modObjects ??= {});
+    const now = Date.now();
+    coll[stubId] = {
+      _id: stubId,
+      client_key: opts.client_key,
+      user_id: userId,
+      team_id: opts.team_id,
+      workspace: opts.team_id ? `team:${opts.team_id}` : `user:${userId}`,
+      prefix: opts.prefix,
+      short_id: `${opts.prefix}-…`,
+      title: opts.title,
+      status: opts.status,
+      fields: opts.fields ?? {},
+      body: opts.body,
+      created_at: now,
+      updated_at: now,
+    };
+    return { ...opts };
+  }),
+
+  updateModObject: action(function (this: Draft, id: string, patch: { title?: string; status?: string; fields?: Record<string, unknown>; body?: string; archived?: boolean }) {
+    const row = ((this as any).modObjects ?? {})[id];
+    if (!row) return;
+    const { fields, ...rest } = patch;
+    Object.assign(row, rest, { updated_at: Date.now() });
+    if (fields) row.fields = { ...(row.fields ?? {}), ...fields };
+  }),
+
+  updateClientLayout: action(function (this: Draft, key: string, value: any) {
+    if (!this.clientState.layouts) this.clientState.layouts = {};
+    (this.clientState.layouts as any)[key] = value;
+  }),
+
+  // action(): the patch rides the outbox (the old hand-rolled _dispatch had one
+  // 3s retry and no replay — a failed write left this client permanently
+  // diverged from the server). The ":ts" stamp is what lets the LWW merge sync
+  // the preference across devices (mergeStampedBagLww).
+  updateClientDismissed: action(function (this: Draft, key: string, value: any) {
+    if (!this.clientState.dismissed) this.clientState.dismissed = {};
+    const bag = this.clientState.dismissed as Record<string, any>;
+    bag[key] = value;
+    bag[`${key}:ts`] = Date.now();
+  }),
+
+  _applyClientTips: sync(function (this: Draft, partial: Partial<ClientTips>) {
+    if (!this.clientState.tips) this.clientState.tips = {} as ClientTips;
+    const tips = this.clientState.tips;
+    if (partial.seen) tips.seen = partial.seen;
+    if (partial.dismissed) tips.dismissed = partial.dismissed;
+    if (partial.completed) tips.completed = partial.completed;
+    if (partial.level !== undefined) tips.level = partial.level;
+    if (partial._inlineSuppressed !== undefined) tips._inlineSuppressed = partial._inlineSuppressed;
+  }),
+
+  updateClientTips: (partial: Partial<ClientTips>) => {
+    (get() as any)._applyClientTips(partial);
+    const serverPartial = { ...partial };
+    delete serverPartial._inlineSuppressed;
+    if (Object.keys(serverPartial).length > 0) {
+      (get() as any).persistClientTips(serverPartial);
+    }
+  },
+
+  // The public wrapper above performs one exact local sync (including the
+  // device-only _inlineSuppressed flag). This named no-op action durably carries
+  // only the cross-device subset; dispatch.ts builds the validated client_state
+  // patch without ever leaking the local suppression bit.
+  persistClientTips: action(function (_partial: Partial<ClientTips>) {}),
+
+  // =====================
+  // GENERIC SYNC
+  // =====================
+
+  // Cross-team mention index — rebuild the slice from the latest server
+  // snapshot. Replaces wholesale by design: each `webMentionList` query
+  // returns the full set of records the user can see, so swapping the map
+  // is both correct and the cheapest way to handle deletions.
+  syncMentionIndex: sync(function (this: Draft, kind: "tasks" | "docs" | "plans", items: any[]) {
+    if (!items) return;
+    const next: Record<string, any> = {};
+    for (const it of items) {
+      if (it && it._id) next[String(it._id)] = it;
+    }
+    if (!this.mentionIndex) this.mentionIndex = { tasks: {}, docs: {}, plans: {} } as any;
+    (this.mentionIndex as any)[kind] = next;
+  }),
+
+  // Team activity feed = a liberal, accumulating cache (the read source for the
+  // feed, just like store.sessions backs the personal feed). Both the live query
+  // (newest page) and "Load more" (older pages) dump here; we overlay by _id so
+  // updates and paginated pages merge without ever losing a row, then keep it
+  // sorted newest-first. UNBOUNDED on purpose: every row a page ever fetched
+  // stays cached. The feed's exhaustiveness rests on this — a cap silently
+  // dropped the oldest rows once a deep scroll crossed it, and the catch-up
+  // walk (lib/feedCatchup) counts on cached rows below the watermark staying
+  // put. sync() = local draft + IDB write, no server dispatch.
+  mergeFeedConversations: sync(function (this: Draft, key: string, convs: any[]) {
+    const byId = new Map((this.feedConversations[key] ?? []).map((c: any) => [c._id, c]));
+    for (const c of convs ?? []) byId.set(c._id, c);
+    this.feedConversations[key] = [...byId.values()]
+      .sort((a: any, b: any) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  }),
+
+  // Whether older pages remain for this feed key (persisted so the "Load more"
+  // affordance is correct on cold open without first probing the server).
+  setFeedHasMore: sync(function (this: Draft, key: string, hasMore: boolean) {
+    this.feedHasMore[key] = hasMore;
+  }),
+
+  // Server-issued continuation cursor for the next older page (null = the
+  // server confirmed true end-of-history). Persisted so pagination resumes
+  // exactly where it stopped instead of re-deriving from the oldest cached row.
+  setFeedCursor: sync(function (this: Draft, key: string, cursor: string | null) {
+    this.feedCursors[key] = cursor;
+  }),
+
+  // Advance the per-workspace incremental-sync watermark. sync() = local draft +
+  // IDB write, no server dispatch — this is purely local bookkeeping. `cursor`
+  // only ever moves FORWARD (max) so a late/out-of-order delta can't rewind it
+  // and cause already-synced rows to be re-fetched; `backfilledAt` is set wholesale.
+  recordSyncMeta: sync(function (this: Draft, key: string, patch: { cursor?: number; backfilledAt?: number; resumeCursor?: string | null; resumeAt?: number }) {
+    const prev = this.syncMeta[key] ?? {};
+    const next = { ...prev };
+    if (typeof patch.cursor === "number" && (prev.cursor === undefined ? patch.cursor >= 0 : patch.cursor > prev.cursor)) next.cursor = patch.cursor;
+    if (typeof patch.backfilledAt === "number") next.backfilledAt = patch.backfilledAt;
+    // Mid-crawl checkpoint (reconcileCrawl): the continuation cursor of an
+    // interrupted backfill, so a reload resumes instead of re-walking from page
+    // zero. Unlike `cursor` this may move to any value, and null clears it.
+    if ("resumeCursor" in patch) {
+      next.resumeCursor = patch.resumeCursor ?? undefined;
+      next.resumeAt = patch.resumeCursor == null ? undefined : patch.resumeAt;
+    }
+    this.syncMeta[key] = next;
+  }),
+
+  // Every incoming apply runs inside a sync transaction, so a burst of feeder
+  // pushes costs ONE subscriber visit instead of N (ct-49548). State still
+  // commits synchronously; only the notification is folded. A plain function,
+  // not an action: the fold has to wrap the inner action's own commit.
+  syncTable(field: string, incoming: any, opts?: SyncOpts) {
+    syncTransaction(() => get().applySyncTableRows(field, incoming, opts));
+  },
+
+  applySyncTableRows: sync(function (this: Draft, field: string, incoming: any, opts?: SyncOpts) {
+    if (!incoming && incoming !== 0) return;
+    const config = SYNC_REGISTRY[field] ? { ...SYNC_REGISTRY[field], ...opts } : (opts || {});
+    const kind = config.kind ?? "collection";
+    const base = (isDraft(this) ? original(this) : this) as any;
+
+    // A local-first list or singleton holds what an action locked over the push
+    // (applyShapeLocks); a retired lock leaves the pending map.
+    const holdLocks = (value: any, shape: "list" | "singleton") => {
+      const out = applyShapeLocks(field, shape, value, base.pending ?? {}, base[field], { rowKey: config.rowKey, altKey: config.altKey });
+      if (out.pending !== base.pending) (this as any).pending = out.pending;
+      return out.value;
+    };
+
+    if (kind === "scalar" || kind === "list") {
+      if (config.normalize) incoming = config.normalize(incoming, this);
+      if (kind === "list") incoming = holdLocks(incoming, "list");
+      // No-op re-pushes are common — a list-kind subscription re-emits on any
+      // read-set change (teamMembers was measured re-pushing ~every 2s on
+      // presence heartbeats) — and a wholesale assign registers as a change:
+      // every subscriber wakes and the persistence layer re-puts the whole meta
+      // blob to IDB. Bail when the payload is value-identical. Skipped when a
+      // transform/extra is registered (bookmarks reconciles local pending state
+      // even against an identical payload). These lists are small rosters, so
+      // the JSON compare is far cheaper than the wake + IDB put it avoids.
+      if (!config.transform && !config.extra) {
+        const current = base[field];
+        if (Object.is(current, incoming)) return;
+        if (kind === "list" && Array.isArray(current) && Array.isArray(incoming) &&
+            JSON.stringify(current) === JSON.stringify(incoming)) return;
+      }
+      (this as any)[field] = incoming;
+      if (config.transform) config.transform(this, incoming, incoming, false);
+      if (config.extra) Object.assign(this, config.extra);
+      return;
+    }
+
+    if (kind === "singleton") {
+      if (config.normalize) incoming = config.normalize(incoming, this);
+      // Before the no-op bail, so an echo retires its lock even when the push
+      // changes nothing on screen.
+      incoming = holdLocks(incoming, "singleton");
+      const local = (this as any)[field];
+      const comparable = base[field];
+      const initKey = `${field}Initialized`;
+      const initialized = (this as any)[initKey] ?? false;
+      // Same no-op bail as list-kind above: currentUser re-pushes on every
+      // users-doc heartbeat (last_seen), and each accepted push is a new object
+      // identity that wakes every subscriber. `local &&` keeps the first real
+      // write landing (and setting the init flag below) unconditionally.
+      if (!config.transform && !config.merge && !config.extra &&
+          comparable && incoming && JSON.stringify(comparable) === JSON.stringify(incoming)) {
+        return;
+      }
+      const result = config.merge
+        ? applyMerge(isDraft(local) ? current(local) : local, incoming, config.merge, initialized)
+        : incoming;
+      (this as any)[field] = result;
+      if (config.transform) config.transform(this, (this as any)[field], incoming, initialized);
+      if (initKey in this) (this as any)[initKey] = true;
+      if (config.extra) Object.assign(this, config.extra);
+      return;
+    }
+
+    // collection
+    // A non-array here is a broken contract, not data: a field renamed out of
+    // the registry while a stale feeder still pushes its old scalar (an HMR
+    // batch re-ran the old useChatSync against the new registry and sent
+    // `chatThreadUnread: 0` down this path), or a server shape change inside
+    // a deploy window. Drop the push and keep the cached rows — throwing here
+    // unmounted the whole DashboardSyncEffects boundary, which stops EVERY
+    // feeder, not just the bad one.
+    if (!Array.isArray(incoming)) {
+      if (process.env.NODE_ENV !== "production") {
+        console.error(`[sync] ${field}: collection push is not an array (${typeof incoming}); dropped`);
+      }
+      return;
+    }
+    // Read the previous collection and pending map from the BASE state, not
+    // through the draft: applySyncTable walks every row of prev, and each read
+    // through the mutative proxy allocates a child draft (a 14k-row docs
+    // collection × every crawl page made this the top idle cost). The
+    // decision is made on plain objects; only the final assignment touches the
+    // draft.
+    const prevCollection = base[field] || {};
+    if (config.normalize) incoming = config.normalize(incoming, base);
+    // Single-writer enforcement (sync-convergence C1): stamp fields never land
+    // on a row, whichever channel delivered it. Copy-on-write per row so an
+    // untouched payload keeps its identities.
+    if (config.stripFields?.length) {
+      incoming = (incoming as any[]).map((r: any) => {
+        let out = r;
+        for (const f of config.stripFields!) {
+          if (out[f] !== undefined) {
+            if (out === r) out = { ...r };
+            delete out[f];
+          }
+        }
+        return out;
+      });
+    }
+    let { table, pending } = applySyncTable(
+      field, incoming, base.pending, prevCollection,
+      (config.isDelta || config.ignoreFields || config.deepFields || config.preserveFields || config.pruneAbsentScope)
+        ? {
+            isDelta: config.isDelta,
+            ignoreFields: config.ignoreFields,
+            deepFields: config.deepFields as string[] | undefined,
+            preserveFields: config.preserveFields,
+            pruneAbsentScope: config.pruneAbsentScope,
+          }
+        : undefined,
+    );
+
+    if (config.altKey) {
+      // applySyncTable hands back the BASE table/pending objects when a push
+      // changed nothing. The rekey below mutates in place, so copy on first
+      // write — never touch base state, and keep the untouched identity (no
+      // subscriber wake) when no stub matched.
+      const mutTable = () => { if (table === prevCollection) table = { ...table }; return table; };
+      const mutPending = () => { if (pending === base.pending) pending = { ...pending }; return pending; };
+      const incomingByAlt = new Map(
+        (incoming as any[]).map((r: any) => [r[config.altKey!], r])
+      );
+      for (const oldId in prevCollection) {
+        if (isConvexId(oldId)) continue;
+        const old = prevCollection[oldId];
+        const match = incomingByAlt.get((old as any)[config.altKey!] || oldId);
+        if (match) {
+          const launchReconfigure =
+            field === "sessions" ? pendingLaunchReconfigure(old) : null;
+          rekeyId(this, oldId, match._id);
+          rekeyPending(mutPending(), oldId, match._id);
+          if (oldId !== match._id && table[oldId]) {
+            mutTable();
+            if (!table[match._id]) {
+              table[match._id] = { ...(table[oldId] as any), _id: match._id };
+            } else if (config.preserveFields) {
+              // applySyncTable can only preserve an overlay field when prev and
+              // incoming share an id. An alt-key match is the stub→real case:
+              // carry those same local-only fields across before discarding the
+              // old row, or a reload-time rekey drops durable post-create intent.
+              for (const field of config.preserveFields) {
+                if (
+                  (table[match._id] as any)[field] == null &&
+                  (table[oldId] as any)[field] != null
+                ) {
+                  table[match._id] = {
+                    ...(table[match._id] as any),
+                    [field]: (table[oldId] as any)[field],
+                  };
+                }
+              }
+            }
+            delete table[oldId];
+          }
+          // Reapply field overrides that applySyncTable missed (it ran
+          // before the pending entries were rekeyed to the new ID).
+          const fp = `${field}:${match._id}:`;
+          for (const [key, entry] of Object.entries(pending)) {
+            if (entry.type !== "field" || !key.startsWith(fp)) continue;
+            if (table[match._id]) {
+              mutTable()[match._id] = { ...(table[match._id] as any), [key.slice(fp.length)]: entry.value };
+            }
+          }
+          if (field === "sessions" && isConvexId(match._id)) {
+            // sync() commits after this recipe returns. A timer makes the
+            // continuation observe the rekeyed store and keeps dispatch out of
+            // the incoming-data transaction itself.
+            scheduleResolvedSessionContinuations(match._id, launchReconfigure);
+          }
+          if (field === "chatChannels" && isConvexId(match._id)) {
+            scheduleResolvedChatChannelSends(match._id);
+          }
+          if (field === "buckets" && isConvexId(match._id)) {
+            setTimeout(() => useInboxStore.getState().resumePostCreateSessionIntents(), 0);
+          }
+        } else if (!table[oldId]) {
+          mutTable()[oldId] = old as any;
+        }
+      }
+    }
+
+    if (config.keepSelected) {
+      const selectedId = (this as any)[config.keepSelected];
+      if (selectedId && !table[selectedId] && prevCollection[selectedId]) {
+        // table !== prevCollection here (prev has the row, table doesn't).
+        table[selectedId] = prevCollection[selectedId];
+      }
+    }
+
+    // A non-delta push is the server's complete set. Record it BEFORE the no-op
+    // bail (an empty or unchanged snapshot has still landed): the rows it
+    // dropped may now leave disk too, and boot hydration must not merge cached
+    // rows back under it. See durableDeletes / cacheFloorUnderSnapshot.
+    if (!config.isDelta) {
+      noteSnapshotSync(
+        field,
+        (incoming as any[]).map((r: any) => String(r._id)),
+        table === prevCollection ? [] : Object.keys(prevCollection).filter((id) => !table[id]),
+      );
+    }
+
+    // No-op push: nothing to commit. Decided by ROW IDENTITY — applySyncTable
+    // hands back the previous row object whenever nothing it compares changed
+    // — never by `updated_at` alone: a table whose rows carry no updated_at
+    // (agent_tasks) made every push after the first look identical
+    // (undefined === undefined) and silently dropped real changes. And the
+    // pending map must land even when the rows didn't: an echo that CLEARS a
+    // local-first field protection changes pending, not the table.
+    if (!config.altKey && !config.extra && !config.transform && base.pending === pending) {
+      if (table === prevCollection) return;
+      if (prevCollection) {
+        const newKeys = Object.keys(table);
+        if (newKeys.length === Object.keys(prevCollection).length &&
+            newKeys.every(k => prevCollection[k] === table[k])) {
+          return;
+        }
+      }
+    }
+
+    // Quiescence clock for the digest compare (sync-convergence C6): a row
+    // channel COMMITTED a change, so the replica is mid catch-up until it
+    // settles. Stamped here, past the no-op bail above, because a busy account
+    // re-pushes the sessions channel every few seconds (liveness heartbeats
+    // re-emit the live window; facts are stripped from this channel, so those
+    // pushes are value-identical) and a value-identical push is not catch-up
+    // — stamping it kept the compare gated on not_quiescent forever. Decided
+    // by IDENTITY, like the no-op bail: applySyncTable hands back the previous
+    // table and pending objects when nothing it compares changed (the sessions
+    // channel registers a transform, so it never reaches that bail).
+    if (SYNC_ACTIVITY_FIELDS.has(field) && (base[field] !== table || base.pending !== (pending as any))) noteSyncApply();
+    // applySyncTable returns the PREVIOUS table/pending objects untouched when
+    // a push changed nothing (whole-collection identity reuse) — skip the draft
+    // writes so a no-op sync produces no commit at all.
+    if (base[field] !== table) (this as any)[field] = Object.freeze(table);
+    if (base.pending !== (pending as any)) this.pending = pending as any;
+    if (field === "sessions") this.pending = applyHeldOverlayFacts(this.sessions as Record<string, unknown>, this.pending);
+    if (field === "bucketAssignments") {
+      for (const row of Object.values(table) as BucketAssignmentItem[]) {
+        if (!isConvexId(String(row._id))) continue;
+        const clear = (session: any) => {
+          // A real assignment row (including an explicit unfile tombstone or a
+          // different bucket selected later) supersedes the one-shot marker.
+          if (session?._postCreateBucketId) {
+            delete session._postCreateBucketId;
+          }
+        };
+        clear(this.sessions[row.conversation_id]);
+        clear(this.conversations[row.conversation_id]);
+      }
+    }
+    if (config.transform) config.transform(this, table, incoming, false, prevCollection);
+    if (config.extra) Object.assign(this, config.extra);
+  }),
+
+  // The single-record twin of syncTable, and the same transaction (ct-49746).
+  // A feeder that writes a row at a time — useSyncDocs and useSyncTasks each
+  // loop syncRecord over a page — used to cost one subscriber visit per row;
+  // now the whole page costs one. Same shape as syncTable above: a plain
+  // function wrapping the sync() action, because the fold has to enclose the
+  // action's own write.
+  syncRecord(field: string, id: string, record: any) {
+    syncTransaction(() => get().applySyncRecordRow(field, id, record));
+  },
+
+  applySyncRecordRow: sync(function (this: Draft, field: string, id: string, record: any) {
+    // Apply pending protection: local-first field values win over server
+    const { record: protectedRecord, pending: newPending } =
+      applySyncRecord(field, id, record, this.pending);
+    this.pending = newPending as any;
+
+    // Exclude pending — entire record blocked from sync
+    const excludeKey = `${field}:${id}`;
+    if (this.pending[excludeKey]?.type === "exclude") return;
+
+    const collection = (this as any)[field];
+    const existing = collection?.[id];
+
+    // Bail out if every incoming property already matches — avoids creating
+    // a new state reference, which would cascade through useTrackedStore →
+    // storeMeta → conversation prop → ConversationView re-render → Radix
+    // tooltip ref loop under React 19's ref cleanup semantics.
+    if (existing && protectedRecord) {
+      const keys = Object.keys(protectedRecord);
+      if (keys.length > 0 && keys.every(k => Object.is(existing[k], protectedRecord[k]))) {
+        return;
+      }
+    }
+
+    // Mutate draft in-place instead of replacing the collection object.
+    // This ensures mutative only marks the changed subtree as dirty.
+    if (!collection) {
+      (this as any)[field] = { [id]: protectedRecord };
+    } else if (!existing) {
+      collection[id] = protectedRecord;
+    } else {
+      for (const key of Object.keys(protectedRecord)) {
+        if (!Object.is(existing[key], protectedRecord[key])) {
+          existing[key] = protectedRecord[key];
+        }
+      }
+    }
+  }),
+
+  dropDocDetail: sync(function (this: Draft, id: string) {
+    if (this.docDetails[id]) delete this.docDetails[id];
+  }),
+
+  // Local-first retire of the "assigned to you" ping: the UI clears it the
+  // moment the user acks, while the ackSessionAssignment mutation round-trips;
+  // the next inbox sync reflects the server's cleared state and agrees.
+  clearAssignedPing: sync(function (this: Draft, conversationId: string) {
+    const row = this.sessions[conversationId];
+    if (row?.assigned_ping) row.assigned_ping = null;
+  }),
+
+  // Merge a small high-churn map (e.g. heartbeat liveness keyed by id) onto a
+  // base collection's existing rows, touching only changed fields so unchanged
+  // rows keep object identity (React.memo holds). The base list owns the stable
+  // fields; the overlay carries only the churny ones (agent_status, is_idle,
+  // updated_at, …). This is the generic "split liveness out of the row" verb —
+  // sessions, tasks, and feedSessions all merge their activity overlay through
+  // this one path instead of bundling liveness into the heavyweight list
+  // payload (which forces a full O(N) re-push of the whole collection on every
+  // ~1s heartbeat). Rows the base doesn't have yet are skipped — an overlay
+  // never creates a row, it only annotates one.
+  syncOverlay: sync(function (this: Draft, field: string, overlayById: Record<string, Record<string, any>>) {
+    const collection = (this as any)[field];
+    if (!collection) return;
+    // Same single-writer rule as syncTable: fields on the collection's strip
+    // list (the sessions projection stamps) never merge onto a row from any
+    // channel — the overlay applier routes them into sessionsProjection.
+    const strip = SYNC_REGISTRY[field]?.stripFields;
+    const stripSet = strip?.length ? new Set(strip) : null;
+    for (const id in overlayById) {
+      const row = collection[id];
+      if (!row) continue;
+      const { fields, pending } = applySyncPatch(field, id, overlayById[id], [], this.pending);
+      if (pending !== this.pending) this.pending = pending;
+      for (const key in fields) {
+        if (stripSet?.has(key)) continue;
+        if (!Object.is(row[key], fields[key])) row[key] = fields[key];
+      }
+      // The overlay carries the facts a send is settled by (updated_at, the
+      // status), and a finished conversation may get no base row after it:
+      // a send still on its way is read against them here too, or it waits
+      // for the minute coverage pass with its row reading as working.
+      if (field === "sessions" && pendingRowsUnsettled(this.pendingMessages[id])) {
+        reconcilePendingSendForSession(this.pendingMessages, id, row, this.currentSessionId, this.messages[id], this);
+      }
+    }
+  }),
+
+
+  sortedSessions: () => {
+    return sortSessions(get().sessions).filter((s: InboxSession) => !s.is_subagent && !s.parent_conversation_id);
+  },
+
+  visualOrder: () => computeVisualOrder(get()),
+  yourMoveOrder: () => computeVisualOrder(get(), { yourMove: true }),
+
+  // =====================
+  // NAVIGATION
+  // =====================
+
+  advanceToNext: () => {
+    const currentId = get().currentSessionId;
+    const idleSessions = get().yourMoveOrder();
+    const currentIdleIdx = idleSessions.findIndex((s: InboxSession) => s._id === currentId);
+    const nextIdle = idleSessions[currentIdleIdx + 1] || idleSessions[0];
+    if (nextIdle && nextIdle._id !== currentId) {
+      get().setCurrentSession(nextIdle._id);
+    }
+  },
+
+  navigateUp: () => {
+    get().freezeRecentForNav();
+    const ordered = get().visualOrder();
+    if (ordered.length === 0) return;
+    const currentId = get().currentSessionId;
+    const idx = ordered.findIndex((s: InboxSession) => s._id === currentId);
+    const newIdx = Math.max(idx - 1, 0);
+    if (newIdx === idx) return;
+    get().navigateToSession(ordered[newIdx]._id);
+  },
+
+  navigateDown: () => {
+    get().freezeRecentForNav();
+    const ordered = get().visualOrder();
+    if (ordered.length === 0) return;
+    const currentId = get().currentSessionId;
+    const idx = ordered.findIndex((s: InboxSession) => s._id === currentId);
+    const newIdx = Math.min(idx + 1, ordered.length - 1);
+    if (newIdx === idx) return;
+    get().navigateToSession(ordered[newIdx]._id);
+  },
+
+  freezeRecentForNav: () => {
+    if (resolveInboxViewMode(get().clientState.ui) !== "recent") return;
+    // Snapshot the live order once; later presses within the window just re-arm
+    // the thaw timer so the same frozen order keeps being walked.
+    if (!get().recentFreezeOrder) {
+      set({ recentFreezeOrder: get().visualOrder().map((s: InboxSession) => s._id) });
+    }
+    if (recentThawTimer) clearTimeout(recentThawTimer);
+    recentThawTimer = setTimeout(() => get().thawRecentOrder(), RECENT_FREEZE_THAW_MS);
+  },
+
+  thawRecentOrder: () => {
+    if (recentThawTimer) { clearTimeout(recentThawTimer); recentThawTimer = null; }
+    if (get().recentFreezeOrder) set({ recentFreezeOrder: null });
+  },
+
+  setCurrentSession: action(function (this: Draft, id: string, source: ViewNavSource = "gesture") {
+    // A Cmd-click on a session row opens it in a background tab / detached
+    // window (lib/openIntent) — the visible conversation must not move.
+    if (source === "gesture" && divertSessionOpen(id)) return;
+    // "adopt" is machine selection (a fallback picking a view because none
+    // exists). It is boot-only by policy: never before hydration restored the
+    // client's own position, and never once ANY view has been shown this
+    // window lifetime — a mid-session adopt is exactly the "random jump".
+    if (source === "adopt" && (!this.clientStateInitialized || hasViewNavigated())) {
+      recordNavEvent({
+        field: "currentSessionId",
+        from: this.currentSessionId ?? null,
+        to: id,
+        source,
+        blocked: this.clientStateInitialized ? "adopt after first view" : "adopt before hydration",
+      });
+      return;
+    }
+    declareViewNav(source);
+    commitCurrentSession(this, id);
+  }),
+
+  clearSelection: action(function (this: Draft) {
+    setDismissedView(this, null);
+  }),
+
+  toggleCollapsedSection: action(function (this: Draft, key: string) {
+    this.collapsedSections = { ...this.collapsedSections, [key]: !this.collapsedSections[key] };
+  }),
+
+  // Raw set: ephemeral nav bookkeeping — no draft, no persistence, no dispatch.
+  setScheduleNavSets: (sets: ScheduleNavSets | null) =>
+    set({ scheduleNavSets: sets }),
+
+  // Raw set: one-shot trigger strip request (see the state field's comment).
+  setTriggerStripRequest: (req: TriggerStripRequest | null) =>
+    set({ triggerStripRequest: req }),
+
+  // Raw set: one-shot composer seed (see the state field's comment).
+  setComposerPrefill: (req: { convId: string; text: string } | null) =>
+    set({ composerPrefill: req }),
+
+  setViewingDismissedId: action(function (this: Draft, id: string | null) {
+    if (id && divertSessionOpen(id)) return;
+    setDismissedView(this, id);
+  }),
+
+  getCurrentSession: () => {
+    const { sessions, currentSessionId } = get();
+    if (!currentSessionId) return null;
+    return sessions[currentSessionId] ?? null;
+  },
+
+  injectSession: action(function (this: Draft, session: InboxSession) {
+    // Dismiss/stash are absolute — never altered by viewing. If the injected
+    // session arrived hidden, surface it through viewingDismissedId so the user
+    // can read it without resurrecting it into the active inbox.
+    const merged = seedSessionRow(this, session);
+    if (isSessionHidden(merged)) {
+      setDismissedView(this, session._id);
+    } else {
+      declareViewNav("gesture");
+      commitCurrentSession(this, session._id);
+    }
+  }),
+
+  // Put one fetched row in the store without moving the view: a pane showing a
+  // session the store did not hold (a teammate's, from a deep link or a pill).
+  // Incoming data, so sync() like preloadForkSessions; a row killed locally
+  // stays out.
+  seedSession: sync(function (this: Draft, session: InboxSession) {
+    if (this.pending[`sessions:${session._id}`]?.type === "exclude") return;
+    seedSessionRow(this, session);
+  }),
+
+  // Seed branch (fork) sessions into the local cache WITHOUT navigating, so a
+  // later branch-chip click switches instantly instead of routing through the
+  // pendingNavigate → getConversation fetch → injectSession path (the source of
+  // the "branch spins forever" hang on a cold cache). Gap-fill only: an existing
+  // live row is never downgraded by a thin stub. Authoritative metadata + the
+  // message list reconcile via the normal getConversationWithMeta + listMessages
+  // subscriptions the moment the branch is actually viewed. sync() (not action())
+  // because this is incoming-data seeding, not a user edit — it persists to IDB
+  // (branches stay preloaded across reloads) but dispatches nothing to the server.
+  preloadForkSessions: sync(function (this: Draft, forks: ForkChild[], forkedFrom?: string) {
+    for (const f of forks) {
+      const id = f?._id;
+      if (!id || !isConvexId(id)) continue;               // skip optimistic/stub ids
+      if (this.pending[`sessions:${id}`]?.type === "exclude") continue; // killed locally
+      const existing = this.sessions[id];
+      if (existing) {
+        // Don't clobber live data — but DO heal a row seeded before payloads
+        // carried triage state: fill exactly the stamp keys this payload
+        // delivers into fields the row never had (undefined = never delivered;
+        // an explicit null is a real "not stashed/dismissed" and stays). This
+        // is what retires the stampless stubs persisted in old caches.
+        for (const k of TRIAGE_STAMP_KEYS) {
+          if (f[k] !== undefined && (existing as any)[k] === undefined) {
+            (existing as any)[k] = f[k] ?? null;
+            if (k === "inbox_pinned_at" && existing.is_pinned === undefined) {
+              existing.is_pinned = !!f[k];
+            }
+          }
+        }
+        continue;
+      }
+      if (!this.conversations[id]) this.conversations[id] = { _id: id } as any;
+      this.sessions[id] = sessionRowFromSummary({
+        ...f,
+        forked_from: f.forked_from ?? forkedFrom ?? null,
+      });
+    }
+  }),
+
+  updateSessionProject: action(function (this: Draft, id: string, projectPath: string) {
+    if (this.sessions[id]) {
+      this.sessions[id].project_path = projectPath;
+      this.sessions[id].git_root = projectPath;
+    }
+    if (!this.conversations[id]) {
+      this.conversations[id] = { _id: id } as any;
+    }
+    this.conversations[id].project_path = projectPath;
+    this.conversations[id].git_root = projectPath;
+  }),
+
+  patchSession: sync(function (this: Draft, id: string, fields: Partial<InboxSession>) {
+    if (!this.sessions[id]) return;
+    Object.assign(this.sessions[id], fields);
+  }),
+
+  // The machine row's stamp. Local-only (`sync`): the conversations table has no
+  // such column — the value's only job is to survive on the stub row until
+  // createSessionFromStub reads it. Null clears a pick the user reverted.
+  setSessionTargetDevice: sync(function (this: Draft, id: string, deviceId: string | null) {
+    if (this.sessions[id]) this.sessions[id].target_device_id = deviceId;
+    if (this.conversations[id]) (this.conversations[id] as any).target_device_id = deviceId;
+  }),
+
+  setConversationAgent: action(function (this: Draft, id: string, agentType: string) {
+    // Same as the server patch: an agent flip invalidates the previous
+    // agent's model/effort (claude-fable on a Codex session is leftover).
+    for (const coll of ["sessions", "conversations"] as const) {
+      const row = this[coll][id] as any;
+      if (!row) continue;
+      row.agent_type = agentType;
+      row.model = undefined;
+      row.effort = undefined;
+    }
+    if (this.currentConversation.conversationId === id) {
+      this.currentConversation.agentType = agentType;
+    }
+  }),
+
+  setConversationAgentDefinition: action(function (this: Draft, id: string, name: string | null) {
+    for (const row of [this.sessions[id], this.conversations[id]] as any[]) {
+      if (!row) continue;
+      row.agent_definition = name ?? undefined;
+    }
+  }),
+
+  setConversationModel: action(function (this: Draft, id: string, opts: { model?: string | null; effort?: string | null }) {
+    for (const row of [this.sessions[id], this.conversations[id]] as any[]) {
+      if (!row) continue;
+      if (opts.model !== undefined) row.model = opts.model ?? undefined;
+      if (opts.effort !== undefined) row.effort = opts.effort ?? undefined;
+    }
+  }),
+
+  setStableContextPrefs: sync(function (this: Draft, id: string, prefs: { mode?: string | null; exclude?: string[] | null }) {
+    for (const row of [this.sessions[id], this.conversations[id]] as any[]) {
+      if (!row) continue;
+      if (prefs.mode !== undefined) row.stable_mode = prefs.mode ?? undefined;
+      if (prefs.exclude !== undefined) row.stable_exclude = prefs.exclude?.length ? prefs.exclude : undefined;
+    }
+  }),
+
+  navigateToSession: action(function (this: Draft, id: string, source: ViewNavSource = "gesture") {
+    // Plain navigation. Forks are first-class conversations — clicking one
+    // (in the sidebar, BranchSelector, or a deep link) just sets it as the
+    // current conversation. No overlay-on-parent state to keep in sync.
+    //
+    // Dismiss/stash are absolute: navigation NEVER clears them.
+    // Deep-link / URL `?s=` / popstate / palette / desktop window-focus all
+    // funnel through here, and silently resurrecting a dismissed session was
+    // the long-running "dismiss doesn't stick" bug. A hidden target is
+    // shown through `viewingDismissedId` (the same view-only path the inbox
+    // sidebar uses when you click a session under "Stashed"/"Dismissed"); only
+    // an explicit `restoreSession` or sending a message clears the flags.
+    if (source === "gesture" && divertSessionOpen(id)) return;
+    declareViewNav(source);
+    const session = this.sessions[id];
+    if (session) {
+      if (isSessionHidden(session)) {
+        setDismissedView(this, id);
+      } else {
+        commitCurrentSession(this, id);
+      }
+    } else {
+      this.pendingNavigateId = id;
+      this.viewingDismissedId = null;
+    }
+  }),
+
+  // The pendingNavigateId channel as one tagged action: target + scroll target
+  // set atomically (setting them separately raced the inbox's cache-hit
+  // watcher onto the previous conversation). All UI "go to message X in
+  // conversation Y" affordances funnel here — raw setState writes to these
+  // fields are reverted by the middleware's view guard.
+  requestNavigate: action(function (
+    this: Draft,
+    id: string,
+    opts?: {
+      scrollToMessageId?: string | null;
+      scrollToMessageTimestamp?: number | null;
+      highlightQuery?: string | null;
+      showMySessions?: boolean;
+      source?: ViewNavSource;
+    },
+  ) {
+    if ((opts?.source ?? "gesture") === "gesture" && divertSessionOpen(id, { messageId: opts?.scrollToMessageId })) return;
+    declareViewNav(opts?.source ?? "gesture");
+    this.pendingNavigateId = id;
+    if (opts && "scrollToMessageId" in opts) this.pendingScrollToMessageId = opts.scrollToMessageId ?? null;
+    if (opts && "scrollToMessageTimestamp" in opts) this.pendingScrollToMessageTimestamp = opts.scrollToMessageTimestamp ?? null;
+    if (opts && "highlightQuery" in opts) this.pendingHighlightQuery = opts.highlightQuery ?? null;
+    if (opts?.showMySessions === false) this.showMySessions = false;
+  }),
+
+  // Public "I am now viewing `id` as the current session" — delegates to the
+  // shared recorder so it persists (action() → IDB) and updates the divider
+  // anchor. Used by the inbox effect + restore paths; the navigation primitives
+  // above already record on their own.
+  touchMru: action(function (this: Draft, id: string) {
+    recordSessionView(this, id, this.currentSessionId);
+  }),
+
+  markKilling: action(function (this: Draft, id: string) {
+    let newSessionId = this.currentSessionId;
+    if (this.currentSessionId === id) {
+      const next = nextSessionPastRemoved(computeVisualOrder(this), id, new Set([id]));
+      newSessionId = next?._id ?? null;
+    }
+    delete this.sessions[id];
+    // Killing an already-dismissed session HARD-REMOVES its inbox row, so a
+    // sibling window still holding that row would re-put it and the killed card
+    // would come back (gestureBridge.ts). Scoped to the session row because
+    // that is all this action drops — the conversation stays cached.
+    broadcastGesture({ kind: "forget", ids: [id], scope: "session-row", ts: Date.now() }, bridgeUserId(this));
+    declareViewNav("gesture");
+    this.currentSessionId = newSessionId;
+    recordCurrentConversationPointer(this, newSessionId ?? undefined);
+    // Same lockstep as commitCurrentSession / hideSessionInDraft: advancing the
+    // selection must rewrite the active inbox tab's `?s=`, or the re-assert effect
+    // snaps the view back onto the just-removed session.
+    syncActiveInboxTabPath(this, newSessionId);
+  }),
+
+
+  // =====================
+  // MESSAGE MANAGEMENT
+  // =====================
+
+  setMessages: sync(function (this: Draft, convId: string, msgs: Message[], meta?: Partial<PaginationState>, source?: "cache") {
+    msgs = dedupeReplayedMessages(msgs);
+    prunePendingEchoes(this, convId, msgs);
+    // Server data only — pending messages are merged at read time.
+    //
+    // Preserve any local messages with timestamps strictly newer than the
+    // incoming batch's newest. The paginated `listMessages` subscription is
+    // DESC-ordered and its first page covers the newest N items, but its
+    // reactivity can briefly stall while a recovery fetch (see
+    // useConversationMessages) has already merged in even-newer items.
+    // Without this guard, the next paginated tick clobbers them and the
+    // user sees the conversation snap backward.
+    const existing = this.messages[convId] || [];
+    const incomingNewestTs = msgs.length > 0 ? msgs[msgs.length - 1].timestamp : -Infinity;
+    const incomingIds = new Set(msgs.map((m: Message) => m._id));
+    const newerLocal = existing.filter(
+      (m: Message) => m.timestamp > incomingNewestTs && !incomingIds.has(m._id)
+    );
+    const merged = newerLocal.length > 0 ? [...msgs, ...newerLocal] : msgs;
+    this.messages[convId] = merged;
+    const pag = { ...(this.pagination[convId] || DEFAULT_PAGINATION), ...meta };
+    this.pagination[convId] = pag;
+    if (source !== "cache") writeConversationMessages(convId, plainMessages(merged), plain(pag));
+    evictInactiveMessages(this, convId);
+  }),
+
+  // The live-tail apply. listMessagesTail's result is AUTHORITATIVE for the
+  // range (anchorTs, lastTimestamp]: local rows there are replaced wholesale.
+  // This is what delivers in-place streaming patches — mergeMessages is
+  // add-only and silently drops a row whose _id already exists — and in-range
+  // deletes (API-error banner supersession). Rows at or before the anchor stay
+  // untouched; rows strictly newer than the tail's last timestamp are
+  // preserved (a recovery fetch can race ahead of the subscription). An empty
+  // tail result changes nothing: deletes of old rows reconcile through the
+  // message-count watermark refetch, never through an empty window.
+  applyTailMessages: sync(function (this: Draft, convId: string, anchorTs: number, msgs: Message[], lastTimestamp: number | null) {
+    msgs = dedupeReplayedMessages(msgs);
+    if (msgs.length === 0) return;
+    prunePendingEchoes(this, convId, msgs);
+    const existing = this.messages[convId] || [];
+    const tailLast = lastTimestamp ?? msgs[msgs.length - 1].timestamp;
+    const incomingIds = new Set(msgs.map((m: Message) => m._id));
+    const keep = existing.filter((m: Message) => m.timestamp <= anchorTs && !incomingIds.has(m._id));
+    const newerLocal = existing.filter((m: Message) => m.timestamp > tailLast && !incomingIds.has(m._id));
+    const merged = [...keep, ...msgs, ...newerLocal];
+    // A stale in-flight result from a just-replaced anchor can interleave with
+    // kept rows; the feed assumes ascending order, so sort unconditionally.
+    merged.sort((a: Message, b: Message) => a.timestamp - b.timestamp);
+    this.messages[convId] = merged;
+    const pag = { ...(this.pagination[convId] || DEFAULT_PAGINATION), initialized: true };
+    this.pagination[convId] = pag;
+    writeConversationMessages(convId, plainMessages(merged), plain(pag));
+    evictInactiveMessages(this, convId);
+  }),
+
+  mergeMessages: sync(function (this: Draft, convId: string, msgs: Message[], direction: "prepend" | "append", meta?: Partial<PaginationState>) {
+    msgs = dedupeReplayedMessages(msgs);
+    prunePendingEchoes(this, convId, msgs);
+    // A row the server sends again is the server's newer copy: a row fetched
+    // mid-stream (a hosted turn's first words) is patched in place with its
+    // full text and tool calls, and the delta reads re-fetch the newest local
+    // row to pick that up. Replaced only when it changed, so refs stay stable.
+    const incomingById = new Map(msgs.map((m: Message) => [m._id, m]));
+    let refreshed = false;
+    const existing = (this.messages[convId] || []).map((m: Message) => {
+      const next = incomingById.get(m._id);
+      if (!next || !serverRowChanged(m, next)) return m;
+      refreshed = true;
+      return next;
+    });
+    const existingIds = new Set(existing.map((m: Message) => m._id));
+    const existingReplayKeys = new Set(existing.map(messageReplayKey).filter((key): key is string => !!key));
+    const unique = msgs.filter((m: Message) => {
+      if (existingIds.has(m._id)) return false;
+      const key = messageReplayKey(m);
+      return !key || !existingReplayKeys.has(key);
+    });
+    if (unique.length === 0 && !meta && !refreshed) return;
+
+    const merged = direction === "prepend"
+      ? [...unique, ...existing]
+      : [...existing, ...unique];
+    merged.sort((a: Message, b: Message) => a.timestamp - b.timestamp);
+    // Server data only — pending messages are merged at read time
+    this.messages[convId] = merged;
+    const pag = meta ? { ...(this.pagination[convId] || DEFAULT_PAGINATION), ...meta } : this.pagination[convId];
+    if (meta) this.pagination[convId] = pag;
+    writeConversationMessages(convId, plainMessages(merged), plain(pag));
+    evictInactiveMessages(this, convId);
+  }),
+
+  setUserMessages: sync(function (this: Draft, convId: string, msgs: UserMessage[], source?: "cache") {
+    const prev = this.userMessages[convId];
+    if (prev && prev.length === msgs.length && prev.every((message, index) => {
+      const next = msgs[index];
+      return message._id === next._id && message.content === next.content &&
+        message.timestamp === next.timestamp && message.message_uuid === next.message_uuid &&
+        message.from_user_id === next.from_user_id &&
+        JSON.stringify(message.images) === JSON.stringify(next.images);
+    })) return;
+    this.userMessages[convId] = msgs;
+    // Persisted beside the message pages so a reopen (or a reload) paints the
+    // message navigator from disk instead of a skeleton while getUserMessages
+    // is in flight; ensureHydrated restores it.
+    if (source !== "cache") writeConversationUserMessages(convId, msgs);
+  }),
+
+  addOptimisticMessage: sync(function (this: Draft, convId: string, content: string, images?: Array<OptimisticImage>, clientId?: string) {
+    return appendOptimisticMessage(this, convId, content, images, clientId);
+  }),
+
+  markOptimisticAsQueued: sync(function (this: Draft, convId: string, content: string) {
+    const stripped = stripImageRef(content);
+    const promote = (m: Message) => {
+      if (m._isOptimistic && m.role === "user" && stripImageRef(m.content || "") === stripped) {
+        const { _isOptimistic, ...rest } = m;
+        return { ...rest, _isQueued: true as const };
+      }
+      return m;
+    };
+    const pending = this.pendingMessages[convId];
+    if (pending) {
+      this.pendingMessages[convId] = pending.map(promote);
+    }
+  }),
+
+  markOptimisticAsFailed: sync(function (this: Draft, convId: string, clientId: string) {
+    const mark = (m: Message): Message => {
+      if (m._clientId === clientId || m._id === clientId) {
+        return { ...m, _isFailed: true as const };
+      }
+      return m;
+    };
+    const pending = this.pendingMessages[convId];
+    if (pending) {
+      this.pendingMessages[convId] = pending.map(mark);
+    }
+  }),
+
+  // The other way: a failed bubble the person asked to send again reads as on
+  // its way from the same gesture. Nothing else clears the flag (an echo
+  // prunes the row, and a hosted approval's answer has no echo), and the
+  // settle and redrive passes all skip a failed row, so a retry that worked
+  // would read "Failed to send" for good. A retry refused again is marked
+  // failed again by the paths that marked it the first time.
+  markOptimisticAsRetrying: sync(function (this: Draft, convId: string, clientId: string) {
+    const pending = this.pendingMessages[convId];
+    if (!pending) return;
+    this.pendingMessages[convId] = pending.map((m: Message): Message => {
+      if (!m._isFailed || (m._clientId !== clientId && m._id !== clientId)) return m;
+      const { _isFailed: _failed, ...rest } = m;
+      return { ...rest, _isOptimistic: true as const };
+    });
+  }),
+
+  // The revert half of addOptimisticMessage: drop a bubble whose delivery was
+  // refused before it ever reached the rail (the blocked-revive paint, whose
+  // mutation threw). Marking it failed would keep it forever — the prune
+  // deliberately protects failed sends for a retry — so a gesture that will
+  // never be delivered has to take its optimistic copy back with it.
+  removeOptimisticMessage: sync(function (this: Draft, convId: string, clientId: string) {
+    const pending = this.pendingMessages[convId];
+    if (!pending) return;
+    const kept = pending.filter((m) => m._clientId !== clientId && m._id !== clientId);
+    if (kept.length === pending.length) return;
+    if (kept.length === 0) delete this.pendingMessages[convId];
+    else this.pendingMessages[convId] = kept;
+  }),
+
+  // The server confirmed this send (its transcript row exists). The bubble is
+  // NOT removed: this window's tail may lag the server by minutes under load
+  // (33 minutes on 2026-09-23), and a removed bubble with no echo on screen
+  // is a message that vanished. The row loses its in-flight look and its
+  // redrive, and stays in place until prunePendingEchoes sees the echo land.
+  settleOptimisticMessage: sync(function (this: Draft, convId: string, clientId: string) {
+    const pending = this.pendingMessages[convId];
+    if (!pending) return;
+    this.pendingMessages[convId] = pending.map((m) => {
+      if ((m._clientId !== clientId && m._id !== clientId) || m._isSettled) return m;
+      const { _isOptimistic, _isQueued, ...rest } = m;
+      return { ...rest, _isSettled: true as const };
+    });
+  }),
+
+  // Lands settled uploads on the row by client id, under whichever key holds it
+  // now: the upload task captured the STUB id at send time, and a parked create
+  // may have rekeyed the row to its real id while the upload was in flight. A
+  // miss would leave the row `uploading` forever and every redrive would skip it.
+  resolvePendingUploads: sync(function (this: Draft, convId: string, clientId: string, images: Array<OptimisticImage>) {
+    const isRow = (m: Message) => m._clientId === clientId || m._id === clientId;
+    const keys = this.pendingMessages[convId]?.some(isRow)
+      ? [convId]
+      : Object.keys(this.pendingMessages).filter((key) => this.pendingMessages[key]?.some(isRow));
+    for (const key of keys) {
+      this.pendingMessages[key] = this.pendingMessages[key].map((m) => (isRow(m) ? { ...m, images } : m));
+    }
+  }),
+
+  stampPendingDispatchContent: sync(function (this: Draft, convId: string, clientId: string, dispatchContent: string) {
+    const pending = this.pendingMessages[convId];
+    if (!pending) return;
+    this.pendingMessages[convId] = pending.map((m) =>
+      m._clientId === clientId || m._id === clientId ? { ...m, _dispatchContent: dispatchContent } : m
+    );
+  }),
+
+  setPagination: action(function (this: Draft, convId: string, update: Partial<PaginationState>) {
+    this.pagination = {
+      ...this.pagination,
+      [convId]: { ...(this.pagination[convId] || DEFAULT_PAGINATION), ...update },
+    };
+  }),
+
+  initPagination: action(function (this: Draft, convId: string) {
+    if (this.pagination[convId]) return;
+    this.pagination = { ...this.pagination, [convId]: { ...DEFAULT_PAGINATION } };
+  }),
+
+  // =====================
+  // METADATA
+  // =====================
+
+  setCurrentConversation: action(function (this: Draft, ctx: CurrentConversationContext) {
+    this.currentConversation = ctx;
+  }),
+
+  setIsolatedWorktreeMode: action(function (this: Draft, val: boolean) {
+    this.isolatedWorktreeMode = val;
+  }),
+
+  setCloudSessionMode: action(function (this: Draft, val: boolean) {
+    this.cloudSessionMode = val;
+    // Entering cloud mode starts isolated; leaving it drops the choice. The
+    // isolated flag itself is never touched from here.
+    this.cloudSharedCheckout = false;
+  }),
+
+  setCloudSharedCheckout: action(function (this: Draft, val: boolean) {
+    this.cloudSharedCheckout = val;
+  }),
+
+  setCloudStartFrom: (val: "checkout" | "origin_main") => get().updateClientUI({ cloud_start_from: val }),
+
+  clearCurrentConversation: action(function (this: Draft) {
+    this.currentConversation = {};
+  }),
+
+  // =====================
+  // DRAFTS
+  // =====================
+
+  setDraft: sync(function (this: Draft, id: string, fields: Record<string, any>) {
+    this.drafts[id] = fields;
+    if (!this.clientState.drafts) this.clientState.drafts = {};
+    this.clientState.drafts[id] = fields;
+  }),
+
+  getDraft: (id: string) => {
+    return get().drafts[id];
+  },
+
+  // Kept-draft marker on the session ROW (see InboxSession._hasDraft). sync():
+  // local + IDB only — a deferred stub has no server row to dispatch to.
+  setSessionHasDraft: sync(function (this: Draft, id: string, has: boolean) {
+    const row = this.sessions[id];
+    if (!row) return;
+    // Keeping stamps the row, so the newest kept draft is the last one
+    // dismissed (findKeptComposeDraft reopens onto it).
+    if (has) { row._hasDraft = true; row.updated_at = Date.now(); }
+    else delete row._hasDraft;
+  }),
+
+  moveDraft: sync(function (this: Draft, fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const draft = this.drafts[fromId]
+      ?? (this.clientState.drafts?.[fromId] && typeof this.clientState.drafts[fromId] === "object"
+        ? this.clientState.drafts[fromId] as Record<string, any>
+        : undefined);
+    if (!draft) return;
+    this.drafts[toId] = draft;
+    delete this.drafts[fromId];
+    if (!this.clientState.drafts) this.clientState.drafts = {};
+    this.clientState.drafts[toId] = draft;
+    this.clientState.drafts[fromId] = null;
+  }),
+
+  clearDraft: sync(function (this: Draft, id: string) {
+    dropDraft(this, id);
+    // A kept-draft row's whole reason to exist is its draft — clearing the
+    // draft (sent or discarded) retires the marker with it.
+    if (this.sessions[id]?._hasDraft) delete this.sessions[id]._hasDraft;
+  }),
+
+  clearDraftFinal: action(function (this: Draft, id: string) {
+    dropDraft(this, id);
+    if (this.sessions[id]?._hasDraft) delete this.sessions[id]._hasDraft;
+    // The conversation row is a second durable home for the draft (mobile
+    // persists straight to conversations.draft_message, and the composer seeds
+    // from it via initialDraft). A final clear that leaves it standing lets
+    // the row re-seed the composer on the next boot. Only real Convex ids —
+    // compose stubs and comment keys have no server row to clear.
+    if (/^[a-z0-9]{32}$/.test(id)) {
+      if (!this.conversations[id]) this.conversations[id] = { _id: id } as any;
+      (this.conversations[id] as any).draft_message = null;
+    }
+  }),
+
+  // =====================
+  // QUEUED MESSAGES
+  // =====================
+  // The texts a user queued (Ctrl+Enter) while the agent was busy, waiting to
+  // auto-send when it next reaches "needs input". Local-first like drafts:
+  // sync() writes the IDB-persisted record (no server dispatch), so they
+  // survive navigation and reload. The drain that actually sends them lives in
+  // MessageInput's idle watcher.
+
+  getQueuedMessages: (id: string) => {
+    return get().queuedMessages[id] ?? [];
+  },
+
+  setQueuedMessagesFor: sync(function (this: Draft, id: string, list: string[]) {
+    const previous = (this.pendingMessages[id] ?? []).filter(message => message._isLocalQueue);
+    const kept = new Set<string>();
+    for (const [position, content] of list.entries()) {
+      const existing = previous.find(message => message.content === content && !kept.has(message._id));
+      const clientId = existing?._id ?? appendOptimisticMessage(this, id, content);
+      const row = this.pendingMessages[id].find(message => message._id === clientId)!;
+      row._isLocalQueue = true;
+      row._queuePosition = position;
+      kept.add(clientId);
+    }
+    if (this.pendingMessages[id]) {
+      this.pendingMessages[id] = this.pendingMessages[id].filter(message => !message._isLocalQueue || kept.has(message._id));
+      if (!this.pendingMessages[id].length) delete this.pendingMessages[id];
+    }
+    if (list.length) this.queuedMessages[id] = list;
+    else delete this.queuedMessages[id];
+  }),
+
+  takeQueuedMessage: sync(function (this: Draft, id: string) {
+    const content = this.queuedMessages[id]?.[0];
+    if (content == null) return;
+    let row = this.pendingMessages[id]?.find(message => message._isLocalQueue && message.content === content);
+    if (!row) {
+      const clientId = appendOptimisticMessage(this, id, content);
+      row = this.pendingMessages[id].find(message => message._id === clientId)!;
+    }
+    delete row._isLocalQueue;
+    delete row._queuePosition;
+    row._isOptimistic = true;
+    row.timestamp = Date.now();
+    row._sentBaselineTs = this.sessions[id]?.updated_at;
+    const remaining = this.queuedMessages[id].slice(1);
+    if (remaining.length) this.queuedMessages[id] = remaining;
+    else delete this.queuedMessages[id];
+    return { content, clientId: row._clientId || row._id };
+  }),
+
+  // =====================
+  // SESSION ID RESOLUTION
+  // =====================
+
+  _rekeySession: sync(function (this: Draft, sessionId: string, convexId: string) {
+    rekeyPending(this.pending, sessionId, convexId);
+    rekeyId(this, sessionId, convexId);
+  }),
+
+  resolveSessionId: (sessionId: string, convexId: string) => {
+    const launchReconfigure = pendingLaunchReconfigure(
+      get().sessions[sessionId] || get().conversations[sessionId],
+    );
+    (get() as any)._rekeySession(sessionId, convexId);
+    scheduleResolvedSessionContinuations(convexId, launchReconfigure);
+  },
+
+  getConvexId: (id: string) => {
+    if (isConvexId(id)) return id;
+    const sessions = get().sessions as Record<string, InboxSession>;
+    const session = Object.values(sessions).find((s) => s.session_id === id || s._id === id);
+    return session && isConvexId(session._id) ? session._id : undefined;
+  },
+
+  // Render-safe id resolution across the stub→real rekey. resolveSessionId
+  // deletes the stub rows in the same transaction it flips the pointers, but
+  // views holding the old id (useDeferredValue, stale props, stub URLs) render
+  // at least once more with it. A live row under the id wins; otherwise follow
+  // the session_id mapping the stub leaves behind. Falls back to the input so
+  // genuinely unknown ids keep their existing not-found behavior.
+  resolveLiveSessionId: (id: string) => {
+    const s = get();
+    if (s.conversations[id] || s.sessions[id]) return id;
+    return s.getConvexId(id) ?? id;
+  },
+
+  trackSessionCreate: (stubId: string, promise: Promise<string>) => {
+    set((s: InboxStoreState) => ({
+      pendingSessionCreates: { ...s.pendingSessionCreates, [stubId]: promise },
+    }));
+    const clearTrackedCreate = () => {
+      set((s: InboxStoreState) => {
+        if (!s.pendingSessionCreates[stubId]) return s;
+        const { [stubId]: _, ...rest } = s.pendingSessionCreates;
+        return { pendingSessionCreates: rest };
+      });
+    };
+    // A bare finally() creates a second promise that rejects with the original
+    // error. Nobody observes that child, so an honestly parked create still
+    // surfaced as an unhandled rejection even when every caller caught `promise`.
+    void promise.then(clearTrackedCreate, clearTrackedCreate);
+  },
+
+  awaitSessionCreate: (stubId: string) => {
+    return get().pendingSessionCreates[stubId];
+  },
+
+  awaitConvexId: async (id: string): Promise<string> => {
+    const resolved = get().getConvexId(id);
+    if (resolved) {
+      await awaitResolvedSessionPreparation(resolved);
+      return resolved;
+    }
+    // Prefer the in-flight createSession promise — deterministic and surfaces
+    // the real dispatch error if the server rejects. Polling is the fallback
+    // for cases where the promise was lost (e.g. reload mid-flight) or the
+    // rekey arrives via listInboxSessions altKey sync instead of the dispatch.
+    let inFlight = get().awaitSessionCreate(id);
+    // SELF-HEAL a stranded stub: no real id and no create in flight means the
+    // original createSession was given up (outbox cap) or lost to a reload, so
+    // the conversation was never created server-side and the poll below would
+    // dead-end at "Session not yet created" forever — the stuck-send symptom.
+    // Re-issue the create from the stub's own row; the server is idempotent on
+    // (user, session_id), so this revives the original or mints a fresh one and
+    // the altKey supersede rekeys the stub either way.
+    if (!inFlight && !isConvexId(id) && (get().sessions[id] || get().conversations[id])) {
+      inFlight = get().ensureSessionCreated(id);
+    }
+    let parkedCreateError: unknown = null;
+    if (inFlight) {
+      let createError: unknown = null;
+      try {
+        const convexId = await awaitTrackedSessionCreateResult(inFlight);
+        if (convexId) {
+          await awaitResolvedSessionPreparation(convexId);
+          return convexId;
+        }
+      } catch (e) {
+        if (isParkedDispatchError(e)) parkedCreateError = e;
+        else createError = e;
+      }
+      const r2 = get().getConvexId(id);
+      if (r2) {
+        await awaitResolvedSessionPreparation(r2);
+        return r2;
+      }
+      if (createError) throw createError instanceof Error ? createError : new Error(String(createError));
+      // A parked create is already durable and can rekey through the live
+      // by_session_id result independently of its rejected in-memory promise.
+      // Keep polling below instead of declaring the optimistic first send
+      // failed before that resolver has a chance to land.
+    }
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 250));
+      const r = get().getConvexId(id);
+      if (r) {
+        await awaitResolvedSessionPreparation(r);
+        return r;
+      }
+    }
+    if (parkedCreateError) throw parkedCreateError;
+    throw new Error("Session not yet created on server");
+  },
+
+  // Re-create a stub whose original createSession was given up, using the
+  // fields the stub row already carries (project/agent ride along so the
+  // daemon spawns in the right place). Idempotent against an in-flight create
+  // (returns it) and against an already-rekeyed stub (returns the real id).
+  // The server dedupes on (user, session_id), so re-issuing is safe even if the
+  // original create actually did land — it just resolves to the same row.
+  ensureSessionCreated: (id: string): Promise<string> => {
+    const s = get();
+    const real = s.getConvexId(id);
+    if (real && isConvexId(real)) return Promise.resolve(real);
+    const existing = s.pendingSessionCreates[id];
+    if (existing) return existing;
+    const stub = (s.sessions[id] || s.conversations[id]) as any;
+    if (!stub || isConvexId(id)) return Promise.resolve(id);
+    // A FORK stub must never be revived as a plain create: that silently
+    // converts "fork with history" into a blank session that merely inherits
+    // the parent's project path — the daemon then spawns a context-less agent
+    // and the fork lineage is gone for good. Re-issue forkFromMessage instead;
+    // it's idempotent on session_id, so if the original create actually landed
+    // this resolves to the existing fork row.
+    if (stub.forked_from) {
+      const parentId = s.getConvexId(String(stub.forked_from)) ?? String(stub.forked_from);
+      if (!isConvexId(parentId)) {
+        return Promise.reject(new Error("Fork parent unknown — fork again from the parent thread"));
+      }
+      const ready = s.convCommand(parentId, "forkFromMessage", {
+        ...(stub._forkTargetAgentType
+          ? { target_agent_type: stub._forkTargetAgentType }
+          : (stub.parent_message_uuid && stub.parent_message_uuid !== "agent-switch"
+            ? { message_uuid: stub.parent_message_uuid }
+            : {})),
+        session_id: id,
+      }).then((result: any) => {
+        const convexId = result?.conversation_id;
+        if (convexId && isConvexId(convexId)) get().resolveForkSessionId(id, convexId);
+        return get().getConvexId(id) ?? (isConvexId(convexId) ? convexId : id);
+      });
+      s.trackSessionCreate(id, ready);
+      ready.catch(() => {});
+      return ready;
+    }
+    // Refuse to re-create a PATHLESS stub. The server would create it and ask
+    // the daemon to start_session with no cwd, which falls back to spawning in
+    // $HOME (daemon start fallback) — an agent running silently outside any
+    // checkout, worse than the honest "not created yet" failure this replaces.
+    // The rare source is a project-less doc's "new agent" (≈30/6095 docs). The
+    // caller (composer) can catch this and route to the project picker; once a
+    // path is set (updateSessionProject) the retry re-creates normally. The
+    // automatic heal-on-load already filters pathless stubs out, so this only
+    // gates the user-triggered awaitConvexId retry.
+    // A hosted assistant conversation has no folder by design.
+    if (!stub.project_path && !stub.git_root && !isHostedAgentType(stub.agent_type)) {
+      return Promise.reject(new Error("Pick a folder for this session before sending"));
+    }
+    // Route through createSessionFromStub (not a bare createSession) so the live
+    // project/agent + isolated-worktree mode are sourced identically to the
+    // compose popup's materialize — one create-payload builder, two callers.
+    const ready = s.createSessionFromStub(id).then((convexId: string) => {
+      // createSession returns the server conversation id; rekey explicitly so
+      // we don't wait on the listInboxSessions altKey sync. Falls back to the
+      // session_id mapping if the dispatch result was empty.
+      if (convexId && isConvexId(convexId)) get().resolveSessionId(id, convexId);
+      return get().getConvexId(id) ?? (isConvexId(convexId) ? convexId : id);
+    });
+    s.trackSessionCreate(id, ready);
+    ready.catch(() => {});
+    return ready;
+  },
+
+  // Heal a stranded stub the user TYPED INTO: re-create it, then re-send the
+  // messages they queued while it had no server conversation. rekeyId moved
+  // pendingMessages[stub] → pendingMessages[real]; sendMessage is durable and
+  // dedups on client_id, so replaying is idempotent against any later echo.
+  // Image-only messages whose uploads never resolved are skipped (nothing real
+  // to send). Returns the real id, or null when the create still hasn't landed
+  // (offline/daemon down) — the next sweep retries.
+  healStrandedStub: async (stubId: string): Promise<string | null> => {
+    let realId: string;
+    try {
+      realId = await get().ensureSessionCreated(stubId);
+    } catch (err) {
+      // A stranded new session whose re-create failed: its first message is
+      // still only local, so this is the moment that message gets lost.
+      console.error(`[stub-heal] re-create failed for ${stubId}`, err);
+      captureError(err instanceof Error ? err : new Error(String(err)), { source: "stub-heal", stubId });
+      return null;
+    }
+    if (!isConvexId(realId)) return null;
+    const pending = get().pendingMessages[realId] || [];
+    for (const m of pending as any[]) {
+      if (m._isLocalQueue || m._isSettled || m.images?.some((image: any) => image.uploading)) continue;
+      // Prefer the recorded dispatch bytes (see redrivePendingMessagesFor) —
+      // a row that already sent once must replay identically to dedupe.
+      const content = m._dispatchContent || m.content || "";
+      const storageIds = (m.images || [])
+        .map((im: any) => im.storage_id)
+        .filter((sid: any): sid is string => typeof sid === "string");
+      if (!content.trim() && storageIds.length === 0) continue;
+      get().sendMessage(realId, content, storageIds.length ? storageIds : undefined, m._clientId || m._id);
+    }
+    return realId;
+  },
+
+  redrivePendingMessages: async () => {
+    const userId = get().currentUser?._id;
+    for (const [convId, messages] of Object.entries(get().pendingMessages) as [string, Message[]][]) {
+      if (!isConvexId(convId)) continue;
+      for (const message of messages) {
+        if (message._isFailed || message._isSettled || message._isLocalQueue) continue;
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        const state = get();
+        if (state.currentUser?._id !== userId) return;
+        const latest = state.pendingMessages[convId]?.find((m: Message) => m._id === message._id);
+        if (latest) redrivePendingMessagesFor(convId, [latest]);
+      }
+    }
+  },
+
+  resumePostCreateSessionIntents: () => {
+    const state = get();
+    const ids = new Set([
+      ...Object.keys(state.sessions),
+      ...Object.keys(state.conversations),
+    ]);
+    for (const id of ids) {
+      if (isConvexId(id)) resumePostCreateBucketIntentFor(id);
+    }
+  },
+
+  // =====================
+  // FORK NAVIGATION
+  // =====================
+  // Forks are first-class conversations. The only state we track is the
+  // optimistic fork-children list (so the UI can show a freshly created
+  // fork before the server confirms its convex id).
+
+  addOptimisticFork: (fork: ForkChild) => {
+    set((s: InboxStoreState) => ({
+      optimisticForkChildren: [...s.optimisticForkChildren, fork],
+    }));
+  },
+
+  pruneOptimisticForks: (serverIds: Set<string>) => {
+    const current = get().optimisticForkChildren;
+    const filtered = current.filter((f: ForkChild) => !serverIds.has(f._id));
+    if (filtered.length === current.length) return;
+    set({ optimisticForkChildren: filtered });
+  },
+
+  resolveForkSessionId: (sessionId: string, convexId: string) => {
+    if (sessionId === convexId) return;
+    // Full stub→real rekey (sessions, conversations, messages, drafts, pending,
+    // currentSessionId, optimistic fork chips, …) — the fork stub is navigated
+    // to immediately, so every pointer the new-session stub convention moves
+    // must move here too. rekeyId owns the whole set, including
+    // optimisticForkChildren (shared with the altKey-supersede path).
+    (get() as any)._rekeySession(sessionId, convexId);
+  },
+
+  discardForkStub: sync(function (this: Draft, stubId: string, parentId?: string) {
+    delete this.sessions[stubId];
+    delete this.conversations[stubId];
+    delete this.messages[stubId];
+    delete this.pendingMessages[stubId];
+    delete this.pagination[stubId];
+    delete this.drafts[stubId];
+    for (const [key, row] of Object.entries(this.bucketAssignments) as Array<[string, BucketAssignmentItem]>) {
+      if (row.conversation_id === stubId) delete this.bucketAssignments[key];
+    }
+    this.optimisticForkChildren = this.optimisticForkChildren.filter((f: ForkChild) => f._id !== stubId);
+    if (this.currentSessionId === stubId) {
+      // Follow the discarded stub to its parent; with no parent the view goes
+      // EMPTY (null), never to some other session — the inbox's adopt fallback
+      // is boot-only, so a background discard can't teleport the user.
+      declareViewNav("rekey");
+      this.currentSessionId = parentId ?? null;
+      recordCurrentConversationPointer(this, parentId);
+    }
+  }),
+
+  // =====================
+  // TASK / DOC STATE
+  // =====================
+
+  sidebarNavExpanded: {},
+  toggleSidebarNav: (section: string) => set((s: any) => ({
+    sidebarNavExpanded: { ...s.sidebarNavExpanded, [section]: !s.sidebarNavExpanded[section] },
+  })),
+  setSyncLogLag: (scope: string, lag: number) => {
+    const cur = useInboxStore.getState().syncLogLag;
+    if (scope in cur && cur[scope] === lag) return;
+    set((s: any) => ({ syncLogLag: { ...s.syncLogLag, [scope]: lag } }));
+  },
+
+  setLiveLoading: (scope: string, loading: boolean) => {
+    // No-op guard: the sync hooks re-assert their status on effect re-runs
+    // (reconnects, workspace flicker), and each unconditional write was a fresh
+    // liveLoading identity waking every subscriber. First write for a scope
+    // always lands (the chip lists scopes from these keys).
+    const cur = useInboxStore.getState().liveLoading;
+    if (scope in cur && cur[scope] === loading) return;
+    set((s: any) => ({
+      liveLoading: { ...s.liveLoading, [scope]: loading },
+    }));
+  },
+
+  comments: {},
+  tasks: {},
+  taskActiveSessions: {} as Record<string, any>,
+  taskOriginBadges: {},
+  syncProgress: {},
+  killedShelf: EMPTY_KILLED_SHELF,
+  liveLoading: {},
+  syncLogLag: {},
+  syncLogApplyStats: { direct: 0, refetch: 0 },
+  syncLogScopeStamps: {},
+  stampSyncLogScope: (scopeKey: string) => {
+    if (scopeKey in useInboxStore.getState().syncLogScopeStamps) return;
+    set((s: any) => ({ syncLogScopeStamps: { ...s.syncLogScopeStamps, [scopeKey]: Date.now() } }));
+  },
+  syncLogFloorEpoch: 0,
+  bumpSyncLogFloorEpoch: () => set((s: any) => ({ syncLogFloorEpoch: s.syncLogFloorEpoch + 1 })),
+  mentionIndex: { tasks: {}, docs: {}, plans: {} },
+  docs: {},
+  plans: {},
+  projects: {},
+  savedViews: {},
+  notifications: {},
+  docDetails: {},
+  taskFilter: { status: "" },
+  docFilter: { type: "", query: "", project: "", scope: "" },
+  planFilter: { status: "" },
+  docProjectPaths: [],
+
+
+  setTaskFilter: (filter: Partial<{ status: string }>) => {
+    set((s: InboxStoreState) => ({
+      taskFilter: { ...s.taskFilter, ...filter },
+    }));
+  },
+
+  setDocFilter: (filter: Partial<{ type: string; query: string }>) => {
+    set((s: InboxStoreState) => ({
+      docFilter: { ...s.docFilter, ...filter },
+    }));
+  },
+
+  setPlanFilter: (filter: Partial<{ status: string }>) => {
+    set((s: InboxStoreState) => ({
+      planFilter: { ...s.planFilter, ...filter },
+    }));
+  },
+
+  // The optional resolution rides to dispatch.updateTaskStatus → webUpdate's
+  // close-guard; on "cascade" the open local subtree closes optimistically too.
+  // Both writers patch EVERY row carrying the short id, not just the first
+  // match: the store can hold more than one copy of a task (a detail-query row
+  // keyed by URL param in pre-fix sessions, a stub beside its echo), and
+  // patching one copy leaves whichever copy a view happens to render frozen at
+  // the old status while the detail shows the new one.
+  updateTaskStatus: action(function (this: Draft, shortId: string, status: string, subtaskResolution?: "cascade" | "only_parent") {
+    const copies = Object.values(this.tasks).filter((t: any) => t.short_id === shortId) as TaskItem[];
+    for (const task of copies) {
+      // Category change orphans a custom-status refinement (server rule in
+      // tasks.resolveStatusWrite); mirror it so the row re-renders honestly.
+      if (status !== task.status) (task as any).status_id = undefined;
+      task.status = status;
+      task.updated_at = Date.now();
+      if (status === "done" || status === "dropped") (task as any).closed_at = Date.now();
+    }
+    if ((status === "done" || status === "dropped") && subtaskResolution === "cascade") {
+      for (const id of new Set(copies.map((t) => String(t._id)))) cascadeCloseDraft(this, id, status);
+    }
+  }),
+
+  updateTask: action(function (this: Draft, shortId: string, fields: Record<string, any>) {
+    const copies = Object.values(this.tasks).filter((t: any) => t.short_id === shortId) as TaskItem[];
+    // `parent` is a short id (or "" to detach) for the server; the draft
+    // mirrors it onto parent_id so the row re-nests instantly. The caller
+    // (setTaskParent) has already run the shared cycle/workspace guards.
+    const { parent, subtask_resolution, ...rest } = fields;
+    const parentRow = parent
+      ? (Object.values(this.tasks).find((t: any) => t.short_id === parent || t._id === parent) as TaskItem | undefined)
+      : undefined;
+    // Mirror the server's custom-status rules (tasks.resolveStatusWrite):
+    // "" clears the refinement, and a category change without an explicit
+    // refinement clears the stale one — else the row would keep rendering
+    // the old category's custom status until the echo. The "" decision is
+    // hoisted so deleting it from `rest` for the first copy can't hide it
+    // from the rest.
+    const clearStatusId = rest.status_id === "";
+    if (clearStatusId) delete rest.status_id;
+    // `from_call` "" unlinks the call; the row stores no field then.
+    if (rest.from_call === "") rest.from_call = undefined;
+    for (const task of copies) {
+      if (clearStatusId || (rest.status && rest.status !== (task as any).status && rest.status_id === undefined)) {
+        (task as any).status_id = undefined;
+      }
+      Object.assign(task, rest, { updated_at: Date.now() });
+      if (parent !== undefined) {
+        if (!parent) (task as any).parent_id = undefined;
+        else if (parentRow) (task as any).parent_id = parentRow._id;
+      }
+    }
+    if ((fields.status === "done" || fields.status === "dropped") && subtask_resolution === "cascade") {
+      for (const id of new Set(copies.map((t) => String(t._id)))) cascadeCloseDraft(this, id, fields.status);
+    }
+    // Assigning to another PERSON is a handoff (the server mutes the assigner
+    // and drops their thread_reads row): mirror it so the task's card leaves
+    // this Threads inbox now, not on the next sync. Agent labels hand the
+    // stream to nobody, so the follow stays. The exclude tombstone stops a
+    // racing listMine push from re-adding the row.
+    const me = this.currentUser?._id ? String(this.currentUser._id) : undefined;
+    if (rest.assignee && me && String(rest.assignee) !== me && !String(rest.assignee).startsWith("agent:")) {
+      for (const id of new Set(copies.map((t) => String(t._id)))) {
+        const rowId = `task:${id}`;
+        const row = this.threadInbox[rowId];
+        if (!row) continue;
+        if (row.unread > 0 && this.threadUnread > 0) this.threadUnread -= 1;
+        delete this.threadInbox[rowId];
+        this.pending[`threadInbox:${rowId}`] = { type: "exclude", ts: Date.now() };
+      }
+    }
+  }),
+
+  // The task graph: draft writes in ./taskGraphDraft, the real write in the
+  // same-named side effect (convex/dispatch.ts). The adds are asyncActions so
+  // the palette can tell a landed pick from a refused one.
+  addBlocker: asyncAction(function (this: Draft, shortId: string, blocker: string) {
+    setBlockerEdge(this.tasks, shortId, blocker, true);
+  }),
+  // Every form the edge is stored under goes in one draft; the side effect
+  // reads only [shortId, blocker], since the server drops every form too.
+  removeBlocker: action(function (this: Draft, shortId: string, blocker: string, forms: string[] = []) {
+    removeBlockerEdge(this.tasks, shortId, blocker, forms);
+  }),
+  // The same edge removed from the blocker's side, so a Blocks entry whose
+  // mirror drifted (or whose dependent is unreadable) still goes.
+  removeBlocks: action(function (this: Draft, shortId: string, dependent: string) {
+    removeBlocksEdge(this.tasks, shortId, dependent);
+  }),
+  addWait: asyncAction(function (this: Draft, shortId: string, input: TaskWaitInput) {
+    addWaitDraft(this.tasks, shortId, input, this.currentUser?._id ? String(this.currentUser._id) : undefined);
+  }),
+  // `waits` holds no lock to roll back, so a refusal from any caller (the
+  // palette, an undo, an outbox replay) lands here.
+  rollbackWait: sync(function (this: Draft, shortId: string, waitId: string) {
+    rollbackWaitDraft(this.tasks, shortId, waitId);
+  }),
+  removeWait: action(function (this: Draft, shortId: string, waitId: string) {
+    removeWaitDraft(this.tasks, shortId, waitId);
+  }),
+  relateTasks: asyncAction(function (this: Draft, shortId: string, other: string) {
+    setRelatedEdge(this.tasks, shortId, other, true);
+  }),
+  unrelateTasks: action(function (this: Draft, shortId: string, other: string) {
+    setRelatedEdge(this.tasks, shortId, other, false);
+  }),
+
+  // Plans are a protected store collection with no serverTable, so the local
+  // mutation here is field-protected but only the updatePlan side-effect writes
+  // to Convex (it delegates to plans.webUpdate for progress recalc + doc sync).
+  // Keyed by short_id to match the server mutation and the picker call sites.
+  updatePlan: action(function (this: Draft, shortId: string, fields: Record<string, any>) {
+    const plan = Object.values(this.plans).find((p: any) => p.short_id === shortId || p._id === shortId) as any;
+    if (plan) writeAsServerShape(plan, fields);
+  }),
+
+  updateProject: action(function (this: Draft, id: string, fields: Record<string, any>) {
+    const project = (this.projects as any)[id] ?? Object.values(this.projects).find((p: any) => p._id === id);
+    if (project) writeAsServerShape(project, fields);
+  }),
+
+  // Naming a project's lead (org-roles-run-work.md R4): one gesture, two
+  // things painted in the same tick. The project row takes the owner, and when
+  // the role's scope does not list the project it gains it, as a role fields
+  // intent so a tree push before the echo does not take it back. The named
+  // side effect (dispatch.setProjectLead) makes both writes in one transaction.
+  // An asyncAction only so the caller can say what the server alone knows once
+  // it lands (how many sessions now report to the role); nothing waits on it.
+  // `_opts.leave_sessions` is the dispatch's: the person's one edit on the
+  // takeover (R1), which paints nothing here.
+  setProjectLead: asyncAction(function (this: Draft, projectId: string, roleId: string | null, _opts?: { leave_sessions?: boolean }) {
+    const project = (this.projects as any)[projectId];
+    if (project) writeAsServerShape(project, { owner_role_id: roleId });
+    const tree = this.orgTree;
+    const role = roleId ? tree?.roles.find((r) => r._id === roleId) : undefined;
+    if (!tree || !role) return;
+    if (projectLeadScopeOutcome(tree, projectId, role).kind !== "add") return;
+    pushRoleFieldsIntent(this, role._id, { scope: { project_ids: [...role.scope.project_ids, projectId], plan_ids: role.scope.plan_ids } });
+  }),
+
+  // ── Issue sync sources (docs/architecture/issue-sync.md S1.3, S9) ────────
+  //
+  // The integrations page paints every one of these locally and hands the real
+  // write to the matching dispatch side effect, which delegates to the
+  // issueSync mutations (they own access checks, the project create and the
+  // provider webhook registration — none of it is re-derived here).
+  //
+  // The add stub carries the viewer's workspace key so it renders through the
+  // useWorkspaceCollection boundary immediately. `issueSync.addSource` takes no
+  // client key, so nothing supersedes the stub by id; the next listSources
+  // snapshot carries the real row and drops the stub (the collection syncs in
+  // snapshot mode, so absence IS removal).
+  addIssueSyncSource: asyncAction(function (this: Draft, opts: any) {
+    const stubId = `temp_iss_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const teamId = this.clientState.ui?.active_team_id;
+    const userId = this.currentUser?._id ? String(this.currentUser._id) : null;
+    (this.issueSyncSources as any)[stubId] = {
+      _id: stubId,
+      provider: opts.provider,
+      kind: opts.kind,
+      external_id: opts.external_id,
+      external_key: opts.external_key,
+      name: opts.name,
+      url: opts.url,
+      project_id: opts.project_id,
+      project_name: opts.project_name ?? opts.name,
+      team_id: teamId,
+      workspace: activeWorkspaceKey(teamId, userId) ?? undefined,
+      status: "active",
+      auto_spawn: false,
+      push_new_tasks: false,
+      delegate_label: "agent",
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }),
+
+  updateIssueSyncSource: action(function (this: Draft, id: string, fields: Record<string, any>) {
+    const source = (this.issueSyncSources as any)[id];
+    if (source) Object.assign(source, fields, { updated_at: Date.now() });
+  }),
+
+  removeIssueSyncSource: action(function (this: Draft, id: string) {
+    delete (this.issueSyncSources as any)[id];
+  }),
+
+  // Agent definitions and chains. An upsert with an _id patches the row in
+  // place; without one it writes a stub keyed by a client_key the server
+  // echoes back, so the stub supersedes onto the real row (registry altKey).
+  upsertAgentDefinition: asyncAction(function (this: Draft, fields: any) {
+    return upsertAgentLibraryRow(this, "agentDefinitions", "ad", fields);
+  }),
+  removeAgentDefinition: action(function (this: Draft, id: string) {
+    delete (this.agentDefinitions as any)[id];
+  }),
+  upsertAgentChain: asyncAction(function (this: Draft, fields: any) {
+    return upsertAgentLibraryRow(this, "agentChains", "ac", fields);
+  }),
+  removeAgentChain: action(function (this: Draft, id: string) {
+    delete (this.agentChains as any)[id];
+  }),
+
+  // Local-first create: an optimistic stub renders the row instantly (the
+  // quick-add loop on task detail fires several per second). The stub carries a
+  // minted client_key and is keyed by `temp_task_<key>`; when the server row
+  // syncs back with the same client_key, the tasks altKey supersede rekeys the
+  // stub onto the real _id and prunes it (SYNC_REGISTRY.tasks). The dispatch
+  // forwards client_key to the idempotent webCreate, so a retry can't double
+  // the server row. opts.client_key is always set by callers (createTaskAndAdopt);
+  // a fallback keeps a bare call safe.
+  createTask: asyncAction(function (this: Draft, opts: any) {
+    if (!opts.client_key) opts.client_key = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    const tempId = taskStubId(opts.client_key);
+    // A subtask stub inherits its parent's containers so it renders in place
+    // (same group, same board scope) instead of jumping on the server echo.
+    const parentRow = opts.parent
+      ? (Object.values(this.tasks).find((t: any) => t.short_id === opts.parent || t._id === opts.parent) as TaskItem | undefined)
+      : undefined;
+    this.tasks[tempId] = taskCreateStub(opts.client_key, {
+      title: opts.title,
+      description: opts.description,
+      task_type: opts.task_type || "task",
+      status: opts.status || "open",
+      status_id: opts.status_id || undefined,
+      priority: opts.priority || "medium",
+      source: "human",
+      labels: opts.labels,
+      assignee: opts.assignee,
+      parent_id: parentRow?._id ?? undefined,
+      plan_id: opts.plan_id ?? (parentRow as any)?.plan_id,
+      project_id: opts.project_id ?? (parentRow as any)?.project_id,
+      team_id: opts.team_id ?? parentRow?.team_id,
+      from_call: opts.from_call,
+    }) as any as TaskItem;
+  }),
+
+  // Remove a create-stub whose server create was permanently refused (depth
+  // cap, workspace/plan access) — no server row will ever sync back to
+  // supersede it, so without this the stub strands as a durable ghost. Plants
+  // the exclude tombstone so the IDB diff is authorised to delete the row.
+  // One-time repair. A short-lived build pruned savedViews with
+  // pruneAbsentScope, which writes a DURABLE exclude tombstone for every row
+  // absent from a push — and webList is legitimately empty for a beat while auth
+  // settles. Any client that ran it has views permanently hidden from its own
+  // rail while they sit healthy on the server. Nothing else ever tombstones this
+  // table (it syncs as a plain replace), so clearing them all is safe and this
+  // becomes a no-op for everyone else.
+  // The same repair for signals: a short-lived dev build pruned them with
+  // pruneAbsentScope too, and nothing else tombstones that table.
+  clearTombstones: sync(function (this: Draft, table: "savedViews" | "signals") {
+    for (const key of Object.keys(this.pending)) {
+      if (key.startsWith(`${table}:`)) delete (this.pending as any)[key];
+    }
+  }),
+
+  removeTaskStub: sync(function (this: Draft, clientKey: string) {
+    const tempId = taskStubId(clientKey);
+    if (!this.tasks[tempId]) return;
+    delete this.tasks[tempId];
+    delete (this.pending as any)[`tasks:${tempId}`];
+    (this.pending as any)[`tasks:${tempId}`] = { type: "exclude", ts: Date.now() };
+  }),
+
+  // Creates route through the single dispatch path (no direct useMutation) and
+  // delegate to the existing webCreate mutation, which returns the real id.
+  // Docs and plans paint no stub: their callers navigate to the new record's
+  // own page, and their delta-synced lists have no altKey to retire a stub.
+  // A project carries one (see createProject below). receiptAsyncAction keeps
+  // its Promise pending across an unwired window and resolves it from the exact
+  // durable command receipt, preserving the caller's navigation continuation.
+  createDoc: receiptAsyncAction(function (
+    this: Draft,
+    _opts: Record<string, any>,
+    continuation?: DurableCreateContinuation,
+  ) {
+    return continuation ? { continuation } : undefined;
+  }),
+  createPlan: receiptAsyncAction(function (
+    this: Draft,
+    _opts: Record<string, any>,
+    continuation?: DurableCreateContinuation,
+  ) {
+    return continuation ? { continuation } : undefined;
+  }),
+  // A project create that names a `client_key` paints a stub row under it at
+  // once; the server stores the key and the synced row supersedes the stub
+  // (the projects altKey). Created from a goal's sheet it also sits under the
+  // goal in the same draft, and the server attaches it in the create's own
+  // transaction (attachToInitiative); the acknowledgement moves the goal's
+  // list to the real id.
+  createProject: receiptAsyncAction(function (
+    this: Draft,
+    opts: { title: string; client_key?: string; workspace?: "personal" | "team"; team_id?: string; [k: string]: any },
+    continuation?: DurableCreateContinuation,
+  ) {
+    const stubId = opts?.client_key;
+    const title = (opts?.title || "").trim();
+    const me = String(this.currentUser?._id ?? "");
+    const team = opts?.workspace === "team" && opts.team_id ? opts.team_id : undefined;
+    // The stub needs the workspace it will land in, or no list would show it.
+    if (stubId && title && (team || me)) {
+      const now = Date.now();
+      this.projects[stubId] = {
+        _id: stubId,
+        client_key: stubId,
+        title,
+        status: opts.status || "active",
+        ...(team ? { team_id: team } : {}),
+        workspace: team ? `team:${team}` : `user:${me}`,
+        task_counts: { total: 0, done: 0, in_progress: 0 },
+        plan_count: 0,
+        doc_count: 0,
+        active_plan_count: 0,
+        created_at: now,
+        updated_at: now,
+      } as ProjectItem;
+      if (continuation?.kind === "attachToInitiative") attachProjectStubDraft(this, continuation.initiativeId, stubId);
+    }
+    return continuation ? { continuation, ...(stubId ? { stubId } : {}) } : stubId ? { stubId } : undefined;
+  }),
+  // Low-frequency doc/plan/conversation ops: route through dispatch and delegate
+  // to the existing mutations. asyncAction surfaces the server result for the
+  // callers that navigate to / read the returned record.
+  promoteDocToPlan: asyncAction(function (this: Draft, _docId: string) {}),
+  ensurePlanDoc: asyncAction(function (this: Draft, _planShortId: string) {}),
+  publishToDirectory: asyncAction(function (this: Draft, _opts: Record<string, any>) {}),
+
+  // -- Manual session buckets --
+  // Local-first create: a stub chip appears instantly (keyed by a non-Convex
+  // id, so the patch path skips it and the dispatch args carry the create);
+  // when the server row syncs back, the buckets altKey ("name") supersedes the
+  // stub — same machinery as bucketAssignments' stubs. Callers still await the
+  // returned REAL _id for follow-up assignment.
+  createBucket: receiptAsyncAction(function (
+    this: Draft,
+    opts: { name: string; color?: string },
+    continuation?: DurableCreateContinuation,
+  ) {
+    const name = (opts?.name || "").trim();
+    if (!name) return;
+    const stubId = `bucketstub-${Math.random().toString(36).slice(2)}`;
+    const now = Date.now();
+    // Mirror the server's append-to-end stamp so the stub lands where the real
+    // row will (the server's own max+1024 wins after supersede).
+    const maxOrder = (Object.values(this.buckets) as BucketItem[])
+      .reduce((m, b) => Math.max(m, b.sort_order ?? 0), 0);
+    this.buckets[stubId] = {
+      _id: stubId,
+      name,
+      sort_order: maxOrder + 1024,
+      ...(opts.color ? { color: opts.color } : {}),
+      created_at: now,
+      updated_at: now,
+    };
+    if (continuation?.kind === "assignBucket") {
+      const conversationIds: string[] = [];
+      const deferredAssignments: ReturnType<typeof assignSessionBucketDraft>[] = [];
+      for (const id of continuation.conversationIds) {
+        const conversationId = get().getConvexId(id) ?? id;
+        if (isConvexId(conversationId)) {
+          conversationIds.push(conversationId);
+        } else if (this.sessions[conversationId] || this.conversations[conversationId]) {
+          deferredAssignments.push(assignSessionBucketDraft(this, conversationId, stubId));
+        }
+      }
+      return {
+        stubId,
+        deferredAssignments,
+        ...(conversationIds.length ? { continuation: { ...continuation, conversationIds } } : {}),
+      };
+    }
+    return { stubId, ...(continuation ? { continuation } : {}) };
+  }),
+
+  // -- Teams --
+  // Local-first create, the same shape as createBucket: the stub row and the
+  // workspace switch happen in one draft, so the switcher and the sidebar show
+  // the new team in the same tick. The pointer holds the stub id only for the
+  // round trip. A stub id is not a server id: every feeder that hands
+  // clientState.ui.active_team_id to Convex as an Id<"teams"> guards it with
+  // isConvexId and skips while the stub is in flight (useWorkspaceArgs,
+  // TeamMembersPump, the team sync hooks); an unguarded pass would throw
+  // ArgumentValidationError and drop that surface into its error boundary.
+  // The server mutation (teams.createTeam) writes the canonical
+  // users.active_team_id, and the dispatch handler rewrites the ui mirror
+  // with the real id, so both halves agree once the echo lands (see
+  // lib/__tests__/activeTeamPointer.guard.test.ts). The `teams` list is
+  // replaced wholesale on echo, which retires the stub; resolveTeamStub rekeys
+  // it first so a caller holding the real id never sees a gap.
+  createTeam: async (opts: { name: string; icon?: string; icon_color?: string; discoverable?: boolean }) => {
+    const name = (opts?.name || "").trim();
+    if (!name) throw new Error("Team name is required");
+    const stubId = `team-stub-${Math.random().toString(36).slice(2)}`;
+    const previousActiveTeamId = get().clientState.ui?.active_team_id;
+    try {
+      const teamId = await get().dispatchCreateTeam(stubId, { ...opts, name });
+      if (typeof teamId !== "string" || !teamId) throw new Error("Team create returned no id");
+      get().resolveTeamStub(stubId, teamId);
+      return teamId;
+    } catch (error) {
+      // A parked create is durable, not failed: there was no dispatch binding
+      // at click time (boot, HMR rewire, account switch), so the entry sits in
+      // the outbox and delivers when the binding returns. Discarding here
+      // would show a failure for a team that is about to exist, and a retry
+      // would mint a second one under a fresh client_key. Keep the stub and
+      // the workspace switch, and wait for the echo to name the real id --
+      // the same shape as the parked session create above.
+      if (isParkedDispatchError(error)) {
+        for (let i = 0; i < 60; i++) {
+          await new Promise((r) => setTimeout(r, 250));
+          const echoed = (get().teams ?? []).find(
+            (t: any) => t?.client_key === stubId && isConvexId(String(t?._id)),
+          );
+          if (echoed) {
+            get().resolveTeamStub(stubId, String(echoed._id));
+            return String(echoed._id);
+          }
+        }
+      }
+      get().discardTeamStub(stubId, previousActiveTeamId);
+      throw error;
+    }
+  },
+
+  dispatchCreateTeam: asyncAction(function (this: Draft, stubId: string, opts: { name: string; icon?: string; icon_color?: string; discoverable?: boolean }) {
+    this.teams = [
+      ...(this.teams ?? []),
+      {
+        _id: stubId,
+        name: opts.name,
+        icon: opts.icon,
+        icon_color: opts.icon_color,
+        role: "admin",
+        memberCount: 1,
+        created_at: Date.now(),
+      },
+    ];
+    if (!this.clientState.ui) this.clientState.ui = {} as ClientUI;
+    this.clientState.ui.active_team_id = stubId;
+  }),
+
+  resolveTeamStub: sync(function (this: Draft, stubId: string, teamId: string) {
+    this.teams = (this.teams ?? []).map((t: any) => (t?._id === stubId ? { ...t, _id: teamId } : t));
+    // Conditional: a user who switched workspaces during the round trip keeps
+    // their choice; the mirror only advances stub -> real id.
+    if (this.clientState.ui?.active_team_id === stubId) this.clientState.ui.active_team_id = teamId;
+  }),
+
+  discardTeamStub: sync(function (this: Draft, stubId: string, previousActiveTeamId: string | undefined) {
+    this.teams = (this.teams ?? []).filter((t: any) => t?._id !== stubId);
+    if (this.clientState.ui?.active_team_id === stubId) this.clientState.ui.active_team_id = previousActiveTeamId;
+  }),
+
+  // Local-first delete, the mirror of createTeam: the row leaves the list and
+  // the workspace pointer moves in one draft, so the switcher, the sidebar and
+  // the settings panel re-scope in the same tick. The fallback is the caller's
+  // oldest remaining team, the same rule the server applies when it repoints
+  // users.active_team_id (teams.endMembership), so the mirror and the canonical
+  // pointer agree once the echo lands. A refused delete (not an admin, name
+  // mismatch) puts the row and the pointer back.
+  deleteTeam: async (teamId: string, confirmName: string) => {
+    const team = (get().teams ?? []).find((t: any) => t?._id === teamId);
+    if (!team) throw new Error("Team not found");
+    const previousActiveTeamId = get().clientState.ui?.active_team_id;
+    const fallback = (get().teams ?? [])
+      .filter((t: any) => t?._id !== teamId && isConvexId(String(t?._id)))
+      .sort((a: any, b: any) => (a?.joined_at ?? 0) - (b?.joined_at ?? 0))[0];
+    try {
+      await get().dispatchDeleteTeam(teamId, confirmName, fallback?._id);
+    } catch (error) {
+      if (!isParkedDispatchError(error)) get().restoreTeamRow(team, previousActiveTeamId);
+      throw error;
+    }
+  },
+
+  dispatchDeleteTeam: asyncAction(function (this: Draft, teamId: string, _confirmName: string, fallbackTeamId: string | undefined) {
+    this.teams = (this.teams ?? []).filter((t: any) => t?._id !== teamId);
+    if (!this.clientState.ui) this.clientState.ui = {} as ClientUI;
+    if (this.clientState.ui.active_team_id === teamId) this.clientState.ui.active_team_id = fallbackTeamId;
+  }),
+
+  renameTeam: asyncAction(function (this: Draft, teamId: string, name: string) {
+    const team = (this.teams ?? []).find((t: any) => t?._id === teamId);
+    if (team) team.name = name;
+  }),
+
+  updateTeamIcon: asyncAction(function (this: Draft, teamId: string, fields: { icon?: string; icon_color?: string }) {
+    const team = (this.teams ?? []).find((t: any) => t?._id === teamId);
+    if (!team) return;
+    if (fields.icon !== undefined) team.icon = fields.icon;
+    if (fields.icon_color !== undefined) team.icon_color = fields.icon_color;
+  }),
+
+  updateTeamTaskStatuses: asyncAction(function (this: Draft, teamId: string, statuses: { id: string; name: string; category: string; color?: string }[]) {
+    const team = (this.teams ?? []).find((t: any) => t?._id === teamId);
+    if (team) team.task_statuses = statuses;
+  }),
+
+  // teamMembers holds the active team's roster, keyed by user id.
+  setTeamMemberRole: asyncAction(function (this: Draft, teamId: string, userId: string, role: "member" | "admin") {
+    if (this.clientState.ui?.active_team_id !== teamId) return;
+    const member = (this.teamMembers ?? []).find((m: any) => String(m?._id) === userId);
+    if (member) member.role = role;
+  }),
+
+  removeTeamMember: asyncAction(function (this: Draft, teamId: string, userId: string) {
+    if (this.clientState.ui?.active_team_id !== teamId) return;
+    this.teamMembers = (this.teamMembers ?? []).filter((m: any) => String(m?._id) !== userId);
+  }),
+
+  restoreTeamRow: sync(function (this: Draft, team: any, previousActiveTeamId: string | undefined) {
+    if (!(this.teams ?? []).some((t: any) => t?._id === team?._id)) this.teams = [...(this.teams ?? []), team];
+    if (!this.clientState.ui) this.clientState.ui = {} as ClientUI;
+    this.clientState.ui.active_team_id = previousActiveTeamId;
+  }),
+
+  // Rename / color / sort / archive ride the generic patch path (inbox_buckets
+  // is in dispatch TABLE_CONFIG); fields are auto-protected until server echo.
+  updateBucket: action(function (this: Draft, id: string, fields: { name?: string; color?: string; sort_order?: number; archived_at?: number | null }) {
+    const bucket = this.buckets[id] as any;
+    if (!bucket) return;
+    const previous: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(fields)) if (v !== undefined) previous[k] = bucket[k];
+    writeAsServerShape(bucket, fields);
+    return { bucketId: id, fields, previous };
+  }),
+
+  // Exclusive filing: upsert the one assignment row for this conversation.
+  // First-time assignments add a stub row; the bucketAssignments altKey config
+  // rekeys it onto the server row when it syncs. The same-named dispatch side
+  // effect performs the durable upsert. A stub conversation id is allowed when
+  // the server reaches the same assignment on its own (fork label inheritance):
+  // the dispatch no-ops there, and rekeyId carries the local row to the real id.
+  assignSessionToBucket: action(function (this: Draft, conversationId: string, bucketId: string | null) {
+    return assignSessionBucketDraft(this, conversationId, bucketId);
+  }),
+
+  // -- Teammate comments --
+  // Optimistic stub keyed by a client_id; the synced server row supersedes it via
+  // the comments altKey config, and the server dedups on client_id so an outbox
+  // retry can't double-insert. The same-named dispatch side effect does the
+  // durable write (notifications, mentions, github sync) via comments.addComment.
+  addComment: receiptAsyncAction(function (this: Draft, conversationId: string, content: string, opts?: { messageId?: string; parentCommentId?: string; filePath?: string; lineNumber?: number; anchorLines?: CodeAnchorText }) {
+    const body = content.trim();
+    if (!body) return;
+    const clientId = `commentstub-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    const me = (this as any).currentUser;
+    this.comments[clientId] = {
+      _id: clientId,
+      client_id: clientId,
+      conversation_id: conversationId,
+      message_id: opts?.messageId,
+      parent_comment_id: opts?.parentCommentId,
+      file_path: opts?.filePath,
+      line_number: opts?.lineNumber,
+      anchor_lines: opts?.anchorLines,
+      content: body,
+      user_id: me?._id ?? "",
+      created_at: Date.now(),
+      author_kind: "user",
+      user: me ? { _id: me._id, name: me.name, github_username: me.github_username, github_avatar_url: me.github_avatar_url, image: me.image } : null,
+    } as CommentRow;
+    return {
+      conversationId,
+      content: body,
+      messageId: opts?.messageId,
+      parentCommentId: opts?.parentCommentId,
+      filePath: opts?.filePath,
+      lineNumber: opts?.lineNumber,
+      anchorLines: opts?.anchorLines,
+      clientId,
+      commandId: `legacy-comments-create:${clientId}`,
+    };
+  }),
+
+  // Receipt-backed because a generic patch can be acknowledged as a no-op when
+  // the cached comment was deleted or access was revoked. Preserve the exact
+  // prior content so a terminal V2 rejection can release pending protection
+  // and restore what the user saw before this edit.
+  editComment: receiptAsyncAction(function (this: Draft, commentId: string, content: string) {
+    const c = this.comments[commentId] as any;
+    const previousContent = typeof c?.content === "string" ? c.content : "";
+    const conversationId = typeof c?.conversation_id === "string"
+      ? c.conversation_id
+      : undefined;
+    const clientId = typeof c?.client_id === "string" ? c.client_id : undefined;
+    if (c) c.content = content;
+    return {
+      ...(isConvexId(commentId) ? { commentId } : {}),
+      ...(conversationId ? { conversationId } : {}),
+      ...(clientId ? { clientId } : {}),
+      content,
+      previousContent,
+      // Only used if an envelope-era payload is replayed by an older bridge.
+      // The receipt envelope's random command id is canonical for new writes.
+      commandId: `legacy-comments-update:${clientId || commentId}:${Date.now()}`,
+    };
+  }),
+
+  deleteComment: receiptAsyncAction(function (this: Draft, commentId: string) {
+    const comment = this.comments[commentId] as any;
+    // Values read from a mutative draft are revocable proxies. The action
+    // result is persisted and serialized after the recipe closes, so capture a
+    // plain snapshot while the proxy is still live.
+    const optimisticComment = comment
+      ? JSON.parse(JSON.stringify(comment)) as CommentRow
+      : undefined;
+    delete this.comments[commentId];
+    const clientId = comment?.client_id as string | undefined;
+    return {
+      ...(isConvexId(commentId) ? { commentId } : {}),
+      ...(comment?.conversation_id ? { conversationId: String(comment.conversation_id) } : {}),
+      ...(clientId ? { clientId } : {}),
+      ...(optimisticComment ? { optimisticComment } : {}),
+      commandId: `legacy-comments-delete:${clientId || commentId}`,
+    };
+  }),
+
+  // Resolve/reopen one comment thread. Stamps (or clears) resolved_at on every
+  // cached comment sharing the anchor — mirroring the server, which does the
+  // same to the authoritative rows; the live echo reconciles. Idempotent, so
+  // the plain dispatch path (no receipt) is enough.
+  resolveCommentThread: action(function (this: Draft, conversationId: string, anchor: { messageId?: string; filePath?: string; lineNumber?: number }, resolved: boolean) {
+    const me = (this as any).currentUser;
+    const now = Date.now();
+    for (const comment of Object.values(this.comments) as CommentRow[]) {
+      if (comment.conversation_id !== conversationId) continue;
+      const inThread = anchor.messageId
+        ? comment.message_id === anchor.messageId
+        : anchor.filePath
+          ? !comment.message_id && comment.file_path === anchor.filePath && comment.line_number === anchor.lineNumber
+          : !comment.message_id && !comment.file_path;
+      if (!inThread) continue;
+      comment.resolved_at = resolved ? now : undefined;
+      comment.resolved_by = resolved ? me?._id : undefined;
+    }
+  }),
+
+  // Resolve or reopen one code review thread (the PR, commit and file pages).
+  // Only the flag is painted: the server stamps resolved_at itself, and the
+  // flag is what commentResolved reads first. The server settles the whole
+  // thread, root and replies, from any one of its comments.
+  resolveCodeCommentThread: action(function (this: Draft, commentIds: string[], resolved: boolean) {
+    for (const id of commentIds) {
+      const row = (this as any).codeComments?.[id];
+      if (row) row.resolved = resolved;
+    }
+  }),
+
+  editCodeComment: action(function (this: Draft, commentId: string, content: string) {
+    const row = (this as any).codeComments?.[commentId];
+    if (row) row.content = content;
+  }),
+
+  // The server folds shepherd_state from these and keeps enabled off for a
+  // closed pull request; the paint follows the same rule.
+  setPrShepherd: action(function (this: Draft, prId: string, conversationId: string | undefined, enabled: boolean) {
+    const row = (this as any).pullRequests?.[prId];
+    if (!row) return;
+    row.shepherd_enabled = enabled && row.state === "open";
+    if (conversationId) row.shepherd_conversation_id = conversationId;
+  }),
+
+  // The session lands through the inbox feed; nothing to paint first.
+  assignTaskToAgent: asyncAction(function (this: Draft, _shortId: string, _agentType: string, _initialMessage?: string) {}),
+
+  deleteCodeComment: action(function (this: Draft, commentId: string) {
+    const rows = (this as any).codeComments;
+    if (rows?.[commentId]) delete rows[commentId];
+  }),
+
+  // Opt-in agent reply: drop an optimistic "thinking" agent comment so the UI
+  // reacts instantly; the side effect spawns/reuses the thread's fork.
+  askAgentInThread: receiptAsyncAction(function (this: Draft, conversationId: string, opts?: { messageId?: string; filePath?: string; lineNumber?: number }) {
+    const clientId = `commentstub-agent-${Math.random().toString(36).slice(2)}${Math.random().toString(36).slice(2)}`;
+    const me = (this as any).currentUser;
+    this.comments[clientId] = {
+      _id: clientId,
+      client_id: clientId,
+      conversation_id: conversationId,
+      message_id: opts?.messageId,
+      file_path: opts?.filePath,
+      line_number: opts?.lineNumber,
+      content: "",
+      user_id: me?._id ?? "",
+      created_at: Date.now(),
+      author_kind: "agent",
+      agent_status: "thinking",
+    } as CommentRow;
+    return {
+      conversationId,
+      messageId: opts?.messageId,
+      filePath: opts?.filePath,
+      lineNumber: opts?.lineNumber,
+      clientId,
+      commandId: `legacy-comments-ask:${clientId}`,
+    };
+  }),
+
+  _handleReceiptAcknowledgement: sync(function (
+    this: Draft,
+    actionName: string,
+    continuation: DurableCreateContinuation,
+    serverResult: any,
+    _commandId: string,
+  ) {
+    const seedTarget = { createDoc: "docs", createPlan: "plans", createProject: "projects" } as const;
+    if (actionName === "createProject" && continuation.kind === "attachToInitiative") {
+      // The server attached the project in the create's transaction. The row
+      // carries the stub's key: the stub becomes the real row here (or already
+      // has, if the feed's push came first) and the goal's list follows it.
+      const row = serverResult?.row;
+      const stubId = typeof row?.client_key === "string" ? row.client_key : null;
+      if (!row || typeof row._id !== "string" || !stubId) return;
+      if (this.projects[stubId]) {
+        if (!this.projects[row._id]) this.projects[row._id] = { ...this.projects[stubId], ...row };
+        delete this.projects[stubId];
+      }
+      delete this.pending[`projects:${stubId}`];
+      rekeyInitiativeProjectDraft(this as any, stubId, row._id);
+      return;
+    }
+    if (actionName in seedTarget) {
+      // The receipt carries the inserted row. Seed the collection so the detail
+      // page (which paints from the store) has its row before the view moves;
+      // the list feed's echo reconciles the same key.
+      const row = serverResult?.row;
+      const collection = (this as any)[seedTarget[actionName as keyof typeof seedTarget]];
+      if (continuation.kind === "navigate" && row && typeof row._id === "string" && collection && !collection[row._id]) {
+        collection[row._id] = row;
+      }
+      return;
+    }
+    if (
+      actionName !== "createBucket" ||
+      continuation.kind !== "assignBucket" ||
+      typeof serverResult?.bucketId !== "string"
+    ) {
+      return;
+    }
+
+    // The server applies this filing in the same transaction as the create
+    // receipt. Mirror that acknowledged state locally without dispatching a
+    // second command. Replaying after a crash updates the same per-conversation
+    // row, so effect-before-outbox-cleanup stays idempotent.
+    for (const conversationId of continuation.conversationIds) {
+      if (!isConvexId(conversationId)) continue;
+      const existing = (Object.values(this.bucketAssignments) as BucketAssignmentItem[])
+        .find((row) => row.conversation_id === conversationId);
+      if (existing) {
+        existing.bucket_id = serverResult.bucketId;
+        existing.updated_at = Date.now();
+      } else {
+        const stubId = `bucketassign-${conversationId}`;
+        this.bucketAssignments[stubId] = {
+          _id: stubId,
+          conversation_id: conversationId,
+          bucket_id: serverResult.bucketId,
+          updated_at: Date.now(),
+        };
+      }
+    }
+  }),
+
+  // Receipt-backed actions return rejections as data, not thrown Convex
+  // failures. The middleware invokes this local-only reducer for both a live
+  // response and a boot-time replay, so an optimistic row cannot remain
+  // protected after the server durably refused its command.
+  _handleReceiptRejection: sync(function (
+    this: Draft,
+    actionName: string,
+    localResult: any,
+  ) {
+    if (!localResult || typeof localResult !== "object") return false;
+
+    if (actionName === "createBucket") {
+      const stubId = localResult.stubId;
+      if (typeof stubId !== "string") return false;
+      for (const assignment of localResult.deferredAssignments ?? []) {
+        const conversationId = get().getConvexId(assignment.conversationId) ?? assignment.conversationId;
+        const current = (Object.values(this.bucketAssignments) as BucketAssignmentItem[])
+          .find((row) => row.conversation_id === conversationId);
+        if (current?.bucket_id === stubId) {
+          assignSessionBucketDraft(this, conversationId, assignment.previous?.bucketId ?? null, true);
+          setTimeout(() => resumePostCreateBucketIntentFor(conversationId), 0);
+        }
+      }
+      delete this.buckets[stubId];
+      delete this.pending[`buckets:${stubId}`];
+      for (const [key, entry] of Object.entries(this.pending)) {
+        if (entry.type === "field" && entry.value === stubId &&
+          (key.endsWith(":bucket_id") || key.endsWith(":_postCreateBucketId"))) {
+          delete this.pending[key];
+        }
+      }
+      return ["buckets", "bucketAssignments", "sessions", "conversations", "pending"];
+    }
+
+    if (actionName === "createProject") {
+      const stubId = localResult.stubId;
+      if (typeof stubId !== "string") return false;
+      delete this.projects[stubId];
+      delete this.pending[`projects:${stubId}`];
+      detachProjectStubDraft(this as any, stubId);
+      return ["projects", "initiatives", "pending"];
+    }
+
+    if (actionName === "deleteCallRecording") {
+      const rows = localResult.rows;
+      if (!Array.isArray(rows)) return false;
+      const coll = (this as any).callRecordings as Record<string, unknown>;
+      for (const row of rows) {
+        if (typeof row?._id !== "string") continue;
+        // A push since may have brought the row back already, fresher.
+        if (!coll[row._id]) coll[row._id] = row;
+        delete this.pending[`callRecordings:${row._id}`];
+      }
+      const facts = typeof localResult.transcriptId === "string"
+        ? ((this as any).callRecordingCalls as Record<string, { deleted_here_at?: number }>)[localResult.transcriptId]
+        : undefined;
+      if (facts && facts.deleted_here_at === localResult.at) delete facts.deleted_here_at;
+      return ["callRecordings", "callRecordingCalls", "pending"];
+    }
+
+    if (actionName === "updateBucket") {
+      const bucketId = localResult.bucketId;
+      const fields = localResult.fields;
+      const previous = localResult.previous;
+      const bucket = typeof bucketId === "string" ? this.buckets[bucketId] as any : null;
+      if (!bucket || !fields || !previous) return false;
+      for (const [field, optimisticValue] of Object.entries(fields)) {
+        const normalizedOptimistic = optimisticValue === null ? undefined : optimisticValue;
+        // A later edit wins; rollback only the exact rejected value.
+        if (bucket[field] !== normalizedOptimistic) continue;
+        const prior = previous[field];
+        if (prior === undefined) delete bucket[field];
+        else bucket[field] = prior;
+        delete this.pending[`buckets:${bucketId}:${field}`];
+      }
+      return ["buckets", "pending"];
+    }
+
+    if (actionName === "assignSessionToBucket") {
+      const conversationId = localResult.conversationId;
+      const requestedBucketId = localResult.bucketId ?? null;
+      const optimisticRowId = localResult.optimisticRowId;
+      if (typeof conversationId !== "string" || typeof optimisticRowId !== "string") {
+        return false;
+      }
+      const found = Object.entries(this.bucketAssignments).find(([, row]) =>
+        (row as any)?.conversation_id === conversationId);
+      const current = found?.[1] as any;
+      if ((current?.bucket_id ?? null) !== requestedBucketId) {
+        return ["bucketAssignments", "pending"];
+      }
+      const previous = localResult.previous;
+      if (previous && typeof previous.rowId === "string") {
+        const rowId = found?.[0] ?? previous.rowId;
+        if (current) {
+          current.bucket_id = previous.bucketId ?? undefined;
+          current.updated_at = previous.updatedAt;
+        }
+        delete this.pending[`bucketAssignments:${rowId}:bucket_id`];
+      } else if (found) {
+        delete this.bucketAssignments[found[0]];
+        delete this.pending[`bucketAssignments:${found[0]}`];
+      }
+      delete this.pending[`bucketAssignments:${optimisticRowId}:bucket_id`];
+      return ["bucketAssignments", "pending"];
+    }
+
+    if (actionName === "addComment" || actionName === "askAgentInThread") {
+      const clientId = localResult.clientId;
+      if (typeof clientId !== "string") return false;
+      for (const [id, comment] of Object.entries(this.comments)) {
+        if (id === clientId || (comment as any)?.client_id === clientId) {
+          delete this.comments[id];
+          delete this.pending[`comments:${id}`];
+        }
+      }
+      delete this.pending[`comments:${clientId}`];
+      return ["comments", "pending"];
+    }
+
+    if (actionName === "editComment") {
+      const optimisticContent = localResult.content;
+      const previousContent = localResult.previousContent;
+      const commentId = localResult.commentId;
+      const clientId = localResult.clientId;
+      if (
+        typeof optimisticContent !== "string" ||
+        typeof previousContent !== "string"
+      ) {
+        return false;
+      }
+      const found = Object.entries(this.comments).find(([id, comment]) =>
+        id === commentId ||
+        (typeof clientId === "string" &&
+          (comment as any)?.client_id === clientId));
+      const rowId = found?.[0];
+      const comment = found?.[1] as any;
+
+      // A later local edit/delete wins. Only revert the exact optimistic value
+      // this rejected receipt introduced, and only release a field lock whose
+      // protected value is that same edit.
+      if (comment?.content === optimisticContent) {
+        comment.content = previousContent;
+      }
+      const possibleIds = new Set(
+        [rowId, commentId, clientId].filter(
+          (value): value is string => typeof value === "string",
+        ),
+      );
+      for (const id of possibleIds) {
+        const key = `comments:${id}:content`;
+        if (this.pending[key]?.value === optimisticContent) {
+          delete this.pending[key];
+        }
+      }
+      return ["comments", "pending"];
+    }
+
+    if (actionName === "deleteComment") {
+      const snapshot = localResult.optimisticComment as CommentRow | undefined;
+      const clientId = localResult.clientId as string | undefined;
+      const originalId = snapshot?._id || localResult.commentId;
+      if (typeof originalId !== "string") return false;
+      delete this.pending[`comments:${originalId}`];
+      if (clientId) {
+        delete this.pending[`comments:${clientId}`];
+      }
+
+      // Deleting a just-created stub is a cancellation of that optimistic
+      // create. If the create itself was rejected there is nothing to restore;
+      // if it succeeded, its real echo (same client_id) is authoritative.
+      const existing = clientId
+        ? Object.values(this.comments).find(
+            (comment: any) => comment?.client_id === clientId,
+          )
+        : undefined;
+      if (
+        snapshot &&
+        !existing &&
+        typeof snapshot._id === "string" &&
+        !snapshot._id.startsWith("commentstub")
+      ) {
+        this.comments[snapshot._id] = snapshot;
+      }
+      return ["comments", "pending"];
+    }
+
+    return false;
+  }),
+
+  // Doc drag-reparent: optimistically move the node in the local tree (docs is a
+  // protected collection, so parent_id/sort_order are field-protected) and
+  // delegate the authoritative write to docs.webMoveDoc.
+  moveDoc: asyncAction(function (this: Draft, id: string, parentId?: string, sortOrder?: number) {
+    const doc = this.docs[id] as any;
+    if (doc) {
+      doc.parent_id = parentId;
+      if (sortOrder !== undefined) doc.sort_order = sortOrder;
+    }
+  }),
+
+  addTaskComment: action(function (this: Draft, shortId: string, text: string, commentType?: string, imageIds?: string[]) {
+    const task = Object.values(this.tasks).find((t: any) => t.short_id === shortId) as any;
+    if (task) {
+      // The row may not carry activity yet (list channels never send it) —
+      // start the array so the optimistic comment renders instantly; the live
+      // detail query reconciles it with the full server set.
+      if (!task.comments) task.comments = [];
+      task.comments.push({
+        _id: `temp_${Date.now()}`,
+        author: "You",
+        text,
+        comment_type: commentType || "note",
+        image_storage_ids: imageIds && imageIds.length ? imageIds : undefined,
+        created_at: Date.now(),
+      });
+    }
+  }),
+
+  updateDoc: action(function (this: Draft, id: string, fields: { content?: string; title?: string; doc_type?: string; labels?: string[]; overflow?: string }) {
+    let changed = false;
+    if (this.docs[id]) {
+      if (fields.content !== undefined && fields.content !== this.docs[id].content) { this.docs[id].content = fields.content; changed = true; }
+      if (fields.title !== undefined && fields.title !== this.docs[id].title) { this.docs[id].title = fields.title; changed = true; }
+      if (fields.doc_type !== undefined && fields.doc_type !== (this.docs[id] as any).doc_type) { (this.docs[id] as any).doc_type = fields.doc_type; changed = true; }
+      if (fields.labels !== undefined) { (this.docs[id] as any).labels = fields.labels; changed = true; }
+      if (fields.overflow !== undefined) { (this.docs[id] as any).overflow = fields.overflow; changed = true; }
+      if (changed) this.docs[id].updated_at = Date.now();
+    }
+    if (this.docDetails[id]) {
+      if (fields.content !== undefined) this.docDetails[id].content = fields.content;
+      if (fields.title !== undefined) this.docDetails[id].title = fields.title;
+      if (fields.doc_type !== undefined) (this.docDetails[id] as any).doc_type = fields.doc_type;
+      if (fields.labels !== undefined) (this.docDetails[id] as any).labels = fields.labels;
+      if (fields.overflow !== undefined) (this.docDetails[id] as any).overflow = fields.overflow;
+      if (changed) this.docDetails[id].updated_at = Date.now();
+    }
+  }),
+
+  pinDoc: action(function (this: Draft, id: string, pinned: boolean) {
+    if (this.docs[id]) this.docs[id].pinned = pinned;
+    if (this.docDetails[id]) (this.docDetails[id] as any).pinned = pinned;
+  }),
+
+  archiveDoc: action(function (this: Draft, id: string) {
+    delete this.docs[id];
+    delete this.docDetails[id];
+  }),
+
+  // undoActions restores the exact cached doc snapshots itself. This action is
+  // intentionally memory-neutral and exists to make the authoritative unarchive
+  // survive reload/offline windows through the outbox.
+  restoreArchivedDoc: action(function (_id: string) {}),
+
+  // =====================
+  // MESSAGE QUEUE
+  // =====================
+
+  sessionsWithQueuedMessages: new Set<string>(),
+  blockedReviveRequestedAt: {},
+  setSessionHasQueuedMessages: (sessionId: string, hasQueued: boolean) => {
+    const prev = get().sessionsWithQueuedMessages;
+    // No-op bail: this fires on every queue poll and message push; a fresh Set
+    // with the same members woke the inbox panel 16× per session switch.
+    if (prev.has(sessionId) === hasQueued) return;
+    const next = new Set(prev);
+    if (hasQueued) next.add(sessionId);
+    else next.delete(sessionId);
+    set({ sessionsWithQueuedMessages: next });
+  },
+
+  // SIDE PANEL
+  // =====================
+
+  shortcutsPanelOpen: false,
+  toggleShortcutsPanel: () => set({ shortcutsPanelOpen: !get().shortcutsPanelOpen }),
+  stagePick: null,
+  setStagePick: (pick: { path: string; title?: string } | null) => set({ stagePick: pick }),
+  tour: null,
+  setTour: (run: TourRun | null) => set({ tour: run }),
+  toursPanelOpen: false,
+  setToursPanelOpen: (open: boolean) => set({ toursPanelOpen: open }),
+  anchorPanel: { open: false, target: null },
+  openAnchorPanel: (target?: AnchorPanelTarget | null) => set({
+    anchorPanel: { open: true, target: target === undefined ? get().anchorPanel.target : target },
+  }),
+  closeAnchorPanel: () => set({ anchorPanel: { ...get().anchorPanel, open: false } }),
+  toggleAnchorPanel: () => set({ anchorPanel: { ...get().anchorPanel, open: !get().anchorPanel.open } }),
+
+  settingsModalSection: null,
+  openSettingsModal: (section?: SettingsSectionId) => {
+    // Settings sits below the compose layer, so a modal compose (the place
+    // "share yours" opens it from) folds to its dock title bar first.
+    const modal = (get().composes as ComposeInstance[]).find((c) => c.mode === "modal");
+    if (modal) {
+      get().dockCompose(modal.id);
+      get().setComposeCollapsed(modal.id, true);
+    }
+    set({ settingsModalSection: section ?? DEFAULT_SETTINGS_SECTION });
+  },
+  closeSettingsModal: () => set({ settingsModalSection: null }),
+
+  peopleWallOpen: false,
+  openPeopleWall: () => set({ peopleWallOpen: true }),
+  stageWide: null,
+  setStageWide: (wide: { tabId: string; leafId: string | null } | null) => set({ stageWide: wide }),
+  profileSignIn: null,
+  openProfileSignIn: (target: { deviceId: string; profile: string; start?: boolean }) => set({ profileSignIn: target }),
+  closeProfileSignIn: () => set({ profileSignIn: null }),
+  closePeopleWall: () => set({ peopleWallOpen: false }),
+  togglePeopleWall: () => set({ peopleWallOpen: !get().peopleWallOpen }),
+
+  // The workspace slots (nav | context | dock…). The stage itself is no
+  // longer one of them: side by side lives in the tab's split layout
+  // (store/stageSplit), and the secondary slot's one remaining use is the
+  // fleet board's transient drill-in overlay, owned by the board.
+  workspace: (() => {
+    const prefs = readCriticalUiPrefs() as any;
+    const device = readDeviceWorkspace();
+    const ws = hydrateWorkspace(prefs.workspace, device);
+    // One-time inheritance from the terminal's own key, so an existing user's
+    // dock opens exactly as they left it before the dock became a slot.
+    if (!device) {
+      try {
+        const raw = typeof localStorage !== "undefined" ? localStorage.getItem("cast_term_panel") : null;
+        const legacy = raw ? JSON.parse(raw) : null;
+        if (legacy?.open) ws.dock = { pane: { kind: "terminal" }, presentation: "split", size: legacy.height };
+        else if (typeof legacy?.height === "number") ws.dock = { ...ws.dock, size: legacy.height };
+      } catch {}
+    }
+    // First boot after the migration: inherit the old sidebar pref so the nav
+    // opens exactly as the user left it.
+    if (!prefs.workspace && prefs.sidebar_collapsed) ws.nav.presentation = "collapsed";
+    return ws;
+  })(),
+
+  wsShow: action(function (this: Draft, slot: SlotId, pane: Pane, opts?: { presentation?: Presentation }) {
+    this.workspace = showPane(this.workspace as WorkspaceState, slot, pane, opts);
+    persistWorkspace(this);
+  }),
+  wsHide: action(function (this: Draft, slot: SlotId, opts?: { remember?: boolean }) {
+    this.workspace = hidePane(this.workspace as WorkspaceState, slot, opts);
+    persistWorkspace(this);
+  }),
+  wsToggle: action(function (this: Draft, slot: SlotId, pane: Pane) {
+    this.workspace = togglePane(this.workspace as WorkspaceState, slot, pane);
+    persistWorkspace(this);
+  }),
+  wsSetPresentation: action(function (this: Draft, slot: SlotId, presentation: Presentation) {
+    this.workspace = wsSetPresentationPure(this.workspace as WorkspaceState, slot, presentation);
+    persistWorkspace(this);
+  }),
+  // One action owns "is the nav folded", so the header button, the shortcut and
+  // the drag-to-zero handler can't drift apart.
+  // The dock is a slot like any other; SLOT_PERSISTENCE says its arrangement
+  // stays on this device, so no component needs its own storage to say so.
+  setDockOpen: (open: boolean) => {
+    const st = get();
+    if (open) st.wsShow("dock", TERMINAL_PANE);
+    else st.wsHide("dock", { remember: true });
+  },
+
+  zenNavOpen: false,
+  setZenNavOpen: (open: boolean) => set({ zenNavOpen: open }),
+
+  setNavCollapsed: action(function (this: Draft, collapsed: boolean) {
+    this.workspace = wsSetPresentationPure(this.workspace as WorkspaceState, "nav", collapsed ? "collapsed" : "split");
+    persistWorkspace(this);
+  }),
+
+  wsSetSize: action(function (this: Draft, slot: SlotId, size: number) {
+    this.workspace = wsSetSizePure(this.workspace as WorkspaceState, slot, size);
+    persistWorkspace(this);
+  }),
+
+  // Switch to a workbench: the WHOLE chrome — every slot, every size, zen —
+  // restores in one draft, so the frame changes in a single paint. Subjects are
+  // re-derived from where you are (the comments pane gets the conversation on
+  // screen); a device that cannot host a terminal never inherits one.
+  activeWorkbenchId: null,
+
+  applyWorkbench: action(function (this: Draft, snap: WorkbenchSnapshot, id?: string, pathname?: string | null) {
+    const conversationId = this.currentSessionId ?? this.viewingDismissedId ?? null;
+    const allowTerminal = typeof window === "undefined" || window.innerWidth >= 768;
+    this.workspace = applyWorkbenchPure(this.workspace as WorkspaceState, snap, { conversationId, allowTerminal });
+    this.activeWorkbenchId = id ?? null;
+    persistWorkspace(this);
+    const zen = snap.zen ?? false;
+    if (!this.clientState.ui) this.clientState.ui = {} as ClientUI;
+    if ((this.clientState.ui.zen_mode ?? false) !== zen) {
+      this.clientState.ui.zen_mode = zen;
+      writeCriticalUiPrefs({ zen_mode: zen });
+      this.zenNavOpen = false;
+    }
+    // The sidebar's pinned sections ride along with the panes. Assigned whole,
+    // including with nothing: a layout saved with no pins (or an older save,
+    // from before this field) hands every section back to its route default.
+    const sections = snap.navSections ?? {};
+    if (JSON.stringify(this.clientState.ui.nav_sections ?? {}) !== JSON.stringify(sections)) {
+      this.clientState.ui.nav_sections = { ...sections };
+      writeCriticalUiPrefs({ nav_sections: this.clientState.ui.nav_sections });
+    }
+    // The chip rides along with the panes. Both axes are assigned together
+    // rather than through the single-axis setters, whose "don't clobber the
+    // other axis's exclude" guards exist for one-chip clicks; here the whole
+    // filter is being replaced at once — including with nothing, which is what
+    // a layout saved with a clear chip (or an older save, from before this
+    // field) means.
+    const prev = snapshotInboxViewFromDraft(this);
+    const want = resolveWorkbenchFilter(snap.filter, this.buckets);
+    this.activeBucketFilter = want.bucket;
+    // Layouts capture the head chip only — a shift-built list doesn't ride.
+    this.extraBucketFilters = [];
+    this.extraProjectFilters = [];
+    this.activeProjectFilter = want.project;
+    this.activeProjectPath = want.projectPath;
+    this.chipFilterExclude = want.exclude;
+    const next = snapshotInboxViewFromDraft(this);
+    if (sameInboxView(prev, next)) return;
+    pushInboxViewHistory(prev, next);
+    // The landing surface is passed in: a layout can change surface, and the
+    // active tab still shows the one being left.
+    evictFocusOutsideOrderInDraft(this, sessionFocusKind(pathname, this.currentConversation?.source));
+  }),
+
+  // Save and update reuse the saved-view pipeline wholesale (optimistic stub,
+  // outbox, share/delete); a workbench is just a view whose page is the
+  // workspace. Update IS the adjust gesture: arrange the chrome, overwrite.
+  saveWorkbench: (name: string, path?: string) => {
+    const st = get();
+    const snap = captureWorkbench(st.workspace as WorkspaceState, {
+      zen: st.clientState.ui?.zen_mode ?? false,
+      path,
+      filter: chipFilterOf(st),
+      navSections: st.clientState.ui?.nav_sections,
+    });
+    return st.createSavedView({ name, page: "workspace", prefs: snap });
+  },
+
+  updateWorkbench: (id: string, path?: string) => {
+    const st = get();
+    const prev = (st.savedViews as Record<string, SavedViewRow>)[id]?.prefs as WorkbenchSnapshot | undefined;
+    const snap = captureWorkbench(st.workspace as WorkspaceState, {
+      zen: st.clientState.ui?.zen_mode ?? false,
+      // Keep the workbench's surface unless the caller states a new one — an
+      // update from a different page shouldn't silently retarget the switch.
+      path: path ?? prev?.path,
+      filter: chipFilterOf(st),
+      navSections: st.clientState.ui?.nav_sections,
+    });
+    st.updateSavedView(id, { prefs: snap });
+  },
+
+
+
+
+  sidePanelSessionId: null,
+
+  openSidePanel: action(function (this: Draft, sessionId: string) {
+    this.sidePanelSessionId = sessionId;
+    this.workspace = showPane(this.workspace as WorkspaceState, "context", SESSION_LIST_PANE);
+    persistWorkspace(this);
+  }),
+
+  closeSidePanel: action(function (this: Draft) {
+    this.sidePanelSessionId = null;
+    this.workspace = hidePane(this.workspace as WorkspaceState, "context", { remember: true });
+    persistWorkspace(this);
+  }),
+
+  clearSidePanelSession: action(function (this: Draft) {
+    this.sidePanelSessionId = null;
+  }),
+
+  toggleSidePanel: action(function (this: Draft) {
+    const ws = this.workspace as WorkspaceState;
+    if (isSessionRailOpen(ws)) {
+      this.workspace = hidePane(ws, "context", { remember: true });
+    } else {
+      this.workspace = showPane(ws, "context", SESSION_LIST_PANE);
+      this.sidePanelSessionId = this.sidePanelSessionId ?? this.currentSessionId ?? null;
+    }
+    persistWorkspace(this);
+  }),
+
+
+  selectPanelSession: action(function (this: Draft, sessionId: string | null) {
+    // Clicking the session that's already open in the right panel exits it — the
+    // same click that peeks a session beside the page dismisses it on a repeat.
+    // Mirrors the panel's close button (which calls selectPanelSession(null));
+    // we leave sidePanelOpen alone so the session-list rail stays as it was.
+    if (sessionId && sessionId === this.sidePanelSessionId) {
+      this.sidePanelSessionId = null;
+      return;
+    }
+    // The side panel is a genuine way of viewing a session (used by the Tab
+    // switcher off the inbox page), so record it. Its "previous" is the panel's
+    // own session, not the main currentSessionId.
+    if (sessionId) recordSessionView(this, sessionId, this.sidePanelSessionId);
+    this.sidePanelSessionId = sessionId;
+  }),
+
+  // =====================
+  // TABS
+  // =====================
+
+  tabs: [],
+  activeTabId: null,
+
+  openTab: action(function (this: Draft, opts: { title: string; path: string; sessionId?: string; makeActive?: boolean }) {
+    // A detached tab window renders no tab shell, so a tab opened there would
+    // be invisible here AND appear out of nowhere in the main window (tabs are
+    // shared state). Whatever asked for a tab really asked to show a page —
+    // navigate this window to it instead.
+    if (typeof window !== "undefined" && (window as any).__CODECAST_ELECTRON__?.isTabWindow === true) {
+      window.location.assign(opts.path);
+      return "";
+    }
+    // A pathless tab is unrenderable and PERSISTS — it crashed the TabBar on
+    // every boot until the store was hand-repaired. Refuse it at the door.
+    if (!opts?.path || typeof opts.path !== "string") return "";
+    const id = `tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    // Only a shell route: the desktop boots at `/`, and a first tab seeded
+    // from that URL rendered a blank stage on every launch (lib/tabRoutes).
+    // And never the /conversation/<id> redirect route — a pane popped out of
+    // a split arrives with that spelling; the tab holds the /inbox?s= form
+    // the redirect would have produced (same rule as closeTab's promotion).
+    const path = conversationTabPath(shellTabPath(opts.path));
+    const tab: AppTab = {
+      id,
+      // The title persists beside the path, so it follows the same storable rule (lib/tabSafePath).
+      title: tabSafeTitle(path, opts.title),
+      path,
+      sessionId: opts.sessionId,
+      createdAt: Date.now(),
+    };
+    this.tabs = [...this.tabs, tab];
+    if (opts.makeActive !== false) {
+      // The tab being left behind keeps its frame; the new tab has no
+      // snapshot yet, so it inherits the frame it was opened under.
+      stampActiveTab(this);
+      this.activeTabId = id;
+    }
+    return id;
+  }),
+
+  closeTab: action(function (this: Draft, id: string) {
+    const idx = this.tabs.findIndex((t: AppTab) => t.id === id);
+    if (idx === -1) return;
+    let newTabs = this.tabs.filter((t: AppTab) => t.id !== id);
+    if (this.activeTabId === id) {
+      const nextTab = newTabs[Math.min(idx, newTabs.length - 1)];
+      this.activeTabId = nextTab?.id ?? null;
+      // A background tab often holds the canonicalized /conversation/<id> path
+      // (stamped from window.location by switchTab), whose pane is a spent
+      // RedirectToInbox — a loading skeleton that already fired its one-shot
+      // redirect while hidden. Every transition onto a tab heals this via a
+      // freshly-mounted redirect targeting the active tab, EXCEPT close, which
+      // just promotes the survivor. Rewrite to the inbox deep-link form the
+      // redirect would have produced so the pane remounts with real content.
+      // NOT for a split tab: its focused conversation LEAF legitimately holds
+      // /conversation/<id> (the pane renderer intercepts that spelling — no
+      // redirect ever mounts), and the raw rewrite would desync tab.path from
+      // the leaf until the next heal converted the pane into a full inbox.
+      if (nextTab && !nextTab.layout && conversationTabPath(nextTab.path) !== nextTab.path) {
+        newTabs = newTabs.map((t: AppTab) =>
+          t.id === nextTab.id ? { ...t, path: conversationTabPath(t.path) } : t,
+        );
+      }
+      this.tabs = newTabs;
+      // Close promotes the survivor without a switchTab, so restore its
+      // frozen frame here — the dying tab's frame dies with it.
+      restoreTabWorkspace(this, nextTab);
+      return;
+    }
+    this.tabs = newTabs;
+  }),
+
+  // Switching tabs swaps the WHOLE frozen view: the outgoing tab is stamped
+  // with the live frame (panes, presentations, sizes, rail subject), and the
+  // incoming tab's stamped frame is put back on screen. A tab that never
+  // stamped one keeps the current frame.
+  switchTab: action(function (this: Draft, id: string) {
+    if (this.activeTabId === id) return;
+    stampActiveTab(this);
+    this.activeTabId = id;
+    restoreTabWorkspace(this, this.tabs.find((t: AppTab) => t.id === id));
+  }),
+
+  updateTab: action(function (this: Draft, id: string, patch: Partial<AppTab>) {
+    const current = this.tabs.find((t: AppTab) => t.id === id);
+    if (!current) return;
+    // A path outside the shell never lands in a tab (lib/tabRoutes); the tab
+    // keeps what it showed rather than taking a path no pane renders.
+    if (patch.path !== undefined && isNonTabRoute(patch.path)) {
+      const { path: _dropped, ...rest } = patch;
+      patch = rest;
+    }
+    let changed = false;
+    for (const k in patch) {
+      if ((current as any)[k] !== (patch as any)[k]) { changed = true; break; }
+    }
+    if (!changed) return;
+    this.tabs = this.tabs.map((t: AppTab) => (t.id === id ? patchedTab(t, patch) : t));
+  }),
+
+  saveCurrentTabState: action(function (this: Draft, patch?: Partial<AppTab>) {
+    if (!this.activeTabId) return;
+    stampActiveTab(this, patch);
+  }),
+
+  // =====================
+  // STAGE SPLITS
+  // =====================
+  //
+  // All ops act on the ACTIVE tab — drops, focus and closes only ever happen
+  // on the visible stage. Each op re-establishes the invariant that
+  // `tab.path` mirrors the focused leaf's path; the URL side (replaceState)
+  // belongs to lib/stage.ts, which wraps these for components.
+
+  stageInsertLeaf: action(function (this: Draft, target: SplitTarget, edge: SplitEdge, path: string, opts?: StageInsertOpts): string | null {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab || isNonTabRoute(path)) return null;
+    // A plain tab grows a layout on first split: its current path becomes the
+    // first leaf, under the id the solo stage already renders it as, so the
+    // split preserves what was on screen — the same cell, not a remount.
+    const firstLeafId = tab.layout ? null : stageSeedLeafId(tab.id);
+    const root: StageNode = tab.layout ?? { type: "leaf", id: firstLeafId!, path: tab.path };
+    if (countLeaves(root) >= MAX_STAGE_LEAVES) return null;
+    const resolvedTarget = target === "root" ? "root" : tab.layout ? target : { leafId: firstLeafId! };
+    const res = insertStageLeaf(root, resolvedTarget, edge, path, opts?.id);
+    if (!res) return null;
+    // `focus: false` leaves what was on stage exactly as it was: the focused
+    // leaf (the seed, for a plain tab) and so `tab.path` and the URL stand.
+    const focus = opts?.focus !== false;
+    const focusedLeafId = focus ? res.leafId : (tab.focusedLeafId ?? firstLeafId!);
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id ? (focus ? withTabPath({ ...t, layout: res.root, focusedLeafId }, path) : { ...t, layout: res.root, focusedLeafId }) : t,
+    );
+    return res.leafId;
+  }),
+
+  stageSetLeafPath: action(function (this: Draft, leafId: string, path: string) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout || isNonTabRoute(path) || !findStageLeaf(tab.layout, leafId)) return;
+    const layout = setStageLeafPath(tab.layout, leafId, path);
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id
+        ? (t.focusedLeafId === leafId ? withTabPath({ ...t, layout }, path) : { ...t, layout })
+        : t,
+    );
+  }),
+
+  stageFocusLeaf: action(function (this: Draft, leafId: string) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout || tab.focusedLeafId === leafId) return;
+    const leaf = findStageLeaf(tab.layout, leafId);
+    if (!leaf) return;
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id ? { ...t, focusedLeafId: leafId, path: leaf.path } : t,
+    );
+  }),
+
+  stageCloseLeaf: action(function (this: Draft, leafId: string) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout) return;
+    const next = removeStageLeaf(tab.layout, leafId);
+    if (next === tab.layout) return;
+    if (!next || countLeaves(next) <= 1) {
+      // One pane left: the tab is a plain tab again. Through the inbox
+      // spelling — a tab must never SIT on /conversation/<id> (that route is
+      // a one-shot redirect against global view state; see conversationTabPath).
+      const survivor = next ? stageLeavesOf(next)[0] : null;
+      this.tabs = this.tabs.map((t: AppTab) =>
+        t.id === tab.id
+          ? { ...t, layout: undefined, focusedLeafId: undefined, ...(survivor ? { path: conversationTabPath(survivor.path) } : {}) }
+          : t,
+      );
+      return;
+    }
+    // Focus falls to the first remaining leaf when the focused one closed.
+    const focused = tab.focusedLeafId && findStageLeaf(next, tab.focusedLeafId)
+      ? tab.focusedLeafId
+      : stageLeavesOf(next)[0].id;
+    const path = findStageLeaf(next, focused)!.path;
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id ? { ...t, layout: next, focusedLeafId: focused, path } : t,
+    );
+  }),
+
+  stageExpandLeaf: action(function (this: Draft, leafId: string) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout) return;
+    const leaf = findStageLeaf(tab.layout, leafId);
+    if (!leaf) return;
+    // Same rule as the collapse in stageCloseLeaf: a plain tab never sits on
+    // the /conversation/<id> redirect route.
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id ? { ...t, layout: undefined, focusedLeafId: undefined, path: conversationTabPath(leaf.path) } : t,
+    );
+  }),
+
+  stageMoveLeaf: action(function (this: Draft, leafId: string, target: SplitTarget, edge: SplitEdge) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout) return;
+    // One tree operation (stageSplit.moveLeaf): the leaf keeps its identity
+    // (no cell remount) and the tree never collapses through the plain-tab
+    // state mid-move — the trap where a two-pane rearrange respelled the
+    // stationary pane's path.
+    const next = moveStageLeaf(tab.layout, leafId, target, edge);
+    if (!next) return;
+    const path = findStageLeaf(next, leafId)!.path;
+    this.tabs = this.tabs.map((t: AppTab) =>
+      t.id === tab.id ? { ...t, layout: next, focusedLeafId: leafId, path } : t,
+    );
+  }),
+
+  stageSetSizes: action(function (this: Draft, branchId: string, sizes: number[]) {
+    const tab = this.tabs.find((t: AppTab) => t.id === this.activeTabId);
+    if (!tab?.layout) return;
+    const layout = setStageBranchSizes(tab.layout, branchId, sizes);
+    if (layout === tab.layout) return;
+    this.tabs = this.tabs.map((t: AppTab) => (t.id === tab.id ? { ...t, layout } : t));
+  }),
+
+  // =====================
+  // CACHED QUERY DATA
+  // =====================
+
+  currentUser: null,
+  teams: [],
+  teamMembers: [],
+  teamUnreadCount: null,
+  favorites: [],
+  bookmarks: [],
+
+  myCalls: { incoming: [], outgoing: [], membership: null },
+  callOccupancy: {},
+  callConfig: null,
+  liveRooms: [],
+  roomKnocks: [],
+  guestsWaiting: [],
+  callKnocked: {},
+  call: {
+    phase: "idle" as const,
+    roomKey: null,
+    muted: true,
+    micDenied: false,
+    camera: false,
+    sharing: false,
+    speaking: [],
+    error: null,
+    errorFix: null,
+  },
+  // Raw set() by convention: ephemeral UI/media state, never shared or
+  // persisted (same class as modal toggles).
+  setCallState: (patch: Partial<InboxStoreState["call"]>) =>
+    set((s: any) => ({ call: { ...s.call, ...patch } })),
+
+  // Raw set() by the same convention as the call slice: ephemeral media-plane
+  // bookkeeping, never persisted and never dispatched. A knock and a lock
+  // toggle are both server gestures whose durable state comes back through
+  // liveRooms/roomKnocks; these hold only what the client must render before
+  // that echo lands.
+  noteKnock: (roomKey: string) =>
+    set((s: any) => ({ callKnocked: { ...s.callKnocked, [roomKey]: Date.now() } })),
+  clearKnock: (roomKey: string) =>
+    set((s: any) => {
+      if (!(roomKey in s.callKnocked)) return {};
+      const next = { ...s.callKnocked };
+      delete next[roomKey];
+      return { callKnocked: next };
+    }),
+
+  // A team's opt-in feature (admin only on the server). `teams` is a
+  // localFirst list: the sidebar row appears or vanishes on the click, and a
+  // refusal puts the switch back.
+  setTeamFeature: action(function (this: Draft, teamId: string, feature: string, enabled: boolean) {
+    const team = (this.teams as any[]).find((t) => t && String(t._id) === String(teamId));
+    if (!team) return;
+    team.features = { ...(team.features ?? {}), [feature]: enabled };
+  }),
+
+  // A team's monthly model budget (learning-loop.md LL10; admin only on the
+  // server). Paints the cached settings row; the server's answer replaces it,
+  // and a refusal toasts like any dispatch.
+  setTeamBudget: action(function (this: Draft, teamId: string, capUsd: number) {
+    const key = settingsDataKey("teamBudget", (this.currentUser as any)?._id, teamId);
+    const row = key ? (this.settingsData as any)[key] : undefined;
+    if (row?.value) row.value = { ...row.value, cap_usd: Math.round(capUsd * 100) / 100 };
+  }),
+
+  // The viewer's codecast-wide default model for one agent client
+  // (users.default_models, applied server-side at launch). currentUser is a
+  // localFirst singleton, so the pin holds until the echo and rolls back if
+  // the server refuses.
+  setDefaultModel: action(function (this: Draft, agentClient: string, model: string | null) {
+    if (!this.currentUser) return;
+    const next: Record<string, string> = { ...((this.currentUser as any).default_models ?? {}) };
+    if (model === null) delete next[agentClient];
+    else next[agentClient] = model;
+    (this.currentUser as any).default_models = next;
+  }),
+
+  // The viewer's settings on the users row. currentUser is a localFirst
+  // singleton: each switch holds until the echo and rolls back (with the
+  // standard dispatch toast) if the server refuses, and two quick toggles
+  // build on the store's value, not a stale copy.
+  updateNotificationSettings: action(function (this: Draft, patch: Record<string, any>) {
+    if (!this.currentUser) return;
+    Object.assign(this.currentUser as any, patch);
+  }),
+  setAgentPermissionModes: action(function (this: Draft, modes: Record<string, any>) {
+    if (!this.currentUser) return;
+    (this.currentUser as any).agent_permission_modes = { ...modes };
+  }),
+  setAgentDefaultParams: action(function (this: Draft, agent: string, params: Record<string, string>) {
+    if (!this.currentUser) return;
+    (this.currentUser as any).agent_default_params = { ...((this.currentUser as any).agent_default_params ?? {}), [agent]: params };
+  }),
+  setPinnedAgents: action(function (this: Draft, agents: string[]) {
+    if (!this.currentUser) return;
+    (this.currentUser as any).pinned_agents = [...agents];
+  }),
+
+  // The room flags: draft flip, then the same-named dispatch side effect
+  // (convex/dispatch.ts) runs the mutation. callRooms is localFirst, so a
+  // getLiveRooms push computed before the write committed cannot flap the
+  // control back, and a refused write surfaces like every other dispatch.
+  setRoomLocked: action(function (this: Draft, roomKey: string, locked: boolean) {
+    const row = (this.callRooms[roomKey] ??= { _id: roomKey, locked: false, transcribe_off: false, transcribe_off_at: null });
+    row.locked = locked;
+    return { roomKey, locked };
+  }),
+  setRoomTranscribeOff: asyncAction(function (this: Draft, roomKey: string, off: boolean) {
+    const row = (this.callRooms[roomKey] ??= { _id: roomKey, locked: false, transcribe_off: false, transcribe_off_at: null });
+    row.transcribe_off = off;
+    row.transcribe_off_at = off ? Date.now() : null;
+    return { roomKey, off };
+  }),
+  // Record and Stop, for the whole room: the mark is up (or down) on this
+  // window the moment it is pressed, and a refused press (recording not set
+  // up, someone stopped it a second ago) rolls the mark back and rejects the
+  // caller, who says why. The flag is unprotected (clientSyncRegistry): the
+  // next push is the server's word on it, whatever this press said.
+  // `pressedAt` is when the person pressed: a press is a moment, so one
+  // delivered long after it (parked through an outage, replayed on a reload)
+  // is refused at both ends (lib/calls/recordingPress, convex dispatch).
+  // `runId` (Stop only) is the run the mark showed, which is all the press
+  // may end.
+  setRoomRecording: asyncAction(function (this: Draft, roomKey: string, on: boolean, _pressedAt: number, _runId?: string) {
+    const row = (this.callRooms[roomKey] ??= { _id: roomKey, locked: false, transcribe_off: false, transcribe_off_at: null });
+    row.recording = on;
+    return { roomKey, on };
+  }),
+  // The room's answers to a guest, from the door, the knock's toast or the
+  // stage: the knock leaves the door (and a removed guest the room's faces)
+  // in the frame it was pressed, and the same-named dispatch side effect
+  // (convex/dispatch.ts) runs callGuests' mutation. roomKnocks is a
+  // localFirst list keyed by from_user (clientSyncRegistry): a getRoomKnocks
+  // push computed before the answer landed cannot put the knock back, every
+  // surface of this window agrees the moment one answers, and a refusal (the
+  // guest renamed, the link closed) restores the row with the reason.
+  admitGuestKnock: asyncAction(function (this: Draft, guestId: string, name: string) {
+    dropGuestKnock(this, guestId);
+    return { guestId, name };
+  }),
+  denyGuestKnock: asyncAction(function (this: Draft, guestId: string, revokeLink?: boolean) {
+    dropGuestKnock(this, guestId);
+    return { guestId, revokeLink: !!revokeLink };
+  }),
+  // liveRooms is server truth replaced whole on every push (not localFirst:
+  // a field lock on a room's `guests` array could never match the server's
+  // fresh array and would freeze it), so the guest leaves the faces here and
+  // the server's push, which drops them too, follows; a refusal puts them
+  // back through restoreCallGuest (lib/calls/guestDoorActions).
+  removeCallGuest: asyncAction(function (this: Draft, roomKey: string, guestId: string, revokeLink?: boolean) {
+    dropGuestKnock(this, guestId);
+    const identity = guestIdentity(guestId);
+    const room = ((this.liveRooms ?? []) as any[]).find((r) => r?.room_key === roomKey);
+    if (room?.guests?.some((g: any) => g.identity === identity)) room.guests = room.guests.filter((g: any) => g.identity !== identity);
+    return { roomKey, guestId, revokeLink: !!revokeLink };
+  }),
+  restoreCallGuest: sync(function (this: Draft, roomKey: string, guest: { identity: string; name: string; joined_at?: number }) {
+    const room = ((this.liveRooms ?? []) as any[]).find((r) => r?.room_key === roomKey);
+    if (room && !(room.guests ?? []).some((g: any) => g.identity === guest.identity)) room.guests = [...(room.guests ?? []), guest];
+  }),
+  // A refused press puts the flag back (an unprotected field has no lock for
+  // the engine to lift), unless a push has spoken for the room since.
+  undoRoomRecordingPress: sync(function (this: Draft, roomKey: string, on: boolean) {
+    const row = this.callRooms[roomKey];
+    if (row && row.recording === on) row.recording = !on;
+  }),
+  // A call's video (registry callRecordings / callRecordingCalls). Deleting
+  // takes the whole run, as the server does: the room's file and the screen
+  // files filmed alongside it share a run_id. Removing the rows on the draft
+  // plants their exclude tombstones, so a push computed before the delete
+  // committed cannot bring them back, and stamps the call's facts with
+  // `deleted_here_at`, so the page says the recording was deleted in the same
+  // frame rather than once the thread's line arrives. Receipt-backed: the
+  // rows ride the command as its local result, and a refusal, live or on a
+  // replay after a reload, puts them back (_handleReceiptRejection).
+  deleteCallRecording: receiptAsyncAction(function (this: Draft, recordingId: string) {
+    const rows = (this as any).callRecordings as Record<string, { run_id?: string; transcript_id?: string }>;
+    const taken = runFilesOf(rows, recordingId);
+    // Plain copies: draft values are revocable proxies, and the result is
+    // persisted with the command after the recipe closes.
+    const snapshot = JSON.parse(JSON.stringify(taken.map(([, r]) => r))) as Array<{ _id: string; transcript_id?: string }>;
+    for (const [id] of taken) delete rows[id];
+    const transcriptId = snapshot[0]?.transcript_id ?? null;
+    const at = Date.now();
+    const facts = transcriptId ? ((this as any).callRecordingCalls as Record<string, { deleted_here_at?: number }>)[transcriptId] : undefined;
+    if (facts) facts.deleted_here_at = at;
+    return { recordingId, transcriptId, at, rows: snapshot };
+  }),
+  // Tombstones a push has answered (the feeder decides which: a row of that
+  // call the server no longer sends is gone for good, ids never come back),
+  // so their excludes have nothing left to hold out. Without this they would
+  // pile up in the persisted pending map.
+  settleCallRecordingTombstones: sync(function (this: Draft, released: string[], collection: "callRecordings" | "callFrameShares" = "callRecordings") {
+    for (const id of released) {
+      const key = `${collection}:${id}`;
+      if (this.pending[key]?.type === "exclude") delete this.pending[key];
+    }
+  }),
+  // A picture of the call taken off its public link: the row leaves on the
+  // draft (its exclude tombstone holds it out of an older push) and the
+  // dispatch deletes the public object. Taking one down is any reader's and
+  // a picture already gone is acknowledged, so there is no refusal to undo.
+  deleteCallFrameShare: asyncAction(function (this: Draft, shareId: string) {
+    delete ((this as any).callFrameShares as Record<string, unknown>)[shareId];
+    return { shareId };
+  }),
+  // The switch moves on the press and holds through a push computed before
+  // the write committed (a field lock on video_shared); a refusal lifts the
+  // lock and the switch falls back to what the server holds.
+  setCallShareVideo: asyncAction(function (this: Draft, transcriptId: string, include: boolean) {
+    const row = ((this as any).callRecordingCalls as Record<string, { video_shared?: boolean }>)[transcriptId];
+    if (row) row.video_shared = include;
+    return { transcriptId, include };
+  }),
+  // The avatar toggle moves on the press: the call's route for the agent
+  // gains or drops `face: false` on the draft, as the server writes it.
+  setCallAgentFace: asyncAction(function (this: Draft, transcriptId: string, target: string, face: boolean) {
+    const call = ((this as any).callDetails as Record<string, { routes?: Array<{ kind: string; target: string; face?: boolean }> }>)[transcriptId];
+    const route = call?.routes?.find((r) => r.kind === "session" && r.target === target);
+    if (route) {
+      if (face) delete route.face;
+      else route.face = false;
+    }
+    return { transcriptId, target, face };
+  }),
+
+  // =====================
+  // SELECTORS
+  // =====================
+
+  getSession: (id: string) => {
+    return get().sessions[id];
+  },
+
+  // =====================
+  // TEAM CHAT
+  // =====================
+  // Collections, optimistic writers and their durable dispatch actions. Kept in
+  // store/chatSlice.ts so the whole surface reads as one thing; spread here so
+  // the middleware wraps every action exactly as if it were written inline.
+  ...createChatSlice(set, get),
+
+  // Org tree singleton + reshaping actions (store/orgSlice.ts), same spread rule.
+  ...createOrgSlice(),
+
+  // Initiative writes (store/initiativeSlice.ts); the collections themselves
+  // are registry slots.
+  ...createInitiativeSlice(),
+  // Project update writes (store/projectUpdatesSlice.ts), same rule.
+  ...createProjectUpdatesSlice(),
+  ...createLineWorkflowSlice(),
+
+  // Line profile edits (store/lineSlice.ts): paint projects.line_profile, ride to the daemon.
+  ...createLineSlice(),
+  // Trial cards (store/trialSlice.ts): a trial run's gate, answered on /trial.
+  ...createTrialSlice(),
+  ...createExpectationsSlice(answerDecisionDraft),
+
+  // Ops writes (store/opsSlice.ts): group triage, sources, app grants.
+  ...createOpsSlice(),
+
+});
+
+function createInboxStore() {
+  const withMiddleware = mutativeMiddleware(inboxStoreConfig);
+  return create<InboxStoreState>(((set: any, get: any, api: any) => {
+    // Runs before create() copies `subscribe` onto the bound hook, so React
+    // subscriptions and imperative ones share one counted, foldable path.
+    installStoreListenerCensus(api);
+    return withMiddleware(set, get, api);
+  }) as any);
+}
+
+// -- Dev hot swap --
+//
+// This module exports a hook and actions, never components, so React Fast
+// Refresh cannot make it an update boundary. Vite then walks the importers for
+// one and finds none: lib/sounds imports the store straight back (a cycle), and
+// lib/errorToast reaches src/boot.tsx, which is the entry and has no importers
+// at all. The fallback is a full page reload, and that costs ~4s of Convex
+// WebSocket handshake before any data comes back — for editing one action.
+//
+// So the module self-accepts instead. The accept call is appended by
+// plugins/storeHmr.ts rather than written here, because Metro bundles this same
+// file for the Expo app and Hermes cannot parse `import.meta` (same reason the
+// dev console hook below reads NODE_ENV). On re-execution the surviving store is
+// reused, so every importer's `useInboxStore` reference stays valid and the
+// state stays in memory; _hotReplaceConfig swaps in the new action bodies.
+//
+// That only holds for the actions. A self-accepting module leaves its importers
+// untouched, so they keep their old copy of every other export here — the
+// selectors, classifySession, sortSessions and the rest. The plugin watches for
+// exactly that: it fingerprints everything outside `inboxStoreConfig` below and
+// reloads instead of swapping when it changes, so an edit never appears to apply
+// and then quietly do nothing. Keep the two markers it splits on intact.
+//
+// `document` is the web/native split — React Native has no document, so a Metro
+// Fast Refresh keeps the plain create() path it has always used.
+const hotSwapCapable = process.env.NODE_ENV !== "production" && typeof document !== "undefined";
+const survivingInboxStore: ReturnType<typeof createInboxStore> | undefined = hotSwapCapable
+  ? (globalThis as any).__codecastInboxStore
+  : undefined;
+
+
+/** Shared draft write for the agent library: patch by _id, else stub a new
+ *  row in the active workspace. Returns the client_key the dispatch sends so
+ *  the server row answers to the same key. */
+function upsertAgentLibraryRow(draft: any, key: "agentDefinitions" | "agentChains", prefix: string, fields: any): { client_key: string; id?: string } {
+  const now = Date.now();
+  const { _id, ...rest } = fields;
+  if (_id && draft[key][_id]) {
+    Object.assign(draft[key][_id], rest, { updated_at: now });
+    return { client_key: draft[key][_id].client_key ?? `${prefix}_${_id}`, id: _id };
+  }
+  const client_key = `${prefix}_${now.toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const teamId = draft.clientState.ui?.active_team_id;
+  const userId = draft.currentUser?._id ? String(draft.currentUser._id) : null;
+  draft[key][client_key] = {
+    _id: client_key,
+    short_id: `${prefix}-${now.toString(36)}`,
+    client_key,
+    team_id: teamId,
+    workspace: activeWorkspaceKey(teamId, userId) ?? undefined,
+    user_id: userId ?? undefined,
+    created_at: now,
+    updated_at: now,
+    ...rest,
+  };
+  return { client_key };
+}
+
+export type MyProfilePatch = Partial<Record<"name" | "title" | "bio" | "timezone", string>> & {
+  status?: "available" | "busy" | "away";
+};
+
+// The viewer's own profile lives on two rows: currentUser, and their row in the
+// team roster (what avatars, hover cards and the status pill read). Both are
+// localFirst, so the patch holds over presence pushes until the server echoes.
+function patchMyProfileInDraft(draft: any, patch: MyProfilePatch) {
+  const meId = String(draft.currentUser?._id ?? "");
+  if (!meId) return;
+  Object.assign(draft.currentUser, patch);
+  const me = (draft.teamMembers as any[]).find((m) => m && String(m._id) === meId);
+  if (me) Object.assign(me, patch);
+}
+
+/**
+ * Anyone the server let read the decision may answer it (sessionDecisions
+ * userMayRead); when it is held by somebody else, the page warns and the
+ * server tells its people who answered for them.
+ */
+export function mayAnswerFromDocument(detail: DecisionDetailItem, meId: string): boolean {
+  return !!meId && !!detail;
+}
+
+/** Answering would act for somebody else: a role holds it, or the viewer is not one of its people. */
+export function answersForOthers(detail: DecisionDetailItem, meId: string): boolean {
+  return detail.decision.holder?.kind === "role" || !detail.asked_users.some((u) => u._id === meId);
+}
+
+/**
+ * A decision answered on the draft: the row flips and, for a decision not
+ * bound to a run, the answer goes into the session as a message. The
+ * answerDecision action and a Ship press on a change card both answer here.
+ */
+/** A decision's document copy becomes its row when the viewer may answer it and holds no queue row (adoptDecision). */
+function adoptDecisionDraft(draft: Draft, decisionId: string): void {
+  const detail = draft.decisionDetails[decisionId];
+  if (draft.sessionDecisions[decisionId] || !detail || !mayAnswerFromDocument(detail, String(draft.currentUser?._id ?? ""))) return;
+  draft.sessionDecisions[decisionId] = { ...detail.decision };
+}
+
+function answerDecisionDraft(draft: Draft, decisionId: string, answer: DecisionAnswerInput): void {
+  const row = draft.sessionDecisions[decisionId];
+  // Pending, or an advisory answer a person is changing (advisoryAnswerOpen):
+  // the agent went ahead on its default, so a new pick is one more message.
+  if (!row || (row.status !== "pending" && ("dismiss" in answer || !advisoryAnswerOpen(row)))) return;
+  dropDraft(draft, decisionDraftKey(decisionId));
+  const now = Date.now();
+  if ("dismiss" in answer) {
+    row.status = "dismissed";
+    row.resolved_at = now;
+    return;
+  }
+  row.status = "answered";
+  row.answer_index = answer.index ?? (Array.isArray(answer.json) ? answer.json[0] : undefined);
+  row.answer_text = answer.text;
+  row.answer_json = answer.json;
+  row.resolved_at = now;
+  // The chosen option enters the session as a normal user message so the
+  // parked agent resumes with it — same rail as typing into the composer,
+  // reusing the standard optimistic-bubble + outbox send pair (the mobile
+  // AUQ answer path does the identical two-step). Deferred to after this
+  // draft commits because both are themselves decorated store functions.
+  // The one-line label is the shared contract the server uses for its own
+  // answers (decisionAnswerLabel), so a multi, rank or form answer reads
+  // the same whichever path delivered it.
+  const answerText = decisionAnswerLabel(row, { answer_index: row.answer_index, answer_text: answer.text, answer_json: answer.json });
+  // Wire format (shared contracts): "Decision: <answer>" plus a tag naming
+  // the decision and its question, so the bubble can render the answer
+  // against its ask and link back to the `cast decide` call.
+  // A silent card (a staffing proposal's pointer, org-staffing.md S4) is
+  // cleared by the answer and delivers nothing: the author is not woken.
+  const content = answerText && !row.silent ? formatDecisionAnswer({ id: decisionId, question: row.question, answer: answerText }) : undefined;
+  const convId = row.conversation_id;
+  // A decision bound to a run (the-line.md L4) is the server's to deliver:
+  // its run consumes the answer as the open gate, or, when the run is past
+  // it, the server sends the same message (settleClientResolution).
+  if (content && !row.workflow_run_id) {
+    queueMicrotask(() => {
+      const s = useInboxStore.getState();
+      const clientId = s.addOptimisticMessage(convId, content);
+      s.sendMessage(convId, content, undefined, clientId);
+    });
+  }
+}
+
+export const useInboxStore = survivingInboxStore ?? createInboxStore();
+
+// An undo that restores the viewed conversation moves the pointer and the
+// inbox tab with it, as every navigation commit does.
+bindUndoStore({
+  restoreView: (draft, field, value) => {
+    if (field !== "currentSessionId") return;
+    const id = typeof value === "string" ? value : null;
+    recordCurrentConversationPointer(draft, id ?? undefined);
+    syncActiveInboxTabPath(draft, id);
+  },
+  bridgeUserId: () => bridgeUserId(useInboxStore.getState()),
+});
+
+if (survivingInboxStore) {
+  (survivingInboxStore.getState() as any)._hotReplaceConfig?.(inboxStoreConfig);
+} else if (hotSwapCapable) {
+  (globalThis as any).__codecastInboxStore = useInboxStore;
+}
+
+function cloneInitialValue<T>(value: T): T {
+  if (value instanceof Set) return new Set(value) as T;
+  if (value instanceof Map) return new Map(value) as T;
+  if (Array.isArray(value)) return value.map(cloneInitialValue) as T;
+  if (value && typeof value === "object") {
+    const copy: Record<string, unknown> = {};
+    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+      copy[key] = cloneInitialValue(child);
+    }
+    return copy as T;
+  }
+  return value;
+}
+
+// Captured before any protected hydration. Functions remain installed in the
+// middleware; every data-bearing slot returns to this account-neutral floor.
+const INITIAL_INBOX_DATA = Object.fromEntries(
+  Object.entries(useInboxStore.getInitialState())
+    .filter(([, value]) => typeof value !== "function")
+    .map(([key, value]) => [key, cloneInitialValue(value)]),
+);
+
+/** A fresh, unaliased copy of the account-neutral data floor. */
+function freshInboxData(): Record<string, any> {
+  return cloneInitialValue(INITIAL_INBOX_DATA);
+}
+
+// Every clear opens a new hydration epoch: a disk read that started for the
+// account before it (boot hydration, a conversation's tail) finds the epoch
+// moved when it resolves and lands nothing.
+let hydrationEpoch = 0;
+
+/** Synchronous gate used before an old principal store is closed or purged. */
+export function clearProtectedInboxMemory(): void {
+  hydrationEpoch++;
+  const state = useInboxStore.getState() as any;
+  state._clearRuntimeBindings?.();
+  const reset = freshInboxData();
+  // These few device layout preferences are explicitly account-neutral and
+  // already mirrored to localStorage; no server or principal data is retained.
+  reset.clientState = { ui: readCriticalUiPrefs() as ClientUI };
+  reset.clientStateInitialized = false;
+  // Monotonic through the reset: a bootstrap floor still in flight for the
+  // old principal fences on the epoch it was cut at and must not apply into
+  // this cleared store, and the next sign-in's floors must never resolve to
+  // the old principal's already-applied entries.
+  reset.syncLogFloorEpoch = (state.syncLogFloorEpoch ?? 0) + 1;
+  useInboxStore.setState(reset);
+  _idbHydrating.clear();
+}
+
+// =====================
+// STORE PROXY
+// =====================
+
+type StoreProxy = InboxStoreState & { use: typeof useInboxStore };
+
+export const store = new Proxy({} as StoreProxy, {
+  get(_, prop) {
+    if (prop === "use") return useInboxStore;
+    const state = useInboxStore.getState();
+    const val = (state as any)[prop];
+    return val;
+  },
+});
+
+// Console access in every build, dev and prod (e.g. drive deep-link
+// navigation via __inboxStore.getState().requestNavigate(id, { scrollToMessageId })
+// — raw setState writes to the view fields are reverted by the middleware's
+// view guard; see viewNav.ts and __navLog()). Prod is where agents verify
+// (`cast app` reads this handle on codecast.sh) and where live incidents get
+// debugged; hiding it protected nothing, since devtools reach the store
+// through React internals anyway. The window check is the only gate: this
+// module is shared with the Expo app.
+if (typeof window !== "undefined") (window as any).__inboxStore = useInboxStore;
+
+// =====================
+// TRACKED STORE HOOK
+// =====================
+// Declare what to watch, access the full state.
+// Re-renders only when a dep's return value changes (Object.is).
+//
+//   const s = useTrackedStore([s => s.messages[id], s => s.sessions[id]]);
+//   s.conversations[id]  // full state access
+//   s.getSession(id)     // getters work too
+//
+export function resolveTrackedStoreSnapshot<S>(
+  state: S,
+  deps: ReadonlyArray<(s: S) => unknown>,
+  prev: { deps: unknown[]; state: S } | null,
+): { deps: unknown[]; state: S } {
+  if (prev && deps.length === prev.deps.length) {
+    for (let i = 0; i < deps.length; i++) {
+      const value = deps[i](state);
+      if (!Object.is(value, prev.deps[i])) {
+        const next = prev.deps.slice();
+        next[i] = value;
+        for (let j = i + 1; j < deps.length; j++) next[j] = deps[j](state);
+        return { deps: next, state };
+      }
+    }
+    return prev;
+  }
+  return { deps: deps.map((dep) => dep(state)), state };
+}
+
+// A render outside the browser (the marketing prerender) reads the initial
+// state instead of throwing for a missing server snapshot.
+const serverSnapshot = () => useInboxStore.getInitialState();
+
+export function useTrackedStore(deps: Array<(s: InboxStoreState) => any>): InboxStoreState {
+  const prevRef = useRef<{ deps: any[]; state: InboxStoreState } | null>(null);
+  let lastReadState: InboxStoreState | undefined;
+  let lastReadSnapshot: InboxStoreState | undefined;
+  return useSyncExternalStore(useInboxStore.subscribe, () => {
+    const state = useInboxStore.getState();
+    if (state === lastReadState && lastReadSnapshot) return lastReadSnapshot;
+    const prev = prevRef.current;
+    const snapshot = resolveTrackedStoreSnapshot(state, deps, prev);
+    lastReadState = state;
+    lastReadSnapshot = snapshot.state;
+    if (snapshot === prev) return prev.state;
+    const next = snapshot.deps;
+    if (process.env.NODE_ENV !== "production" && prev) {
+      // Dev-only wake audit: which dep woke this subscriber, keyed by the dep's
+      // source text. Read from the console as __depChanges().
+      for (let i = 0; i < next.length; i++) {
+        if (!Object.is(next[i], prev.deps[i])) {
+          const k = ((deps[i] as any).label ?? String(deps[i])).slice(0, 120);
+          _depChanges.set(k, (_depChanges.get(k) || 0) + 1);
+        }
+      }
+    }
+    prevRef.current = snapshot;
+    return state;
+  }, serverSnapshot);
+}
+const _depChanges = new Map<string, number>();
+if (process.env.NODE_ENV !== "production" && typeof window !== "undefined") {
+  (window as any).__depChanges = (reset?: boolean) => {
+    const out = [..._depChanges.entries()].sort((a, b) => b[1] - a[1]);
+    if (reset) _depChanges.clear();
+    return out;
+  };
+  // Which sessions' STRUCTURAL signature changed since the last call, and how
+  // (the sig parts that differ). Names the field behind a sessionsWakeSig wake.
+  let _sigSnap: Record<string, string> = {};
+  (window as any).__sessionSigDiff = () => {
+    const sessions = useInboxStore.getState().sessions;
+    const next: Record<string, string> = {};
+    const changed: Array<{ id: string; title?: string; diff: Array<[number, string, string]> }> = [];
+    for (const id in sessions) {
+      const sig = sessionStructuralSig(sessions[id]);
+      next[id] = sig;
+      const prev = _sigSnap[id];
+      if (prev !== undefined && prev !== sig) {
+        const a = prev.split(","), b = sig.split(",");
+        const diff: Array<[number, string, string]> = [];
+        for (let i = 0; i < Math.max(a.length, b.length); i++) if (a[i] !== b[i]) diff.push([i, a[i], b[i]]);
+        changed.push({ id: id.slice(0, 7), title: sessions[id].title?.slice(0, 40), diff });
+      }
+    }
+    _sigSnap = next;
+    return changed;
+  };
+}
+
+// -- Per-conversation IDB hydration (idempotent, no hooks) --
+// Tracks in-flight hydrations (not "ever hydrated") so evicted conversations
+// can be re-hydrated from IDB when the user switches back to them.
+// Resolves true once the conversation holds messages in memory (already there,
+// or restored from IndexedDB), false on a genuine cache miss or storage error.
+// Callers that would otherwise fetch from the network can await this and skip
+// the round-trip on a warm cache — the inbox cold-warm used to fire a
+// listMessages for every row it didn't hold in MEMORY, which on a relaunch was
+// all of them, even though IDB had the tail for nearly every one.
+const _idbHydrating = new Map<string, Promise<boolean>>();
+// Conversations whose messages were already in memory when we went to disk
+// for the navigator list alone. Probed once: ensureHydrated runs on every
+// ConversationView render, and a conversation with no persisted list must not
+// cost an IDB read per render. Eviction drops messages and the list together,
+// so the next full hydration re-reads both regardless of this set.
+const _userMsgsProbed = new Set<string>();
+export function ensureHydrated(convId: string): Promise<boolean> {
+  const store = useInboxStore.getState();
+  const epoch = hydrationEpoch;
+  const hasMessages = store.messages[convId]?.length > 0;
+  // Already in memory — nothing to hydrate
+  if (hasMessages && (store.userMessages[convId] || _userMsgsProbed.has(convId))) return Promise.resolve(true);
+  // In-flight hydration — don't double-load
+  const inflight = _idbHydrating.get(convId);
+  if (inflight) return inflight;
+  if (hasMessages) _userMsgsProbed.add(convId);
+  const p = loadConversationMessages(convId).then((cached) => {
+    _idbHydrating.delete(convId);
+    if (epoch !== hydrationEpoch) return false;
+    const s = useInboxStore.getState();
+    if (cached?.userMessages && !s.userMessages[convId]) s.setUserMessages(convId, cached.userMessages, "cache");
+    if (!cached || cached.messages.length === 0) return hasMessages;
+    if (s.messages[convId]?.length > 0) return true;
+    s.setMessages(convId, cached.messages, cached.pagination, "cache");
+    return true;
+  }).catch(() => {
+    _idbHydrating.delete(convId);
+    // Never reinterpret a storage error as an authoritative empty conversation.
+    return hasMessages;
+  });
+  _idbHydrating.set(convId, p);
+  return p;
+}
+
+// Cache-as-floor hydration merge for id-keyed collections. IndexedDB rows are
+// the base; whatever live data already landed in the store wins per-id. A
+// windowed live payload — listInboxSessions' recent window, tasks.webList's
+// take(300) — must never empty-gate out the full cached collection: that race
+// (live fills the store before the deferred IDB hydration runs) is what made
+// tasks/sessions collapse to the live window on every load and stream back in.
+// Union-merge backfills the omitted rows while keeping live freshness; genuine
+// deletions are reconciled by the reconcile crawl's authoritative onComplete
+// snapshot, not by hydration.
+export function unionHydrate<T extends Record<string, unknown>>(
+  idbVal: T | undefined,
+  liveVal: T | undefined,
+): T {
+  if (!idbVal) return liveVal ?? {} as T;
+  if (!liveVal) return idbVal;
+  if (Object.keys(idbVal).every((key) => Object.prototype.hasOwnProperty.call(liveVal, key))) return liveVal;
+  return { ...(idbVal ?? {}), ...(liveVal ?? {}) } as T;
+}
+
+// How one cached value re-enters the store over whatever live sync already
+// wrote, per the registry's merge strategy. "fill" keys (live-synced
+// singletons) only land while the slot is still null; everything else merges
+// by shape — objects union (cache as floor, live wins per key), arrays fill
+// only an empty slot, scalars replace.
+export function hydrateMergeValue(
+  key: string,
+  val: unknown,
+  cur: unknown,
+): { apply: boolean; value?: unknown } {
+  if (key === "pendingMessages" && val && typeof val === "object") {
+    const merged = { ...(val as Record<string, Message[]>) };
+    for (const [convId, rows] of Object.entries((cur ?? {}) as Record<string, Message[]>)) {
+      const combined = [...(merged[convId] ?? []), ...rows];
+      merged[convId] = [...new Map(combined.map(message => [message._clientId || message._id, message])).values()];
+    }
+    return { apply: true, value: merged };
+  }
+  if (hydrationMergeStrategy(key) === "fill") {
+    return cur == null ? { apply: true, value: val } : { apply: false };
+  }
+  if (Array.isArray(val)) {
+    return (cur as unknown[] | undefined)?.length === 0
+      ? { apply: true, value: val }
+      : { apply: false };
+  }
+  if (typeof val === "object") {
+    const live = cur as Record<string, unknown> | undefined;
+    return {
+      apply: true,
+      value: unionHydrate(cacheFloorUnderSnapshot(key, val as Record<string, unknown>, live), live),
+    };
+  }
+  return { apply: true, value: val };
+}
+
+// Drop persisted feedHasMore=false entries (in place) so they hydrate as
+// "unknown" instead of as a dead latch. False used to stick durably off one
+// bad page — the server could return an empty page mid-history (a window of
+// filtered-out rows), the client persisted false, and the seed effect (which
+// only writes when the key is absent) could never undo it: feed pagination
+// stayed dead on that device forever. A true end-of-history loses nothing:
+// feedCursors[key] === null short-circuits loadMore before any network.
+export function dropLatchedFeedHasMore(feedHasMore: unknown): void {
+  if (!feedHasMore || typeof feedHasMore !== "object") return;
+  const map = feedHasMore as Record<string, unknown>;
+  for (const key of Object.keys(map)) {
+    if (map[key] === false) delete map[key];
+  }
+}
+
+// Decide what feed pagination state to persist after an older-page fetch.
+// A non-null nextCursor is always trusted (the server promises continuation).
+// A null cursor is only trusted as END OF HISTORY when the page carried rows:
+// an unauthenticated/blipped query returns the identical empty+null shape, and
+// persisting that null used to kill pagination on the device for good — the
+// cursor twin of the feedHasMore latch above. `cursor: undefined` = keep the
+// existing resume point.
+export function feedPagePersistence(page: { rowCount: number; nextCursor: string | null }): {
+  cursor: string | null | undefined;
+  hasMore: boolean;
+} {
+  if (page.nextCursor != null) return { cursor: page.nextCursor, hasMore: true };
+  if (page.rowCount > 0) return { cursor: null, hasMore: false };
+  return { cursor: undefined, hasMore: false };
+}
+
+// -- IndexedDB cache: wire patch-driven writes + hydrate on load --
+
+// Boot-seed liveInboxIds from its persisted twin. Guarded: only a non-empty
+// cached array lands, and only while the in-memory set is still empty — if a
+// live payload raced hydration and landed first (size > 0), the fresher server
+// truth wins and the stale snapshot is discarded. Raw setState on purpose: the
+// value came FROM disk, so re-persisting it through the sync() action would be
+// a pointless IDB write during hydration.
+export function seedLiveInboxIdsFromCache(cachedList: unknown) {
+  if (!Array.isArray(cachedList) || cachedList.length === 0) return;
+  if (useInboxStore.getState().liveInboxIds.size > 0) return;
+  const ids = cachedList.filter((id): id is string => typeof id === "string");
+  if (ids.length === 0) return;
+  useInboxStore.setState({ liveInboxIds: new Set(ids), liveInboxIdList: ids });
+}
+
+// Team-mode analogue of seedLiveInboxIdsFromCache. Extra guards: only seeds
+// when the client boots IN team scope with the SAME active team the snapshot
+// was taken for — a snapshot from another team (or a client since switched to
+// "mine") must never gate the board. Runs after clientState hydrates (the
+// scope/team prefs live there), same synchronous pass.
+export function seedTeamInboxIdsFromCache(cachedSnapshot: unknown) {
+  const snap = cachedSnapshot as { team_id?: string | null; ids?: unknown } | null | undefined;
+  if (!snap || !Array.isArray(snap.ids) || snap.ids.length === 0) return;
+  const state = useInboxStore.getState();
+  if (state.teamInboxIds.size > 0) return; // live payload raced hydration — server truth wins
+  const ui = state.clientState.ui;
+  if ((ui?.inbox_scope ?? "mine") !== "team") return;
+  if ((snap.team_id ?? null) !== (ui?.active_team_id ?? null)) return;
+  const ids = snap.ids.filter((id): id is string => typeof id === "string");
+  if (ids.length === 0) return;
+  useInboxStore.setState({
+    teamInboxIds: new Set(ids),
+    teamInboxIdSnapshot: { team_id: snap.team_id ?? null, ids },
+  });
+}
+
+// -- IndexedDB cache: wire patch-driven writes + hydrate on load --
+async function hydrateInboxCacheFromIDB(): Promise<boolean> {
+  if (!PERSISTENCE_AVAILABLE) return false;
+  // A clear during this hydration (an account boundary) moves the epoch; from
+  // then on every step here is a no-op and the store stays as the clear left it.
+  const epoch = hydrationEpoch;
+  const superseded = () => epoch !== hydrationEpoch;
+
+  (useInboxStore.getState() as any)._setIDBWrite(writePatchesToIDB);
+  (useInboxStore.getState() as any)._setOutbox(enqueueDispatch, removeDispatch, loadOutbox);
+  const setStorageDegraded = (next: InboxStoreState["storageDegraded"]) => {
+    if (useInboxStore.getState().storageDegraded === next) return;
+    useInboxStore.setState({ storageDegraded: next });
+  };
+  (useInboxStore.getState() as any)._setStorageHealth?.((healthy: boolean) => {
+    // A write stuck behind a blocked upgrade trips the watchdog too; keep the
+    // actionable cause rather than downgrading it to a generic stall.
+    if (!healthy && useInboxStore.getState().storageDegraded === "blocked") return;
+    setStorageDegraded(healthy ? false : "stalled");
+  });
+  setUpgradeBlockedListener((blocked) => setStorageDegraded(blocked ? "blocked" : false));
+
+  // Salvage any writes parked in the retired local-first v2 databases, then
+  // delete those databases. Runs before the first drain can matter: the drain
+  // re-fires below once salvage lands rows.
+  void salvageLocalFirstV2Data().then((salvaged) => {
+    if (salvaged > 0) (useInboxStore.getState() as any)._drainOutbox?.();
+  });
+
+  setHydrating(true);
+  // Native first paint reads only the live inbox rows (no getAllKeys of the
+  // whole SQLite cache, no conversations twin). That runs before the first
+  // await so bootPersistence() at module eval already has sessions in the
+  // store. The full critical set still loads below, after splash can hide.
+  // Desktop IndexedDB has no sync read; loadPaintCacheSync returns null.
+  const paintCached = loadPaintCacheSync();
+
+    const apply = (source: Record<string, any> | null, pick: string[]) => {
+      if (!source || superseded()) return;
+      const state = useInboxStore.getState();
+      const updates: Record<string, any> = {};
+      for (const key of pick) {
+        const val = source[key];
+        if (val == null) continue;
+        const cur = (state as any)[key];
+        if (key === "clientState" && state.clientStateInitialized) {
+          // Merge tips (set_union)
+          const cachedTips = val?.tips;
+          if (cachedTips) {
+            const cur = state.clientState.tips ?? {} as any;
+            const merged: Record<string, any> = {};
+            let changed = false;
+            for (const k of ["seen", "dismissed", "completed"] as const) {
+              const union = [...new Set([...((cur as any)[k] ?? []), ...(cachedTips[k] ?? [])])];
+              if (union.length > ((cur as any)[k]?.length ?? 0)) { merged[k] = union; changed = true; }
+            }
+            if (changed) state.updateClientTips(merged);
+          }
+          // Merge ui fields that may only exist in IDB (saved_views, etc.)
+          const cachedUI = val?.ui;
+          if (cachedUI) {
+            const curUI = state.clientState.ui ?? {};
+            const uiPatch: Record<string, any> = {};
+            for (const [uk, uv] of Object.entries(cachedUI)) {
+              // Stamps ride along with their base key below, never alone — a
+              // bare stale ":ts" would misdate whatever value is already live.
+              if (uk.endsWith(":ts")) continue;
+              // Fill keys the live bag is missing, and let a NEWER cached stamp
+              // overlay an older live value. `[]` is not null, so a boot that
+              // took an empty server list wholesale would otherwise keep it
+              // and drop a pin still on disk (ct-51761).
+              const liveVal = (curUI as any)[uk];
+              const liveTs = (curUI as any)[`${uk}:ts`];
+              const cachedTs = (cachedUI as any)[`${uk}:ts`];
+              const liveMissing = liveVal == null;
+              const cachedNewer = typeof cachedTs === "number" &&
+                (typeof liveTs !== "number" || cachedTs > liveTs);
+              if (uv != null && (liveMissing || cachedNewer)) {
+                uiPatch[uk] = uv;
+                // Keep the ORIGINAL write time (updateClientUI honors a passed
+                // stamp) so this boot-time restore can't outrank a genuinely
+                // newer write from another device.
+                if (typeof cachedTs === "number") uiPatch[`${uk}:ts`] = cachedTs;
+              }
+            }
+            if (Object.keys(uiPatch).length > 0) state.updateClientUI(uiPatch);
+          }
+          continue;
+        }
+        if (key === "clientState") {
+          // Cold-start path. clientState may have a small localStorage seed
+          // (sidebar_collapsed, zen_mode, etc.) — preserve those and fill in
+          // everything else from IDB. Deep-merge nested objects (ui, dismissed,
+          // layouts, tips) so a single seeded ui key doesn't shadow the rest.
+          const merged: Record<string, any> = { ...val };
+          for (const subKey of Object.keys(cur || {})) {
+            const curSub = (cur as any)[subKey];
+            const cachedSub = (val as any)[subKey];
+            if (
+              curSub && typeof curSub === "object" && !Array.isArray(curSub) &&
+              cachedSub && typeof cachedSub === "object" && !Array.isArray(cachedSub)
+            ) {
+              // Local seed wins per-key; cached fills in the rest.
+              merged[subKey] = { ...cachedSub, ...curSub };
+            } else if (curSub != null) {
+              merged[subKey] = curSub;
+            }
+          }
+          updates[key] = merged;
+          continue;
+        }
+        const merge = hydrateMergeValue(key, val, cur);
+        if (merge.apply) updates[key] = merge.value;
+      }
+      if (updates.pendingMessages) updates.queuedMessages = queuedMessagesFromPending(updates.pendingMessages);
+      if (Object.keys(updates).length > 0) {
+        useInboxStore.setState(updates);
+      }
+    };
+
+    if (paintCached) {
+      apply(paintCached, [...HYDRATION_PAINT_KEYS]);
+      seedLiveInboxIdsFromCache(paintCached.liveInboxIdList);
+      seedTeamInboxIdsFromCache(paintCached.teamInboxIdSnapshot);
+      const paintFocus = (paintCached.lastFocusedConversationId ?? null) as string | null;
+      if (paintFocus && !useInboxStore.getState().lastFocusedConversationId) {
+        useInboxStore.setState({ lastFocusedConversationId: paintFocus });
+      }
+      if (!useInboxStore.getState().clientStateInitialized) {
+        useInboxStore.setState({ clientStateInitialized: true });
+      }
+    }
+
+    const cached = await loadCache(HYDRATION_CRITICAL_READ_KEYS);
+    if (superseded()) return false;
+
+    // Strip stale large fields from cached conversations (git_diff, git_diff_staged, available_skills)
+    if (cached?.conversations && typeof cached.conversations === "object") {
+      for (const conv of Object.values(cached.conversations) as any[]) {
+        if (conv) { delete conv.git_diff; delete conv.git_diff_staged; delete conv.available_skills; }
+      }
+    }
+
+    // Legacy disk rows under unregistered keys (the old monolithic messages /
+    // pagination meta blobs) can't leak in: apply() walks registry-derived key
+    // lists only. Messages load per-conversation from their own IDB table.
+
+    // A persisted optimistic message whose image is still `uploading` was
+    // orphaned by a reload mid-upload: the in-memory upload+send task didn't
+    // survive, and resolvePendingUploads (which clears the flag) never ran. It
+    // can't complete on its own, so surface it as failed instead of a forever
+    // spinner, and drop the now-dead blob preview.
+    if (cached?.pendingMessages && typeof cached.pendingMessages === "object") {
+      for (const msgs of Object.values(cached.pendingMessages) as Message[][]) {
+        if (!Array.isArray(msgs)) continue;
+        for (const m of msgs) {
+          if ((m as any)?.images?.some((img: any) => img?.uploading)) {
+            (m as any)._isFailed = true;
+            (m as any).images = (m as any).images.filter((img: any) => !img?.uploading);
+          }
+        }
+      }
+    }
+
+    // A persisted feedHasMore=false is dropped at hydration (treated as
+    // unknown) — it used to latch durably off one bad page and nothing could
+    // ever undo it (the seed effect only writes when the key is absent), which
+    // killed feed pagination on that device for good. A true end-of-history is
+    // re-confirmed for free: feedCursors[key] === null short-circuits loadMore
+    // before any network.
+    dropLatchedFeedHasMore(cached?.feedHasMore);
+
+    // Critical path: everything needed for first paint (sidebar, current
+    // conversation, tabs, label groups, team feed). Derived from the registry —
+    // a persisted key hydrates here unless it opted into the deferred phase or
+    // "manual" handling, so a new key can never silently skip hydration (the
+    // ct-34920 / buckets-pop-in bug class).
+    apply(cached, HYDRATION_CRITICAL_KEYS);
+
+    // Seed the authoritative active set from its persisted twin (manual
+    // hydration — see clientSyncRegistry). Same synchronous pass as the
+    // sessions apply above, so the first frame that shows cached sessions
+    // already filters them to the last-known server set: no cold-boot flash of
+    // aged-out rows. The live subscription / recovery poll replace it within
+    // ~1s of connecting.
+    seedLiveInboxIdsFromCache(cached?.liveInboxIdList);
+    seedTeamInboxIdsFromCache(cached?.teamInboxIdSnapshot);
+
+    // Restore the selected session before React effects can auto-select the
+    // first session (QueuePageClient's fallback effect). Prefer this client's
+    // OWN last position (lastFocusedConversationId, local-only); the per-user
+    // synced pointer is a fallback for clients with no local history ONLY —
+    // it is writable by every other client (devices, agent-driven tabs), and
+    // restoring from it here is what kept teleporting the desktop into random
+    // sessions after every dev reload (ct-36951; the round-1 fix gated the
+    // server-sync pull but this hydration path was the live door).
+    const st = useInboxStore.getState();
+    // A tab persisted with a path the shell cannot render (older builds
+    // stamped the live URL unchecked) heals to the inbox before first paint.
+    const healedTabs = healTabPaths(st.tabs);
+    if (healedTabs !== st.tabs) useInboxStore.setState({ tabs: healedTabs });
+    const ownId = (cached?.lastFocusedConversationId ?? null) as string | null;
+    if (ownId && !st.lastFocusedConversationId) {
+      useInboxStore.setState({ lastFocusedConversationId: ownId });
+    }
+    if (!st.currentSessionId) {
+      // A fresh open onto the feed home goes to the new-session page
+      // (DashboardLayout opens it) rather than back to the last conversation.
+      // Decided from the address the window opened on: by now the tab shell
+      // may have put the restored tab's conversation in the address bar,
+      // which is not a link the person followed.
+      const freshHome = freshHomeLaunchPending() && !hostedHomeAsked(st.clientState?.ui) && resolveInboxHome(st.clientState?.ui) !== "board";
+      if (!freshHome) settleFreshHomeLaunch();
+      const linked = freshHome ? undefined : bootLinkTarget(st.sessions);
+      const remembered = ownId ?? st.clientState?.current_conversation_id;
+      // A link opens what it names; a remembered position comes back only
+      // when the Assistant scope would list it (restorableIn).
+      const homeAsked = linked === undefined && hostedHomeAsked(st.clientState?.ui);
+      const restoreId = linked !== undefined ? linked
+        : !homeAsked && !freshHome && remembered && restorableIn(assistantScopeOnly(st.clientState?.ui), st.sessions[remembered]) ? remembered : null;
+      if (homeAsked) {
+        useInboxStore.setState({ showMySessions: true });
+      } else if (restoreId && st.sessions[restoreId]) {
+        // The divider anchor (_seenUpToAt) is persisted, so reopening the app to
+        // this session naturally shows what arrived while it was closed — no
+        // special seeding needed here.
+        declareViewNav("boot-restore");
+        useInboxStore.setState({ currentSessionId: restoreId });
+      }
+    }
+
+    // Preload messages for the restored focus target only. The rows on screen
+    // are hydrated by the inbox warm loop (hooks/inboxWarm.ts) in rendered
+    // order, and anything else hydrates on open. Preloading the whole live
+    // inbox set here made a phone with 594 live sessions parse 78 MB of cached
+    // message JSON on the JS thread right after first paint, and load hundreds
+    // of conversations into memory for the eviction cap to fight back out.
+    const focusId = useInboxStore.getState().currentSessionId;
+    if (focusId) await ensureHydrated(focusId);
+    if (superseded()) return false;
+
+    if (!useInboxStore.getState().clientStateInitialized) {
+      useInboxStore.setState({ clientStateInitialized: true });
+    }
+
+    // Deferred: list views + secondary data hydrate just after first paint.
+    // setTimeout, NOT requestAnimationFrame: rAF is paused in background tabs, so
+    // with the gate release below tied to it, a backgrounded tab would never
+    // finish hydrating and never re-enable IDB writes (stuck `_hydrating`). With
+    // the user running many session tabs, most are backgrounded — they must still
+    // hydrate and persist. setTimeout fires (throttled) even when hidden.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    if (superseded()) return false;
+    const deferred = await loadCache(HYDRATION_DEFERRED_KEYS, {
+      pending: cached?.pending,
+    });
+    if (superseded()) return false;
+    apply(deferred, HYDRATION_DEFERRED_KEYS);
+      // Re-enable IDB write-through only AFTER the deferred collections land.
+      // If a live delta arrives while write-through is open but the store still
+      // holds just the windowed payload (tasks' 300, sessions' ~30d), then
+      // diffCollection would diff that window against the full on-disk shadow and
+      // bulkDelete every cached row outside it — pruning the shared IndexedDB
+      // before unionHydrate merges it back (the cross-tab "disappear then stream
+      // back" race jx799py found). Post-hydration the store holds the full union,
+      // so delta overlays never drop rows; write-through then deletes only on a
+      // real removal (dismiss/kill) or the crawl's authoritative snapshot.
+    setHydrating(false);
+    // A snapshot that landed BEFORE hydration left its omitted rows on disk:
+    // the floor kept them out of memory, so no later prune will ever name them
+    // and no commit is pending for that collection. Spend those drops now —
+    // otherwise they wait for the collection's next change, and a follower
+    // window booting in between hydrates them with no feeder to correct it.
+    // Only a window that ran the feeder holds drops, so a follower never writes.
+    const stale = keysWithSnapshotDrops();
+    if (stale.length) {
+      writePatchesToIDB(
+        stale.map((key) => ({ op: "replace", path: [key], value: undefined }) as any),
+        useInboxStore.getState(),
+      );
+    }
+    return true;
+}
+
+// Persistence boots with the module: wire write-through and hydrate
+// immediately. Nothing gates on auth — cached state renders first and live
+// sync reconciles after (local-first is the law).
+function bootPersistence(): void {
+  if (PERSISTENCE_AVAILABLE) {
+    void hydrateInboxCacheFromIDB().catch((error) => {
+      console.error("[store] IDB hydration failed; continuing with live-only state", error);
+      setHydrating(false);
+      useInboxStore.setState({ clientStateInitialized: true });
+    });
+  } else {
+    useInboxStore.setState({ clientStateInitialized: true });
+  }
+}
+
+/**
+ * Persistence for the account this window now acts for, after a clear
+ * unbound it: write-through and the outbox rebound, then hydration, which
+ * serves the disk cache only to the account that owns it (idbCache).
+ */
+export function rebootPersistence(): void {
+  bootPersistence();
+}
+
+// Once per store, not once per module evaluation: after a dev hot swap the
+// surviving store is already hydrated and still holds its IDB write-through and
+// outbox bindings, so running this again would re-open the database and re-seed
+// state that is live.
+if (!survivingInboxStore) bootPersistence();
+
+// A server-deleted session that was open when the prune ran is dropped as soon
+// as the view moves off it (dropSessionInDraft deferred it).
+if (!survivingInboxStore) useInboxStore.subscribe((state, prev) => {
+  if (state.currentSessionId === prev.currentSessionId || deferredDeletedSessions.size === 0) return;
+  const ids = [...deferredDeletedSessions].filter((id) => id !== state.currentSessionId);
+  if (ids.length) state.pruneGhostSessions(ids, { serverDeleted: true });
+});
+
+// -- Simulation seams (docs/architecture/multiplayer-sim-harness.md, section 3.3) --
+// The multiplayer sim runs several windows in one process, each with its own
+// store instance, and swaps this module's per-window bindings around every
+// turn (sim/windowSlots.ts copies them). Nothing in production calls these.
+export const __createInboxStoreForTests = createInboxStore;
+const windowBindings = () => ({
+  _heldOverlayFacts, recentlyRequestedPendingMessages, resolvedSessionPreparations, recentThawTimer, _userMsgsProbed, _idbHydrating, hydrationEpoch, _lastParityCheckAt, deferredDeletedSessions,
+  _membershipKey, _membershipVal, _visibleMemo, _pendingSendSigRef, _pendingSendSig, _placementDeadlineMemo, _placedMemo, retiredAckTs,
+});
+/** The live per-window bindings (collections by reference), and set() for the ones a window swaps by value. */
+export const __inboxStoreWindowBindings = {
+  get: windowBindings,
+  set(s: ReturnType<typeof windowBindings>): void {
+    ({ _heldOverlayFacts, recentThawTimer, hydrationEpoch, _lastParityCheckAt, _membershipKey, _membershipVal, _pendingSendSigRef, _pendingSendSig, _placementDeadlineMemo } = s);
+  },
+};

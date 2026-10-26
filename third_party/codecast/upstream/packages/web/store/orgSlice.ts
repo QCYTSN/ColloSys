@@ -1,0 +1,1549 @@
+// The org tree slice: the `orgTree` singleton (fed by hooks/useSyncOrgTree from
+// org.tree) and the reshaping actions (docs/architecture/org-roles.md S6).
+// Every action patches the snapshot optimistically so the graph moves in the
+// same tick as the gesture, and rides `dispatch` to the matching orgRoles
+// mutation (convex/dispatch.ts SIDE_EFFECTS, keyed by the action name). The
+// snapshot is a meta singleton, not a dispatch table, so the middleware sends
+// no generic patches for it and keeps no pending entry for it either.
+//
+// Pending protection therefore lives here. org.tree recomputes on any
+// conversation write in the workspace, so a push that started before the
+// mutation landed carries the OLD shape and would revert the gesture for one
+// round trip. Each action records its edit as an INTENT (`orgIntents`), and
+// the singleton's merge (ORG_SYNC_REGISTRY) replays every open intent onto
+// each incoming tree. An intent is dropped the moment an incoming tree already
+// agrees with it: the server's own recompute is the acknowledgement. The same
+// apply function serves the draft and the merge, so there is one definition
+// of what each edit does to a tree.
+import { create, current, isDraft } from "mutative";
+import { action, asyncAction, sync } from "./mutativeMiddleware";
+import {
+  countStates,
+  sameParent,
+  sortOrgSessions,
+  ORG_TOP_N,
+  type OrgParentRef,
+  type OrgPerson,
+  type OrgRole,
+  type OrgScope,
+  type OrgSession,
+  type OrgTree,
+} from "../components/org/orgTypes";
+import { applyPersonMove, orgRoleReparentMakesCycle, personMoveApplies, personMoveSatisfied, type MovePersonIntent } from "./orgTreeMoves";
+export { orgPersonReparentMakesCycle, orgRoleReparentMakesCycle } from "./orgTreeMoves";
+import { HEAD_OF_PEOPLE_HANDLE, isHeadOfPeopleRole, type OrgChangeStatus, type OrgHealth, type OrgProposalChange, type OrgProposalListRow } from "../components/org/orgStaffingTypes";
+import { andList, changeSentence, describeOrgChange, isOrgChangeDecidable, proposalReplyText, ORG_VERDICT_REVISED, type OrgChangeReply, type OrgProposalReply, type OrgReplyVerdict, type OrgTenureSpec, type OrgVerdictSeen } from "@codecast/shared/contracts/orgProposal";
+import { hasThreadState, clearedThreadStateFields, type ThreadStateFields } from "@codecast/shared/contracts";
+import { isConvexId } from "../lib/entityLinks";
+import { leadScopeChange, type LeadScopeChange } from "@codecast/shared/contracts/orgLead";
+import type { OrgLogEntry, OrgLogRow } from "@codecast/shared/contracts/orgChange";
+
+/** An optimistic edit awaiting the server's echo (see the header). The tree
+ *  kinds reshape the tree (a move, a follow, a role's fields, a retire). The
+ *  staffing kinds (org-staffing.md S5, S6) flip a proposal change's row or
+ *  put a stub role on the tree. Every kind carries what it takes to put the
+ *  draft back when the dispatch is refused or no echo ever comes. */
+export type OrgIntent =
+  | { kind: "moveSession"; id: string; conversation_id: string; target: OrgParentRef; at: number }
+  | { kind: "moveRole"; id: string; role_id: string; reports_to: OrgParentRef; at: number }
+  | MovePersonIntent
+  | { kind: "follow"; id: string; role_short_id: string; channel_id: string; follow: boolean; at: number }
+  /** A role's fields (pause and resume, caps, trust, name, charter, scope):
+   *  `from` holds the prior value of every touched field, so a refusal
+   *  restores them at once instead of waiting for a push. */
+  | { kind: "roleFields"; id: string; role_id: string; fields: OrgUpdateRoleInput; from: OrgUpdateRoleInput; at: number }
+  | { kind: "retireRole"; id: string; role_id: string; handle: string; at: number }
+  /** The role's line (the-line.md L2): the workflow slug its scope runs on.
+   *  `from` is the slug the tree row held before, for a refusal to restore. */
+  | { kind: "line"; id: string; role_id: string; slug: string; from?: string; at: number }
+  | { kind: "decideChange"; id: string; change_id: string; proposal_id: string; from: OrgChangeStatus; to: OrgChangeStatus; line: string; /** The answer the reply stamps on the row beside the verdict (a rejection, an approval with words), and what the row held before, for a refusal to put back. */ reply?: OrgChangeReply; reply_from?: OrgChangeReply; at: number }
+  /** A person's words on a change with no verdict (S39): the row keeps its
+   *  status and gains the `reply` stamp. The server's own stamp (another
+   *  `at`, or a `by`) is the echo. */
+  | { kind: "noteChange"; id: string; change_id: string; proposal_id: string; reply: OrgChangeReply; from?: OrgChangeReply; line: string; at: number }
+  /** A person's words on the whole proposal (S39, a note naming no change):
+   *  the list row gains the `reply` stamp. Same echo as noteChange. */
+  | { kind: "noteProposal"; id: string; proposal_id: string; short_id: string; reply: OrgChangeReply; from?: OrgChangeReply; at: number }
+  /** Withdraw a proposal from the pane (S4 supersession): the list row flips
+   *  to withdrawn; the server's resolved_at stamp is the echo. */
+  | { kind: "withdraw"; id: string; proposal_id: string; short_id: string; at: number }
+  /** A hand-written role (the hire form): the stub the tree shows until the
+   *  server's own row arrives. Without this the stub vanishes on the next
+   *  org.tree push — which any conversation write in the workspace triggers —
+   *  and a refusal would be silent. */
+  | { kind: "createRole"; id: string; stub: OrgCreateRoleInput; at: number }
+  | { kind: "staff"; id: string; stub: OrgStaffInput; at: number }
+  /** Take an entry of the record back, or apply it again (org-staffing.md
+   *  S21): the entry, and every later entry the person agreed goes with it,
+   *  is marked at once. The server's own `undone_by` stamp (or its absence,
+   *  for a redo) is the echo. `line` is the entry's sentence, for the notice. */
+  | { kind: "undoChange"; id: string; batch: string; with: string[]; redo: boolean; by: { user_id: string; name: string }; /** What each entry's `undone_by` was before, for a refusal to restore. */ from: Record<string, OrgLogEntry["undone_by"] | null>; line: string; at: number };
+
+/** What a revert tells the person: `at` keys the toast so it fires once. */
+export type OrgIntentNotice = { text: string; at: number };
+
+/** What orgRoles.reparentSession / reparent echo back (org-staffing.md S11):
+ *  who the subject now reports to, and how many agents were told. The web
+ *  reads this to toast both things at once. */
+export type ReparentResult = {
+  short_id?: string;
+  reports_to?: { kind: "user" | "role"; name: string } | null;
+  /** `deferred` counts a session too stale to wake for one sentence: the line
+   *  is parked and it reads it when it next runs. Never "was told". */
+  told?: { sessions: number; roles: number; deferred?: number };
+};
+
+/**
+ * The one toast a reparent shows (S11). It must say only what actually
+ * happened, because the three deliveries differ:
+ *
+ * - A SESSION move enqueues a real message into that session (tellSession), so
+ *   "the session was told" is literally true: it arrives in its transcript.
+ * - A session too stale to wake for one sentence is DEFERRED instead: the line
+ *   is parked and it reads it on its next turn. Saying "was told" there would
+ *   have someone open a transcript that has not received anything yet, so it
+ *   says when it will arrive instead.
+ * - A ROLE move wakes the role once and files one PASSIVE fact per live hand
+ *   into the ROLE's own next frame (tellRoleMoved enqueues against role._id,
+ *   not against the hand). Nothing reaches a hand's transcript, so calling them
+ *   "told" would send a founder hunting for a line that was never written.
+ *   They are noted in the role's frame, and that is what this says.
+ */
+export function reparentToastLine(subject: string, parentName: string, kind: "session" | "role", told?: { sessions: number; roles: number; deferred?: number }): string {
+  const head = `${subject} now reports to ${parentName}`;
+  if (kind === "session") {
+    if (told?.sessions) return `${head}; the session was told.`;
+    if (told?.deferred) return `${head}; it will be told when it next runs.`;
+    return `${head}.`;
+  }
+  const hands = told?.sessions ?? 0;
+  const noted = hands ? `${hands} hand${hands === 1 ? "" : "s"} noted in its frame` : "";
+  if (told?.roles) return noted ? `${head}; the role was told, ${noted}.` : `${head}; the role was told.`;
+  return noted ? `${head}; ${noted}.` : `${head}.`;
+}
+
+/** An intent older than this is abandoned: the dispatch failed or was
+ *  rejected and no echo will ever agree with it. */
+export const ORG_INTENT_TTL_MS = 60_000;
+
+export type OrgSliceData = {
+  orgTree: OrgTree | null;
+  /** The last tree the SERVER sent, before any intent was replayed onto it.
+   *  A refused mutation writes nothing, so no org.tree push follows it to undo
+   *  the optimistic edit; this is what a refusal rebuilds from, which is what
+   *  makes "it is back where it was" true rather than a claim. Local only:
+   *  unregistered, so it neither persists nor replicates, and the first push
+   *  refills it. */
+  orgTreeServer: OrgTree | null;
+  /** The workspace key ("team:<id>" | "user:<id>") whose org this window's
+   *  tree holds while a surface reads a workspace of its own (/line, through
+   *  setOrgScope); null: the app's active workspace. The org feeders follow it
+   *  and the tree refuses a push for any other workspace (orgTreeFor), so a
+   *  replicated or stale push cannot swap the org under the page. Local only:
+   *  unregistered, so it neither persists nor replicates. */
+  orgScope: string | null;
+  /** Open optimistic edits, replayed onto every incoming org.tree push. */
+  orgIntents: OrgIntent[];
+  /** The company's flow signals and flags (org-staffing.md S3), fed by
+   *  hooks/useSyncOrgHealth from org.health. */
+  orgHealth: OrgHealth | null;
+  /** Staffing proposals (S4): list rows and the changes of opened proposals,
+   *  fed by hooks/useSyncOrgProposals; joined by joinProposals at render. */
+  orgProposals: Record<string, OrgProposalListRow>;
+  orgProposalChanges: Record<string, OrgProposalChange>;
+  /** The org record (S21): one entry per gesture, and the rows of the entries
+   *  a person has unfolded, fed by hooks/useSyncOrgLog. */
+  orgLog: Record<string, OrgLogEntry>;
+  orgLogRows: Record<string, OrgLogRow>;
+  /** The change the chart is focused on: a ghost click or a change row click
+   *  sets it, the pane and the ghosts read it. Ephemeral, never replicated. */
+  orgFocusChangeId: string | null;
+  /** The last intent the journal put back on its own (TTL, no echo came):
+   *  the org page toasts it, because a ghost that quietly reappears reads as
+   *  a bug. A refusal toasts straight from the dispatch hook instead. */
+  orgIntentNotice: OrgIntentNotice | null;
+};
+
+/** "Hire a Head of People" (org-staffing.md S6): the one role with the
+ *  reserved handle, scoped to the whole company, reporting to the hirer. */
+export type OrgStaffInput = {
+  team_id?: string;
+  host_user_id: string;
+  /** The project the provisioned standing session starts in; the same
+   *  resolution every session the web starts uses. Absent when adopting. */
+  project_path?: string;
+  /** Stub id: the row is re-keyed when org.tree echoes the real one. */
+  client_id: string;
+  adopt_conversation_id?: string;
+  /** S16: seat the workspace's existing standing agent (default) or start a
+   *  fresh session and retire the old one. */
+  seat?: "existing" | "fresh";
+};
+
+export type OrgHireAssistantInput = {
+  reach: { reach: "global" } | { reach: "team"; team_id: string };
+  /** A team reach kept in the person's own boundary: their own assistant for that team. */
+  personal?: boolean;
+  given_name?: string;
+  handle?: string;
+  avatar?: string;
+  project_path?: string;
+  adopt_conversation_id?: string;
+};
+
+export type HireAssistantResult = {
+  role: { _id: string; short_id: string; handle: string; name: string; given_name: string };
+  standing: { conversation_id: string; short_id?: string } | null;
+  created: boolean;
+  already_existed: boolean;
+};
+
+/** What orgRoles.staff echoes back (S16): where the Head of People's thread is and what
+ *  happened to the workspace's old standing agent, so the web can route there
+ *  and say what changed. */
+export type StaffResult = {
+  role?: { _id: string; short_id: string; handle: string; name: string };
+  standing?: { conversation_id: string; short_id?: string } | null;
+  seated?: "existing" | "fresh";
+  conversation_short_id?: string | null;
+  previous_title?: string | null;
+  already_existed?: boolean;
+};
+
+/** The target of a session reparent (org-staffing.md S11). A person carries the
+ *  owner-set arithmetic the menu wants (`add` re-homes under the added person,
+ *  `set` under the LAST listed (callers put the named person last), `remove`
+ *  leaves the line to whoever remains);
+ *  the bare `{ kind: "user", user_id }` the chart drops on a person reads as an
+ *  `add`: that person also owns it and takes the reporting line, and whoever
+ *  else owned it keeps it. A role files the session under the role. This is
+ *  the shape orgRoles.reparentSession takes. */
+export type OrgReparentSessionTarget =
+  | { kind: "user"; user_id?: string; owners?: string[]; mode?: "set" | "add" | "remove" }
+  | { kind: "role"; role_id: string };
+
+export type OrgCreateRoleInput = {
+  name: string;
+  handle: string;
+  team_id?: string;
+  scope?: OrgScope;
+  reports_to?: OrgParentRef;
+  charter?: string;
+  /** Standing or program (S10); absent = standing. */
+  tenure?: OrgTenureSpec;
+  /** The chosen face (S13); absent = the default for the handle. */
+  avatar?: string;
+  /** The hire form (org-init.md O3): provision the standing session in the
+   *  same gesture, in this cwd, and start with these caps. */
+  provision?: boolean;
+  project_path?: string;
+  /** "Make this a role" (R2): this session becomes the role's standing
+   *  session, so no new session starts and `project_path` is not read. */
+  adopt_conversation_id?: string;
+  caps?: OrgRole["caps"];
+  /** The person's one edit on a hire with projects or plans (R1): the role
+   *  starts and the sessions in its scope stay with their owner. */
+  leave_sessions?: boolean;
+  /** The caller, for the optimistic row (host and default reports_to). */
+  host_user_id: string;
+  /** Stub id: the row is re-keyed when org.tree echoes the real one. */
+  client_id: string;
+};
+
+export type OrgUpdateRoleInput = {
+  name?: string;
+  handle?: string;
+  scope?: OrgScope;
+  charter?: string;
+  status?: OrgRole["status"];
+  // Standing agent settings (org-roles-standing.md T4); dispatch routes them
+  // to orgRoles.setTrust / setCaps.
+  trust?: OrgRole["trust"];
+  caps?: OrgRole["caps"];
+  // Standing or program (S10) and the face (S13); dispatch routes them to
+  // orgRoles.update. Editable from the role's settings after creation.
+  tenure?: OrgTenureSpec;
+  avatar?: string;
+  // People who report to the role (org-roles-run-work.md R6); dispatch diffs
+  // the list against the tree and routes it to orgRoles.setReports.
+  reports_user_ids?: string[];
+  // Leeway to hire; dispatch routes it to orgRoles.setHiresFreely.
+  hires_freely?: boolean;
+};
+
+export type OrgSliceActions = {
+  /** Move a session under a person (ownership) or a role (org_role_id) — the one
+   *  path for the chart drag AND the ownership menu (org-staffing.md S11). The
+   *  target carries the menu's owner-set arithmetic ({ owners, mode }); the
+   *  note rides the reparent into the line the session is told. `opts.row` is
+   *  the session when the caller holds it outside the tree's top N (a page
+   *  loaded through org.sessionsUnder); the slice cannot find it otherwise.
+   *  Resolves to the reparent result (told counts + the new parent) so the
+   *  caller can toast both things once the server echoes. */
+  reparentOrgSession: (conversationId: string, target: OrgReparentSessionTarget, opts?: { row?: OrgSession | null; note?: string; from_session?: string }) => Promise<ReparentResult | undefined>;
+  /** Change a role's reports_to. Resolves to the reparent result (told counts). */
+  reparentOrgRole: (roleId: string, reportsTo: OrgParentRef, note?: string) => Promise<ReparentResult | undefined>;
+  /** Change who a team member reports to (null: nobody). Dispatch runs orgPeople.reparentPerson. */
+  reparentOrgPerson: (teamId: string, userId: string, reportsTo: string | null) => void;
+  createOrgRole: (input: OrgCreateRoleInput) => void;
+  /** `opts.leave_sessions`: with a scope that gains refs, the sessions in it
+   *  stay with their owner (R1). The dispatch's; it paints nothing. */
+  updateOrgRole: (roleId: string, fields: OrgUpdateRoleInput, opts?: { leave_sessions?: boolean }) => void;
+  /** Set the workflow a scope's tasks run on (the-line.md L2). Human only;
+   *  dispatch runs orgRoles.setLine, which logs it and wakes the role. */
+  setRoleLine: (roleId: string, slug: string) => void;
+  /** Retire a role: its sessions fall back to their owners. `standingSession`
+   *  (S16) says what becomes of its standing agent: keep running it as a plain
+   *  agent, or retire it with the seat. Absent lets the server choose — keep
+   *  for the head of people, retire for any other seat. */
+  retireOrgRole: (roleId: string, standingSession?: "keep" | "retire") => void;
+  /** Add or drop a chat channel from a role's follow list (agent-channels
+   *  C1). Keyed by the role's short id, which is what orgChannels resolves. */
+  followOrgChannel: (roleShortId: string, channelId: string, follow: boolean) => void;
+  /** Drop an intent the dispatch rail rejected, so the tree stops replaying it. */
+  dropOrgIntent: (intentId: string) => void;
+  /** Drop an intent AND put its draft effect back: a refused verdict flips
+   *  the change row to what it was, a refused hire takes the stub off the
+   *  tree. The tree kinds need no revert (the next push is authoritative). */
+  revertOrgIntent: (intentId: string) => void;
+  /** Hire the head of people (org-staffing.md S6): an optimistic role stub
+   *  under the hirer; dispatch runs orgRoles.staff, which provisions the
+   *  standing session, arms the review routine and runs the first review. */
+  staffHeadOfPeople: (input: OrgStaffInput) => Promise<StaffResult | undefined>;
+  /** Hire an Executive Assistant (org-staffing.md S30): the person's right hand,
+   *  global by default. The seat row lands through the anchors feed; the
+   *  result carries the role so the caller can say who came online. */
+  hireExecutiveAssistant: (input: OrgHireAssistantInput) => Promise<HireAssistantResult | undefined>;
+  /** A person's answers to a proposal's cards, sent together (S39): each
+   *  item approves, rejects or writes on the changes of one card (`seqs`
+   *  empty = the whole proposal). Approvals and rejections flip their rows on
+   *  the draft like an ask's verdict and carry the `reply` stamp; a note
+   *  stamps `reply` and nothing else (on the list row when it names no
+   *  change). One dispatch runs orgProposals.reply,
+   *  which applies the approvals in order, skips the rejections, stores the
+   *  words, and with `say` sends the reply text into the proposal's thread
+   *  (the optimistic bubble is added here, keyed by `say.client_id`). A
+   *  refusal reverts every row of the reply (dropRejectedOrgIntent). */
+  replyOnOrgProposal: (proposalId: string, items: OrgReplyInput[], seen: OrgVerdictSeen, opts?: OrgReplyOpts) => void;
+  /** Withdraw an open proposal (the replaced one, S4): optimistic on the
+   *  list row; dispatch runs orgProposals.withdraw, whose author or admin
+   *  gate is what allows a person to take it down. */
+  withdrawOrgProposal: (proposalId: string) => void;
+  /** Take an entry of the record back (S21). The entry and the later entries
+   *  in `opts.with` (the ones the preview said must go with it) are struck on
+   *  the draft at once; dispatch runs orgChanges.undo, which applies the
+   *  inverse as a new batch. `opts.line` is the sentence the page showed. */
+  undoOrgChange: (batch: string, opts?: { with?: string[]; line?: string }) => void;
+  /** Apply an undone entry again: the strike comes off at once; dispatch runs
+   *  orgChanges.redo. */
+  redoOrgChange: (batch: string, opts?: { with?: string[]; line?: string }) => void;
+  setOrgFocusChangeId: (changeId: string | null) => void;
+} & OrgServerVerbs<Promise<any>>;
+
+/** Org gestures whose result the server shapes (new roles, a closed handoff,
+ *  a wiped chart): each resolves to the mutation's result so the caller can
+ *  word its toast, and paints nothing until the tree echoes. Each still goes
+ *  through the store, so it is classified and the org record lists it. */
+type OrgServerVerbs<R> = {
+  /** Split a role into two leads (S34): orgSplit.split. */
+  splitOrgRole: (args: { role_id: string; halves: { name: string; handle: string; refs: string[] }[]; standing_session: "keep" | "retire" }) => R;
+  /** Run or close a role's handoff (S32): orgHandoff.settle. */
+  settleOrgHandoff: (roleId: string, how: "run" | "close") => R;
+  /** The line's merge step (L12): orgLineMerge.setLineMerge. */
+  setOrgLineMerge: (roleId: string, on: boolean, perDay?: number) => R;
+  /** Reset the org (S27): orgRoles.reset. */
+  resetOrg: (teamId?: string) => R;
+  /** Bring an unseated role's agent online: orgRoles.provision. */
+  provisionOrgRole: (roleId: string) => R;
+  /** A template role's setup item (H3): orgTemplates.setup. */
+  markOrgTemplateSetup: (instanceKey: string, id: string, status: "done" | "open" | "skipped") => R;
+  /** A template role's routine (H3): orgTemplates.activateRoutine. */
+  activateOrgTemplateRoutine: (taskId: string) => R;
+  /** The host step (H3): orgTemplates.requestBind, with secrets already sealed. */
+  requestOrgTemplateBind: (instanceKey: string, secrets: { key: string; payload: { provider: string; epk: string; iv: string; ct: string } }[], deviceId?: string) => R;
+  /** Whether Codecast may learn from the workspace's template roles (H12): orgTemplateLearning.setLearning. */
+  setOrgTemplateLearning: (teamId: string | undefined, enabled: boolean) => R;
+};
+
+/** One answer as the store takes it: the verdict, the card's members (what
+ *  the draft flips) and its drawn seqs (what the server and the words name). */
+export type OrgReplyInput = { verdict: OrgReplyVerdict; change_ids: string[]; seqs: number[]; text?: string };
+export type OrgReplyOpts = {
+  leave_sessions?: boolean;
+  /** A surface with no composer: the server sends the reply text (and
+   *  `body`, when given) into the proposal's thread as one message. */
+  say?: { thread: string; body?: string; client_id: string };
+};
+
+export type OrgSliceState = OrgSliceData & OrgSliceActions;
+
+// The middleware wraps an asyncAction so its CALLER receives the server result
+// as a promise; the function BODY returns nothing. The slice is written against
+// the body's signature, the store interface against the caller's.
+type OrgSliceImpl = OrgSliceData &
+  Omit<OrgSliceActions, "reparentOrgSession" | "reparentOrgRole" | "staffHeadOfPeople" | "hireExecutiveAssistant" | keyof OrgServerVerbs<unknown>> & OrgServerVerbs<void> & {
+    hireExecutiveAssistant: (input: OrgHireAssistantInput) => void;
+    reparentOrgSession: (conversationId: string, target: OrgReparentSessionTarget, opts?: { row?: OrgSession | null; note?: string; from_session?: string }) => void;
+    reparentOrgRole: (roleId: string, reportsTo: OrgParentRef, note?: string) => void;
+    staffHeadOfPeople: (input: OrgStaffInput) => void;
+  };
+
+type OrgDraft = OrgSliceData;
+
+/** Every holder of a `sessions` list in the tree, keyed by parent ref. */
+function parentBucket(tree: OrgTree, ref: OrgParentRef): OrgPerson | OrgRole | undefined {
+  return ref.kind === "user"
+    ? tree.people.find((p) => p.user_id === ref.user_id)
+    : tree.roles.find((r) => r._id === ref.role_id);
+}
+
+function refill(bucket: OrgPerson | OrgRole) {
+  bucket.sessions = sortOrgSessions(bucket.sessions).slice(0, ORG_TOP_N);
+}
+
+/** Find the session in whichever bucket holds it and pull it out. */
+function detachSession(tree: OrgTree, conversationId: string): { session: OrgSession; from: OrgPerson | OrgRole } | null {
+  const buckets: (OrgPerson | OrgRole)[] = [...tree.people, ...tree.roles];
+  for (const b of buckets) {
+    const i = b.sessions.findIndex((s) => s._id === conversationId);
+    if (i < 0) continue;
+    const [session] = b.sessions.splice(i, 1);
+    b.total = Math.max(0, b.total - 1);
+    b.counts[session.state] = Math.max(0, (b.counts[session.state] ?? 0) - 1);
+    return { session, from: b };
+  }
+  return null;
+}
+
+function attachSession(bucket: OrgPerson | OrgRole, session: OrgSession) {
+  bucket.sessions.push(session);
+  bucket.total += 1;
+  bucket.counts[session.state] = (bucket.counts[session.state] ?? 0) + 1;
+  refill(bucket);
+}
+
+/** The single parent the optimistic tree move files under, from the reparent
+ *  target (org-staffing.md S11): a role, or the person the owner arithmetic
+ *  makes the reporting line (`add`/`set` = the added or first person; `remove`
+ *  leaves the line to whoever remains, which the snapshot cannot compute, so
+ *  the tree waits for the echo). Null = do not move the tree optimistically. */
+export function reparentTreeParent(target: OrgReparentSessionTarget): OrgParentRef | null {
+  if (target.kind === "role") return { kind: "role", role_id: target.role_id };
+  if ((target.mode ?? "set") === "remove") return null;
+  const id = target.user_id ?? target.owners?.[target.owners.length - 1];
+  return id ? { kind: "user", user_id: id } : null;
+}
+
+/** Where the tree files a session, or null when it is beyond every top N. */
+export function orgSessionParent(tree: OrgTree, conversationId: string): OrgParentRef | null {
+  for (const p of tree.people) if (p.sessions.some((s) => s._id === conversationId)) return { kind: "user", user_id: p.user_id };
+  for (const r of tree.roles) if (r.sessions.some((s) => s._id === conversationId)) return { kind: "role", role_id: r._id };
+  return null;
+}
+
+// ---------------------------------------------------------------- intents
+
+/** The live head of people on a tree, if any: the reserved handle, not retired. */
+function liveHead(tree: OrgTree): OrgRole | undefined {
+  return tree.roles.find((r) => isHeadOfPeopleRole(r) && r.status !== "retired");
+}
+
+/** The optimistic row a hand-written hire shows until the server's own arrives.
+ *  One factory for the action and the replay, like headStub (the root, whose
+ *  switch stays off). */
+function roleStub(tree: OrgTree, input: OrgCreateRoleInput, now: number): OrgRole {
+  const team = tree.workspace.kind === "team";
+  return {
+    _id: input.client_id,
+    short_id: "or-…",
+    scope_type: team ? "team" : "user",
+    ...(team ? { team_id: tree.workspace.id } : { scope_user_id: input.host_user_id }),
+    host_user_id: input.host_user_id,
+    name: input.name,
+    handle: input.handle,
+    scope: input.scope ?? { project_ids: [], plan_ids: [] },
+    reports_to: input.reports_to ?? { kind: "user", user_id: input.host_user_id },
+    status: "active",
+    ...(input.charter ? { charter: input.charter } : {}),
+    ...(input.caps ? { caps: { ...input.caps } } : {}),
+    ...(input.tenure ? { tenure: input.tenure } : {}),
+    ...(input.avatar ? { avatar: input.avatar } : {}),
+    // A hired role starts work on its own (org-staffing.md S23.1).
+    trust: "direct",
+    created_by: input.host_user_id,
+    created_at: now,
+    updated_at: now,
+    counts: countStates([]),
+    sessions: [],
+    total: 0,
+    scope_names: { projects: [], plans: [] },
+  };
+}
+
+function headStub(tree: OrgTree, input: OrgStaffInput, now: number): OrgRole {
+  const team = tree.workspace.kind === "team";
+  return {
+    _id: input.client_id,
+    short_id: "or-…",
+    scope_type: team ? "team" : "user",
+    ...(team ? { team_id: tree.workspace.id } : { scope_user_id: input.host_user_id }),
+    host_user_id: input.host_user_id,
+    name: "Head of People",
+    handle: HEAD_OF_PEOPLE_HANDLE,
+    scope: { project_ids: [], plan_ids: [] },
+    reports_to: { kind: "user", user_id: input.host_user_id },
+    status: "active",
+    trust: "understand",
+    created_by: input.host_user_id,
+    created_at: now,
+    updated_at: now,
+    counts: countStates([]),
+    sessions: [],
+    total: 0,
+    scope_names: { projects: [], plans: [] },
+  };
+}
+
+/**
+ * Does the server's data already show this edit? Then it has echoed it. The
+ * tree kinds read `tree`; a verdict reads its change row (`changes`): the
+ * server stamps `decided_by` on every accept and skip, which the optimistic
+ * flip never sets, so that stamp is the acknowledgement. Without the rows the
+ * verdict cannot be judged and stays open.
+ */
+export function orgIntentSatisfied(tree: OrgTree, intent: OrgIntent, changes?: Record<string, OrgProposalChange>, proposals?: Record<string, OrgProposalListRow>, log?: Record<string, OrgLogEntry>): boolean {
+  switch (intent.kind) {
+    case "undoChange": {
+      // The server names the batch that did the undo; the draft's mark does
+      // not (applyOrgUndoIntent), so a named batch is the acknowledgement.
+      if (!log) return false;
+      return undoIntentBatches(intent).every((b) => {
+        const e = log[b];
+        if (!e) return false;
+        if (!intent.redo) return !!e.undone_by?.batch;
+        const undoneBy = intent.from[b]?.batch;
+        return !e.undone_by && !!undoneBy && Object.values(log).some((entry) => entry.gesture === "redo" && entry.undoes === undoneBy);
+      });
+    }
+    case "withdraw": {
+      if (!proposals) return false;
+      const row = proposals[intent.proposal_id];
+      return !row || row.resolved_at !== undefined || row.status !== "open" && row.resolved_at !== undefined;
+    }
+    case "decideChange": {
+      if (!changes) return false;
+      const row = changes[intent.change_id];
+      return !row || row.decided_by !== undefined;
+    }
+    case "noteChange": {
+      if (!changes) return false;
+      const row = changes[intent.change_id];
+      return !row || replyStampEchoed(row.reply, intent);
+    }
+    case "noteProposal": {
+      if (!proposals) return false;
+      const row = proposals[intent.proposal_id];
+      return !row || replyStampEchoed(row.reply, intent);
+    }
+    case "staff": {
+      const head = liveHead(tree);
+      return !!head && head._id !== intent.stub.client_id;
+    }
+    // The server's own row for this handle is the acknowledgement: a live role
+    // carrying the handle that is NOT our stub means the create landed.
+    case "createRole":
+      return tree.roles.some((r) => r.handle === intent.stub.handle && r.status !== "retired" && r._id !== intent.stub.client_id);
+    case "roleFields": {
+      const role = tree.roles.find((r) => r._id === intent.role_id);
+      if (!role) return true;
+      return roleFieldKeys(intent.fields).every((k) => sameValue(role[k], intent.fields[k]));
+    }
+    case "retireRole":
+      return !tree.roles.some((r) => r._id === intent.role_id);
+    case "line": {
+      // org.tree carries no slug today (orgRoles.line does), so a push
+      // cannot confirm this one; the settings tab drops it when its per view
+      // read echoes the slug (lineIntentEchoed), else it ages out quietly.
+      const role = tree.roles.find((r) => r._id === intent.role_id) as (OrgRole & { line_workflow_slug?: string }) | undefined;
+      return !role || role.line_workflow_slug === intent.slug;
+    }
+    case "moveSession": {
+      const parent = orgSessionParent(tree, intent.conversation_id);
+      // A session beyond the target's top N cannot be seen in the snapshot at
+      // all; the echo is then indistinguishable from the old shape, so the
+      // intent stays until its TTL. Visible under the target = confirmed.
+      return !!parent && sameParent(parent, intent.target);
+    }
+    case "moveRole": {
+      const role = tree.roles.find((r) => r._id === intent.role_id);
+      return !role || sameParent(role.reports_to, intent.reports_to);
+    }
+    case "movePerson": return personMoveSatisfied(tree, intent);
+    case "follow": {
+      const role = tree.roles.find((r) => r.short_id === intent.role_short_id);
+      if (!role) return true;
+      return (role.follow_channel_ids ?? []).includes(intent.channel_id) === intent.follow;
+    }
+  }
+}
+
+/**
+ * Apply one edit to a tree in place. Used by the actions on the draft and by
+ * the merge on each incoming push, so the optimistic shape and the replayed
+ * shape are the same shape. `row` carries the session for a move whose
+ * subject is not among the tree's top N (loaded through org.sessionsUnder).
+ */
+export function applyOrgIntent(tree: OrgTree, intent: OrgIntent, row?: OrgSession | null): void {
+  switch (intent.kind) {
+    case "decideChange":
+    case "noteChange":
+    case "noteProposal":
+    case "withdraw":
+    case "undoChange":
+      // Act on the proposal rows, not the tree: applyOrgChangeIntent,
+      // applyOrgProposalIntent. An undo acts on the record: applyOrgUndoIntent.
+      return;
+    case "staff": {
+      if (liveHead(tree)) return;
+      tree.roles.push(headStub(tree, intent.stub, intent.at));
+      return;
+    }
+    case "createRole": {
+      // Superseded the moment the tree carries the handle for real.
+      if (tree.roles.some((r) => r.handle === intent.stub.handle && r.status !== "retired")) return;
+      tree.roles.push(roleStub(tree, intent.stub, intent.at));
+      return;
+    }
+    case "roleFields": {
+      const role = tree.roles.find((r) => r._id === intent.role_id);
+      if (!role) return;
+      applyRoleFields(role, intent.fields, roleFieldKeys(intent.fields));
+      role.updated_at = Math.max(role.updated_at, intent.at);
+      return;
+    }
+    case "line": {
+      const role = tree.roles.find((r) => r._id === intent.role_id) as (OrgRole & { line_workflow_slug?: string }) | undefined;
+      if (!role) return;
+      role.line_workflow_slug = intent.slug;
+      role.updated_at = Math.max(role.updated_at, intent.at);
+      return;
+    }
+    case "retireRole": {
+      const i = tree.roles.findIndex((r) => r._id === intent.role_id);
+      if (i < 0) return;
+      const [role] = tree.roles.splice(i, 1);
+      // Its sessions fall back to their owners; roles under it fall back to
+      // whatever it reported to (the server does the same walk). The server
+      // files a session whose area a wider role now owns under that role
+      // instead (org-staffing.md S26); the tree carries no session's task or
+      // plan to read the rule here, so the echo places those.
+      let rehomed = 0;
+      for (const s of role.sessions) {
+        delete s.org_role_id;
+        const owner = s.owner_user_id ? parentBucket(tree, { kind: "user", user_id: s.owner_user_id }) : undefined;
+        if (owner) { attachSession(owner, s); rehomed += 1; }
+      }
+      // The snapshot carries only the role's top N; the rest still count. Put
+      // the remainder on the role's parent when that is a person (the likely
+      // owner) so the header total and the card tallies do not dip for one
+      // round trip. The echo is authoritative and corrects any misfile.
+      const remainder = Math.max(0, role.total - rehomed);
+      const fallback = role.reports_to.kind === "user" ? parentBucket(tree, role.reports_to) : undefined;
+      if (remainder > 0 && fallback) {
+        fallback.total += remainder;
+        for (const k of Object.keys(role.counts) as (keyof typeof role.counts)[]) {
+          const seen = role.sessions.filter((s) => s.state === k).length;
+          fallback.counts[k] = (fallback.counts[k] ?? 0) + Math.max(0, (role.counts[k] ?? 0) - seen);
+        }
+      }
+      for (const r of tree.roles) {
+        if (r.reports_to.kind === "role" && r.reports_to.role_id === intent.role_id) r.reports_to = role.reports_to;
+      }
+      return;
+    }
+    case "moveSession": {
+      const to = parentBucket(tree, intent.target);
+      if (!to) return;
+      const moved = detachSession(tree, intent.conversation_id);
+      let session = moved?.session ?? (row ? { ...row } : null);
+      if (!moved && row) {
+        // Beyond the source's top N: the row is not in the snapshot, but the
+        // source's total and counts still include it.
+        const from = orgSessionParent(tree, row._id) ?? (row.org_role_id ? { kind: "role" as const, role_id: row.org_role_id } : row.owner_user_id ? { kind: "user" as const, user_id: row.owner_user_id } : null);
+        const fromBucket = from && !sameParent(from, intent.target) ? parentBucket(tree, from) : undefined;
+        if (fromBucket) {
+          fromBucket.total = Math.max(0, fromBucket.total - 1);
+          fromBucket.counts[row.state] = Math.max(0, (fromBucket.counts[row.state] ?? 0) - 1);
+        }
+      }
+      if (!session) return;
+      if (intent.target.kind === "user") {
+        session.owner_user_id = intent.target.user_id;
+        delete session.org_role_id;
+      } else {
+        session.org_role_id = intent.target.role_id;
+      }
+      session.updated_at = Math.max(session.updated_at, intent.at);
+      attachSession(to, session);
+      return;
+    }
+    case "moveRole": {
+      const role = tree.roles.find((r) => r._id === intent.role_id);
+      if (!role || sameParent(role.reports_to, intent.reports_to)) return;
+      if (orgRoleReparentMakesCycle(tree, intent.role_id, intent.reports_to)) return;
+      role.reports_to = intent.reports_to;
+      role.updated_at = Math.max(role.updated_at, intent.at);
+      return;
+    }
+    case "movePerson": return applyPersonMove(tree, intent);
+    case "follow": {
+      const role = tree.roles.find((r) => r.short_id === intent.role_short_id);
+      if (!role) return;
+      const cur = role.follow_channel_ids ?? [];
+      if (cur.includes(intent.channel_id) === intent.follow) return;
+      role.follow_channel_ids = intent.follow ? [...cur, intent.channel_id] : cur.filter((id) => id !== intent.channel_id);
+      role.updated_at = Math.max(role.updated_at, intent.at);
+      return;
+    }
+  }
+}
+
+/** The fields an update names, in a stable order (the intent's subject key
+ *  and the satisfaction check both walk them). */
+export function roleFieldKeys(fields: OrgUpdateRoleInput): (keyof OrgUpdateRoleInput)[] {
+  return (Object.keys(fields) as (keyof OrgUpdateRoleInput)[]).filter((k) => fields[k] !== undefined).sort();
+}
+
+const sameValue = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+
+/** Write `keys` of `fields` onto a role (undefined clears), one body for the
+ *  action, the replay and the revert. A scope write keeps the names of ids
+ *  it already knew; new ones resolve on the next org.tree push. */
+function applyRoleFields(role: OrgRole, fields: OrgUpdateRoleInput, keys: (keyof OrgUpdateRoleInput)[]): void {
+  for (const k of keys) {
+    const v = fields[k];
+    if (k === "scope") {
+      const scope = v as OrgScope | undefined;
+      role.scope = scope ? { project_ids: [...scope.project_ids], plan_ids: [...scope.plan_ids] } : { project_ids: [], plan_ids: [] };
+      role.scope_names = {
+        projects: role.scope_names.projects.filter((p) => role.scope.project_ids.includes(p.id)),
+        plans: role.scope_names.plans.filter((p) => role.scope.plan_ids.includes(p.id)),
+      };
+    } else if (v === undefined) {
+      delete (role as Record<string, unknown>)[k];
+    } else {
+      (role as Record<string, unknown>)[k] = k === "caps" ? { ...(v as object) } : v;
+    }
+  }
+}
+
+/** A verdict's flip, on the change rows: the same body for the action's
+ *  draft and for the replay onto a push that still carries the old status.
+ *  The edits ride the intent, so a stale push that replaced the row with the
+ *  server's copy (no edits yet) gets them back too. */
+/** Flip every change of a proposal that still waits on a verdict and passes
+ *  `match`, one intent each, so a refusal of the whole call puts every row
+ *  back and a partial echo settles row by row. */
+function decideWaitingChanges(draft: OrgDraft, proposalId: string, to: "accepted" | "skipped", match: (c: OrgProposalChange) => boolean, reply?: (c: OrgProposalChange) => OrgChangeReply | undefined, now = Date.now()): void {
+  for (const c of Object.values(draft.orgProposalChanges)) {
+    if (c.proposal_id !== proposalId || !isOrgChangeDecidable(c.status) || !match(c)) continue;
+    const stamp = reply?.(c);
+    const intent: OrgIntent = {
+      kind: "decideChange", id: intentId(), change_id: c._id, proposal_id: proposalId, from: c.status, to, line: describeOrgChange(c.change),
+      ...(stamp ? { reply: stamp, ...(c.reply ? { reply_from: c.reply } : {}) } : {}),
+      at: now,
+    };
+    applyOrgChangeIntent(draft.orgProposalChanges, intent);
+    pushIntent(draft, intent);
+  }
+}
+
+/** The words a person wrote on a change with no verdict (S39): the row keeps
+ *  its status and gains the `reply` stamp, one intent per row. */
+function noteChanges(draft: OrgDraft, proposalId: string, match: (c: OrgProposalChange) => boolean, stamp: OrgChangeReply): void {
+  for (const c of Object.values(draft.orgProposalChanges)) {
+    if (c.proposal_id !== proposalId || !match(c)) continue;
+    const intent: OrgIntent = { kind: "noteChange", id: intentId(), change_id: c._id, proposal_id: proposalId, reply: stamp, ...(c.reply ? { from: c.reply } : {}), line: describeOrgChange(c.change), at: stamp.at };
+    applyOrgChangeIntent(draft.orgProposalChanges, intent);
+    pushIntent(draft, intent);
+  }
+}
+
+/** The words a person wrote on the whole proposal (S39, a note naming no
+ *  change): the list row gains the `reply` stamp. No row in the store, no
+ *  stamp to draw: the server keeps it either way. */
+function noteProposal(draft: OrgDraft, proposalId: string, stamp: OrgChangeReply): void {
+  const p = draft.orgProposals[proposalId];
+  if (!p) return;
+  const intent: OrgIntent = { kind: "noteProposal", id: intentId(), proposal_id: proposalId, short_id: p.short_id, reply: stamp, ...(p.reply ? { from: p.reply } : {}), at: stamp.at };
+  applyOrgProposalIntent(draft.orgProposals, intent);
+  pushIntent(draft, intent);
+}
+
+export function applyOrgChangeIntent(changes: Record<string, OrgProposalChange>, intent: Extract<OrgIntent, { kind: "decideChange" | "noteChange" }>): void {
+  const c = changes[intent.change_id];
+  if (!c) return;
+  if (intent.kind === "noteChange") return applyNoteStamp(c, intent);
+  if (c.decided_by !== undefined || c.status === intent.to) return;
+  c.status = intent.to;
+  c.decided_at = intent.at;
+  if (intent.reply) c.reply = intent.reply;
+}
+
+/** The server's own `reply` stamp written since this note was pressed: it
+ *  names who answered (the draft's stamp never does) and is not the stamp the
+ *  row held before (`from`, which the server wrote for an earlier answer).
+ *  No clocks: a client's `at` and the server's cannot be compared. */
+function replyStampEchoed(reply: OrgChangeReply | undefined, intent: { from?: OrgChangeReply }): boolean {
+  if (!reply || reply.by === undefined) return false;
+  const was = intent.from;
+  return !was || was.by !== reply.by || was.at !== reply.at || was.verdict !== reply.verdict || (was.text ?? "") !== (reply.text ?? "");
+}
+
+/** A note's stamp on its row (a change, or the proposal for a note on the
+ *  whole): the action's draft and the replay onto a push that predates the
+ *  mutation. The server's own stamp, once there, is left alone. */
+function applyNoteStamp(row: { reply?: OrgChangeReply }, intent: { reply: OrgChangeReply; from?: OrgChangeReply }): void {
+  if (!replyStampEchoed(row.reply, intent)) row.reply = intent.reply;
+}
+
+/** The intents that act on the list row (a withdraw's flip, a whole-proposal
+ *  note's stamp): the action's draft and the replay onto a list push that
+ *  started before the mutation landed. */
+export function applyOrgProposalIntent(proposals: Record<string, OrgProposalListRow>, intent: Extract<OrgIntent, { kind: "withdraw" | "noteProposal" }>): void {
+  const p = proposals[intent.proposal_id];
+  if (!p) return;
+  if (intent.kind === "noteProposal") return applyNoteStamp(p, intent);
+  if (p.resolved_at !== undefined || p.status !== "open") return;
+  p.status = "withdrawn";
+}
+
+/** The entries one undo or redo marks: the one pressed, and the later ones
+ *  the person agreed go with it. */
+const undoIntentBatches = (intent: Extract<OrgIntent, { kind: "undoChange" }>) => [intent.batch, ...intent.with];
+
+/** The mark an undo or a redo puts on the record: the action's draft and the
+ *  replay onto a list push that started before the mutation landed. An undo
+ *  strikes each entry under the person's name with no batch named yet (the
+ *  server's stamp names it, which is how the echo is told from the mark); a
+ *  redo takes the strike off. */
+export function applyOrgUndoIntent(log: Record<string, OrgLogEntry>, intent: Extract<OrgIntent, { kind: "undoChange" }>): void {
+  for (const b of undoIntentBatches(intent)) {
+    const e = log[b];
+    if (!e) continue;
+    if (intent.redo) delete e.undone_by;
+    else if (!e.undone_by) e.undone_by = { batch: "", user_id: intent.by.user_id, name: intent.by.name, at: intent.at };
+  }
+}
+
+/**
+ * Put an intent's draft effect back. A verdict the server never took flips
+ * its row to `from` and keeps the edits, so the person can retry them; a hire
+ * the server refused takes the stub off the tree; a role's fields go back to
+ * what they were. A move, a follow and a retire have nothing to undo here:
+ * the next org.tree push is authoritative for them.
+ */
+export function revertOrgIntent(draft: Pick<OrgDraft, "orgTree" | "orgProposalChanges"> & { orgProposals?: Record<string, OrgProposalListRow>; orgLog?: Record<string, OrgLogEntry> }, intent: OrgIntent): void {
+  switch (intent.kind) {
+    case "undoChange": {
+      for (const b of undoIntentBatches(intent)) {
+        const e = draft.orgLog?.[b];
+        // A named batch is the server's own stamp: it is not ours to take off.
+        if (!e || e.undone_by?.batch) continue;
+        const was = intent.from[b];
+        if (was) e.undone_by = was;
+        else delete e.undone_by;
+      }
+      return;
+    }
+    case "withdraw": {
+      const p = draft.orgProposals?.[intent.proposal_id];
+      if (!p || p.resolved_at !== undefined) return;
+      p.status = "open";
+      return;
+    }
+    case "decideChange": {
+      const c = draft.orgProposalChanges[intent.change_id];
+      if (!c || c.decided_by !== undefined) return;
+      c.status = intent.from;
+      delete c.decided_at;
+      if (intent.reply) putReplyBack(c, intent.reply_from);
+      return;
+    }
+    case "noteChange": {
+      const c = draft.orgProposalChanges[intent.change_id];
+      if (!c || replyStampEchoed(c.reply, intent)) return;
+      putReplyBack(c, intent.from);
+      return;
+    }
+    case "noteProposal": {
+      const p = draft.orgProposals?.[intent.proposal_id];
+      if (!p || replyStampEchoed(p.reply, intent)) return;
+      putReplyBack(p, intent.from);
+      return;
+    }
+    case "staff": {
+      const tree = draft.orgTree;
+      if (!tree) return;
+      tree.roles = tree.roles.filter((r) => r._id !== intent.stub.client_id);
+      return;
+    }
+    case "createRole": {
+      const tree = draft.orgTree;
+      if (!tree) return;
+      tree.roles = tree.roles.filter((r) => r._id !== intent.stub.client_id);
+      return;
+    }
+    case "roleFields": {
+      const role = draft.orgTree?.roles.find((r) => r._id === intent.role_id);
+      if (!role) return;
+      applyRoleFields(role, intent.from, roleFieldKeys(intent.fields));
+      return;
+    }
+    case "line": {
+      const role = draft.orgTree?.roles.find((r) => r._id === intent.role_id) as (OrgRole & { line_workflow_slug?: string }) | undefined;
+      if (!role) return;
+      if (intent.from === undefined) delete role.line_workflow_slug;
+      else role.line_workflow_slug = intent.from;
+      return;
+    }
+    default:
+      return;
+  }
+}
+
+function putReplyBack(row: { reply?: OrgChangeReply }, from: OrgChangeReply | undefined): void {
+  if (from) row.reply = from;
+  else delete row.reply;
+}
+
+/** The tree edits whose apply cannot be undone by writing one field back: a
+ *  move re-buckets a session and its counts, a retire re-homes a whole subtree,
+ *  a follow edits a list. They are put back by rebuilding from the server's own
+ *  last tree instead (rebuildOrgTreeFromServer). */
+const NO_REVERT_TREE_KINDS = new Set<OrgIntent["kind"]>(["moveSession", "moveRole", "movePerson", "retireRole", "follow"]);
+
+/**
+ * Put the tree back to the server's last word with the still-open intents
+ * replayed. Used when a mutation was REFUSED: nothing was written, so no
+ * org.tree push is coming to correct the optimistic edit. A no-op before the
+ * first push, when there is nothing to go back to.
+ */
+export function rebuildOrgTreeFromServer(draft: Pick<OrgDraft, "orgTree" | "orgTreeServer" | "orgIntents">): void {
+  const server = draft.orgTreeServer;
+  if (!server) return;
+  draft.orgTree = mergeOrgTree(JSON.parse(JSON.stringify(server)) as OrgTree, draft.orgIntents).tree;
+}
+
+/** The one line a revert tells the person, for the toast. */
+export function orgIntentNoticeText(intent: OrgIntent, reason: "refused" | "expired"): string {
+  const tail = reason === "refused" ? "was refused" : "did not reach the server after a minute";
+  switch (intent.kind) {
+    case "decideChange": return `${intent.to === "skipped" ? "Rejecting" : "Approving"} "${intent.line}" ${tail}; the change is back to ${intent.from}.`;
+    case "noteChange": return `Your note on "${intent.line}" ${tail}; say it again.`;
+    case "noteProposal": return `Your note on ${intent.short_id} ${tail}; say it again.`;
+    case "withdraw": return `Withdrawing ${intent.short_id} ${tail}; it is open again.`;
+    case "staff": return `Hiring the Head of People ${tail}.`;
+    case "createRole": return `Adding @${intent.stub.handle} ${tail}; the seat is off the chart.`;
+    case "roleFields": {
+      const what = intent.fields.status === "active" ? "Resuming" : intent.fields.status === "paused" ? "Pausing" : `Updating ${roleFieldKeys(intent.fields).join(", ")} on`;
+      return `${what} the role ${tail}; put back.`;
+    }
+    // Expiry says nothing: the tree never echoes the slug, so an aged line
+    // intent is not evidence the write failed (the per view read shows the
+    // server's value either way).
+    case "line": return reason === "refused" ? `Setting the line to ${intent.slug} ${tail}; put back.` : "";
+    case "retireRole": return `Retiring @${intent.handle} ${tail}; the role is back.`;
+    case "moveSession": return `Moving the session ${tail}; it is back where it was.`;
+    case "moveRole": return `Moving the role ${tail}; it is back where it was.`;
+    case "movePerson": return `Moving the person ${tail}; they are back where they were.`;
+    case "follow": return `${intent.follow ? "Following" : "Unfollowing"} the channel ${tail}.`;
+    case "undoChange": return `${intent.redo ? "Applying" : "Taking back"} "${intent.line}"${intent.redo ? " again" : ""} ${tail}; the record is as it was.`;
+  }
+}
+
+/**
+ * Drop what aged out or was echoed, reverting the aged intents (no echo is
+ * coming for them, and for the staffing kinds no push replaces their rows)
+ * and leaving a notice for the page to toast: a ghost that quietly reappears
+ * reads as a bug. Runs on every org.tree push and every change push, so a
+ * quiet workspace still settles its journal.
+ */
+export function pruneOrgIntents(draft: Pick<OrgDraft, "orgTree" | "orgIntents" | "orgProposalChanges"> & { orgProposals?: Record<string, OrgProposalListRow>; orgLog?: Record<string, OrgLogEntry>; orgIntentNotice?: OrgIntentNotice | null }, now = Date.now()): void {
+  if (draft.orgIntents.length === 0) return;
+  const keep: OrgIntent[] = [];
+  for (const i of draft.orgIntents) {
+    if (i.kind === "undoChange" && orgIntentSatisfied(draft.orgTree as OrgTree, i, undefined, undefined, draft.orgLog)) continue;
+    const aged = now - i.at >= ORG_INTENT_TTL_MS;
+    if (aged) {
+      revertOrgIntent(draft, i);
+      const text = orgIntentNoticeText(i, "expired");
+      if (text) draft.orgIntentNotice = { text, at: now };
+      continue;
+    }
+    if (i.kind !== "undoChange" && draft.orgTree && orgIntentSatisfied(draft.orgTree, i, draft.orgProposalChanges, draft.orgProposals, draft.orgLog)) continue;
+    keep.push(i);
+  }
+  if (keep.length !== draft.orgIntents.length) draft.orgIntents = keep;
+}
+
+/**
+ * The singleton merge: take the server's tree, drop every intent it already
+ * agrees with (or that aged out), replay the rest. Returns the open intents
+ * alongside the merged tree so the store can update both slots. `changes` lets
+ * a verdict intent be judged (see orgIntentSatisfied); without it those stay.
+ */
+export function mergeOrgTree(incoming: OrgTree, intents: OrgIntent[], now = Date.now(), changes?: Record<string, OrgProposalChange>): { tree: OrgTree; intents: OrgIntent[] } {
+  const open = intents.filter((i) => now - i.at < ORG_INTENT_TTL_MS && !orgIntentSatisfied(incoming, i, changes));
+  if (open.length === 0) return { tree: incoming, intents: open };
+  // Structured clone: the incoming payload is the feeder's object and must not
+  // be mutated in place (a coalesced push may reuse it).
+  const tree: OrgTree = JSON.parse(JSON.stringify(incoming));
+  for (const i of open) applyOrgIntent(tree, i);
+  return { tree, intents: open };
+}
+
+/** A field edit on a role as an intent: applied to the tree now, replayed over
+ *  every server push until the tree agrees, and put back from `from` when the
+ *  server refuses. updateOrgRole and setProjectLead both write through it. */
+export function pushRoleFieldsIntent(draft: OrgDraft, roleId: string, fields: OrgUpdateRoleInput): void {
+  const tree = draft.orgTree;
+  const role = tree?.roles.find((r) => r._id === roleId);
+  if (!tree || !role) return;
+  const keys = roleFieldKeys(fields);
+  if (keys.length === 0) return;
+  const from: OrgUpdateRoleInput = {};
+  for (const k of keys) (from as Record<string, unknown>)[k] = JSON.parse(JSON.stringify(role[k] ?? null)) ?? undefined;
+  const intent: OrgIntent = { kind: "roleFields", id: intentId(), role_id: roleId, fields, from, at: Date.now() };
+  applyOrgIntent(tree, intent);
+  pushIntent(draft, intent);
+}
+
+/** What naming `role` the lead of a project does to its scope, as the person
+ *  at this screen will see it (org-roles-run-work.md R4). The rule is the
+ *  shared `leadScopeChange`; the web adds the one thing only it knows before
+ *  the server answers: whether this person may reshape the role (the host, the
+ *  personal owner, or a team admin: lib/orgAccess.userCanAdminRole). */
+export type ProjectLeadScopeOutcome = LeadScopeChange<OrgRole> | { kind: "not_admin" };
+
+export function projectLeadScopeOutcome(tree: OrgTree, projectId: string, role: OrgRole): ProjectLeadScopeOutcome {
+  const change = leadScopeChange(projectId, role, tree.roles);
+  if (change.kind !== "add") return change;
+  const me = tree.people.find((p) => p.is_me);
+  const mayReshape = tree.workspace.kind === "user" || (!!me && (me.role !== "member" || role.host_user_id === me.user_id));
+  return mayReshape ? change : { kind: "not_admin" };
+}
+
+/**
+ * The dispatch rail refused an org action for good (useEnsureDispatch's error
+ * handler, permanent errors only: a transient exhaustion leaves the intent
+ * open, the parked outbox row re-drives, and the echo settles it). Drop the
+ * intent for that subject so the draft stops showing the edit. Args are the
+ * action's own arguments, so the subject is read from them. A move, a follow
+ * and a retire are only dropped (the next push replaces the tree); a verdict,
+ * a hire and a role's fields are reverted, because nothing else will put
+ * their rows back at once. Accept all refused reverts every row it flipped.
+ * Returns one notice per intent for the caller to toast; a verdict refused
+ * because the author revised the proposal under the reader (S18,
+ * ORG_VERDICT_REVISED in `error`) returns that one line instead, since the
+ * page shows the revised list marked, and a line per row would say nothing
+ * the marks do not.
+ */
+export function dropRejectedOrgIntent(state: { orgIntents: OrgIntent[]; dropOrgIntent: (id: string) => void; revertOrgIntent: (id: string) => void }, action: string, args: unknown, error?: unknown): string[] {
+  if (!Array.isArray(args)) return [];
+  const notices: string[] = [];
+  const drops = state.orgIntents.filter((i) =>
+    (action === "reparentOrgSession" && i.kind === "moveSession" && i.conversation_id === args[0]) ||
+    (action === "reparentOrgRole" && i.kind === "moveRole" && i.role_id === args[0]) ||
+    (action === "reparentOrgPerson" && i.kind === "movePerson" && i.user_id === args[1]) ||
+    (action === "followOrgChannel" && i.kind === "follow" && i.role_short_id === args[0] && i.channel_id === args[1]) ||
+    (action === "retireOrgRole" && i.kind === "retireRole" && i.role_id === args[0]));
+  for (const i of drops) { state.dropOrgIntent(i.id); notices.push(orgIntentNoticeText(i, "refused")); }
+  const reverts = state.orgIntents.filter((i) =>
+    (action === "withdrawOrgProposal" && i.kind === "withdraw" && i.proposal_id === args[0]) ||
+    (action === "replyOnOrgProposal" && (i.kind === "decideChange" || i.kind === "noteChange" || i.kind === "noteProposal") && i.proposal_id === args[0]) ||
+    (action === "staffHeadOfPeople" && i.kind === "staff" && i.stub.client_id === (args[0] as OrgStaffInput | undefined)?.client_id) ||
+    (action === "createOrgRole" && i.kind === "createRole" && i.stub.client_id === (args[0] as OrgCreateRoleInput | undefined)?.client_id) ||
+    (action === "updateOrgRole" && i.kind === "roleFields" && i.role_id === args[0] && sameValue(roleFieldKeys(i.fields), roleFieldKeys((args[1] as OrgUpdateRoleInput | undefined) ?? {}))) ||
+    (action === "setProjectLead" && i.kind === "roleFields" && i.role_id === args[1] && sameValue(roleFieldKeys(i.fields), ["scope"])) ||
+    (action === "setRoleLine" && i.kind === "line" && i.role_id === args[0] && i.slug === args[1]) ||
+    ((action === "undoOrgChange" || action === "redoOrgChange") && i.kind === "undoChange" && i.batch === args[0] && i.redo === (action === "redoOrgChange")));
+  for (const i of reverts) { state.revertOrgIntent(i.id); notices.push(orgIntentNoticeText(i, "refused")); }
+  const revised = orgVerdictRevisedNotice(error);
+  return revised && reverts.length > 0 ? [revised] : notices;
+}
+
+/** The server's own line for a verdict it refused as revised, or null: from
+ *  the proposal's short id to the end of the sentence, without the
+ *  transport's "Uncaught Error:" and stack around it. */
+export function orgVerdictRevisedNotice(error: unknown): string | null {
+  const msg = String((error as { message?: unknown })?.message ?? error ?? "");
+  const at = msg.indexOf(ORG_VERDICT_REVISED);
+  if (at < 0) return null;
+  const head = msg.slice(0, at).trim().split(/\s+/).pop() ?? "";
+  return `${head} ${ORG_VERDICT_REVISED}. Nothing was applied; the revised list is on the page.`;
+}
+
+/** The line intents on a role that the server's own read (orgRoles.line)
+ *  now agrees with: the echo the tree cannot carry. The caller drops them. */
+export function lineIntentEchoed(intents: OrgIntent[], roleId: string, serverSlug: string | undefined): OrgIntent[] {
+  if (!serverSlug) return [];
+  return intents.filter((i) => i.kind === "line" && i.role_id === roleId && i.slug === serverSlug);
+}
+
+/** One body for undo and redo: record the intent, mark the entries. The
+ *  person's name comes from the tree (the viewer's own row), which is what
+ *  the struck entry shows until the server's stamp replaces it. */
+function markOrgUndo(draft: OrgDraft, batch: string, redo: boolean, opts?: { with?: string[]; line?: string }): void {
+  const entry = draft.orgLog[batch];
+  if (!entry || !!entry.undone_by === !redo) return;
+  const me = draft.orgTree?.people.find((p) => p.is_me);
+  const also = (opts?.with ?? []).filter((b) => b !== batch && !!draft.orgLog[b]);
+  const from: Record<string, OrgLogEntry["undone_by"] | null> = {};
+  for (const b of [batch, ...also]) from[b] = draft.orgLog[b]?.undone_by ? { ...draft.orgLog[b].undone_by! } : null;
+  const intent: OrgIntent = { kind: "undoChange", id: intentId(), batch, with: also, redo, by: { user_id: me?.user_id ?? "", name: me?.name ?? "You" }, from, line: opts?.line ?? "this change", at: Date.now() };
+  applyOrgUndoIntent(draft.orgLog, intent);
+  pushIntent(draft, intent);
+}
+
+/** inboxStore's one writer of an optimistic user bubble (appendOptimisticMessage),
+ *  handed over when that module evaluates. The store spreads this slice in,
+ *  so an import the other way would evaluate inboxStore before this module's
+ *  exports exist (ORG_SYNC_REGISTRY is read at its top level); a binding
+ *  keeps one writer without the cycle. A bare slice (tests without the store)
+ *  has no writer and adds no bubble. */
+type OptimisticMessageWriter = (draft: any, convId: string, content: string, images: undefined, clientId: string) => string;
+let writeOptimisticMessage: OptimisticMessageWriter | null = null;
+export function bindOptimisticMessageWriter(fn: OptimisticMessageWriter): void {
+  writeOptimisticMessage = fn;
+}
+
+/** The optimistic bubble for a reply the server sends into the proposal's
+ *  thread (S39), so the words appear at once: a pending row written by the
+ *  bound inboxStore writer and keyed by the client id
+ *  the server's message carries, so the echo replaces it. Each line is the
+ *  card's sentence (brief), the same words the server writes. The slice is
+ *  spread into the store, so the draft holds the thread's rows at run time. */
+function sayInThread(draft: OrgDraft, proposalId: string, items: OrgReplyInput[], say: NonNullable<OrgReplyOpts["say"]>): void {
+  const store = draft as OrgDraft & Partial<{ pendingMessages: Record<string, OrgThreadMessage[]>; sessions: Record<string, OrgThreadRow>; conversations: Record<string, OrgThreadRow>; messages: Record<string, { timestamp?: number }[]> }>;
+  if (!store.pendingMessages || !writeOptimisticMessage) return;
+  const p = draft.orgProposals[proposalId];
+  const rows = Object.values(draft.orgProposalChanges).filter((c) => c.proposal_id === proposalId);
+  const reply: OrgProposalReply = {
+    proposal: p?.short_id ?? proposalId,
+    title: p?.title ?? "",
+    items: items.map((item) => ({ verdict: item.verdict, seqs: item.seqs, ...(item.text ? { text: item.text } : {}), line: item.seqs.length ? andList(item.seqs.map((seq) => { const c = rows.find((r) => r.seq === seq); return c ? changeSentence(c.change, { brief: true }) : ""; }).filter(Boolean)) : "" })),
+  };
+  const content = [proposalReplyText(reply), (say.body ?? "").trim()].filter(Boolean).join("\n\n");
+  if (!content) return;
+  writeOptimisticMessage(store, say.thread, content, undefined, say.client_id);
+  for (const target of [store.sessions?.[say.thread], store.conversations?.[say.thread]]) {
+    if (target && hasThreadState(target)) Object.assign(target, clearedThreadStateFields());
+  }
+}
+type OrgThreadMessage = { _id: string; role: "user"; content: string; timestamp: number; _isOptimistic: true; _clientId: string; _sentBaselineTs?: number };
+type OrgThreadRow = { updated_at?: number } & ThreadStateFields;
+
+let intentSeq = 0;
+function intentId(): string {
+  intentSeq += 1;
+  return `oi-${Date.now().toString(36)}-${intentSeq}`;
+}
+
+/** Record an intent, replacing an earlier one on the same subject. */
+function pushIntent(draft: OrgDraft, intent: OrgIntent): void {
+  const subjectOf = (i: OrgIntent) =>
+    i.kind === "moveSession" ? `s:${i.conversation_id}`
+    : i.kind === "moveRole" ? `r:${i.role_id}`
+    : i.kind === "movePerson" ? `p:${i.user_id}`
+    : i.kind === "follow" ? `f:${i.role_short_id}:${i.channel_id}`
+    : i.kind === "decideChange" || i.kind === "noteChange" ? `c:${i.change_id}`
+    : i.kind === "withdraw" ? `w:${i.proposal_id}`
+    : i.kind === "noteProposal" ? `pn:${i.proposal_id}`
+    // One subject per role AND field set: a pause and a caps edit on the
+    // same role are two edits, each with its own `from` to go back to.
+    : i.kind === "roleFields" ? `rf:${i.role_id}:${roleFieldKeys(i.fields).join(",")}`
+    : i.kind === "retireRole" ? `x:${i.role_id}`
+    : i.kind === "line" ? `l:${i.role_id}`
+    // One subject per stub, so hiring two roles in a row keeps both on the
+    // chart rather than the second replacing the first.
+    : i.kind === "createRole" ? `n:${i.stub.client_id}`
+    : i.kind === "undoChange" ? `u:${i.batch}`
+    : "staff";
+  const key = subjectOf(intent);
+  draft.orgIntents = [...draft.orgIntents.filter((i) => subjectOf(i) !== key), intent];
+}
+
+
+/** A roles-only payload (org.roles) carries the org without anything a
+ *  session touches: members as identity only (no presence, no sessions), no
+ *  per role counts or sessions, no live state on a standing session or an
+ *  anchor. Both org.roles and org.tree feed this
+ *  one slot, so fill those fields from the tree already held for the same
+ *  workspace, matched by id; a surface that draws them mounts org.tree, which
+ *  replaces them on its next push. With no tree for this workspace they start
+ *  empty, which is what a roles-only surface reads anyway. */
+export function fillRolesOnlyTree(incoming: any, current: OrgTree | null | undefined): OrgTree {
+  const { roles_only: _r, ...rest } = incoming;
+  const held = current && current.workspace?.id === incoming.workspace?.id ? current : null;
+  const heldRole = new Map((held?.roles ?? []).map((r) => [r._id, r]));
+  const heldAnchor = new Map((held?.anchors ?? []).map((a) => [String(a.anchor_id), a]));
+  const heldPerson = new Map((held?.people ?? []).map((p) => [String(p.user_id), p]));
+  return {
+    ...rest,
+    people: (rest.people ?? []).map((person: any) => {
+      const was = heldPerson.get(String(person.user_id));
+      return { ...person, presence: was?.presence ?? "offline", counts: was?.counts ?? countStates([]), sessions: was?.sessions ?? [], total: was?.total ?? 0 };
+    }),
+    truncated: held?.truncated,
+    roles: rest.roles.map((role: any) => {
+      const was = heldRole.get(role._id);
+      const standing = role.standing
+        ? (was?.standing && was.standing.conversation_id === role.standing.conversation_id ? was.standing : role.standing)
+        : null;
+      return { ...role, counts: was?.counts ?? countStates([]), sessions: was?.sessions ?? [], total: was?.total ?? 0, standing };
+    }),
+    anchors: rest.anchors.map((anchor: any) => {
+      const was = heldAnchor.get(String(anchor.anchor_id));
+      if (!was || was.conversation_id !== anchor.conversation_id) return anchor;
+      return { ...anchor, short_id: was.short_id, state: was.state, state_line: was.state_line, state_status: was.state_status, state_at: was.state_at };
+    }),
+  } as OrgTree;
+}
+
+/**
+ * Settle the journal against a pushed collection and replay the intents still
+ * open onto it. The pushed table lands on the store draft as a frozen plain
+ * whole (inboxStore.syncTable), which mutative does not draft: an edit written
+ * into its rows would change rows the previous state still holds, and an
+ * intent's stamp read off the draft would land in them as a proxy that is
+ * revoked at commit, so the next read of the row throws. The replay therefore
+ * runs in a draft of its own over the table, from plain intents, and the
+ * result replaces the table.
+ */
+function replayOntoPush<F extends "orgProposalChanges" | "orgProposals" | "orgLog">(
+  draft: any,
+  field: F,
+  replay: (rows: NonNullable<OrgDraft[F]>, intent: OrgIntent) => void,
+): void {
+  if (!draft?.orgIntents?.length) return;
+  const intents: OrgIntent[] = isDraft(draft.orgIntents) ? current(draft.orgIntents) : draft.orgIntents;
+  const table = draft[field] ?? {};
+  let settled = intents;
+  let notice = draft.orgIntentNotice;
+  const next = create(table, (rows: any) => {
+    const view = { orgTree: draft.orgTree, orgProposalChanges: draft.orgProposalChanges, orgProposals: draft.orgProposals, orgLog: draft.orgLog, orgIntents: intents, orgIntentNotice: notice, [field]: rows };
+    pruneOrgIntents(view);
+    settled = view.orgIntents;
+    notice = view.orgIntentNotice;
+    for (const i of settled) replay(rows, i);
+  });
+  if (settled !== intents) draft.orgIntents = settled;
+  if (notice !== draft.orgIntentNotice) draft.orgIntentNotice = notice;
+  if (next !== table) draft[field] = Object.freeze(next);
+}
+
+/** Whether a pushed org tree is the one this window holds: with no scope set, any (the feeders' own
+ *  argument picks the workspace); with one, only the tree whose workspace is that key. */
+export function orgTreeFor(scope: string | null | undefined, tree: { workspace?: { kind: string; id: string } } | null | undefined): boolean {
+  if (!scope || !tree?.workspace) return true;
+  return `${tree.workspace.kind}:${tree.workspace.id}` === scope;
+}
+
+export const ORG_SYNC_REGISTRY = {
+  // The server stamps generated_at on every execution; strip it so an
+  // unchanged tree doesn't wake subscribers on every no-op push. The merge
+  // replays open intents (see the header) and, as a side effect of running
+  // inside the draft, prunes the ones the push confirmed. A `merge` bypasses
+  // the singleton's equality bail, so it hands back the incoming object
+  // itself when nothing is open: the store's identity check then still sees
+  // a no-op push as a no-op.
+  orgTree: {
+    kind: "singleton" as const,
+    normalize: (v: any, draft: any) => {
+      if (!v || typeof v !== "object") return v;
+      // Another workspace's org while the window reads a scoped one: keep the held tree (the bail sees a no-op).
+      if (!orgTreeFor(draft?.orgScope, v)) { const held = draft?.orgTree ?? null; return isDraft(held) ? current(held) : held; }
+      const { generated_at: _g, ...raw } = v;
+      const rest = raw.roles_only ? fillRolesOnlyTree(raw, draft?.orgTreeServer ?? draft?.orgTree) : raw;
+      // Keep the server's own shape before any replay, so a refusal has
+      // something truthful to go back to (see orgTreeServer).
+      if (draft) draft.orgTreeServer = rest;
+      if (!draft?.orgIntents?.length) return rest;
+      // Aged intents revert first (a verdict with no echo flips its row
+      // back), then the tree merge judges and replays the rest.
+      pruneOrgIntents(draft);
+      const intents: OrgIntent[] = draft.orgIntents;
+      if (intents.length === 0) return rest;
+      const merged = mergeOrgTree(rest as OrgTree, intents, Date.now(), draft.orgProposalChanges);
+      if (merged.intents.length !== intents.length) draft.orgIntents = merged.intents;
+      return merged.tree;
+    },
+  },
+  // A verdict's pending protection (S5): a change push that started before
+  // the decide mutation landed still says `proposed`; replay the open verdict
+  // onto it, and settle the journal (the server's decided_by stamp is the
+  // echo). A transform, not a normalize: collections have no normalize hook,
+  // and this channel pushes only when a proposal's own rows change.
+  orgProposalChanges: {
+    kind: "collection" as const,
+    // A hand entry replaces the registry's derived opts for its key, so the
+    // window semantics (clientSyncRegistry `sync`) are restated here.
+    isDelta: true,
+    transform: (draft: any) => replayOntoPush(draft, "orgProposalChanges", (rows, i) => {
+      if (i.kind === "decideChange" || i.kind === "noteChange") applyOrgChangeIntent(rows, i);
+    }),
+  },
+  // The list row's pending protection: a list push that started before the
+  // withdraw landed still says open, one before a whole-proposal note landed
+  // carries no stamp; replay the open intents.
+  orgProposals: {
+    kind: "collection" as const,
+    isDelta: true,
+    transform: (draft: any) => replayOntoPush(draft, "orgProposals", (rows, i) => {
+      if (i.kind === "withdraw" || i.kind === "noteProposal") applyOrgProposalIntent(rows, i);
+    }),
+  },
+  // An undo's pending protection (S21): a list push that started before the
+  // undo landed still shows the entry standing; replay the open mark onto it,
+  // and settle the journal (the server's named batch is the echo).
+  orgLog: {
+    kind: "collection" as const,
+    isDelta: true,
+    transform: (draft: any) => replayOntoPush(draft, "orgLog", (rows, i) => {
+      if (i.kind === "undoChange") applyOrgUndoIntent(rows, i);
+    }),
+  },
+  // Same stamp, same reason: a no-op health push must not wake the pane.
+  orgHealth: {
+    kind: "singleton" as const,
+    normalize: (v: any) => {
+      if (!v || typeof v !== "object") return v;
+      const { generated_at: _g, ...rest } = v;
+      return rest;
+    },
+  },
+};
+
+export function createOrgSlice(): OrgSliceImpl {
+  return {
+    orgTree: null,
+
+    orgTreeServer: null,
+
+    orgScope: null,
+
+    orgIntents: [],
+
+    orgHealth: null,
+
+    orgProposals: {},
+
+    orgProposalChanges: {},
+
+    orgLog: {},
+
+    orgLogRows: {},
+
+    orgFocusChangeId: null,
+
+    orgIntentNotice: null,
+
+    // One reparent path for the chart AND the ownership menu (S11). asyncAction:
+    // the body does the optimistic tree move (when a tree is mounted), and the
+    // dispatch to the core fires either way — the header and inbox-card menus
+    // act with no org tree loaded, and their move still lands and notifies. The
+    // promise resolves to the server's told counts so the caller toasts both
+    // things. `opts.row` is the session when the page holds it outside the
+    // tree's top N (loaded through org.sessionsUnder); `opts.note` rides the
+    // reparent into the line the session is told.
+    reparentOrgSession: asyncAction(function (this: OrgDraft, conversationId: string, target: OrgReparentSessionTarget, _opts?: { row?: OrgSession | null; note?: string; from_session?: string }) {
+      const tree = this.orgTree;
+      const parent = reparentTreeParent(target);
+      const row = _opts?.row;
+      // The session row carries the role too (role chips, the session map):
+      // it moves in the same tick, and the echo of the conversation confirms it.
+      // Mirrors performReparentSession: a role's own standing session never
+      // moves, and any person target but a remove clears the role.
+      const session = (this as OrgDraft & { sessions?: Record<string, { org_role_id?: string | null; standing_role_id?: string | null }> }).sessions?.[conversationId];
+      if (session && !session.standing_role_id && (target.kind === "role" || target.mode !== "remove")) session.org_role_id = target.kind === "role" ? target.role_id : null;
+      // Move the tree only when it is mounted and can place the move; recording
+      // an intent for a session in no bucket the page did not hand over would
+      // replay a no-op until its TTL. A `remove` has no single new parent, so
+      // its tree move waits for the echo. The dispatch still fires regardless.
+      if (tree && parent && parentBucket(tree, parent) && (row || orgSessionParent(tree, conversationId))) {
+        const intent: OrgIntent = { kind: "moveSession", id: intentId(), conversation_id: conversationId, target: parent, at: Date.now() };
+        applyOrgIntent(tree, intent, row);
+        pushIntent(this, intent);
+      }
+    }),
+
+    reparentOrgPerson: action(function (this: OrgDraft, _teamId: string, userId: string, reportsTo: string | null) {
+      const tree = this.orgTree;
+      if (!tree || !personMoveApplies(tree, userId, reportsTo)) return;
+      const intent: OrgIntent = { kind: "movePerson", id: intentId(), user_id: userId, reports_to_user_id: reportsTo, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    reparentOrgRole: asyncAction(function (this: OrgDraft, roleId: string, reportsTo: OrgParentRef, _note?: string) {
+      const tree = this.orgTree;
+      if (!tree) return;
+      const role = tree.roles.find((r) => r._id === roleId);
+      if (!role || sameParent(role.reports_to, reportsTo)) return;
+      if (orgRoleReparentMakesCycle(tree, roleId, reportsTo)) return;
+      const intent: OrgIntent = { kind: "moveRole", id: intentId(), role_id: roleId, reports_to: reportsTo, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    // An intent like every other edit. org.tree recomputes on any conversation
+    // write in the workspace, so without one the new seat vanished on the next
+    // heartbeat push and a refusal said nothing at all.
+    createOrgRole: action(function (this: OrgDraft, input: OrgCreateRoleInput) {
+      const tree = this.orgTree;
+      if (!tree) return;
+      const intent: OrgIntent = { kind: "createRole", id: intentId(), stub: input, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    // An intent like every other edit: org.tree recomputes on any conversation
+    // write (a heartbeat is enough), so without one a Resume or a caps change
+    // flickered back for a round trip; `from` lets a refusal restore at once.
+    updateOrgRole: action(function (this: OrgDraft, roleId: string, fields: OrgUpdateRoleInput, _opts?: { leave_sessions?: boolean }) {
+      pushRoleFieldsIntent(this, roleId, fields);
+    }),
+
+    // The line (the-line.md L2). An intent, not a bare patch: org.tree is a
+    // singleton replaced wholesale on every push and only intents replay
+    // over it, so a heartbeat push before the mutation echoed would snap the
+    // picker back to the old slug.
+    setRoleLine: action(function (this: OrgDraft, roleId: string, slug: string) {
+      const tree = this.orgTree;
+      const role = tree?.roles.find((r) => r._id === roleId) as (OrgRole & { line_workflow_slug?: string }) | undefined;
+      if (!tree || !role) return;
+      const intent: OrgIntent = { kind: "line", id: intentId(), role_id: roleId, slug, from: role.line_workflow_slug, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    followOrgChannel: action(function (this: OrgDraft, roleShortId: string, channelId: string, follow: boolean) {
+      const tree = this.orgTree;
+      const role = tree?.roles.find((r) => r.short_id === roleShortId);
+      if (!tree || !role) return;
+      // A channel still keyed by a client stub cannot be followed server side
+      // (the dispatch side effect drops it); do not show a follow that will
+      // never land. The caller re-tries once the room has its real id.
+      if (!isConvexId(channelId)) return;
+      if ((role.follow_channel_ids ?? []).includes(channelId) === follow) return;
+      const intent: OrgIntent = { kind: "follow", id: intentId(), role_short_id: roleShortId, channel_id: channelId, follow, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    dropOrgIntent: sync(function (this: OrgDraft, intentId: string) {
+      const dropped = this.orgIntents.find((i) => i.id === intentId);
+      this.orgIntents = this.orgIntents.filter((i) => i.id !== intentId);
+      // A move, a retire and a follow have no inverse to apply (their apply
+      // reshapes the tree in ways a single field cannot undo), so they are
+      // restored by rebuilding from the server's own last tree with the
+      // intents that remain. Without this the chart keeps showing an edit the
+      // server refused while the toast says it is back.
+      if (dropped && NO_REVERT_TREE_KINDS.has(dropped.kind)) rebuildOrgTreeFromServer(this);
+    }),
+
+    revertOrgIntent: sync(function (this: OrgDraft, intentId: string) {
+      const hit = this.orgIntents.find((i) => i.id === intentId);
+      if (!hit) return;
+      revertOrgIntent(this, hit);
+      this.orgIntents = this.orgIntents.filter((i) => i.id !== intentId);
+    }),
+
+    // asyncAction: the optimistic head stub lands on the tree, and the promise
+    // resolves to the server's staff result (S16) so the caller can route to
+    // the seated thread and say what changed.
+    staffHeadOfPeople: asyncAction(function (this: OrgDraft, input: OrgStaffInput) {
+      const tree = this.orgTree;
+      if (!tree) return;
+      // Idempotent per company (S6): a second click while the first is in
+      // flight, or on a company that already has one, adds nothing to the tree.
+      if (liveHead(tree)) return;
+      const intent: OrgIntent = { kind: "staff", id: intentId(), stub: input, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+
+    // The assistant's seat is an anchors row the feed echoes, in whichever
+    // boundary it lives (the person's own for a global assistant, which is not
+    // the active workspace's tree), so nothing is stubbed on the tree.
+    hireExecutiveAssistant: asyncAction(function (this: OrgDraft, _input: OrgHireAssistantInput) {}),
+
+    // The server shapes each of these (org.tree echoes the result), and the
+    // caller awaits it to word its toast. The arguments ride to the dispatch.
+    splitOrgRole: asyncAction(function (this: OrgDraft, _args: Parameters<OrgServerVerbs<void>["splitOrgRole"]>[0]) {}),
+    settleOrgHandoff: asyncAction(function (this: OrgDraft, _roleId: string, _how: "run" | "close") {}),
+    setOrgLineMerge: asyncAction(function (this: OrgDraft, _roleId: string, _on: boolean, _perDay?: number) {}),
+    resetOrg: asyncAction(function (this: OrgDraft, _teamId?: string) {}),
+    provisionOrgRole: asyncAction(function (this: OrgDraft, _roleId: string) {}),
+    markOrgTemplateSetup: asyncAction(function (this: OrgDraft, _instanceKey: string, _id: string, _status: "done" | "open" | "skipped") {}),
+    activateOrgTemplateRoutine: asyncAction(function (this: OrgDraft, _taskId: string) {}),
+    requestOrgTemplateBind: asyncAction(function (this: OrgDraft, _instanceKey: string, _secrets: Parameters<OrgServerVerbs<void>["requestOrgTemplateBind"]>[1], _deviceId?: string) {}),
+    setOrgTemplateLearning: asyncAction(function (this: OrgDraft, _teamId: string | undefined, _enabled: boolean) {}),
+
+    // The draft flips the card's members (change_ids), not the seqs: riders
+    // and carried rows decide with their card. `seen` and `leave_sessions`
+    // are the dispatch's. A text on an approval rides as the row's stamp; a
+    // rejection always stamps, words or not, so the card can say "Rejected".
+    // A note naming no change stamps the list row (the server keeps it on
+    // the proposal), so the closing row says it the moment it is sent.
+    replyOnOrgProposal: action(function (this: OrgDraft, proposalId: string, items: OrgReplyInput[], _seen: OrgVerdictSeen, opts?: OrgReplyOpts) {
+      const at = Date.now();
+      const stampOf = (item: OrgReplyInput): OrgChangeReply => ({ verdict: item.verdict, ...(item.text?.trim() ? { text: item.text.trim() } : {}), at });
+      for (const item of items) {
+        const ids = new Set(item.change_ids);
+        if (!ids.size) {
+          if (item.verdict === "note" && item.text?.trim()) noteProposal(this, proposalId, stampOf(item));
+          continue;
+        }
+        const stamp = stampOf(item);
+        if (item.verdict === "note") noteChanges(this, proposalId, (c) => ids.has(c._id), stamp);
+        else decideWaitingChanges(this, proposalId, item.verdict === "approve" ? "accepted" : "skipped", (c) => ids.has(c._id), (c) => (item.verdict === "reject" || stamp.text ? stamp : undefined), at);
+      }
+      if (opts?.say) sayInThread(this, proposalId, items, opts.say);
+    }),
+
+    withdrawOrgProposal: action(function (this: OrgDraft, proposalId: string) {
+      const p = this.orgProposals[proposalId];
+      if (!p || p.status !== "open") return;
+      const intent: OrgIntent = { kind: "withdraw", id: intentId(), proposal_id: proposalId, short_id: p.short_id, at: Date.now() };
+      applyOrgProposalIntent(this.orgProposals, intent);
+      pushIntent(this, intent);
+    }),
+
+    // `_opts.with` rides to the dispatch too: the server undoes those entries
+    // in the same batch or refuses the whole gesture (S21).
+    undoOrgChange: action(function (this: OrgDraft, batch: string, opts?: { with?: string[]; line?: string }) {
+      markOrgUndo(this, batch, false, opts);
+    }),
+
+    redoOrgChange: action(function (this: OrgDraft, batch: string, opts?: { with?: string[]; line?: string }) {
+      markOrgUndo(this, batch, true, opts);
+    }),
+
+    setOrgFocusChangeId: sync(function (this: OrgDraft, changeId: string | null) {
+      this.orgFocusChangeId = changeId;
+    }),
+
+    // The retire body lives in applyOrgIntent so a heartbeat push between the
+    // click and the echo replays it instead of bringing the role back.
+    retireOrgRole: action(function (this: OrgDraft, roleId: string, _standingSession?: "keep" | "retire") {
+      const tree = this.orgTree;
+      const role = tree?.roles.find((r) => r._id === roleId);
+      if (!tree || !role) return;
+      const intent: OrgIntent = { kind: "retireRole", id: intentId(), role_id: roleId, handle: role.handle, at: Date.now() };
+      applyOrgIntent(tree, intent);
+      pushIntent(this, intent);
+    }),
+  };
+}

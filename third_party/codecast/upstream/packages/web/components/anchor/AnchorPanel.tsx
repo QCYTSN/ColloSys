@@ -1,0 +1,445 @@
+"use client";
+
+// A pinned role or session from anywhere, without leaving the page: the
+// header's slide-over (org-staffing.md S22, S30). The header is the role's
+// face, given name and title (or the session's title); the body is its live
+// conversation. Ephemeral state in the store (`anchorPanel`), opened by a
+// header pin, the shortcut, or the palette; a role's page is the full home,
+// with its scope beside the conversation. With no target the panel shows the
+// first header pin: the person's global Executive Assistant by default, else the
+// active workspace's agent.
+
+import { useAssistantScope } from "../../lib/surfaces";
+import { useWorkspaceFeature } from "../../lib/teamFeatures";
+import { TopbarButton } from "../TopbarButton";
+import { lazy, Suspense, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { ArrowUpRight, X } from "lucide-react";
+import { useInboxStore, useTrackedStore } from "../../store/inboxStore";
+import { agentName, agentTitle, deriveAnchorStatus, useAnchors, useRootAgent, type AnchorRow } from "../../hooks/useSyncAnchors";
+import { AnchorAvatar, AnchorScopePill } from "./AnchorIdentity";
+import { ShortcutTooltip } from "../KeyboardShortcutsHelp";
+import { useCoarseNow } from "../../hooks/useCoarseNow";
+import { anchorIdentityWords, defaultPinOf, globalAssistantOf, isHeaderPinned, readHeaderPins, resolveHeaderPins, toggleHeaderPin, type ResolvedPin } from "../../lib/headerPins";
+import { Pin, PinOff, Plus } from "lucide-react";
+import { DropdownMenuItem } from "../ui/dropdown-menu";
+import { ContextMenu, CtxCheckItem, CtxHeader, CtxItem, CtxLabel, CtxSeparator, useContextMenu } from "../ui/context-menu";
+import { SessionFace } from "../identity/SessionFace";
+import { RoleOffer } from "../org/scope/RoleOffer";
+
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+
+const AnchorConversation = lazy(() =>
+  import("./AnchorConversation").then((module) => ({ default: module.AnchorConversation })),
+);
+const AnchorOnboarding = lazy(() =>
+  import("./AnchorConversation").then((module) => ({ default: module.AnchorOnboarding })),
+);
+const HireAssistantCard = lazy(() =>
+  import("./AnchorConversation").then((module) => ({ default: module.HireAssistantCard })),
+);
+
+export function AnchorPanel() {
+  const open = useInboxStore((st) => st.anchorPanel.open);
+  // The org feature is per team, default off: no chip and no slide-over when
+  // the active workspace has it off (the store keeps its state; nothing renders).
+  const orgOn = useWorkspaceFeature("org");
+  const pins = useHeaderPins();
+  const target = useInboxStore((st) => st.anchorPanel.target);
+  const anchors = useAnchors();
+  const activeTeamId = useInboxStore((st) => (st.clientState.ui?.active_team_id as string | undefined) ?? null);
+  // With no pin to show (a person who unpinned everything), the panel still
+  // opens on the assistant or the workspace's agent, never on a hire form for
+  // a seat that already stands.
+  const shown: ResolvedPin | null = (target?.kind === "anchor"
+    ? pins.find((p) => p.anchor && p.anchor._id === target.id) ?? pinOfAnchor(anchors.find((a) => a._id === target.id) ?? null)
+    : target?.kind === "session" ? pins.find((p) => p.conversationId === target.id) ?? sessionPin(target.id)
+    : null) ?? pins[0] ?? defaultPinOf(anchors, activeTeamId);
+  const current = shown?.anchor ?? null;
+  // What the seat offers next, above its composer: the Head of People's
+  // review (RoleOffer renders nothing for any other thread).
+  const offerFor = shown?.conversationId ?? null;
+  const offer = useMemo(() => (offerFor ? <RoleOffer conversationId={offerFor} /> : null), [offerFor]);
+  const router = useRouter();
+  // No global assistant yet: the panel offers the hire above whatever it shows (S30).
+  const hasGlobalAssistant = !!globalAssistantOf(anchors);
+  const [hiring, setHiring] = useState(false);
+
+  // Keep mounted after first open so the conversation's scroll/composer state
+  // survives close/reopen; slide via transform.
+  const [everOpen, setEverOpen] = useState(false);
+  useWatchEffect(() => { if (open) setEverOpen(true); }, [open]);
+  const rootRef = useRef<HTMLDivElement>(null);
+  if (!everOpen) return null;
+
+  const close = () => useInboxStore.getState().closeAnchorPanel();
+  const name = shown?.name ?? agentName(current);
+  const openFull = () => {
+    router.push(pagePathOf(shown));
+    close();
+  };
+
+  if (!orgOn) return null;
+  return (
+    <div
+      ref={rootRef}
+      role="complementary"
+      aria-label={name}
+      aria-hidden={!open}
+      data-anchor-panel
+      onKeyDown={(e) => {
+        // Esc from inside the panel closes it, unless a composer is holding
+        // text (its own Esc handling wins there).
+        if (e.key !== "Escape") return;
+        const t = e.target as HTMLElement | null;
+        if (t && (t.tagName === "TEXTAREA" || t.tagName === "INPUT") && (t as HTMLInputElement).value) return;
+        e.stopPropagation();
+        close();
+      }}
+      className={`absolute inset-y-0 right-0 z-[45] flex flex-col bg-sol-bg border-l border-sol-border/60 shadow-[-12px_0_32px_-16px_rgba(0,0,0,0.45)] transition-transform ease-out ${
+        open ? "translate-x-0" : "translate-x-full pointer-events-none"
+      }`}
+      style={{ width: "min(480px, 92vw)", transitionDuration: "var(--cc-panel-motion, 220ms)" }}
+    >
+      <header className="flex items-center gap-2 px-3 h-11 border-b border-sol-border/60 shrink-0">
+        <RootAgentHead current={current} shown={shown} onOpenFull={openFull} />
+        <div className="ml-auto flex items-center gap-0.5 shrink-0">
+          <button
+            onClick={openFull}
+            className="cc-panel__btn"
+            title={`Open ${name}'s page (its scope, settings and Slack)`}
+            aria-label={`Open ${name}'s page`}
+          >
+            <ArrowUpRight className="w-3.5 h-3.5" />
+          </button>
+          <ShortcutTooltip label="Close" action="anchor.toggle">
+            <button onClick={close} className="cc-panel__btn is-close" aria-label="Close the panel">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </ShortcutTooltip>
+        </div>
+      </header>
+      <PinStrip pins={pins} shownKey={shown?.key ?? null} />
+      {shown && !hasGlobalAssistant && !hiring && (
+        <button type="button" onClick={() => setHiring(true)} className="shrink-0 flex items-center gap-2 px-3 py-1.5 text-[11.5px] border-b border-sol-border/60 text-sol-text-muted hover:text-sol-text hover:bg-sol-bg-highlight/40 text-left" data-hire-assistant-cta>
+          <AnchorAvatar anchor={null} size={16} />
+          <span>Hire your Executive Assistant: a right hand across every workspace, pinned here.</span>
+        </button>
+      )}
+      {hiring && (
+        <button type="button" onClick={() => setHiring(false)} className="shrink-0 px-3 py-1.5 text-[11.5px] border-b border-sol-border/60 text-sol-text-muted hover:text-sol-text text-left">← Back</button>
+      )}
+      <div className="flex-1 min-h-0">
+        <Suspense fallback={<div className="h-full flex items-center justify-center text-sol-text-dim text-sm">Loading…</div>}>
+          {hiring && !hasGlobalAssistant ? (
+            <HireAssistantCard compact onHired={() => setHiring(false)} />
+          ) : shown ? (
+            shown.conversationId
+              ? <AnchorConversation conversationId={shown.conversationId} hideHeader foldBootstrap foldWorkingTurns composerNode={offer} />
+              : <div className="h-full flex items-center justify-center text-sol-text-dim text-sm">Coming online…</div>
+          ) : (
+            <AnchorOnboarding compact />
+          )}
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+/** The header identity: the role's face, its name, its handle and workspace,
+ *  and its status. A click opens the role's page. */
+function RootAgentHead({ current, shown, onOpenFull }: { current: AnchorRow | null; shown: ResolvedPin | null; onOpenFull: () => void }) {
+  const now = useCoarseNow(30_000);
+  const status = deriveAnchorStatus(current, now);
+  const name = shown?.name ?? agentName(current);
+  const title = current ? agentTitle(current) : shown?.subtitle ?? null;
+  return (
+    <button
+      onClick={onOpenFull}
+      className="flex items-center gap-2.5 min-w-0 rounded-md px-1 py-0.5 -ml-1 hover:bg-sol-bg-highlight/60 transition-colors text-left"
+      title={shown ? `Open ${name}'s page` : "Set up the workspace's agent"}
+    >
+      {current || !shown ? <AnchorAvatar anchor={current} size={28} /> : <SessionPinFace id={shown.conversationId ?? ""} size={28} />}
+      <span className="min-w-0">
+        <span className="flex items-center gap-1.5 min-w-0 leading-tight">
+          <span className="font-semibold text-sm truncate">{shown ? name : "Workspace agent"}</span>
+          {current?.role && <span className="text-[10.5px] font-mono text-sol-text-dim truncate">@{current.role.handle}</span>}
+          {current && <AnchorScopePill anchor={current} />}
+        </span>
+        {shown && (
+          <span className="flex items-center gap-1.5 text-[11px] leading-tight">
+            {current && <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`} />}
+            {title && <span className="text-sol-text-muted truncate">{title}</span>}
+            {current && <span className={status.text}>· {status.label}</span>}
+          </span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+/** The header's pins, resolved against what the viewer can see. */
+function useHeaderPins(): ResolvedPin[] {
+  const anchors = useAnchors();
+  const s = useTrackedStore([
+    (st) => JSON.stringify(st.clientState.ui?.header_pins ?? null),
+    (st) => st.clientState.ui?.active_team_id ?? null,
+    (st) => {
+      const pins = readHeaderPins(st);
+      return pins ? pins.filter((p) => p.kind === "session").map((p) => `${p.id}:${st.sessions[p.id]?.title ?? ""}:${(st.sessions[p.id] as any)?.short_id ?? ""}`).join("|") : "";
+    },
+  ]);
+  return resolveHeaderPins(readHeaderPins(s), anchors, s.sessions as any, (s.clientState.ui?.active_team_id as string | undefined) ?? null);
+}
+
+/** A pinned session's face: the row's character, read through a short
+ *  signature so a heartbeat elsewhere never re-renders the header. */
+function SessionPinFace({ id, size }: { id: string; size: number }) {
+  const s = useTrackedStore([(st) => { const r = st.sessions[id]; return r ? `${r.character_avatar ?? ""}|${r.character_name ?? ""}|${r.title ?? ""}|${r.standing_role_id ?? ""}` : ""; }]);
+  const row = s.sessions[id];
+  if (!row) return <AnchorAvatar anchor={null} size={size} />;
+  return <SessionFace row={row as any} size={size} />;
+}
+
+function pinOfAnchor(a: AnchorRow | null): ResolvedPin | null {
+  if (!a) return null;
+  return { key: `anchor:${a._id}`, pin: a.role ? { kind: "role", id: String(a.role._id) } : null, anchor: a, conversationId: a.conversation_id ? String(a.conversation_id) : null, name: agentName(a), subtitle: agentTitle(a) ?? "", isDefault: false };
+}
+
+function sessionPin(id: string): ResolvedPin | null {
+  const s = (useInboxStore.getState() as any).sessions[id];
+  if (!s) return null;
+  return { key: `session:${id}`, pin: { kind: "session", id }, anchor: null, conversationId: id, name: s.title || "Session", subtitle: s.short_id ? `session ${s.short_id}` : "session", isDefault: false };
+}
+
+/** The header pins (org-staffing.md S30): one face per pinned role or
+ *  session, the person's global Executive Assistant by default, else the active
+ *  workspace's agent. One glance says whether a role needs you or is
+ *  working; one click opens the panel on it. A right click unpins. A person
+ *  who unpinned everything gets an empty header; the panel stays on its
+ *  shortcut, and its Pin button brings a face back. */
+export function HeaderPins() {
+  const pins = useHeaderPins();
+  const chosen = useInboxStore((st) => readHeaderPins(st) !== null);
+  const root = useRootAgent();
+  const orgOn = useWorkspaceFeature("org");
+  const menu = useContextMenu<ResolvedPin | null>();
+  // In hosted mode's Assistant scope the assistant is the one face: a pinned
+  // agent beside it would read as a second assistant.
+  const assistantOnly = useAssistantScope().only;
+  if (!orgOn || assistantOnly || (chosen && !pins.length)) return null;
+  return (
+    <span className="inline-flex items-center gap-0.5" data-header-pins>
+      {pins.length
+        ? pins.map((p) => <PinChip key={p.key} pin={p} onMenu={(e) => menu.open(e, p)} />)
+        : <HirePinChip hasRoot={!!root} onMenu={(e) => menu.open(e, null)} />}
+      <PinMenu state={menu} />
+    </span>
+  );
+}
+
+/** Where a pin's full page lives: a role's page, else the session. */
+function pagePathOf(pin: ResolvedPin | null): string {
+  const role = pin?.anchor?.role;
+  if (pin?.anchor) return role ? `/org/${role.short_id}` : "/anchor";
+  return pin?.conversationId ? `/conversation/${pin.conversationId}` : "/anchor";
+}
+
+/** What the panel opens for a pin. */
+function targetOf(pin: ResolvedPin): { kind: "anchor" | "session"; id: string } {
+  return pin.anchor ? { kind: "anchor", id: pin.anchor._id } : { kind: "session", id: pin.conversationId ?? pin.key };
+}
+
+/** The pin a resolved face stands for, the default face included (its role). */
+function pinIdOf(pin: ResolvedPin): { kind: "role" | "session"; id: string } | null {
+  if (pin.pin) return pin.pin;
+  return pin.anchor?.role ? { kind: "role", id: String(pin.anchor.role._id) } : null;
+}
+
+/** Every role the header can pin: the person's assistant first, then each
+ *  workspace's agent, then the leads. */
+function usePinnableRoles() {
+  const anchors = useAnchors();
+  return useMemo(() => {
+    const rank = (a: AnchorRow) => (a.scope_type === "user" ? 0 : a.is_root ? 1 : 2);
+    return anchors
+      .filter((a) => a.role && a.role.status !== "retired" && a.status !== "decommissioned")
+      .map((a) => ({ roleId: String(a.role!._id), anchor: a, ...anchorIdentityWords(a) }))
+      .sort((x, y) => rank(x.anchor) - rank(y.anchor) || x.name.localeCompare(y.name));
+  }, [anchors]);
+}
+
+/** The checklist every pin menu shares: tick a role or session to keep its
+ *  face in the header. Ticking keeps the menu open, so several go in one pass. */
+function PinChecklist() {
+  const pins = useHeaderPins();
+  const roles = usePinnableRoles();
+  const currentId = useInboxStore((st) => st.currentSessionId);
+  const pinnedRoles = new Set(pins.map((p) => (p.anchor?.role ? String(p.anchor.role._id) : null)).filter(Boolean));
+  const sessions = pins.filter((p) => !p.anchor && p.conversationId);
+  const current = currentId && !sessions.some((p) => p.conversationId === currentId)
+    ? (useInboxStore.getState() as any).sessions[currentId] ?? null
+    : null;
+  const tick = (kind: "role" | "session", id: string) => (e: Event) => { e.preventDefault(); toggleHeaderPin(kind, id); };
+  return (
+    <>
+      <CtxLabel>Pin to header</CtxLabel>
+      {roles.map((r) => (
+        <CtxCheckItem key={r.roleId} checked={pinnedRoles.has(r.roleId)} onSelect={tick("role", r.roleId)} data-pin-option={`role:${r.roleId}`}>
+          <span className="flex items-center gap-2 min-w-0">
+            <AnchorAvatar anchor={r.anchor} size={16} className="shrink-0" />
+            <span className="truncate">{r.name}</span>
+            <span className="truncate text-[11px] text-sol-text-dim">{r.subtitle}</span>
+          </span>
+        </CtxCheckItem>
+      ))}
+      {(sessions.length > 0 || current) && <CtxSeparator />}
+      {sessions.map((p) => (
+        <CtxCheckItem key={p.key} checked onSelect={tick("session", p.conversationId!)}>
+          <span className="flex items-center gap-2 min-w-0">
+            <SessionPinFace id={p.conversationId!} size={16} />
+            <span className="truncate">{p.name}</span>
+          </span>
+        </CtxCheckItem>
+      ))}
+      {current && (
+        <CtxCheckItem checked={false} onSelect={tick("session", currentId!)} data-pin-option="current-session">
+          <span className="flex items-center gap-2 min-w-0">
+            <SessionPinFace id={currentId!} size={16} />
+            <span className="truncate">{current.title || "This session"}</span>
+            <span className="truncate text-[11px] text-sol-text-dim">this session</span>
+          </span>
+        </CtxCheckItem>
+      )}
+    </>
+  );
+}
+
+/** A face's menu (right click) or the panel's Pin button: the face's own
+ *  verbs when there is one, then the checklist. */
+function PinMenu({ state }: { state: ReturnType<typeof useContextMenu<ResolvedPin | null>> }) {
+  const router = useRouter();
+  return (
+    <ContextMenu state={state}>
+      {(pin) => {
+        const id = pin && pinIdOf(pin);
+        return (
+          <>
+            {pin && (
+              <>
+                <CtxHeader title={pin.name} />
+                <CtxItem icon={ArrowUpRight} onSelect={() => router.push(pagePathOf(pin))}>Open {pin.name}&apos;s page</CtxItem>
+                {id && <CtxItem icon={PinOff} onSelect={() => toggleHeaderPin(id.kind, id.id)}>Unpin from header</CtxItem>}
+                <CtxSeparator />
+              </>
+            )}
+            <PinChecklist />
+          </>
+        );
+      }}
+    </ContextMenu>
+  );
+}
+
+/** The pins inside the panel: one tab per face to switch between them, and
+ *  the Pin button that adds or removes one, where the person already is. */
+function PinStrip({ pins, shownKey }: { pins: ResolvedPin[]; shownKey: string | null }) {
+  const menu = useContextMenu<ResolvedPin | null>();
+  return (
+    <div className="shrink-0 flex items-center gap-1 px-2 h-9 border-b border-sol-border/60 overflow-x-auto scrollbar-none" data-pin-strip>
+      {pins.map((p) => {
+        const on = p.key === shownKey;
+        return (
+          <button
+            key={p.key}
+            type="button"
+            onClick={() => useInboxStore.getState().openAnchorPanel(targetOf(p))}
+            onContextMenu={(e) => menu.open(e, p)}
+            title={`${p.name} · ${p.subtitle}`}
+            aria-pressed={on}
+            className={`shrink-0 inline-flex items-center gap-1.5 h-6 pl-0.5 pr-2 rounded-full text-[11.5px] transition-colors ${on ? "bg-sol-bg-highlight text-sol-text" : "text-sol-text-muted hover:text-sol-text hover:bg-sol-bg-highlight/50"}`}
+          >
+            {p.anchor ? <AnchorAvatar anchor={p.anchor} size={18} /> : <SessionPinFace id={p.conversationId ?? ""} size={18} />}
+            <span className="truncate max-w-[110px]">{p.name}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); menu.openAt(r.left, r.bottom + 4, null); }}
+        className="ml-auto shrink-0 inline-flex items-center gap-1 h-6 px-2 rounded-full text-[11.5px] text-sol-text-muted hover:text-sol-text hover:bg-sol-bg-highlight/50"
+        title="Choose which roles and sessions sit in the header"
+        data-pin-picker
+      >
+        <Plus className="w-3 h-3" />
+        Pin
+      </button>
+      <PinMenu state={menu} />
+    </div>
+  );
+}
+
+function PinChip({ pin, onMenu }: { pin: ResolvedPin; onMenu: (e: React.MouseEvent) => void }) {
+  const now = useCoarseNow(30_000);
+  const open = useInboxStore((st) => st.anchorPanel.open);
+  const target = useInboxStore((st) => st.anchorPanel.target);
+  const status = pin.anchor ? deriveAnchorStatus(pin.anchor, now) : null;
+  const dot = !status ? ""
+    : status.tone === "attention" ? "bg-sol-yellow"
+    : status.tone === "working" ? "bg-sol-cyan animate-pulse"
+    : status.tone === "online" ? "bg-sol-green"
+    : "";
+  const label = status?.tone === "attention" ? `${pin.name} needs you`
+    : status?.tone === "working" ? `${pin.name} is working`
+    : `Talk to ${pin.name}`;
+  const mine = targetOf(pin);
+  const active = open && (!target ? pin.isDefault : target.kind === mine.kind && target.id === mine.id);
+  return (
+    <ShortcutTooltip label={`${label} · ${pin.subtitle}`} action="anchor.toggle">
+      <TopbarButton
+        onClick={() => {
+          const st = useInboxStore.getState();
+          if (active) st.closeAnchorPanel(); else st.openAnchorPanel(mine);
+        }}
+        onContextMenu={onMenu}
+        aria-label={label}
+        aria-pressed={active}
+        active={active}
+        desktopOnly
+        data-header-pin={pin.key}
+      >
+        {pin.anchor ? <AnchorAvatar anchor={pin.anchor} size={18} /> : <SessionPinFace id={pin.conversationId ?? ""} size={18} />}
+        {dot && (
+          <span className={`absolute right-1 top-1 w-1.5 h-1.5 rounded-full ring-2 ring-sol-bg ${dot}`} />
+        )}
+      </TopbarButton>
+    </ShortcutTooltip>
+  );
+}
+
+/** Nothing pinned and nothing to show by default: the way in. */
+function HirePinChip({ hasRoot, onMenu }: { hasRoot: boolean; onMenu: (e: React.MouseEvent) => void }) {
+  const open = useInboxStore((st) => st.anchorPanel.open);
+  const label = hasRoot ? "Pin a role or session here" : "Set up the workspace's agent";
+  return (
+    <ShortcutTooltip label={label} action="anchor.toggle">
+      <TopbarButton onClick={() => useInboxStore.getState().toggleAnchorPanel()} onContextMenu={onMenu} aria-label={label} aria-pressed={open} active={open} desktopOnly>
+        <AnchorAvatar anchor={null} size={18} />
+      </TopbarButton>
+    </ShortcutTooltip>
+  );
+}
+
+/** "Pin to header" / "Unpin from header" for a session's own menu. Renders
+ *  nothing where the header has no pins (the org feature is off). */
+export function HeaderPinMenuItem({ sessionId }: { sessionId: string }) {
+  const orgOn = useWorkspaceFeature("org");
+  const pinned = useInboxStore((st) => isHeaderPinned(st, "session", sessionId));
+  if (!orgOn) return null;
+  return (
+    <DropdownMenuItem onSelect={() => toggleHeaderPin("session", sessionId)} data-header-pin-toggle={pinned ? "pinned" : "unpinned"}>
+      {pinned ? <PinOff className="w-3 h-3 mr-1.5" /> : <Pin className="w-3 h-3 mr-1.5" />}
+      {pinned ? "Unpin from header" : "Pin to header"}
+    </DropdownMenuItem>
+  );
+}

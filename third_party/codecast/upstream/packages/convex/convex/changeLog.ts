@@ -1,0 +1,357 @@
+// Cross-entity change feed — emission side.
+//
+// The write interceptor in functions.ts calls into here on every insert / patch
+// / replace / delete to a tracked table. We keep ONE row per entity in
+// `change_log` (keyed by entity_id) and bump its `seq` to now on each change, so
+// the table is bounded by entity count, not change volume — a conversation
+// touched on every message batch updates a single row in place.
+//
+// The pure helpers (scopeFromDoc / decidePatchScope) are unit-tested without a
+// db; the db-touching emit/lookup are thin shells around them.
+import {
+  appendSyncAction,
+  buildCargo,
+  emitScopeAction,
+  emitSyncActions,
+  isChurnOnlyPatch,
+  revokeStaleScope,
+  scopesForChange,
+  syncLogDisabled,
+  userScopeKey,
+  type ActionExtra,
+  type SyncAckCollector,
+} from "./syncLog";
+import { accessStampFor, computeWorkspaceKeyDb, type AccessStamp } from "./lib/accessKeys";
+import { withdrawDeletedConversation } from "./lib/changesDirty";
+import { agentTypeChangeRefusal } from "@codecast/shared/contracts";
+
+// One memoized POST-WRITE document read per tracked write. The sync log reads
+// it for three things (sync-log-cargo): the access-derived fan-out scopes, the
+// access stamp (always fresh — never reused across writes), and the partial
+// self-heal (a full cargo when the merged one can no longer prove itself).
+function postWriteDoc(rawDb: any, id: any, known?: any): () => Promise<any | null> {
+  let cached: Promise<any> | null = known !== undefined ? Promise.resolve(known) : null;
+  return () => (cached ??= rawDb.get(id));
+}
+
+// One memoized stamp per write, shared by every fan-out scope and by the sync
+// scope derivation below (a stamp for a pre-backfill row reads its linked
+// conversation, so computing it once per write matters).
+function syncExtra(rawDb: any, table: string, doc: () => Promise<any | null>, cargo: ActionExtra["cargo"]): ActionExtra {
+  let stamp: Promise<AccessStamp | null> | null = null;
+  return {
+    cargo,
+    table,
+    fullDoc: doc,
+    access: () => (stamp ??= doc().then((d) => accessStampFor({ db: rawDb }, table, d))),
+  };
+}
+
+// The sync log's scope IS the access stamp (fan-out is access-derived).
+function syncScopeFromStamp(stamp: AccessStamp | null): ChangeScope {
+  return {
+    owner_user_id: stamp?.access_owner,
+    workspace: stamp?.access_key,
+    grants: stamp?.access_grants ?? [],
+  };
+}
+
+// Document fields whose change can move the entity between sync-log scopes or
+// change who may read it: the pre-write document is read so departed scopes
+// get their revocation delete (design D4, access-derived fan-out).
+const SCOPE_FIELDS = new Set(["user_id", "team_id", "workspace", "assignee"]);
+
+export type ChangeEntity =
+  | "conversations"
+  | "tasks"
+  | "docs"
+  | "plans"
+  | "projects";
+
+// The tables whose writes feed the change log. A table is tracked iff its rows
+// carry the uniform { user_id, team_id? } scope shape every catch-up query relies
+// on. Keep in sync with the change_log.entity_type union in schema.ts.
+export const TRACKED_TABLES: ReadonlySet<ChangeEntity> = new Set([
+  "conversations",
+  "tasks",
+  "docs",
+  "plans",
+  "projects",
+]);
+
+export type ChangeScope = {
+  owner_user_id: string | undefined;
+  team_id?: string | undefined;
+  // Access facts the sync log fans out on (sync-log-cargo): the stored
+  // workspace key and the explicit per-user grants (a task's assignee, a
+  // conversation's session owners). change_log ignores them.
+  workspace?: string;
+  grants?: string[];
+};
+
+// The owner/team scope of an entity, read straight off its document. Every
+// tracked table uses these exact field names (verified against schema.ts), so
+// one extractor covers them all. Pure — unit-tested.
+export function scopeFromDoc(doc: any): ChangeScope {
+  return {
+    owner_user_id: doc?.user_id ? String(doc.user_id) : undefined,
+    team_id: doc?.team_id ? String(doc.team_id) : undefined,
+  };
+}
+
+// Whether a patch needs a fresh document read to resolve scope, or can reuse the
+// scope already recorded on the entity's change_log row. A read is needed when
+// the patch could MOVE the entity between scopes (touches user_id/team_id) or
+// when there's no prior row to reuse. Pure — unit-tested. Keeps the hot path
+// (e.g. a message batch bumping a conversation) to one indexed lookup, no extra
+// document get, in the common "ordinary field changed" case.
+export function patchNeedsDocRead(
+  patchFields: Record<string, any>,
+  hasExistingRow: boolean,
+): boolean {
+  return !hasExistingRow || "user_id" in patchFields || "team_id" in patchFields;
+}
+
+// Identify which tracked table an id belongs to. `db.normalizeId(table, id)` is a
+// pure string check (no document read) that returns the id iff it belongs to
+// that table's id space, so this costs at most one cheap check per tracked table
+// and never a query. Returns null for untracked ids (the interceptor then skips
+// emission).
+export function trackedTableOf(db: any, id: any): ChangeEntity | null {
+  for (const table of TRACKED_TABLES) {
+    if (db.normalizeId(table, id)) return table;
+  }
+  return null;
+}
+
+// The single existing change_log row for an entity (or null). first() not
+// unique(): a rare concurrent double-insert leaves a duplicate that is harmless
+// (catch-up dedups by entity id) rather than throwing on read.
+export async function lookupChangeRow(db: any, entityId: string): Promise<any | null> {
+  return db
+    .query("change_log")
+    .withIndex("by_entity", (q: any) => q.eq("entity_id", entityId))
+    .first();
+}
+
+// Upsert the entity's change_log row to { op, seq=now, scope }. `db` MUST be the
+// raw (un-wrapped) writer so this never re-enters the interceptor. Skips silently
+// if the scope has no owner — a tracked row always has user_id, so a missing one
+// means the document was already gone (e.g. delete of an absent id).
+export async function emitChange(
+  db: any,
+  entityType: ChangeEntity,
+  entityId: string,
+  op: "upsert" | "delete",
+  scope: ChangeScope,
+  existing?: any | null,
+): Promise<void> {
+  if (!scope.owner_user_id) return;
+  const seq = Date.now();
+  const row = existing !== undefined ? existing : await lookupChangeRow(db, entityId);
+  const fields = {
+    entity_type: entityType,
+    entity_id: entityId,
+    op,
+    owner_user_id: scope.owner_user_id as any,
+    team_id: scope.team_id as any,
+    seq,
+  };
+  if (row) {
+    await db.patch(row._id, { op, seq, owner_user_id: fields.owner_user_id, team_id: fields.team_id, entity_type: entityType });
+  } else {
+    await db.insert("change_log", fields);
+  }
+}
+
+// A new session owner gets the conversation in their own user scope, whichever
+// writer added the row (addSessionOwnerRow, an undo's restore insert, the
+// legacy-owner backfill). The action is thin: no cargo, so the owner's applier
+// fetches the row through byIds, which admits owners. Its stamp comes from the
+// post-write conversation, whose grants now name the new owner, so getRange
+// projects it as an upsert for them. A runner who is also an owner already
+// holds the conversation in that scope, so nothing is appended for them.
+//
+// Owner REMOVAL emits nothing, on purpose. A revocation delete in the departed
+// owner's scope reaches their client as a held-row delete: a byIds probe, then
+// a durable exclude that prunes the row from their team board even when the
+// session is still team-visible to them. Disown keeps its own path: the row
+// leaves their inbox list, and their client asks byIds about it without
+// pruning (web settleDisownClaims): a returned row keeps its stamps, an
+// omitted one loses only its ownership claim.
+async function emitOwnerAdded(rawDb: any, collector: SyncAckCollector | null, conversationId: any, ownerId: string): Promise<void> {
+  const conv = await rawDb.get(conversationId);
+  if (!conv?.user_id || String(conv.user_id) === ownerId) return;
+  await appendSyncAction(rawDb, collector, userScopeKey(ownerId), "conversations", String(conversationId), "upsert", {
+    table: "conversations",
+    access: () => accessStampFor({ db: rawDb }, "conversations", conv),
+  });
+}
+
+// Wrap a raw Convex DatabaseWriter so every insert/patch/replace/delete to a
+// tracked table also upserts the entity's change_log row AND appends the entity's
+// sync-log actions (syncLog.ts — the ordered per-scope log that supersedes this
+// table's Date.now() heuristic for new clients; both are written until deployed
+// bundles roll off getChangesSince). Reads and id helpers pass straight through.
+// The interceptor's own change_log/sync_log writes go through the RAW db handed in
+// here, so they never re-enter the wrapper (no recursion; both tables are
+// untracked regardless). functions.ts builds the custom mutation ctx from this;
+// tests drive it with a fake in-memory db. Pure factory — it loads without the
+// Convex runtime.
+//
+// `collector` (optional) accumulates the sync positions this transaction appended;
+// dispatch returns them to an opting-in client as its write acknowledgement.
+function assertAgentTypeKept(preDoc: any, next: string | undefined) {
+  const refusal = preDoc ? agentTypeChangeRefusal(preDoc.agent_type, next) : null;
+  if (refusal) throw new Error(refusal);
+}
+
+export function makeChangeTrackedDb(rawDb: any, collector: SyncAckCollector | null = null): any {
+  // Only wrap a real Convex DatabaseWriter, detected via normalizeId — the
+  // table-from-id primitive the interceptor relies on. A partial test mock that
+  // lacks it is returned untouched, so the interceptor never changes a mock's
+  // behaviour. In production ctx.db always has normalizeId, so this always wraps.
+  if (typeof rawDb.normalizeId !== "function") return rawDb;
+  return {
+    get: (...args: any[]) => rawDb.get(...args),
+    query: (...args: any[]) => rawDb.query(...args),
+    normalizeId: (...args: any[]) => rawDb.normalizeId(...args),
+    system: rawDb.system,
+
+    async insert(table: string, doc: any) {
+      const id = await rawDb.insert(table, doc);
+      if (TRACKED_TABLES.has(table as any)) {
+        const scope = scopeFromDoc(doc);
+        await emitChange(rawDb, table as ChangeEntity, String(id), "upsert", scope, null);
+        // Stamp the stored ACCESS key at the one chokepoint every tracked insert
+        // passes through (review): raw insert sites (doc/project/template task
+        // creates) still mint rows without `workspace`, and every such row would
+        // otherwise pay a linked-conversation read on each later write and a
+        // membership query per list row, forever.
+        if (table !== "conversations" && doc?.user_id && !(typeof doc.workspace === "string" && doc.workspace)) {
+          const key = await computeWorkspaceKeyDb({ db: rawDb }, { _id: id, ...doc });
+          await rawDb.patch(id, { workspace: key });
+          doc = { ...doc, workspace: key };
+        }
+        if (!syncLogDisabled()) {
+          const full = { _id: id, ...doc };
+          const extra = syncExtra(rawDb, table, postWriteDoc(rawDb, id, full), buildCargo(table, doc, { full: true }));
+          await emitSyncActions(
+            rawDb, collector, table as ChangeEntity, String(id), "upsert",
+            syncScopeFromStamp(await extra.access!()), null, extra,
+          );
+        }
+      } else if (table === "team_memberships" && doc?.user_id && doc?.team_id) {
+        await emitScopeAction(rawDb, collector, String(doc.user_id), String(doc.team_id), "scope_added");
+      } else if (table === "session_owners" && doc?.user_id && doc?.conversation_id && !syncLogDisabled()) {
+        await emitOwnerAdded(rawDb, collector, doc.conversation_id, String(doc.user_id));
+      }
+      return id;
+    },
+
+    async patch(id: any, fields: any) {
+      const table = trackedTableOf(rawDb, id);
+      // A patch that touches scope fields can MOVE the entity between scopes; the
+      // departed scope needs a revocation action, which requires the pre-write doc.
+      const movesScope = !!table && Object.keys(fields).some((k) => SCOPE_FIELDS.has(k));
+      const movesAgent = table === "conversations" && "agent_type" in fields;
+      const preDoc = movesScope || movesAgent ? await rawDb.get(id) : null;
+      // Every writer passes here, so a conversation can never cross between
+      // hosted and local, whichever mutation writes agent_type first.
+      if (movesAgent) assertAgentTypeKept(preDoc, fields.agent_type);
+      const preScope = movesScope && preDoc && table
+        ? syncScopeFromStamp(await accessStampFor({ db: rawDb }, table, preDoc))
+        : null;
+      const res = await rawDb.patch(id, fields);
+      if (table) {
+        const entityId = String(id);
+        const existing = await lookupChangeRow(rawDb, entityId);
+        let scope: ChangeScope;
+        if (patchNeedsDocRead(fields, !!existing)) {
+          const doc = await rawDb.get(id);
+          scope = doc
+            ? scopeFromDoc(doc)
+            : { owner_user_id: existing?.owner_user_id, team_id: existing?.team_id };
+        } else {
+          scope = { owner_user_id: existing.owner_user_id, team_id: existing.team_id };
+        }
+        await emitChange(rawDb, table, entityId, "upsert", scope, existing);
+        // Churn exemption (design D1): counter/liveness-only patches never touch
+        // the sync log — emitting them would serialize every streaming session of
+        // a user on one head row and wake every online client per message flush.
+        // The live snapshot floor re-delivers these fields on reconnect.
+        if (!isChurnOnlyPatch(table, fields) && !syncLogDisabled()) {
+          // The sync log's scopes and stamp come from the POST-write document
+          // (one memoized read; the D1 cost note anticipated it) — never from
+          // the change_log row, which knows only owner/team_id.
+          const extra = syncExtra(rawDb, table, postWriteDoc(rawDb, id), buildCargo(table, fields, { full: false }));
+          const stamp = await extra.access!();
+          if (stamp) {
+            const syncScope = syncScopeFromStamp(stamp);
+            await emitSyncActions(
+              rawDb, collector, table, entityId, "upsert",
+              syncScope, preScope, extra,
+            );
+            // Routing-era row in the change_log's team scope? Flip it (review).
+            if (existing?.team_id) {
+              await revokeStaleScope(rawDb, collector, table, entityId, `team:${String(existing.team_id)}`, scopesForChange(table, syncScope));
+            }
+          }
+        }
+      }
+      return res;
+    },
+
+    async replace(id: any, doc: any) {
+      const table = trackedTableOf(rawDb, id);
+      const preDoc = table ? await rawDb.get(id) : null;
+      if (table === "conversations") assertAgentTypeKept(preDoc, doc?.agent_type);
+      const preScope = preDoc && table
+        ? syncScopeFromStamp(await accessStampFor({ db: rawDb }, table, preDoc))
+        : null;
+      const res = await rawDb.replace(id, doc);
+      if (table) {
+        // `undefined` (not null): a replaced entity usually already has a
+        // change_log row from its insert — look it up and flip it, don't add one.
+        await emitChange(rawDb, table, String(id), "upsert", scopeFromDoc(doc));
+        if (!syncLogDisabled()) {
+          const full = { _id: id, ...doc };
+          const extra = syncExtra(rawDb, table, postWriteDoc(rawDb, id, full), buildCargo(table, doc, { full: true }));
+          await emitSyncActions(
+            rawDb, collector, table, String(id), "upsert",
+            syncScopeFromStamp(await extra.access!()), preScope, extra,
+          );
+        }
+      }
+      return res;
+    },
+
+    async delete(id: any) {
+      const table = trackedTableOf(rawDb, id);
+      const membershipDoc =
+        !table && typeof rawDb.normalizeId === "function" && rawDb.normalizeId("team_memberships", id)
+          ? await rawDb.get(id)
+          : null;
+      // Read scope BEFORE the row is gone.
+      const preDoc = table ? await rawDb.get(id) : null;
+      const scope = table ? scopeFromDoc(preDoc) : null;
+      const syncScope = table && preDoc
+        ? syncScopeFromStamp(await accessStampFor({ db: rawDb }, table, preDoc))
+        : null;
+      const res = await rawDb.delete(id);
+      // Changes stories built from a deleted session lose it in this transaction.
+      if (table === "conversations") await withdrawDeletedConversation({ db: rawDb }, id);
+      if (table && scope) {
+        // `undefined`: find the entity's existing upsert row and flip it to a
+        // delete tombstone, rather than inserting a duplicate.
+        await emitChange(rawDb, table, String(id), "delete", scope);
+        if (syncScope) await emitSyncActions(rawDb, collector, table, String(id), "delete", syncScope);
+      } else if (membershipDoc?.user_id && membershipDoc?.team_id) {
+        await emitScopeAction(
+          rawDb, collector, String(membershipDoc.user_id), String(membershipDoc.team_id), "scope_removed",
+        );
+      }
+      return res;
+    },
+  };
+}

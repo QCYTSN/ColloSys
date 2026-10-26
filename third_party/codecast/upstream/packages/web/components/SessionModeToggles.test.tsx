@@ -1,0 +1,202 @@
+import { replaceGlobals } from "../test-helpers/globals";
+import { afterAll, expect, test } from "bun:test";
+import { JSDOM } from "jsdom";
+import React, { act } from "react";
+import { createRoot } from "react-dom/client";
+import { SessionModeToggles } from "./SessionModeToggles";
+import type { SessionMachine } from "../lib/sessionMachines";
+import { CLOUD_AGENT_PROVIDERS } from "@codecast/shared/contracts";
+
+import { closeDomWindow } from "../test-helpers/domGlobals";
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { url: "https://app.test/" });
+const restoreGlobals = replaceGlobals({
+  window: dom.window,
+  document: dom.window.document,
+  navigator: dom.window.navigator,
+  IS_REACT_ACT_ENVIRONMENT: true,
+});
+afterAll(() => {
+  closeDomWindow(dom);
+  restoreGlobals();
+});
+
+const cloud: SessionMachine = { device_id: "cloud", label: "Linux - ip-172-31-40-243", platform: "linux", online: false, is_remote: true, last_seen: 0, local_project_roots: [] };
+
+function mount(el: React.ReactElement) {
+  const host = document.createElement("div");
+  document.body.appendChild(host);
+  const root = createRoot(host);
+  act(() => root.render(el));
+  return { host, unmount: () => act(() => root.unmount()) };
+}
+const buttons = (host: HTMLElement) => Array.from(host.querySelectorAll("button"));
+const byText = (host: HTMLElement, text: string) => buttons(host).find((b) => b.textContent?.includes(text))!;
+const click = (el: Element) => act(() => el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true })));
+
+test("cloud mode on: violet label; the isolated toggle is the workspace pick and never writes the local flag", () => {
+  let cloudToggles = 0;
+  let isolatedToggles = 0;
+  let sharedToggles = 0;
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode cloudToggleEnabled onToggleCloud={() => { cloudToggles++; }} isolated onToggleIsolated={() => { isolatedToggles++; }} shared={false} onToggleShared={() => { sharedToggles++; }} />,
+  );
+  const cloudBtn = byText(host, "run in the cloud");
+  expect(cloudBtn.innerHTML).toContain("text-sol-violet");
+  expect(cloudBtn.getAttribute("title")).toContain("turn off 'isolated worktree' to use the host's main checkout");
+  const isolatedBtn = byText(host, "isolated worktree");
+  expect(isolatedBtn.disabled).toBe(false);
+  expect(isolatedBtn.getAttribute("title")).toBe("Own worktree on the host (default)");
+  click(isolatedBtn);
+  expect(isolatedToggles).toBe(0);
+  expect(sharedToggles).toBe(1);
+  click(cloudBtn);
+  expect(cloudToggles).toBe(1);
+  unmount();
+});
+
+test("cloud mode with the shared checkout picked: the toggle reads off and explains the refusals", () => {
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode cloudToggleEnabled onToggleCloud={() => {}} isolated={false} onToggleIsolated={() => {}} shared onToggleShared={() => {}} />,
+  );
+  const isolatedBtn = byText(host, "isolated worktree");
+  expect(isolatedBtn.innerHTML).not.toContain("text-sol-cyan\"");
+  expect(isolatedBtn.getAttribute("title")).toBe("Runs in the host's main checkout — refused if it is dirty or another session is using it");
+  unmount();
+});
+
+test("cloud mode off: the isolated toggle acts and the cloud label is plain", () => {
+  let isolatedToggles = 0;
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode={false} cloudToggleEnabled onToggleCloud={() => {}} isolated={false} onToggleIsolated={() => { isolatedToggles++; }} />,
+  );
+  expect(byText(host, "run in the cloud").innerHTML).not.toContain("text-sol-violet");
+  const isolatedBtn = byText(host, "isolated worktree");
+  expect(isolatedBtn.disabled).toBe(false);
+  click(isolatedBtn);
+  expect(isolatedToggles).toBe(1);
+  unmount();
+});
+
+test("a cloud-only roster disables the toggle and says why", () => {
+  let cloudToggles = 0;
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode cloudToggleEnabled={false} onToggleCloud={() => { cloudToggles++; }} isolated onToggleIsolated={() => {}} />,
+  );
+  const cloudBtn = byText(host, "run in the cloud");
+  expect(cloudBtn.disabled).toBe(true);
+  expect(cloudBtn.getAttribute("title")).toContain("only machine");
+  click(cloudBtn);
+  expect(cloudToggles).toBe(0);
+  unmount();
+});
+
+test("no cloud host: only the isolated toggle renders", () => {
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={null} cloudMode={false} cloudToggleEnabled={false} onToggleCloud={() => {}} isolated={false} onToggleIsolated={() => {}} />,
+  );
+  expect(buttons(host)).toHaveLength(1);
+  unmount();
+});
+
+test("cloud mode shows the 'start from' pick: my checkout by default, origin/main on click; the shared checkout pins it at origin/main (ct-49433)", () => {
+  const picks: string[] = [];
+  const { host, unmount } = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode cloudToggleEnabled onToggleCloud={() => {}} isolated onToggleIsolated={() => {}} shared={false} onToggleShared={() => {}} startFrom="checkout" onSetStartFrom={(v) => { picks.push(v); }} />,
+  );
+  const mine = byText(host, "my checkout");
+  const origin = byText(host, "origin/main");
+  expect(mine.getAttribute("aria-checked")).toBe("true");
+  expect(origin.getAttribute("aria-checked")).toBe("false");
+  expect(mine.getAttribute("title")).toContain("uncommitted changes");
+  click(origin);
+  expect(picks).toEqual(["origin_main"]);
+  click(mine); // already active: no pick
+  expect(picks).toEqual(["origin_main"]);
+  unmount();
+
+  const shared = mount(
+    <SessionModeToggles cloudHost={cloud} cloudMode cloudToggleEnabled onToggleCloud={() => {}} isolated={false} onToggleIsolated={() => {}} shared onToggleShared={() => {}} startFrom="checkout" onSetStartFrom={(v) => { picks.push(v); }} />,
+  );
+  expect(byText(shared.host, "origin/main").getAttribute("aria-checked")).toBe("true");
+  expect(byText(shared.host, "my checkout").disabled).toBe(true);
+  click(byText(shared.host, "my checkout"));
+  expect(picks).toEqual(["origin_main"]);
+  shared.unmount();
+
+  const off = mount(<SessionModeToggles cloudHost={cloud} cloudMode={false} cloudToggleEnabled onToggleCloud={() => {}} isolated={false} onToggleIsolated={() => {}} />);
+  expect(buttons(off.host).some((b) => b.textContent?.includes("my checkout"))).toBe(false);
+  off.unmount();
+});
+
+test("a cloud agent provider replaces the host controls: its own switch, and a connect control while it has no credentials", () => {
+  const spec = CLOUD_AGENT_PROVIDERS.cursor;
+  let toggles = 0;
+  const props = { cloudHost: cloud, cloudMode: false, cloudToggleEnabled: true, onToggleCloud: () => {}, isolated: false, onToggleIsolated: () => {} };
+  const off = mount(<SessionModeToggles {...props} cloudAgent={{ spec, on: false, onToggle: () => { toggles++; }, connected: false }} />);
+  expect(byText(off.host, "isolated worktree")).toBeDefined();
+  expect(byText(off.host, "run in the cloud")).toBeUndefined();
+  const sw = byText(off.host, "run in Cursor Cloud");
+  expect(sw.getAttribute("title")).toBe(spec.toggleTitle);
+  expect(sw.getAttribute("role")).toBe("switch");
+  expect(sw.getAttribute("aria-checked")).toBe("false");
+  expect(byText(off.host, "connect Cursor")).toBeUndefined();
+  click(sw);
+  expect(toggles).toBe(1);
+  off.unmount();
+
+  const on = mount(<SessionModeToggles {...props} cloudAgent={{ spec, on: true, onToggle: () => {}, connected: false }} />);
+  expect(byText(on.host, "isolated worktree")).toBeUndefined();
+  expect(byText(on.host, "run in Cursor Cloud").innerHTML).toContain("text-sol-violet");
+  expect(byText(on.host, "connect Cursor")).toBeDefined();
+  on.unmount();
+
+  const connected = mount(<SessionModeToggles {...props} cloudAgent={{ spec, on: true, onToggle: () => {}, connected: true }} />);
+  expect(byText(connected.host, "connect Cursor")).toBeUndefined();
+  connected.unmount();
+});
+
+test("an agent type with several cloud providers: the switch names the vendor (not the cloud host's words), and while on, a choice of how with what each costs", () => {
+  const { codex, codex_api } = CLOUD_AGENT_PROVIDERS;
+  const lanes = [codex, codex_api];
+  const picked: string[] = [];
+  const props = { cloudHost: cloud, cloudMode: false, cloudToggleEnabled: true, onToggleCloud: () => {}, isolated: false, onToggleIsolated: () => {} };
+  const off = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex, lanes, onPickLane: (l) => picked.push(l.id), on: false, onToggle: () => {}, connected: true }} />);
+  expect(byText(off.host, "run in the cloud")).toBeUndefined();
+  // Its place, not its models: a local Codex session runs on OpenAI's models too.
+  const sw = byText(off.host, "run in OpenAI's cloud");
+  expect(sw.getAttribute("title")).toBe("Run this session on OpenAI's machines: Codex Cloud on your ChatGPT plan, or OpenAI Agents API on your API key");
+  expect(byText(off.host, "API key")).toBeUndefined();
+  off.unmount();
+
+  const on = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex_api, lanes, onPickLane: (l) => picked.push(l.id), on: true, onToggle: () => {}, connected: false }} />);
+  expect(byText(on.host, "API key").getAttribute("aria-checked")).toBe("true");
+  expect(byText(on.host, "ChatGPT plan").getAttribute("title")).toBe(`Codex Cloud: ${codex.lane.detail}`);
+  expect(on.host.textContent).toContain(codex_api.lane.cost);
+  // Its key is missing: the guided key dialog's control.
+  expect(byText(on.host, "connect OpenAI")).toBeDefined();
+  click(byText(on.host, "ChatGPT plan"));
+  expect(picked).toEqual(["codex"]);
+  on.unmount();
+});
+
+test("a problem no sign-in fixes (the provider changed, a limit, a workspace that refuses it): its word beside the switch, and no connect control while the sign-in holds", () => {
+  const { codex } = CLOUD_AGENT_PROVIDERS;
+  const props = { cloudHost: cloud, cloudMode: false, cloudToggleEnabled: true, onToggleCloud: () => {}, isolated: false, onToggleIsolated: () => {} };
+  const sentence = "Codex Cloud changed in a way codecast can't read yet. Syncing on Mac is paused and checks again every 5 minutes.";
+  const paused = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex, on: true, onToggle: () => {}, connected: true, problem: { kind: "changed", sentence, credential: false } }} />);
+  expect(byText(paused.host, "paused").querySelector("[aria-label]")?.getAttribute("aria-label")).toBe("Why Codex Cloud is paused");
+  expect(byText(paused.host, "connect Codex")).toBeUndefined();
+  paused.unmount();
+  const limited = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex, on: true, onToggle: () => {}, connected: true, problem: { kind: "limit", sentence: "Codex Cloud limit reached: the Week (7d) window of your ChatGPT Pro plan is used up.", credential: false } }} />);
+  expect(byText(limited.host, "limited")).toBeDefined();
+  limited.unmount();
+  // A workspace that turned Codex Cloud off: the sign-in is fine, so the admin's fix is said, not a sign-in.
+  const denied = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex, on: true, onToggle: () => {}, connected: true, problem: { kind: "access", sentence: "Codex Cloud is not enabled for you in this ChatGPT workspace (x).", credential: false } }} />);
+  expect(byText(denied.host, "no access")).toBeDefined();
+  expect(byText(denied.host, "connect Codex")).toBeUndefined();
+  denied.unmount();
+  // Off, nothing is said: the lane is not in use.
+  const off = mount(<SessionModeToggles {...props} cloudAgent={{ spec: codex, on: false, onToggle: () => {}, connected: true, problem: { kind: "changed", sentence, credential: false } }} />);
+  expect(byText(off.host, "paused")).toBeUndefined();
+  off.unmount();
+});

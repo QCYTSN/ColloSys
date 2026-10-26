@@ -1,0 +1,316 @@
+"use client";
+
+import { useHostedMode, useModeWords } from "../../lib/surfaces";
+import { Button } from "../ui/button";
+import { useCallback, useMemo, useRef, useState, type RefObject } from "react";
+import { ArrowDown, ArrowUp, Check, Square, CheckSquare } from "lucide-react";
+import type { SessionDecisionItem, DecisionAnswerInput } from "../../store/inboxStore";
+import { KeyCap } from "../KeyboardShortcutsHelp";
+import { approvalButtonLabel } from "@codecast/shared/contracts/assistant";
+import { DecisionOptionList, TypeAnswerButton } from "./DecisionOptionList";
+import { useWatchEffect } from "../../hooks/useWatchEffect";
+import { useDecisionDraft } from "../../hooks/useDecisionDraft";
+import { chosenOptions } from "../../lib/decisionLinks";
+import { ANSWER_WORDS, answerView, buildDecisionAnswer, moveInOrder, togglePicked, type AnswerDraft } from "../../lib/decisionAnswer";
+import { ChangeCardAnswer, answerKeyAllowed, cardAnswerIndexes } from "./ChangeCardView";
+import { PassDecision } from "./PassDecision";
+
+// The answer footer, per kind (docs/architecture/decisions-as-documents.md
+// D1 / D4): single = one option (digits 1 to 9, or a typed answer); multi =
+// checkboxes and a submit; rank = the options in an order the reader moves
+// with up / down and a submit; form = one input per field and a submit.
+//
+// Answering is the caller's: this component only builds the DecisionAnswerInput
+// (store answerDecision takes it and delivers the message). `keys` claims the
+// digit keys on window in capture phase, the same way SessionDecisionCard
+// does, so exactly one surface on screen should pass it; `keyScope` narrows
+// that to while focus is inside the given element (a card in a transcript).
+//
+// A decision about a change card (LE11) answers Ship, Revise or Drop through
+// the card's own controls (ChangeCardAnswer), whatever surface renders it.
+/** `record` is a card's answer on record in words (cardOutcome's pill); other kinds show theirs on the rows. */
+/** `caption: false` leaves out the card's "X recommended: why" line where the surface already leads with the recommendation. */
+type AnswerControlsProps = Parameters<typeof GenericAnswerControls>[0] & { record?: string; describe?: boolean; caption?: boolean };
+export function DecisionAnswerControls(props: AnswerControlsProps) {
+  const indexes = cardAnswerIndexes(props.decision);
+  if (indexes) return <ChangeCardAnswer decision={props.decision} indexes={indexes} onAnswer={props.onAnswer} onDismiss={props.onDismiss} keys={props.keys} keyScope={props.keyScope} size={props.size} record={props.record} describe={props.describe} caption={props.caption} />;
+  const { record: _record, describe: _describe, caption: _caption, ...rest } = props;
+  return <GenericAnswerControls {...rest} />;
+}
+
+function GenericAnswerControls({
+  decision,
+  onAnswer,
+  onDismiss,
+  keys = false,
+  keyScope,
+  size = "full",
+  recommendation,
+}: {
+  decision: SessionDecisionItem;
+  onAnswer: (input: DecisionAnswerInput) => void;
+  onDismiss?: () => void;
+  keys?: boolean;
+  keyScope?: RefObject<HTMLElement | null>;
+  /** "line" is a change card's chip row in the queue; other kinds draw it as compact. */
+  size?: "full" | "compact" | "line";
+  /** The option a role on the ladder recommended (the latest hop with one). */
+  recommendation?: number;
+}) {
+  const kind = decision.kind ?? "single";
+  // Everything the reader has chosen so far lives in the decision's draft,
+  // not here: this component unmounts whenever its card folds or its page
+  // changes, and a choice must never fold away with it.
+  const [draft, patchDraft] = useDecisionDraft<AnswerDraft>(decision._id);
+  const hosted = useHostedMode();
+  const otherOpen = !!draft.otherOpen;
+  const otherText = draft.otherText ?? "";
+  const setOtherOpen = useCallback((open: boolean) => patchDraft({ otherOpen: open }), [patchDraft]);
+  const otherRef = useRef<HTMLTextAreaElement>(null);
+  const view = useMemo(() => answerView(decision, draft), [decision, draft]);
+  const { picked, order, values } = view;
+  const setValue = useCallback((key: string, fn: (v: any) => any) => patchDraft((cur) => ({ values: { ...cur.values, [key]: fn(cur.values?.[key] ?? values[key]) } })), [patchDraft, values]);
+  const togglePick = useCallback((n: number) => patchDraft((cur) => togglePicked(cur, n)), [patchDraft]);
+  const [error, setError] = useState<string | null>(null);
+  // Where it can be dismissed it can be handed on, except a trial's question
+  // and a hosted assistant's (only its owner answers).
+  const canPass = !!onDismiss && !hosted && !decision.trial && decision.status === "pending";
+  const [passOpen, setPassOpen] = useState(false);
+
+  const answerSingle = useCallback((index: number) => onAnswer({ index }), [onAnswer]);
+  const answerText = useCallback(() => {
+    const t = otherText.trim();
+    if (!t) return;
+    onAnswer({ text: t });
+  }, [onAnswer, otherText]);
+
+  const submit = useCallback(() => {
+    const built = buildDecisionAnswer(decision, view);
+    if (!built) return;
+    if ("error" in built) return setError(built.error);
+    onAnswer(built.input);
+  }, [decision, view, onAnswer]);
+
+  const move = useCallback((from: number, dir: -1 | 1) => {
+    const next = moveInOrder(order, from, dir);
+    if (next) patchDraft({ order: next });
+  }, [order, patchDraft]);
+
+  // Digits answer a single; on a multi they toggle; Enter submits a multi,
+  // rank or form; t opens the typed answer; x dismisses. Capture phase, so
+  // the global shortcut layer cannot eat the digits first. Exactly one
+  // surface on screen may pass `keys`; stopImmediatePropagation is the belt
+  // for a second claimant on the same window (two open stacks would answer
+  // two decisions on one digit otherwise).
+  useWatchEffect(() => {
+    if (!keys) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (passOpen || !answerKeyAllowed(e, keyScope)) return;
+      const target = e.target as HTMLElement | null;
+      const editing = !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable || target.tagName === "SELECT");
+      if (editing) {
+        if (target === otherRef.current) {
+          if (e.key === "Escape") { e.preventDefault(); setOtherOpen(false); }
+          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); answerText(); }
+        } else if (kind === "form" && e.key === "Enter" && !e.shiftKey && target?.tagName !== "TEXTAREA") {
+          e.preventDefault(); submit();
+        }
+        return;
+      }
+      if (e.key >= "1" && e.key <= "9") {
+        const n = Number(e.key) - 1;
+        if (n >= decision.options.length) return;
+        e.preventDefault(); e.stopImmediatePropagation();
+        if (kind === "single") answerSingle(n);
+        else if (kind === "multi") togglePick(n);
+        return;
+      }
+      if (e.key === "Enter" && kind !== "single") { e.preventDefault(); e.stopImmediatePropagation(); submit(); return; }
+      if ((e.key === "t" || e.key === "T") && kind === "single") {
+        e.preventDefault(); e.stopImmediatePropagation();
+        setOtherOpen(true); setTimeout(() => otherRef.current?.focus(), 0);
+        return;
+      }
+      if ((e.key === "x" || e.key === "X") && onDismiss) { e.preventDefault(); e.stopImmediatePropagation(); onDismiss(); }
+      if ((e.key === "p" || e.key === "P") && canPass) { e.preventDefault(); e.stopImmediatePropagation(); setPassOpen(true); }
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [keys, keyScope, kind, decision.options.length, answerSingle, answerText, submit, onDismiss, togglePick, setOtherOpen, passOpen, canPass]);
+
+  const compact = size !== "full";
+  const submitBtn = (
+    <Button variant="green" size={compact ? "xs" : "default"} onClick={submit}>
+      {keys && <KeyCap size="xs">return</KeyCap>}
+      <span>{ANSWER_WORDS.send}</span>
+    </Button>
+  );
+  // The marks after a label: a lead's recommendation, the default the agent
+  // is already proceeding with on an advisory ask.
+  const tags = (i: number) => (
+    <>
+      {recommendation === i && <span className="text-[10px] px-1.5 py-0.5 rounded border border-sol-cyan/40 text-sol-cyan">recommended</span>}
+      {decision.default_option === i && !decision.blocking && <span className="text-[10px] px-1.5 py-0.5 rounded border border-sol-border text-sol-text-dim">{ANSWER_WORDS.proceeding}</span>}
+    </>
+  );
+  const openOther = () => { setOtherOpen(true); setTimeout(() => otherRef.current?.focus(), 0); };
+
+  const words = useModeWords();
+  const dismissBtn = onDismiss && (
+    <button onClick={onDismiss} className="flex items-center gap-1.5 text-[11px] text-sol-text-dim hover:text-sol-red transition-colors" title={words.dismissAskTip}>
+      {keys && <KeyCap size="xs">x</KeyCap>}<span>{words.dismissAsk}</span>
+    </button>
+  );
+
+  const body = useMemo(() => {
+    if (kind === "single") {
+      // The recommended option (else the first) reads as the primary row. In
+      // hosted mode nothing reads as chosen before the person picks: a
+      // recommendation is a tag, and a filled first row looked answered.
+      const primary = hosted ? -1 : recommendation ?? 0;
+      return (
+        <div className="space-y-2">
+          <DecisionOptionList
+            // Hosted mode answers an approval the way a person would: Yes, Not now.
+            options={hosted ? decision.options.map((o) => ({ ...o, label: approvalButtonLabel(o.label) })) : decision.options}
+            keys={keys}
+            compact={compact}
+            onPick={answerSingle}
+            tone={(n) => (n === primary ? "primary" : "plain")}
+            tags={tags}
+          />
+          <TypeAnswerButton onOpen={openOther} keys={keys} />
+        </div>
+      );
+    }
+    if (kind === "multi") {
+      return (
+        <div className="space-y-2">
+          <DecisionOptionList
+            options={decision.options}
+            keys={keys}
+            compact={compact}
+            onPick={togglePick}
+            tone={(n) => (picked.includes(n) ? "picked" : "plain")}
+            tags={tags}
+            leading={(n) => (
+              <span className="flex items-center gap-1.5">
+                {picked.includes(n) ? <CheckSquare className="w-4 h-4 text-sol-green" /> : <Square className="w-4 h-4 text-sol-text-dim" />}
+                {keys && n < 9 && <KeyCap size="xs">{String(n + 1)}</KeyCap>}
+              </span>
+            )}
+          />
+          <div className="flex items-center gap-3 pt-1">{submitBtn}<span className="text-[11px] text-sol-text-dim">{picked.length} picked</span></div>
+        </div>
+      );
+    }
+    if (kind === "rank") {
+      // Rows in the reader's order; the badge is the rank, not the option's number.
+      const ordered = order.map((i) => decision.options[i]).filter(Boolean);
+      return (
+        <div className="space-y-2">
+          <DecisionOptionList
+            options={ordered}
+            compact={compact}
+            tags={(pos) => tags(order[pos])}
+            leading={(pos) => <span className="font-mono text-[11px] text-sol-text-dim w-5">{pos + 1}.</span>}
+            trailing={(pos) => (
+              <>
+                <button onClick={() => move(pos, -1)} disabled={pos === 0} className="p-1 rounded hover:bg-sol-card disabled:opacity-30" title="Move up"><ArrowUp className="w-3.5 h-3.5" /></button>
+                <button onClick={() => move(pos, 1)} disabled={pos === order.length - 1} className="p-1 rounded hover:bg-sol-card disabled:opacity-30" title="Move down"><ArrowDown className="w-3.5 h-3.5" /></button>
+              </>
+            )}
+          />
+          <div className="flex items-center gap-3 pt-1">{submitBtn}<span className="text-[11px] text-sol-text-dim">first is most preferred</span></div>
+        </div>
+      );
+    }
+    const fields = decision.form?.fields ?? [];
+    const input = "w-full bg-sol-card border border-sol-border rounded px-2 py-1.5 text-sm text-sol-text placeholder:text-sol-text-dim focus:outline-none focus:border-sol-blue/50";
+    return (
+      <div className="space-y-2.5">
+        {fields.map((f) => (
+          <label key={f.key} className="block">
+            <span className="block text-[11px] uppercase tracking-wide text-sol-text-dim mb-1">{f.label}</span>
+            {f.type === "bool" ? (
+              <button onClick={() => setValue(f.key, (v) => !v)} className="flex items-center gap-2 text-sm text-sol-text">
+                {values[f.key] ? <CheckSquare className="w-4 h-4 text-sol-yellow" /> : <Square className="w-4 h-4 text-sol-text-dim" />}
+                <span>{values[f.key] ? ANSWER_WORDS.yes : ANSWER_WORDS.no}</span>
+              </button>
+            ) : f.type === "select" ? (
+              <select value={values[f.key]} onChange={(e) => { const v = e.target.value; setValue(f.key, () => v); }} className={input}>
+                {(f.options ?? []).map((o) => <option key={o} value={o}>{o}</option>)}
+              </select>
+            ) : (
+              <input type={f.type === "number" ? "number" : "text"} value={values[f.key]} onChange={(e) => { const v = e.target.value; setValue(f.key, () => v); }} className={input} />
+            )}
+          </label>
+        ))}
+        <div className="pt-1">{submitBtn}</div>
+      </div>
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, decision.options, decision.form, decision.default_option, decision.blocking, picked, order, values, keys, recommendation, hosted, compact, answerSingle, move, submit, togglePick, setValue]);
+
+  return (
+    <div>
+      {body}
+      {error && <div className="mt-2 text-[12px] text-sol-red">{error}</div>}
+      {otherOpen && kind === "single" && (
+        <div className="mt-3">
+          <textarea
+            ref={otherRef}
+            value={otherText}
+            onChange={(e) => patchDraft({ otherText: e.target.value })}
+            rows={3}
+            placeholder="Answer in your own words — this goes to the agent as a message."
+            className="w-full bg-sol-card border border-sol-border rounded px-2 py-1.5 text-sm text-sol-text placeholder:text-sol-text-dim focus:outline-none focus:border-sol-blue/50"
+            onKeyDown={(e) => {
+              if (keys) return; // the window listener handles it
+              if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); answerText(); }
+              if (e.key === "Escape") setOtherOpen(false);
+            }}
+          />
+          <div className="flex items-center gap-2 mt-1 text-[11px] text-sol-text-dim">
+            <button onClick={answerText} className="flex items-center gap-1 hover:text-sol-text"><KeyCap size="xs">return</KeyCap><span>send</span></button>
+            <button onClick={() => setOtherOpen(false)} className="flex items-center gap-1 hover:text-sol-text"><KeyCap size="xs">esc</KeyCap><span>cancel</span></button>
+          </div>
+        </div>
+      )}
+      {dismissBtn && (
+        <div className="mt-3 flex items-center gap-4 text-[11px] text-sol-text-dim">
+          {canPass && <PassDecision decisionId={decision._id} open={passOpen} onOpenChange={setPassOpen} keys={keys} />}
+          {dismissBtn}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The recorded answer, read-only, for an answered row: the chosen option(s)
+// in order, or the form values, or the typed text.
+export function DecisionRecordedAnswer({ decision }: { decision: Pick<SessionDecisionItem, "kind" | "status" | "options" | "answer_index" | "answer_text" | "answer_json"> }) {
+  const kind = decision.kind ?? "single";
+  if (decision.status !== "answered") return null;
+  if (decision.answer_text) return <div className="text-sm text-sol-text">{decision.answer_text}</div>;
+  if (kind === "form" && decision.answer_json && typeof decision.answer_json === "object") {
+    return (
+      <dl className="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">
+        {Object.entries(decision.answer_json).map(([k, v]) => (
+          <div key={k} className="contents"><dt className="text-sol-text-dim">{k}</dt><dd className="text-sol-text">{String(v)}</dd></div>
+        ))}
+      </dl>
+    );
+  }
+  const list = chosenOptions(decision);
+  return (
+    <ol className="space-y-1">
+      {list.map((i, pos) => (
+        <li key={i} className="flex items-center gap-2 text-sm text-sol-text">
+          {kind === "rank" ? <span className="font-mono text-[11px] text-sol-text-dim w-5">{pos + 1}.</span> : <Check className="w-3.5 h-3.5 text-sol-green" />}
+          <span>{decision.options[i]?.label ?? `option ${i + 1}`}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}

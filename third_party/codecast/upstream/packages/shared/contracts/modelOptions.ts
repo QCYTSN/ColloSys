@@ -1,0 +1,299 @@
+// Curated model/effort options per agent — the single source of truth for the
+// web pickers, the Convex dispatch payloads, and the daemon's launch-flag
+// mapping. PURE isomorphic data.
+//
+// Keys are stable wire values (what the web sends and the conversation row
+// stores as the REQUESTED value); labels are what pickers render; cliAlias is
+// the value the agent itself understands — the launch flag (`--model`/`-m`)
+// and, for clients that switch mid-session, the argument of the in-session
+// `/model` command. Absent for "default" (= omit the flag and let the agent's
+// own saved default win).
+
+export interface ModelOption {
+  key: string;
+  label: string;
+  /** One-line picker description. */
+  hint?: string;
+  /** Launch-flag / `/model` argument. Undefined = omit the flag ("default"). */
+  cliAlias?: string;
+  /**
+   * How many tokens the model holds before it must compact — the denominator
+   * for "this session carries 487k, which is half of what it can hold".
+   * Undefined where we have no honest figure, and a surface that cannot name
+   * the window renders the raw token count alone rather than a made-up share.
+   */
+  contextWindow?: number;
+  /**
+   * Accepted on the wire and recognized as a stored stamp, never listed by a
+   * picker: a key some other control sets (a cloud launch's ask mode and
+   * attempts, set by the composer's own switches).
+   */
+  hidden?: boolean;
+}
+
+// Context windows below are read off real sessions, not off a datasheet: the
+// largest context any conversation on this fleet reported per model on
+// 2026-09-18 was 952k (fable-5-1), 890k (opus-5), 214k (sonnet-5) and 465k
+// (opus-4-8), so the Claude 5 family and Opus 4.8 all hold a million. Haiku 4.5
+// is the documented 200k. A figure that is wrong shows up as a share over 100%,
+// which is why measuring beats guessing here.
+/** The small Claude model codecast's own calls run on: titles, summaries,
+ *  briefs, ask, triage, and the Free plan's assistant. It refuses any
+ *  temperature, and it thinks by default inside max_tokens. */
+export const CHEAP_MODEL = "claude-haiku-5-5";
+
+/**
+ * Whether a one-shot model call on this model runs with thinking off. The
+ * cheap model thinks by default and its thinking spends the reply's
+ * max_tokens, so the server's API body turns it off (convex lib/anthropic.ts)
+ * and a subscription call (cli subscriptionCall.ts) does the same; every other
+ * model thinks as the API's default has it, on both.
+ */
+export const sendsThinkingOff = (model: string): boolean => model === CHEAP_MODEL;
+
+export const CLAUDE_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "Your saved default model" },
+  { key: "fable", label: "Fable", hint: "Most capable, ~2× limit burn", cliAlias: "fable", contextWindow: 1_000_000 },
+  { key: "opus", label: "Opus", hint: "Best for everyday, complex tasks", cliAlias: "opus", contextWindow: 1_000_000 },
+  { key: "sonnet", label: "Sonnet", hint: "Efficient for routine tasks", cliAlias: "sonnet", contextWindow: 1_000_000 },
+  { key: "haiku", label: "Haiku", hint: "Fastest for quick answers", cliAlias: "haiku", contextWindow: 200_000 },
+];
+
+// The stops Claude Code's `--effort` flag and `/effort <x>` one-shot accept
+// (session-only: "Set effort level to max (this session only)", no
+// settings.json write).
+export const CLAUDE_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type ClaudeEffortLevel = (typeof CLAUDE_EFFORT_LEVELS)[number];
+
+export const CODEX_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "Your config.toml model" },
+  { key: "gpt-6-astra", label: "GPT-6 Astra", hint: "Most capable for complex, demanding work", cliAlias: "gpt-6-astra" },
+  { key: "gpt-5.6-sol", label: "GPT-5.6 Sol", hint: "Reliable agentic workhorse for everyday tasks", cliAlias: "gpt-5.6-sol" },
+  { key: "gpt-5.6-terra", label: "GPT-5.6 Terra", hint: "Balanced agentic coding for everyday work", cliAlias: "gpt-5.6-terra" },
+  { key: "gpt-5.6-luna", label: "GPT-5.6 Luna", hint: "Fast and affordable agentic coding", cliAlias: "gpt-5.6-luna" },
+  { key: "gpt-5.5", label: "GPT-5.5", hint: "Proven previous-generation coding and general work", cliAlias: "gpt-5.5" },
+  { key: "gpt-5.4", label: "GPT-5.4", hint: "Strong model for everyday coding", cliAlias: "gpt-5.4" },
+  { key: "gpt-5.4-mini", label: "GPT-5.4 Mini", hint: "Small, fast, cost-efficient", cliAlias: "gpt-5.4-mini" },
+  { key: "gpt-5.3-codex-spark", label: "Codex Spark", hint: "Ultra-fast coding model", cliAlias: "gpt-5.3-codex-spark" },
+];
+
+export const CODEX_EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export type CodexEffortLevel = (typeof CODEX_EFFORT_LEVELS)[number];
+
+// OpenCode addresses models as `provider/model` (its `-m` launch flag and the
+// `providerID`/`modelID` pair every message stores). The picker offers "Default"
+// (omit the flag; opencode uses its configured default) plus a small honest set
+// of common frontier models across the providers opencode ships with. cliAlias is
+// the full `provider/model` value passed to `opencode -m`. There is no scriptable
+// mid-session model picker (the TUI's /models is interactive-only), so midSession
+// is false — the model is chosen at launch and tracked from the transcript after.
+export const OPENCODE_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "Your opencode configured model" },
+  { key: "opus", label: "Claude Opus", hint: "Anthropic's most capable model", cliAlias: "anthropic/claude-opus-4-8" },
+  { key: "sonnet", label: "Claude Sonnet", hint: "Efficient for routine tasks", cliAlias: "anthropic/claude-sonnet-5" },
+  { key: "gpt-5", label: "GPT-5", hint: "OpenAI frontier model", cliAlias: "openai/gpt-5" },
+  { key: "gemini", label: "Gemini 2.5 Pro", hint: "Google frontier model", cliAlias: "google/gemini-2.5-pro" },
+];
+
+// OpenCode has no codex-style reasoning-effort launch flag, so the effort list is
+// empty and the picker shows no effort control.
+export const OPENCODE_EFFORT_LEVELS = [] as const;
+
+// pi addresses models as `provider/model` too (`--model`, fuzzy patterns accepted
+// but we always pass the exact id). Curation comes from the live inventory; the
+// static list is just the "Default" stop for devices that haven't reported one.
+export const PI_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "pi's configured default model" },
+];
+
+// pi's `--thinking` levels map onto the effort slot (same launch-flag shape as
+// codex's reasoning effort). "off" is a real stop, distinct from "default"
+// (= omit the flag, pi decides).
+export const PI_EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+export type PiEffortLevel = (typeof PI_EFFORT_LEVELS)[number];
+
+// Grok Build's baked-in catalog (default_models.json; `grok models` logged out
+// prints exactly these two). Keys are the exact `-m` values — bare model ids,
+// not `provider/model`, so grok is a STATIC client (isDynamicModelKey can never
+// accept its keys). `grok-code-fast-1` is NOT in the catalog (it appears only in
+// a slash-command parse test upstream) — deliberately absent.
+export const GROK_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "Your grok configured model" },
+  { key: "grok-4.6", label: "Grok 4.6", hint: "Default frontier model, 500k context", cliAlias: "grok-4.6", contextWindow: 500_000 },
+  { key: "grok-4.5", label: "Grok 4.5", hint: "Previous generation", cliAlias: "grok-4.5" },
+];
+
+// cursor-agent's `--model` ids (`cursor-agent --list-models`, v2026.09.28) for a
+// local launch, and Cursor Cloud Agents for a remote one. Cloud keys are
+// `cloud` (the account's default model) or `cloud:<id>` with an id from the
+// Cloud Agents API's GET /v1/models; the two catalogs differ, so a cloud
+// option never reaches the local `--model` flag (cloudAgentModel in cloudAgents.ts).
+export const CURSOR_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Auto", hint: "Cursor picks the model, on this machine" },
+  { key: "composer-2.5", label: "Composer 2.5", hint: "Cursor's own coding model", cliAlias: "composer-2.5" },
+  { key: "claude-opus-5-thinking-high", label: "Opus 5", hint: "Claude Opus 5, thinking", cliAlias: "claude-opus-5-thinking-high" },
+  { key: "gpt-5.6-sol-high", label: "GPT-5.6 Sol", hint: "GPT-5.6 Sol, high effort", cliAlias: "gpt-5.6-sol-high" },
+  { key: "cloud", label: "Cloud · Auto", hint: "Cursor Cloud Agent on this repo's GitHub branch", cliAlias: "cloud" },
+  { key: "cloud:composer-2.5", label: "Cloud · Composer 2.5", hint: "Cursor Cloud Agent", cliAlias: "cloud:composer-2.5" },
+  { key: "cloud:claude-opus-5-5", label: "Cloud · Opus 5.5", hint: "Cursor Cloud Agent", cliAlias: "cloud:claude-opus-5-5" },
+  { key: "cloud:gpt-5.6-sol", label: "Cloud · GPT-5.6 Sol", hint: "Cursor Cloud Agent", cliAlias: "cloud:gpt-5.6-sol" },
+];
+
+// `--reasoning-effort` (alias `--effort`) accepts none|minimal|low|medium|high|
+// xhigh|max as a serde enum, but the per-model menus offer only the model's own
+// list: grok-4.6 low|medium|high|xhigh, grok-4.5 low|medium|high (default high
+// for both). The picker is per-agent, not per-model, so it offers the UNION of
+// the shipped models' menus (same compromise as codex); "default" (= omit the
+// flag) comes from launchRailOptions. Verified: the CLI accepts any effort
+// string at flag-parse time (validation is post-login), so xhigh on grok-4.5
+// cannot hard-error at launch.
+export const GROK_EFFORT_LEVELS = ["low", "medium", "high", "xhigh"] as const;
+export type GrokEffortLevel = (typeof GROK_EFFORT_LEVELS)[number];
+
+// Muse's `--model` takes a Meta model id for non-echo providers. The only id
+// observed live is the session log's own `run_model` record
+// (`muse-spark-1.3-contributor` on CLI 1.3.0); there is no `muse models`
+// listing to curate from, so the static list is Default plus that one id.
+// Keys are bare model ids, not `provider/model`, so muse is a STATIC client
+// (isDynamicModelKey can never accept its keys) — same shape as grok.
+export const MUSE_MODEL_OPTIONS: ModelOption[] = [
+  { key: "default", label: "Default", hint: "Your muse configured model" },
+  { key: "muse-spark-1.3-contributor", label: "Muse Spark 1.3", hint: "Meta frontier model", cliAlias: "muse-spark-1.3-contributor" },
+];
+
+// `--reasoning-effort` accepts none|minimal|low|medium|high|xhigh|max|ultra
+// (`muse --help`, default high). "default" (= omit the flag) comes from
+// launchRailOptions. The TUI's model/effort menus are interactive-only, so
+// both are launch-time flags tracked from the transcript after (run_model).
+export const MUSE_EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+export type MuseEffortLevel = (typeof MUSE_EFFORT_LEVELS)[number];
+
+// ---------------------------------------------------------------------------
+// Dynamic model inventory (opencode / pi)
+//
+// Aggregator clients expose hundreds of `provider/model` ids whose availability
+// is a per-device fact (which API keys / logins exist there). The daemon
+// collects each client's own listing (`opencode models`, `pi --list-models`),
+// heartbeats it up only when it changes, and the pickers render from it. The
+// wire key for such a model IS the `provider/model` string — findModelOption
+// synthesizes the option, so web display, convex dispatch validation, and the
+// daemon's launch flags all accept it without any per-layer allowlist.
+// ---------------------------------------------------------------------------
+
+/** Per-device model inventory, heartbeat-reported and stored on the devices row.
+ *  Entries are `provider/model` ids from each client's listing command. */
+export interface DeviceModelInventory {
+  /** Stable hash of `clients` — the daemon resends and the server rewrites only
+   *  when it changes. */
+  hash: string;
+  collected_at: number;
+  clients: { opencode?: string[]; pi?: string[] };
+}
+
+// Conservative shape for a dynamic model key: `provider/model` (aggregators nest,
+// e.g. openrouter/anthropic/claude-sonnet-5). The charset is a subset of the
+// daemon's SAFE_ARG_RE launch-arg allowlist, so a synthesized cliAlias can never
+// smuggle shell metacharacters into the tmux launch line.
+const DYNAMIC_MODEL_KEY_RE = /^[a-z0-9][a-z0-9._-]*(\/[a-zA-Z0-9._:@-]+)+$/;
+
+export function isDynamicModelKey(key: string): boolean {
+  return (
+    key.length <= 120 &&
+    DYNAMIC_MODEL_KEY_RE.test(key) &&
+    // No dot-only segments — the key never touches a filesystem, but a
+    // traversal-shaped id has no business round-tripping as a model either.
+    !key.split("/").some((s) => /^\.+$/.test(s))
+  );
+}
+
+const MODEL_WORD_CASING: Record<string, string> = {
+  gpt: "GPT", glm: "GLM", ai: "AI", llm: "LLM", deepseek: "DeepSeek",
+  qwen: "Qwen", oss: "OSS", tts: "TTS", vl: "VL",
+};
+
+/** "claude-sonnet-5" → "Claude Sonnet 5", "gpt-5.2" → "GPT 5.2",
+ * "claude-haiku-4-5-20251001" → "Claude Haiku 4.5" (dash version runs join with
+ * dots, date pins drop from the label — the key keeps the exact id). */
+export function prettifyModelId(id: string): string {
+  const words = id.split(/[-\s]+/).filter((w) => !/^\d{8}$/.test(w));
+  const merged: string[] = [];
+  for (const w of words) {
+    if (/^\d+$/.test(w) && /^\d+(\.\d+)*$/.test(merged[merged.length - 1] ?? "")) {
+      merged[merged.length - 1] += `.${w}`;
+    } else {
+      merged.push(w);
+    }
+  }
+  return merged
+    .map((w) => MODEL_WORD_CASING[w.toLowerCase()] ?? (/^[a-z]/.test(w) ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(" ");
+}
+
+/** Synthesize the picker/dispatch/launch option for a `provider/model` key. */
+export function dynamicModelOption(key: string): ModelOption {
+  const segments = key.split("/");
+  return {
+    key,
+    label: prettifyModelId(segments[segments.length - 1]),
+    hint: `via ${segments.slice(0, -1).join("/")}`,
+    cliAlias: key,
+  };
+}
+
+// Featured families for the picker head: matched against the live inventory so
+// the shortlist tracks what the device can actually run. Within a family the
+// best id wins: direct provider over aggregator (fewer path segments), then
+// highest embedded version. Ids with pin/variant suffixes (@date, :free, -fast)
+// never make the head — they stay reachable through search.
+const FEATURED_MODEL_FAMILIES: { match: RegExp }[] = [
+  { match: /(^|\/)claude-sonnet[-.\d]*$/ },
+  { match: /(^|\/)claude-opus[-.\d]*$/ },
+  { match: /(^|\/)claude-haiku[-.\d]*$/ },
+  { match: /(^|\/)gpt[-.\d]+$/ },
+  { match: /(^|\/)gemini[-.\d]*(-pro)?$/ },
+];
+
+/** Numeric version tokens of the model segment, for descending comparison.
+ * Date pins (8-digit tokens) are ignored so "claude-sonnet-4-20250514" ranks as
+ * version [4], below "claude-sonnet-4-5" ([4,5]). */
+function versionScore(id: string): number[] {
+  const tail = id.split("/").pop() ?? id;
+  const tokens: string[] = tail.match(/\d+/g) ?? [];
+  return tokens.filter((t) => t.length < 8).map(Number);
+}
+
+function compareVersionDesc(a: number[], b: number[]): number {
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (b[i] ?? -1) - (a[i] ?? -1);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** The curated head of a dynamic picker: best available id per featured family. */
+export function featuredModelOptions(inventory: string[]): ModelOption[] {
+  const clean = inventory.filter((id) => isDynamicModelKey(id) && !/[@:]|-fast$|-latest$/.test(id));
+  const out: ModelOption[] = [];
+  for (const family of FEATURED_MODEL_FAMILIES) {
+    const best = clean
+      .filter((id) => family.match.test(id))
+      .sort((a, b) => {
+        const depth = a.split("/").length - b.split("/").length;
+        if (depth !== 0) return depth;
+        const version = compareVersionDesc(versionScore(a), versionScore(b));
+        if (version !== 0) return version;
+        // Equal version: the shorter id wins (undated over date-pinned,
+        // "google/…" over "google-vertex/…").
+        return a.length - b.length || a.localeCompare(b);
+      })[0];
+    if (best && !out.some((o) => o.key === best)) out.push(dynamicModelOption(best));
+  }
+  return out;
+}
+
+// The per-client model config (AGENT_MODEL_CONFIG) and the model helpers
+// (modelAgentKey / findModelOption / modelOptionKey) now live in ./agentClients
+// alongside the client registry they read from. This file holds only the raw
+// option arrays so the module graph stays acyclic (agentClients imports these;
+// this file imports nothing back). They remain re-exported from
+// @codecast/shared/contracts, so consumers are unaffected.

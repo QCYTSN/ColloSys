@@ -1,0 +1,693 @@
+import { HEAD_INBOX_TITLE } from "./lib/orgRoutine";
+import { describe, expect, test } from "bun:test";
+import { makeFakeDb } from "./testDb";
+import { headOfPeopleOpening } from "@codecast/shared/contracts/headOfPeoplePrompt";
+import { HEAD_OF_PEOPLE_HANDLE, isHeadOfPeopleRole, COMPANY_REVIEW_PROMPT, headOfPeopleCharter, COMPANY_REVIEW_TITLE, performBackfillSeatedHeads, performCreateRole, performProvisionRole, performRetireRole, performSetTrust, performStaff, performUpdateRole, seatingNote } from "./orgRoles";
+import { canAccessProject } from "./lib/access";
+import { webUpdate as planWebUpdate } from "./plans";
+import { webUpdate as projectWebUpdate } from "./projects";
+import { charterPatch, charterLine } from "./lib/orgCharter";
+import { computeBriefFacts } from "./org";
+import { handBriefing } from "./spawn";
+import { workspaceAnchorFor } from "./anchors";
+import { resolveChatMentions } from "./lib/mentionResolve";
+
+// The head of people (docs/architecture/org-staffing.md S6) and the charters
+// on projects and plans (S7): one seat per company, adoptable, capped at
+// understand, with the weekly review armed on its standing session; and the
+// project goal leading the role's frame and a hand's briefing.
+
+const ME = "u".repeat(31) + "m";
+const TEAM = "teams_acme" as any;
+const NOW = 1_800_000_000_000;
+
+function world(extra: Record<string, any[]> = {}) {
+  const tables: Record<string, any[]> = {
+    users: [{ _id: ME, name: "Me", email: "me@x.ai" }],
+    team_memberships: [{ _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 }],
+    teams: [{ _id: TEAM, name: "Acme", features: { org: true } }],
+    counters: [],
+    org_roles: [],
+    anchors: [],
+    conversations: [
+      // The analyzer session that offers to become the head of people.
+      { _id: "mine", user_id: ME, session_id: "s-mine", short_id: "jxmine1", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 4, team_id: TEAM, project_path: "/repo" },
+      // The same, spawned from a repo with no directory mapping: private by default.
+      { _id: "private1", user_id: ME, session_id: "s-priv", short_id: "jxpriv1", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 4, team_id: TEAM, project_path: "/repo", is_private: true },
+      // A hand of some other role: never adoptable.
+      { _id: "hand1", user_id: ME, org_role_id: "role-other", session_id: "s-hand", short_id: "jxhand1", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 1, team_id: TEAM },
+      // Another role's standing session: never adoptable either.
+      { _id: "standing-other", user_id: ME, standing_role_id: "role-other", anchor_id: "anchor-other", session_id: "s-so", short_id: "jxstand", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 1, team_id: TEAM, persistent: true },
+    ],
+    agent_tasks: [],
+    pending_messages: [],
+    managed_sessions: [],
+    session_owners: [],
+    messages: [],
+    user_presence: [],
+    devices: [],
+    docs: [],
+    projects: [],
+    plans: [],
+    tasks: [],
+    session_decisions: [],
+    ...extra,
+  };
+  const db = makeFakeDb(tables);
+  const scheduled: any[] = [];
+  const ctx: any = { db, scheduler: { runAfter: async (delay: number, _fn: any, args: any) => { scheduled.push({ delay, args }); } } };
+  return { ctx, tables, scheduled };
+}
+
+/** The Company review routine among the seat's triggers. */
+const review = (tables: any) => tables.agent_tasks.find((t: any) => t.title === COMPANY_REVIEW_TITLE)!;
+
+describe("orgRoles.staff", () => {
+  test("creates the head of people once, adopting the caller's session as its standing session", async () => {
+    const { ctx, tables } = world();
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxmine1" });
+    expect(out.created).toBe(true);
+    expect(out.adopted).toBe(true);
+    expect(out.role.handle).toBe(HEAD_OF_PEOPLE_HANDLE);
+    const role = tables.org_roles[0];
+    expect(role.name).toBe("Head of People");
+    expect(role.scope).toEqual({ project_ids: [], plan_ids: [] });
+    expect(role.trust).toBe("understand");
+    expect(role.reports_to).toEqual({ kind: "user", user_id: ME });
+    expect(role.charter).toBe(headOfPeopleCharter("Me"));
+    expect(role.anchor_id).toBeDefined();
+    // The adopted row IS the standing session: identity, anchor, persistence.
+    const mine = tables.conversations.find((c) => c._id === "mine")!;
+    expect(String(mine.standing_role_id)).toBe(String(role._id));
+    expect(mine.anchor_id).toBe(role.anchor_id);
+    expect(mine.persistent).toBe(true);
+    const anchor = tables.anchors.find((a) => a._id === role.anchor_id)!;
+    expect(anchor.conversation_id).toBe("mine");
+    expect(String(anchor.org_role_id)).toBe(String(role._id));
+    expect(mine.acting_user_id).toBe(anchor.bot_user_id);
+    expect(tables.users.find((u) => u._id === anchor.bot_user_id)?.bot_kind).toBe("role");
+    expect(out.standing).toEqual({ conversation_id: "mine", short_id: "jxmine1" } as any);
+    // No new session was started for an adoption.
+    expect(tables.conversations).toHaveLength(4);
+
+    // Idempotent per company: the second call returns the same seat and arms nothing new.
+    const again = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxmine1" });
+    expect(again.created).toBe(false);
+    expect(again.already_existed).toBe(true);
+    expect(String(again.role._id)).toBe(String(role._id));
+    expect(tables.org_roles).toHaveLength(1);
+    // The seat's four triggers: the routine, the route up (S28), and the
+    // area watch and the inbox look, which only the Head of People has (S29, S43).
+    expect(tables.agent_tasks.map((t) => t.title)).toEqual([HEAD_INBOX_TITLE, COMPANY_REVIEW_TITLE, "A session under you needs input", "An area needs your review"]);
+    const needsInput = tables.agent_tasks.find((t) => t.event_filter?.event_type === "session_needs_input")!;
+    expect(tables.agent_tasks.find((t) => t.event_filter?.event_type === "org_area_change")).toMatchObject({ title: "An area needs your review", role_id: role._id });
+    expect(String(needsInput.role_id)).toBe(String(role._id));
+  });
+
+  // org-staffing.md S12: the head of people IS the workspace's standing agent.
+  test("with a workspace anchor and no session named, staff seats the anchor as the Head of People: its row gains the role pointer, nothing restarts", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai", github_username: "me" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", created_at: 1, updated_at: 1 }],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true, project_path: "/repo" });
+    const before = { anchors: tables.anchors.length, users: tables.users.length, conversations: tables.conversations.length };
+
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM });
+    expect(out.created).toBe(true);
+    expect(out.adopted).toBe(true);
+    expect(out.standing).toEqual({ conversation_id: "anchor-conv", short_id: "jxanchr" } as any);
+    // S16: the web can say what happened.
+    expect(out.seated).toBe("existing");
+    expect(out.conversation_short_id).toBe("jxanchr");
+    expect(out.previous_title).toBe("Anchor");
+    expect(out.previous_standing).toBeNull();
+    const role = tables.org_roles[0];
+    expect(role.anchor_id).toBe("anchor-t");
+    const anchor = tables.anchors.find((a) => a._id === "anchor-t")!;
+    expect(String(anchor.org_role_id)).toBe(String(role._id));
+    const conv = tables.conversations.find((c) => c._id === "anchor-conv")!;
+    expect(String(conv.standing_role_id)).toBe(String(role._id));
+    expect(conv.anchor_id).toBe("anchor-t");
+    expect(conv.acting_user_id).toBe(BOT);
+    expect(conv.persistent).toBe(true);
+    // Nothing minted, nothing started: the same bot, the same row, the same session.
+    expect({ anchors: tables.anchors.length, users: tables.users.length, conversations: tables.conversations.length }).toEqual(before);
+    expect(tables.users.find((u) => u._id === BOT)?.bot_kind).toBe("role");
+    // The review routine lives on that session.
+    expect(review(tables).originating_conversation_id).toBe("anchor-conv");
+    // The thread looks like the role, and remembers what it was called.
+    expect(conv.title).toBe("Head of People");
+    expect(conv.title_is_custom).toBe(true);
+    expect(conv.seat_previous).toEqual({ title: "Anchor", title_is_custom: true });
+    // The thread says what changed: the seating note from Me, then the briefing.
+    const turns = tables.pending_messages.filter((p) => p.conversation_id === "anchor-conv");
+    expect(turns).toHaveLength(2);
+    expect(turns[0].content).toBe(`<session-message from="unknown" name="Me">\n${seatingNote(role, "Acme")}\n</session-message>`);
+    expect(turns[0].content).toContain("You are now the Head of People of Acme (@head-of-people): https://codecast.sh/org/or-1.");
+    expect(turns[0].content).toContain("Nothing else changed: your memory, your handle, your chat and Slack bindings and this thread are as they were.");
+    expect(turns[0].status).not.toBe("held");
+    expect(turns[1].content.startsWith(`${headOfPeopleOpening({ workspace: "Acme", person: "Me" })}\n\n`)).toBe(true);
+    expect(turns[1].content.endsWith("\n\nRead `cast brief` now.")).toBe(true);
+
+    // The aliases keep working: the workspace anchor lookup still answers with
+    // this row, and `@anchor` in chat now names the Head of People, never the bare bot.
+    expect((await workspaceAnchorFor(ctx, { team_id: TEAM }))?._id).toBe("anchor-t");
+    const mentions = await resolveChatMentions(ctx, TEAM, "@anchor what changed this week?", ME as any);
+    expect(mentions.roles.map((r) => r.handle)).toEqual([HEAD_OF_PEOPLE_HANDLE]);
+    expect(mentions.users).toEqual([]);
+    expect(mentions.refs).toEqual([{ kind: "role", role_id: String(role._id), short_id: role.short_id, handle: HEAD_OF_PEOPLE_HANDLE }]);
+    // A second hire is idempotent.
+    const again = await performStaff(ctx, ME as any, { team_id: TEAM });
+    expect(again.already_existed).toBe(true);
+    expect(tables.anchors).toHaveLength(before.anchors);
+  });
+
+  test("without a Head of People, @anchor still names the bot; a named session outranks the anchor for adoption", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", created_at: 1, updated_at: 1 }],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true });
+    const plain = await resolveChatMentions(ctx, TEAM, "@anchor hello", ME as any);
+    expect(plain.users).toEqual([BOT]);
+    expect(plain.roles).toEqual([]);
+
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxmine1" });
+    expect(out.standing?.conversation_id).toBe("mine");
+    // The workspace anchor is untouched and still the workspace anchor.
+    expect(tables.anchors.find((a) => a._id === "anchor-t")!.org_role_id).toBeUndefined();
+    expect((await workspaceAnchorFor(ctx, { team_id: TEAM }))?._id).toBe("anchor-t");
+  });
+
+  test("a role's bot handle names the role: @marketgrowthlead reaches @growth, not the bot", async () => {
+    const BOT = "u".repeat(31) + "g";
+    const { ctx } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Market Growth lead", is_bot: true, bot_kind: "role" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      org_roles: [{ _id: "role-growth", team_id: TEAM, name: "Market Growth lead", handle: "growth", short_id: "or-36", status: "active", anchor_id: "anchor-g" }],
+      anchors: [{ _id: "anchor-g", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Market Growth lead", org_role_id: "role-growth", status: "active", conversation_id: "growth-conv", created_at: 1, updated_at: 1 }],
+    });
+    const m = await resolveChatMentions(ctx, TEAM, "@marketgrowthlead see this guy", ME as any);
+    expect(m.users).toEqual([]);
+    expect(m.refs).toEqual([{ kind: "role", role_id: "role-growth", short_id: "or-36", handle: "growth" }]);
+  });
+
+  test("seat fresh: a new session is started and the old standing agent is retired in the same act, its thread kept and linked from the role", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", project_path: "/repo", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true, project_path: "/repo" });
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, seat: "fresh" });
+    expect(out.seated).toBe("fresh");
+    expect(out.adopted).toBe(false);
+    expect(out.previous_standing).toEqual({ conversation_id: "anchor-conv", short_id: "jxanchr" } as any);
+    expect(out.previous_title).toBeNull();
+    const role = tables.org_roles[0];
+    expect(role.previous_standing_conversation_id).toBe("anchor-conv");
+    // The old agent is retired, not deleted: its thread stays readable.
+    const old = tables.anchors.find((a) => a._id === "anchor-t")!;
+    expect(old.status).toBe("decommissioned");
+    expect(old.org_role_id).toBeUndefined();
+    const oldConv = tables.conversations.find((c) => c._id === "anchor-conv")!;
+    expect(oldConv.status).toBe("completed");
+    expect(oldConv.persistent).toBe(false);
+    // Filed under Killed, so the old seat's card leaves the inbox.
+    expect(oldConv.inbox_killed_at).toBeDefined();
+    // One root agent: the fresh seat is a new anchors row with its own session.
+    const seat = tables.anchors.find((a) => String(a.org_role_id) === String(role._id))!;
+    expect(seat._id).not.toBe("anchor-t");
+    expect(seat.status).toBe("active");
+    const standing = tables.conversations.find((c) => c._id === seat.conversation_id)!;
+    expect(standing.title).toBe("Head of People");
+    expect(String(standing.standing_role_id)).toBe(String(role._id));
+    expect(out.conversation_short_id).toBe(standing.short_id);
+    // A fresh session has no history to explain: no seating note, only the bootstrap.
+    expect(tables.pending_messages.filter((p) => p.conversation_id === standing._id)).toHaveLength(1);
+    // The workspace's standing agent is the Head of People now.
+    expect((await workspaceAnchorFor(ctx, { team_id: TEAM }))?._id).toBe(seat._id);
+  });
+
+  test("seat fresh with a Head of People already standing is refused; a plain member cannot retire the host's agent for a fresh seat", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const MATE = "u".repeat(31) + "t";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: MATE, name: "Mate", email: "mate@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: MATE, team_id: TEAM, role: "member", joined_at: 1 },
+        { _id: "m3", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true });
+    await expect(performStaff(ctx, MATE as any, { team_id: TEAM, seat: "fresh" })).rejects.toThrow(/host or a team admin/);
+    expect(tables.anchors[0].status).toBe("active");
+    await performStaff(ctx, ME as any, { team_id: TEAM });
+    await expect(performStaff(ctx, ME as any, { team_id: TEAM, seat: "fresh" })).rejects.toThrow(/already has a session/);
+  });
+
+  test("unseating the Head of People keeps the standing agent by default: the old title returns, the pointers clear, the anchor answers again", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true });
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM });
+    const retired = await performRetireRole(ctx, ME as any, { role_id: String(out.role._id) });
+    expect(retired.standing_session).toBe("kept");
+    const conv = tables.conversations.find((c) => c._id === "anchor-conv")!;
+    expect(conv.title).toBe("Anchor");
+    expect(conv.title_is_custom).toBe(true);
+    expect(conv.seat_previous).toBeUndefined();
+    expect(conv.standing_role_id).toBeUndefined();
+    expect(conv.status).toBe("active");
+    expect(conv.persistent).toBe(true);
+    expect(conv.anchor_id).toBe("anchor-t");
+    expect(conv.acting_user_id).toBe(BOT);
+    const anchor = tables.anchors.find((a) => a._id === "anchor-t")!;
+    expect(anchor.status).toBe("active");
+    expect(anchor.org_role_id).toBeUndefined();
+    expect(tables.users.find((u) => u._id === BOT)?.bot_kind).toBe("anchor");
+    expect((await workspaceAnchorFor(ctx, { team_id: TEAM }))?._id).toBe("anchor-t");
+    // The seat's routine went with the seat.
+    expect(review(tables).status).not.toBe("scheduled");
+    // Retiring the standing session with the seat is the other choice.
+    const again = await performStaff(ctx, ME as any, { team_id: TEAM });
+    const gone = await performRetireRole(ctx, ME as any, { role_id: String(again.role._id), standing_session: "retire" });
+    expect(gone.standing_session).toBe("retired");
+    expect(tables.anchors.find((a) => a._id === "anchor-t")!.status).toBe("decommissioned");
+    expect(conv.status).toBe("completed");
+    expect(conv.inbox_killed_at).toBeDefined();
+    expect(conv.anchor_id).toBeUndefined();
+  });
+
+  test("backfill: a Head of People seated before S16 gets the title, the kept old title and the note from its host, once", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "role" }],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", org_role_id: "cos", created_at: 1, updated_at: 1 }],
+      org_roles: [{ _id: "cos", short_id: "or-4", scope_type: "team", team_id: TEAM, host_user_id: ME, name: "Head of People", handle: HEAD_OF_PEOPLE_HANDLE, scope: { project_ids: [], plan_ids: [] }, reports_to: { kind: "user", user_id: ME }, status: "active", anchor_id: "anchor-t", created_by: ME, created_at: 1, updated_at: 1 }],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", standing_role_id: "cos", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true });
+    const dry = await performBackfillSeatedHeads(ctx, true);
+    expect(dry).toEqual({ dry_run: true, updated: [{ role: "or-4", conversation: "jxanchr", previous_title: "Anchor", title: "Head of People", workspace: "Acme" }], skipped: 0 });
+    expect(tables.conversations.find((c) => c._id === "anchor-conv")!.title).toBe("Anchor");
+    expect(tables.pending_messages).toHaveLength(0);
+    const real = await performBackfillSeatedHeads(ctx, false);
+    expect(real.updated).toHaveLength(1);
+    const conv = tables.conversations.find((c) => c._id === "anchor-conv")!;
+    expect(conv.title).toBe("Head of People");
+    expect(conv.seat_previous).toEqual({ title: "Anchor", title_is_custom: true });
+    expect(tables.pending_messages).toHaveLength(1);
+    expect(tables.pending_messages[0].from_user_id).toBe(ME);
+    expect(tables.pending_messages[0].content).toContain("You are now the Head of People of Acme (@head-of-people): ");
+    // A second run finds nothing to do.
+    expect(await performBackfillSeatedHeads(ctx, false)).toEqual({ dry_run: false, updated: [], skipped: 1 });
+    expect(tables.pending_messages).toHaveLength(1);
+  });
+
+  // Review findings on S12 and S16.
+  test("backfill never notes a Head of People born as the role, however often it runs", async () => {
+    const { ctx, tables } = world({ anchor_channels: [], session_commands: [] });
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, seat: "fresh", project_path: "/repo" });
+    const standing = tables.conversations.find((c) => c._id === out.standing!.conversation_id)!;
+    expect(standing.seat_previous).toBeUndefined();
+    const before = tables.pending_messages.length;
+    for (let run = 0; run < 3; run++) {
+      expect(await performBackfillSeatedHeads(ctx, false)).toEqual({ dry_run: false, updated: [], skipped: 1 });
+    }
+    expect(tables.pending_messages).toHaveLength(before);
+    // An adopted thread is marked explained even when its title already matched, so it is skipped too.
+    const again = world({ anchor_channels: [], session_commands: [] });
+    again.tables.conversations.find((c) => c._id === "mine")!.title = "Head of People";
+    again.tables.conversations.find((c) => c._id === "mine")!.title_is_custom = true;
+    await performStaff(again.ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    expect(again.tables.conversations.find((c) => c._id === "mine")!.seat_previous).toEqual({ title: "Head of People", title_is_custom: true });
+  });
+
+  test("after a retire and a second hire, @head-of-people and @anchor name the NEW head, never the retired row", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", project_path: "/repo", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true, project_path: "/repo" });
+    const first = await performStaff(ctx, ME as any, { team_id: TEAM });
+    await performRetireRole(ctx, ME as any, { role_id: String(first.role._id) });
+    const second = await performStaff(ctx, ME as any, { team_id: TEAM });
+    expect(String(second.role._id)).not.toBe(String(first.role._id));
+    expect(tables.org_roles.filter((r) => isHeadOfPeopleRole(r))).toHaveLength(2);
+    for (const line of ["@head-of-people status?", "@anchor status?"]) {
+      const m = await resolveChatMentions(ctx, TEAM, line, ME as any);
+      expect(m.roles.map((r) => String(r._id))).toEqual([String(second.role._id)]);
+      expect(m.users).toEqual([]);
+    }
+  });
+
+  test("unseat with keep cancels only the company review: the person's own triggers and waiting message survive", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", project_path: "/repo", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true, project_path: "/repo" });
+    tables.agent_tasks.push({ _id: "digest", user_id: ME, title: "Morning digest", prompt: "digest", originating_conversation_id: "anchor-conv", schedule_type: "recurring", interval_ms: 86_400_000, status: "scheduled", created_at: 1, updated_at: 1 });
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM });
+    tables.pending_messages.push({ _id: "waiting", conversation_id: "anchor-conv", from_user_id: ME, owner_user_id: ME, content: "what changed?", status: "held", created_at: NOW });
+    const retired = await performRetireRole(ctx, ME as any, { role_id: String(out.role._id) });
+    expect(retired.standing_session).toBe("kept");
+    // The seat's own four go: the routine, the route up, the area watch's and the inbox look.
+    expect(retired.cancelled_triggers).toBe(4);
+    expect(tables.agent_tasks.find((t) => t.event_filter?.event_type === "session_needs_input")!.status).toBe("cancelled");
+    expect(tables.agent_tasks.find((t) => t._id === "digest")!.status).toBe("scheduled");
+    expect(tables.agent_tasks.find((t) => t.title === COMPANY_REVIEW_TITLE)!.status).toBe("cancelled");
+    expect(tables.pending_messages.find((p) => p._id === "waiting")!.status).toBe("pending");
+    // Retiring the session with the seat is still the wholesale path.
+    const again = await performStaff(ctx, ME as any, { team_id: TEAM });
+    tables.pending_messages.push({ _id: "waiting2", conversation_id: "anchor-conv", from_user_id: ME, owner_user_id: ME, content: "and now?", status: "held", created_at: NOW });
+    await performRetireRole(ctx, ME as any, { role_id: String(again.role._id), standing_session: "retire" });
+    expect(tables.agent_tasks.find((t) => t._id === "digest")!.status).toBe("cancelled");
+    expect(tables.pending_messages.find((p) => p._id === "waiting2")!.status).toBe("cancelled");
+  });
+
+  test("a second staff call says what it cannot do, and fills a seat whose anchor was retired on its own", async () => {
+    const BOT = "u".repeat(31) + "b";
+    const { ctx, tables } = world({
+      users: [{ _id: ME, name: "Me", email: "me@x.ai" }, { _id: BOT, name: "Anchor", is_bot: true, bot_kind: "anchor" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: BOT, team_id: TEAM, role: "member", joined_at: 1, visibility: "full" },
+      ],
+      anchors: [{ _id: "anchor-t", scope_type: "team", team_id: TEAM, bot_user_id: BOT, host_user_id: ME, name: "Anchor", status: "active", conversation_id: "anchor-conv", project_path: "/repo", created_at: 1, updated_at: 1 }],
+      anchor_channels: [],
+      session_commands: [],
+    });
+    tables.conversations.push({ _id: "anchor-conv", user_id: ME, acting_user_id: BOT, anchor_id: "anchor-t", session_id: "s-anchor", short_id: "jxanchr", title: "Anchor", title_is_custom: true, status: "active", agent_type: "claude_code", updated_at: NOW, message_count: 9, team_id: TEAM, is_private: false, persistent: true, project_path: "/repo" });
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM });
+    // Naming another session while the Head of People stands is refused, not ignored.
+    await expect(performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxmine1" })).rejects.toThrow(/already runs in another session/);
+    // Naming the Head of People's own session is the idempotent repeat.
+    expect((await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxanchr" })).already_existed).toBe(true);
+    // `cast anchor rm` on the row directly leaves a role pointing at a dead anchor: the seat is empty.
+    tables.anchors.find((a) => a._id === "anchor-t")!.status = "decommissioned";
+    const refilled = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "jxmine1" });
+    expect(refilled.already_existed).toBe(false);
+    expect(String(refilled.role._id)).toBe(String(out.role._id));
+    expect(refilled.standing?.conversation_id).toBe("mine");
+    const seat = tables.anchors.find((a) => a._id === tables.org_roles[0].anchor_id)!;
+    expect(seat.status).toBe("active");
+    expect(seat._id).not.toBe("anchor-t");
+  });
+
+  test("arms one Company review routine on the standing session and queues the first review at once", async () => {
+    const { ctx, tables } = world();
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine", every_ms: 3 * 86_400_000 });
+    const routine = review(tables);
+    expect(out.routine?.id).toBe(routine._id);
+    expect(routine.title).toBe(COMPANY_REVIEW_TITLE);
+    expect(routine.originating_conversation_id).toBe("mine");
+    expect(routine.schedule_type).toBe("recurring");
+    expect(routine.interval_ms).toBe(3 * 86_400_000);
+    expect(routine.prompt).toContain("cast org review");
+    expect(routine.status).toBe("scheduled");
+    // The first review runs at once, through the trigger itself.
+    expect(routine.run_at).toBeLessThanOrEqual(Date.now());
+    expect(routine.requested_run_source).toBe("manual");
+  });
+
+  test("the default cadence is seven days", async () => {
+    const { ctx, tables } = world();
+    await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    expect(review(tables).interval_ms).toBe(7 * 86_400_000);
+  });
+
+  test("adopt refuses a hand and another role's standing session", async () => {
+    // The other seat is live; a pointer at a retired one is stale (see below).
+    const { ctx } = world({
+      org_roles: [{ _id: "role-other", short_id: "or-2", scope_type: "team", team_id: TEAM, host_user_id: ME, name: "Other", handle: "other", scope: { project_ids: [], plan_ids: [] }, reports_to: { kind: "user", user_id: ME }, status: "active", anchor_id: "anchor-other", created_by: ME, created_at: 1, updated_at: 1 }],
+    });
+    await expect(performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "hand1" })).rejects.toThrow(/already reports to a role/);
+    await expect(performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "standing-other" })).rejects.toThrow(/another role's standing session/);
+  });
+
+  test("provision with adopt_conversation_id works for any role, not only the head of people", async () => {
+    const { ctx, tables } = world();
+    const role = await performCreateRole(ctx, ME as any, { name: "Infra lead", handle: "infra", team_id: TEAM });
+    const out = await performProvisionRole(ctx, ME as any, { role_id: String(role._id), adopt_conversation_id: "mine" });
+    expect(out.adopted).toBe(true);
+    expect(out.conversation_id).toBe("mine");
+    expect(String(tables.conversations.find((c) => c._id === "mine")!.standing_role_id)).toBe(String(role._id));
+  });
+
+  // A seat under a role carries the parent role on its standing session
+  // (org-staffing.md S28) so it rides the parent lead's card; a seat under a
+  // person carries none.
+  test("provisioning stamps the standing session with the role's parent role", async () => {
+    const { ctx, tables } = world();
+    const top = await performCreateRole(ctx, ME as any, { name: "Growth", handle: "growth", team_id: TEAM });
+    const sub = await performCreateRole(ctx, ME as any, { name: "Calling", handle: "calling", team_id: TEAM, reports_to: { kind: "role", role_id: top._id } });
+    await performProvisionRole(ctx, ME as any, { role_id: String(sub._id), adopt_conversation_id: "mine" });
+    expect(String(tables.conversations.find((c) => c._id === "mine")!.org_role_id)).toBe(String(top._id));
+    await performProvisionRole(ctx, ME as any, { role_id: String(top._id) });
+    const topSeat = tables.conversations.find((c) => String(c.standing_role_id ?? "") === String(top._id))!;
+    expect(topSeat.org_role_id).toBeUndefined();
+  });
+
+  test("the root role's switch cannot be turned on (S12, S23.1)", async () => {
+    const { ctx, tables } = world();
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    for (const args of [{ on: true }, { trust: "decide" }, { trust: "direct" }]) {
+      await expect(performSetTrust(ctx, ME as any, { role_id: String(out.role._id), ...args, human_decision: "sd-1" } as any)).rejects.toThrow(/does not start work on its own/);
+    }
+    expect(tables.org_roles[0].trust).toBe("understand");
+    // Turning it off again is allowed (a no-op a person may make).
+    await performSetTrust(ctx, ME as any, { role_id: String(out.role._id), on: false, human_decision: "sd-1" } as any);
+  });
+
+  test("a role a person hires starts with the switch on; the charter notes each flip in a person's words (S23.1)", async () => {
+    const { ctx, tables } = world();
+    const role = await performCreateRole(ctx, ME as any, { name: "Growth", handle: "growth", team_id: TEAM });
+    expect(role.trust).toBe("direct");
+    await performProvisionRole(ctx, ME as any, { role_id: String(role._id) });
+    const off = await performSetTrust(ctx, ME as any, { role_id: String(role._id), on: false, human_decision: "sd-1" } as any);
+    expect(off).toMatchObject({ on: false, previous_on: true, trust: "understand" });
+    const on = await performSetTrust(ctx, ME as any, { role_id: String(role._id), on: true, human_decision: "sd-1" } as any);
+    expect(on).toMatchObject({ on: true, previous_on: false, trust: "direct" });
+    const charter = tables.docs.find((d) => d._id === tables.org_roles.find((r) => r.handle === "growth")!.charter_doc_id)!;
+    const notes = (charter.entries ?? []).map((e: any) => e.content);
+    expect(notes).toContain("Me turned off starting work on its own");
+    expect(notes).toContain("Me turned on starting work on its own");
+    expect(notes.join("\n")).not.toMatch(/[Tt]rust|stage|understand|direct/);
+  });
+
+  test("retire takes the seat's markers off the adopted session, so it can be adopted again", async () => {
+    const { ctx, tables } = world({ anchor_channels: [], session_commands: [] });
+    const first = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    await performRetireRole(ctx, ME as any, { role_id: String(first.role._id), standing_session: "retire" });
+    const mine = tables.conversations.find((c) => c._id === "mine")!;
+    expect(mine.standing_role_id).toBeUndefined();
+    expect(mine.anchor_id).toBeUndefined();
+    expect(mine.acting_user_id).toBeUndefined();
+    // Hire again into the same session: a new seat, adopted cleanly.
+    const again = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    expect(again.created).toBe(true);
+    expect(again.adopted).toBe(true);
+    expect(String(mine.standing_role_id)).toBe(String(again.role._id));
+  });
+
+  test("a stale standing pointer at a retired role does not block adoption", async () => {
+    const { ctx, tables } = world({
+      org_roles: [{ _id: "role-dead", short_id: "or-7", scope_type: "team", team_id: TEAM, host_user_id: ME, name: "Old", handle: "old", scope: { project_ids: [], plan_ids: [] }, reports_to: { kind: "user", user_id: ME }, status: "retired", created_by: ME, created_at: 1, updated_at: 1 }],
+    });
+    // A row retired before retire learned to clear the markers.
+    tables.conversations.find((c) => c._id === "mine")!.standing_role_id = "role-dead";
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    expect(out.adopted).toBe(true);
+    expect(String(tables.conversations.find((c) => c._id === "mine")!.standing_role_id)).toBe(String(out.role._id));
+  });
+
+  test("a handle change may not leave or enter the head of people seat", async () => {
+    const { ctx, tables } = world();
+    const out = await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    await expect(performUpdateRole(ctx, ME as any, { role_id: String(out.role._id), handle: "cos" })).rejects.toThrow(/keeps its handle/);
+    expect(tables.org_roles[0].handle).toBe(HEAD_OF_PEOPLE_HANDLE);
+    const other = await performCreateRole(ctx, ME as any, { name: "Ops", handle: "ops", team_id: TEAM });
+    await expect(performUpdateRole(ctx, ME as any, { role_id: String(other._id), handle: HEAD_OF_PEOPLE_HANDLE })).rejects.toThrow(/keeps its handle/);
+    // Any other rename still works, and the seat's own name may change.
+    await performUpdateRole(ctx, ME as any, { role_id: String(other._id), handle: "operations" });
+    await performUpdateRole(ctx, ME as any, { role_id: String(out.role._id), name: "Head of People (interim)" });
+  });
+
+  test("adopting a private team session shares it, so every member sees the seat", async () => {
+    const { ctx, tables } = world();
+    await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "private1" });
+    const row = tables.conversations.find((c) => c._id === "private1")!;
+    expect(row.is_private).toBe(false);
+    expect(row.team_id).toBe(TEAM);
+    expect(row.standing_role_id).toBeDefined();
+    expect(row.persistent).toBe(true);
+  });
+
+  test("the review routine runs the review in the seat's own thread, carries its role, and a seat hired earlier takes the new text", async () => {
+    // Reviewing the structure is one job (org-staffing.md S26), run in the
+    // seat's own thread: it starts no session, so a seat that does not start
+    // work on its own still reviews.
+    expect(COMPANY_REVIEW_PROMPT).not.toContain("cast spawn");
+    expect(COMPANY_REVIEW_PROMPT).toContain("Run `cast org review`");
+    expect(COMPANY_REVIEW_PROMPT).toContain("in your own thread");
+    const { ctx, tables } = world({ agent_task_revisions: [] });
+    await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    const routine = review(tables);
+    expect(String(routine.role_id)).toBe(String(tables.org_roles[0]._id));
+    routine.prompt = "Company review. The old text.";
+    delete routine.role_id;
+    // The backfill refreshes a live routine and never creates one.
+    await performBackfillSeatedHeads(ctx, false);
+    expect(routine.prompt).toBe(COMPANY_REVIEW_PROMPT);
+    expect(String(routine.role_id)).toBe(String(tables.org_roles[0]._id));
+    expect(tables.agent_tasks).toHaveLength(4);
+    routine.status = "cancelled";
+    await performBackfillSeatedHeads(ctx, false);
+    expect(tables.agent_tasks).toHaveLength(4);
+  });
+
+  test("the charter is the structure job its opening states, for the person it reports to", () => {
+    expect(headOfPeopleCharter("Ada").startsWith("Your job is to keep the company's structure true to how the work runs")).toBe(true);
+    expect(headOfPeopleCharter("Ada")).not.toContain("{person}");
+  });
+});
+
+describe("project and plan charters", () => {
+  const project = { _id: "p1", user_id: ME, team_id: TEAM, workspace: `team:${TEAM}`, title: "Growth", status: "active", project_path: "/repo", created_at: 1, updated_at: 1 };
+
+  test("charterPatch writes the fields and resolves the owner through the role handle in the same boundary", async () => {
+    const { ctx, tables } = world({ projects: [project] });
+    const role = await performCreateRole(ctx, ME as any, { name: "Head of Growth", handle: "growth", team_id: TEAM });
+    const patch = await charterPatch(ctx, project, {
+      goal: " Double weekly signups ", success_metrics: ["signups/week", " ", "activation rate"], priority: "p1", owner: "@growth", non_goals: ["paid ads"], risks: ["one channel"], budget: { tokens_per_day: 200_000 },
+    }, "projects");
+    expect(patch).toEqual({
+      goal: "Double weekly signups", success_metrics: ["signups/week", "activation rate"], priority: "p1", owner_role_id: role._id, non_goals: ["paid ads"], risks: ["one channel"], budget: { tokens_per_day: 200_000 },
+    });
+    // A plan takes no risks or budget; null and empty clear.
+    const planPatch = await charterPatch(ctx, project, { priority: null, owner: null, success_metrics: [], risks: ["ignored"], budget: null }, "plans");
+    expect(planPatch).toEqual({ priority: undefined, owner_role_id: undefined, success_metrics: undefined });
+    await expect(charterPatch(ctx, project, { owner: "@nobody" }, "projects")).rejects.toThrow(/No role/);
+    await expect(charterPatch(ctx, project, { priority: "p9" as any }, "projects")).rejects.toThrow(/Priority/);
+    // The goal has one writer: it is trimmed, and empty clears it.
+    expect(await charterPatch(ctx, project, { goal: "  " }, "plans")).toEqual({ goal: undefined });
+    expect(await charterPatch(ctx, project, { goal: " x " }, "plans")).toEqual({ goal: "x" });
+    // A role in another boundary is refused.
+    tables.org_roles.push({ _id: "r-personal", short_id: "or-9", scope_type: "user", scope_user_id: ME, handle: "solo", name: "Solo", status: "active", scope: { project_ids: [], plan_ids: [] } });
+    await expect(charterPatch(ctx, project, { owner: "or-9" }, "projects")).rejects.toThrow(/another workspace/);
+  });
+
+  test("a plan goal cleared through the web path is stored as absent, not an empty string", async () => {
+    const plan = { _id: "pl1", short_id: "pl-1", user_id: ME, team_id: TEAM, workspace: `team:${TEAM}`, title: "Signups", status: "active", goal: "old", source: "human", created_at: 1, updated_at: 1 };
+    const { ctx, tables } = world({ plans: [plan] });
+    ctx.auth = { getUserIdentity: async () => ({ subject: `${ME}|session` }) };
+    await (planWebUpdate as any)._handler(ctx, { short_id: "pl-1", goal: "" });
+    expect(tables.plans[0].goal).toBeUndefined();
+    await (planWebUpdate as any)._handler(ctx, { short_id: "pl-1", goal: "  Double signups " });
+    expect(tables.plans[0].goal).toBe("Double signups");
+  });
+
+  test("project access is the workspace stamp: a teammate cannot edit a project private inside the team", async () => {
+    const MATE = "u".repeat(31) + "t";
+    const shared = { ...project, _id: "p-shared" };
+    const privateInTeam = { ...project, _id: "p-private", workspace: `user:${ME}` };
+    const { ctx, tables } = world({
+      projects: [shared, privateInTeam],
+      users: [{ _id: ME, name: "Me" }, { _id: MATE, name: "Mate" }],
+      team_memberships: [
+        { _id: "m1", user_id: ME, team_id: TEAM, role: "admin", joined_at: 1 },
+        { _id: "m2", user_id: MATE, team_id: TEAM, role: "member", joined_at: 1 },
+      ],
+    });
+    expect(await canAccessProject(ctx, MATE as any, shared as any)).toBe(true);
+    expect(await canAccessProject(ctx, MATE as any, privateInTeam as any)).toBe(false);
+    ctx.auth = { getUserIdentity: async () => ({ subject: `${MATE}|session` }) };
+    await (projectWebUpdate as any)._handler(ctx, { id: "p-shared", goal: "Grow" });
+    expect(tables.projects.find((p) => p._id === "p-shared")!.goal).toBe("Grow");
+    await expect((projectWebUpdate as any)._handler(ctx, { id: "p-private", goal: "Grow" })).rejects.toThrow("Project not found");
+  });
+
+
+  test("a whole-company role reads every project's charter", async () => {
+    const chartered = { ...project, goal: "Double weekly signups", priority: "p0" };
+    const { ctx, tables } = world({ projects: [chartered, { ...project, _id: "p2", title: "Ops", goal: undefined }] });
+    await performStaff(ctx, ME as any, { team_id: TEAM, adopt_conversation_id: "mine" });
+    const facts = await computeBriefFacts(ctx, ME as any, tables.org_roles[0], NOW);
+    expect(facts.scope.whole_workspace).toBe(true);
+    expect(facts.scope.projects.map((p) => p.title).sort()).toEqual(["Growth", "Ops"]);
+    expect(charterLine("- project Growth", facts.scope.projects.find((p) => p.id === "p1"))).toBe("- project Growth [p0] · goal: Double weekly signups");
+    expect(charterLine("- project Ops", facts.scope.projects.find((p) => p.id === "p2"))).toBeNull();
+  });
+
+  test("the brief carries the initiatives the role serves with their health as last said, and its own standing state", async () => {
+    const { ctx, tables } = world({
+      projects: [project],
+      initiatives: [
+        { _id: "in_owned", user_id: ME, team_id: TEAM, workspace: `team:${TEAM}`, short_id: "in-4", title: "Win the private network", project_ids: [], owner: { kind: "role", role_id: "r1" }, status: "active", health: "at_risk", health_at: NOW - 11 * 86_400_000, created_at: 1, updated_at: 1 },
+        { _id: "in_carried", user_id: ME, team_id: TEAM, workspace: `team:${TEAM}`, short_id: "in-9", title: "Grow", project_ids: ["p1"], status: "active", health: "none", created_at: 1, updated_at: 1 },
+        { _id: "in_other", user_id: ME, team_id: TEAM, workspace: `team:${TEAM}`, short_id: "in-2", title: "Elsewhere", project_ids: ["p-none"], status: "active", health: "on_track", created_at: 1, updated_at: 1 },
+      ],
+    });
+    tables.org_roles.push({ _id: "r1", short_id: "or-1", scope_type: "team", team_id: TEAM, host_user_id: ME, handle: "growth", name: "Growth lead", status: "active", scope: { project_ids: ["p1"], plan_ids: [] }, reports_to: { kind: "user", user_id: ME }, anchor_id: "a1", created_by: ME, created_at: 1, updated_at: 1 });
+    tables.anchors.push({ _id: "a1", name: "Growth lead", scope_type: "team", team_id: TEAM, host_user_id: ME, bot_user_id: ME, org_role_id: "r1", conversation_id: "mine", status: "active" });
+    await ctx.db.patch("mine" as any, { standing_role_id: "r1", anchor_id: "a1", thread_state: "Waiting on the pricing decision", thread_state_status: "blocked", thread_state_at: NOW });
+    const facts = await computeBriefFacts(ctx, ME as any, tables.org_roles.find((r) => r._id === "r1"), NOW);
+    expect(facts.initiatives.map((i) => [i.short_id, i.owned, i.health, i.health_at])).toEqual([["in-4", true, "at_risk", NOW - 11 * 86_400_000], ["in-9", false, "none", null]]);
+    expect(facts.standing).toMatchObject({ short_id: "jxmine1", state: "working", state_status: "blocked", state_line: "Waiting on the pricing decision" });
+  });
+
+  test("the hand briefing names the task's project goal", () => {
+    const withGoal = handBriefing({ name: "Head of Growth", handle: "growth" }, "Ship the signup form", "ct-7", { title: "Growth", goal: "Double weekly signups", priority: "p1" });
+    expect(withGoal).toContain("Project Growth [p1] · goal: Double weekly signups. Your work serves that goal");
+    const without = handBriefing({ name: "Head of Growth", handle: "growth" }, "Ship the signup form", "ct-7", { title: "Growth" });
+    expect(without).not.toContain("Project Growth");
+  });
+});

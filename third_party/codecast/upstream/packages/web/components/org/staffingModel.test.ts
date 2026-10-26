@@ -1,0 +1,411 @@
+import { describe, expect, test } from "bun:test";
+import { ORG_FIXTURE } from "./orgFixture";
+import { ORG_STAFFING_FIXTURE_BIG_PROPOSAL, ORG_STAFFING_FIXTURE_HEALTH, ORG_STAFFING_FIXTURE_PROPOSAL } from "./orgStaffingFixture";
+import {
+  changeLine,
+  changeNodeId,
+  changeTenure,
+  collectHealthFlags,
+  areaRows,
+  cadenceLabel,
+  decisionSubject,
+  workspaceOpenProposals,
+  inWorkspace,
+  rolesInTreeOrder,
+  groupChanges,
+  isSyncChange,
+  proposalProgress,
+  proposalRefInContext,
+  recordsInLine,
+  remainingChanges,
+  resolveProposalAuthor,
+  syncEvidence,
+  syncGroupSummary,
+  tenureLine,
+  SYNC_CARD_THRESHOLD,
+  evidenceBucket,
+  planCarriedTasks,
+  reviewRunState,
+  REVIEW_TTL_MS,
+  REVIEW_START_GRACE_MS,
+} from "./staffingModel";
+import type { OrgTree } from "./orgTypes";
+import { AVATAR_KEYS } from "@codecast/shared/contracts/orgAvatars";
+import { ORG_CHANGE_APPLY_RANK } from "@codecast/shared/contracts/orgProposal";
+
+const P = ORG_STAFFING_FIXTURE_PROPOSAL;
+const H = ORG_STAFFING_FIXTURE_HEALTH;
+
+describe("proposal progress and grouping", () => {
+  test("N of M decided counts every change no longer decidable", () => {
+    expect(proposalProgress(P)).toEqual({ decided: 2, total: 8, remaining: 6, applied: 0, skipped: 1, failed: 0, fromCounts: false });
+  });
+
+  test("a failed change is still to decide, as the server sees it", async () => {
+    const { isDecidable } = await import("./staffingModel");
+    expect(["proposed", "failed"].map(isDecidable)).toEqual([true, true]);
+    expect(["accepted", "applied", "skipped"].map(isDecidable)).toEqual([false, false, false]);
+    // One failed row among the eight: the header says 2 of 8, and the failed
+    // row is in the remaining list so Accept all retries it.
+    const withFailed = { ...P, changes: P.changes.map((c) => c._id === "fixture-change-4" ? { ...c, status: "failed" as const, applied_note: "handle clash" } : c) };
+    expect(proposalProgress(withFailed)).toMatchObject({ decided: 2, total: 8, remaining: 6, failed: 1 });
+    expect(remainingChanges(withFailed).map((c) => c._id)).toContain("fixture-change-4");
+    // Every row failed: nothing is decided, everything remains.
+    const allFailed = { ...P, changes: P.changes.map((c) => ({ ...c, status: "failed" as const })) };
+    expect(proposalProgress(allFailed)).toMatchObject({ decided: 0, remaining: 8, failed: 8 });
+  });
+
+  test("before the change rows land, the list row's counts stand in and the failed ones come back out", () => {
+    const listRow = { changes: [], counts: { total: 12, decided: 3, applied: 1, failed: 1, skipped: 1 } };
+    expect(proposalProgress(listRow)).toEqual({ decided: 2, total: 12, remaining: 10, applied: 1, skipped: 1, failed: 1, fromCounts: true });
+    expect(proposalProgress({ changes: [] })).toEqual({ decided: 0, total: 0, remaining: 0, applied: 0, skipped: 0, failed: 0, fromCounts: false });
+  });
+
+  test("remaining changes come back in apply order, not seq order", () => {
+    // seq order is role, role, projects, budget, routine, project_meta, plan
+    // status, task status; the accepted projects change and the skipped
+    // routine drop out, and the shared apply order puts the records first
+    // (S9), then roles, then charters (they name an owner role), then budget.
+    // The two record kinds' relative order is the contract's (the cascade
+    // session moved tasks ahead of plans); the pane only cares that both lead.
+    const kinds = remainingChanges(P).map((c) => c.change.kind);
+    expect(kinds.slice(0, 2).sort()).toEqual(["plan_status", "task_status"]);
+    expect(kinds.slice(2)).toEqual(["role", "role", "project_meta", "budget"]);
+  });
+
+  test("groups follow the apply order: the records first as one group, then one group per kind", () => {
+    const groups = groupChanges(P.changes);
+    expect(groups.map((g) => `${g.kind}:${g.changes.length}`)).toEqual(["sync:2", "projects:1", "role:2", "project_meta:1", "budget:1", "routine:1"]);
+    expect(groups[0]).toMatchObject({ sync: true, label: "Records to bring up to date" });
+    expect(groups[1].sync).toBe(false);
+    expect(groups[2].label).toBe("New roles");
+  });
+
+  test("the records group counts distinct records, and each row carries its evidence line (S9)", () => {
+    const sync = groupChanges(P.changes)[0].changes;
+    const plan = sync.find((c) => c.change.kind === "plan_status")!;
+    expect(recordsInLine(sync)).toBe(2);
+    // The same plan named twice is one record.
+    expect(recordsInLine([...sync, { ...plan, _id: "dup" }])).toBe(2);
+    expect(syncEvidence(plan.change)).toBe("Every task closed 19 days ago; the two bound sessions ended with done handoffs.");
+    expect(syncEvidence(P.changes[0].change)).toBeNull();
+    expect(sync.every((c) => isSyncChange(c.change))).toBe(true);
+    expect(isSyncChange(P.changes[3].change)).toBe(false);
+  });
+
+  test("a role change carries its tenure (S10), edits laid over", () => {
+    expect(changeTenure(P.changes[0])).toEqual({ kind: "standing" });
+    expect(tenureLine(changeTenure(P.changes[0]))).toBe("standing");
+    expect(tenureLine(changeTenure(P.changes[1]))).toBe("program · ends with pl-88, then review");
+    expect(changeTenure({ ...P.changes[0], edits: { tenure: { kind: "program", ends: { date: Date.UTC(2026, 11, 1) }, then: "retire" } } })).toMatchObject({ kind: "program" });
+    // A date reads as a person says it; built relative to now so the year stays true.
+    const thisYear = new Date().getUTCFullYear();
+    expect(tenureLine(changeTenure({ ...P.changes[0], edits: { tenure: { kind: "program", ends: { date: Date.UTC(thisYear, 11, 1) }, then: "retire" } } }))).toBe("program · ends Dec 1, then retire");
+    expect(changeTenure(P.changes[3])).toBeNull();
+    expect(tenureLine(null)).toBe("");
+  });
+
+  test("every kind reads as one line", () => {
+    // The words are the shared describer's (the CLI walk and the ghost chips
+    // read the same line); the pane only sentence cases them.
+    expect(changeLine(P.changes[0].change)).toBe("Add a role, Head of Platform (@platform), reporting to you, looking after Platform");
+    expect(changeLine(P.changes[1].change)).toBe("Add a role, Content Lead (@content), reporting to @growth, looking after pl-88");
+    expect(changeLine(P.changes[6].change)).toBe("Mark done: Onboarding emails (pl-61)");
+    expect(changeLine(P.changes[7].change)).toBe("Mark done: Fix the auth race on sign-in (ct-4102)");
+    expect(changeLine(P.changes[2].change)).toBe("Create the project Platform");
+    expect(changeLine(P.changes[3].change)).toBe("@growth may use up to 800,000 tokens a day");
+    expect(changeLine(P.changes[4].change)).toBe('@growth runs "Weekly growth review" every week');
+    expect(changeLine(P.changes[5].change)).toBe("Make Growth a high priority, make @growth its lead and write down what it is for and how it is measured");
+    expect(changeLine({ kind: "move", handle: "content", reports_to: "@growth" })).toBe("Move @content under @growth");
+    expect(changeLine({ kind: "move", handle: "content", reports_to: "me", scope_add: ["A", "B"], scope_remove: ["C"] })).toBe("Move @content under you; now also looks after A and B; no longer looks after C");
+    expect(changeLine({ kind: "scope", handle: "product", add: ["X", "Y"], remove: ["Z"] })).toBe("@product also looks after X and Y and stops looking after Z");
+    expect(changeLine({ kind: "adopt", handle: "head-of-people", conversation: "jx733c7" })).toBe("Make session jx733c7 the standing session of @head-of-people");
+    expect(changeLine({ kind: "file", plan: "pl-592", project: "Sync" })).toBe("Put plan pl-592 under the project Sync");
+    expect(changeLine({ kind: "budget", handle: "ops", caps: { hands_per_day: 1, wakes_per_day: 8, tokens_per_day: 200_000 } })).toBe("@ops may use up to 1 hand, 8 wakes and 200,000 tokens a day");
+    expect(changeLine({ kind: "routine", handle: "platform", title: "Release check", prompt: "x", every: "1d" })).toBe('@platform runs "Release check" every day');
+    expect(changeLine({ kind: "retire", handle: "ops" })).toBe("Retire @ops; its sessions go back to their owners");
+    expect(changeLine({ kind: "trust", handle: "growth", trust: "decide" })).toBe("@growth starts work on its own");
+  });
+
+  test("a change on an existing role focuses that node; a ghost has no node", () => {
+    expect(changeNodeId(P.changes[3].change, ORG_FIXTURE)).toBe("role:fixture-role-growth");
+    expect(changeNodeId(P.changes[0].change, ORG_FIXTURE)).toBeNull();
+    expect(changeNodeId(P.changes[2].change, ORG_FIXTURE)).toBeNull();
+  });
+});
+
+describe("health summary", () => {
+  test("flags come back worst first, each pointing at its node", () => {
+    const rows = collectHealthFlags(H, ORG_FIXTURE);
+    expect(rows.map((r) => r.flag.severity)).toEqual(["blocker", "warn", "warn", "warn", "info"]);
+    expect(rows[0].subject).toEqual({ kind: "company" });
+    const growth = rows.find((r) => r.subject.kind === "role");
+    expect(growth?.subject).toMatchObject({ kind: "role", handle: "growth", nodeId: "role:fixture-role-growth" });
+  });
+
+  const HEAD = { ...ORG_FIXTURE.roles[0], _id: "fixture-role-head", short_id: "or-9", handle: "head-of-people", name: "Head of People", created_at: ORG_FIXTURE.roles[0].created_at - 1, standing: { conversation_id: "fixture-head-conv", short_id: "jx7ch1f", state_status: "blocked", state_line: "Which market goes first?" } };
+  const SUB = { ...ORG_FIXTURE.roles[0], _id: "fixture-role-content", short_id: "or-3", handle: "content", name: "Content lead", reports_to: { kind: "role" as const, role_id: "fixture-role-growth" }, standing: null };
+  const RETIRED = { ...SUB, _id: "fixture-role-old", handle: "old", status: "retired" as const };
+  const tree: OrgTree = { ...ORG_FIXTURE, roles: [SUB, ORG_FIXTURE.roles[0], RETIRED, HEAD] };
+
+  test("areas come in tree order: the Head of People first, a role's reports right under it, retired roles left out (S29)", () => {
+    expect(rolesInTreeOrder(tree).map((r) => r.handle)).toEqual(["head-of-people", "growth", "content"]);
+    const rows = areaRows(tree, H);
+    expect(rows.map((r) => [r.role.handle, r.status, r.statusWord])).toEqual([["head-of-people", "on_track", "on track"], ["growth", "stuck", "stuck"], ["content", "not_started", "not started"]]);
+    expect(rows[1].area?.standing?.text).toMatch(/^Two landing pages shipped/);
+    expect(rows[1].nodeId).toBe("role:fixture-role-growth");
+    // No health yet: the rows still stand, read from the role row alone.
+    // A blocked pin is not "waiting on you": only Waits on you says that.
+    expect(areaRows(tree, null).map((r) => r.status)).toEqual(["on_track", "on_track", "not_started"]);
+    const stale: typeof H = { ...H, roles: H.roles.map((r) => (r.area ? { ...r, area: { ...r.area, status: "waiting_on_you" as const } } : r)) };
+    expect(areaRows(tree, stale).some((r) => r.status === "waiting_on_you")).toBe(false);
+    expect(areaRows(null, H)).toEqual([]);
+  });
+
+  test("a decision opens the goal or project it cites when the workspace holds it, else the role that asked", () => {
+    const growth = { short_id: "or-3" };
+    const holds = (ref: string) => ref === "in-2" || ref === "pj-k3x";
+    expect(decisionSubject({ question: "Move pj-k3x under in-2?" }, growth, holds)).toEqual({ kind: "project", ref: "pj-k3x" });
+    expect(decisionSubject({ question: "Which list?", contextMd: "For In-2 only." }, growth, holds)).toEqual({ kind: "initiative", ref: "in-2" });
+    expect(decisionSubject({ question: "Close in-9 and in-app checkout?" }, growth, holds)).toEqual({ kind: "role", ref: "or-3" });
+    expect(decisionSubject({ question: "Anything" }, null, holds)).toBeNull();
+  });
+
+  test("open proposals of one workspace, newest first, by the one workspace rule", () => {
+    const rows = [
+      { _id: "a", status: "open" as const, created_at: 1, team_id: "t1" },
+      { _id: "b", status: "open" as const, created_at: 3, team_id: "t1" },
+      { _id: "c", status: "resolved" as const, created_at: 2, team_id: "t1" },
+      { _id: "d", status: "open" as const, created_at: 4 },
+      { _id: "e", status: "open" as const, created_at: 5, team_id: "t2" },
+    ];
+    expect(workspaceOpenProposals(rows, { kind: "team", id: "t1" }).map((p) => p._id)).toEqual(["b", "a"]);
+    expect(workspaceOpenProposals(rows, { kind: "user", id: "u1" }).map((p) => p._id)).toEqual(["d"]);
+    expect(workspaceOpenProposals(rows, null).map((p) => p._id)).toEqual(["e", "d", "b", "a"]);
+  });
+
+  test("one workspace rule: a team's rows, the personal rows, or every row before a workspace is known", () => {
+    expect(inWorkspace({ team_id: "t1" }, { kind: "team", id: "t1" })).toBe(true);
+    expect(inWorkspace({ team_id: "t2" }, { kind: "team", id: "t1" })).toBe(false);
+    expect(inWorkspace({}, { kind: "user", id: "u1" })).toBe(true);
+    expect(inWorkspace({ team_id: "t1" }, { kind: "user", id: "u1" })).toBe(false);
+    expect(inWorkspace({ team_id: "t1" }, null)).toBe(true);
+  });
+
+  test("a cadence reads as words", () => {
+    expect(cadenceLabel(86_400_000)).toBe("every day");
+    expect(cadenceLabel(7 * 86_400_000)).toBe("every week");
+    expect(cadenceLabel(3 * 86_400_000)).toBe("every 3 days");
+    expect(cadenceLabel(3 * 3_600_000)).toBe("every 3 hours");
+    expect(cadenceLabel(3_600_000)).toBe("every hour");
+    expect(cadenceLabel(null)).toBe("no schedule");
+  });
+});
+
+describe("flags a proposal addresses", () => {
+  test("only role flags on a handle some change touches, subject or named parent", async () => {
+    const { relatedFlags, changeHandles } = await import("./staffingModel");
+    const flags = collectHealthFlags(H, ORG_FIXTURE);
+    // The fixture's changes budget and routine @growth and charter Growth with owner @growth.
+    expect(relatedFlags(flags, P.changes).map((r) => `${r.flag.code}@${(r.subject as any).handle}`)).toEqual(["overloaded@growth", "cap_hit@growth", "review_stall@growth"]);
+    expect(relatedFlags(flags, [])).toEqual([]);
+    expect(relatedFlags(flags, [P.changes[2]])).toEqual([]); // a projects change names no role
+    expect(changeHandles({ kind: "move", handle: "content", reports_to: "@growth" })).toEqual(["content", "growth"]);
+    expect(changeHandles({ kind: "role", name: "X", handle: "x", reports_to: "me" })).toEqual(["x"]);
+  });
+});
+
+describe("what a list answer is authoritative for", () => {
+  test("a team's rows by team_id; the personal list is every row with no team", async () => {
+    const { proposalListScope } = await import("./staffingModel");
+    const team = proposalListScope("team-a");
+    expect(team({ team_id: "team-a" })).toBe(true);
+    expect(team({ team_id: "team-b" })).toBe(false);
+    expect(team({})).toBe(false);
+    const personal = proposalListScope(undefined);
+    expect(personal({})).toBe(true);
+    expect(personal({ team_id: "team-a" })).toBe(false);
+  });
+
+  test("a null list answer is a refusal, not an empty workspace: the push is skipped, so nothing is pruned", async () => {
+    // orgProposals.list answers null whenever requireWorkspaceCaller fails
+    // (no identity yet on a fresh subscription, a token refresh beat, a team
+    // the viewer left). Turned into [] it would be an authoritative empty set
+    // and plant a durable exclude tombstone on every proposal in scope.
+    const { selectList } = await import("../../hooks/useSyncOrgProposals");
+    expect(selectList(null)).toBeUndefined();
+    expect(selectList(undefined)).toBeUndefined();
+    expect(selectList({})).toBeUndefined();
+    expect(selectList({ proposals: [] })).toEqual([]);
+    expect(selectList({ proposals: [{ _id: "a" }] })).toEqual([{ _id: "a" }]);
+  });
+
+  test("both feeders prune what their answer no longer carries", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const src = readFileSync(join(import.meta.dir, "..", "..", "hooks", "useSyncOrgProposals.ts"), "utf8");
+    expect(src).toMatch(/pruneAbsentScope: proposalListScope\(teamId\)/);
+    expect(src).toMatch(/"orgProposalChanges", changes \?\? \[\], \{ pruneAbsentScope/);
+  });
+});
+
+describe("a parent reference as a proposal writes one", () => {
+  test("the deciding person is me; another member is their id; a role with no live row is its id", async () => {
+    const { orgParentRefAsProposal } = await import("./staffingModel");
+    expect(orgParentRefAsProposal(ORG_FIXTURE, { kind: "user", user_id: "fixture-user-me" }, "fixture-user-me")).toBe("me");
+    expect(orgParentRefAsProposal(ORG_FIXTURE, { kind: "user", user_id: "fixture-user-sam" }, "fixture-user-me")).toBe("fixture-user-sam");
+    expect(orgParentRefAsProposal(ORG_FIXTURE, { kind: "role", role_id: "fixture-role-growth" }, "fixture-user-me")).toBe("@growth");
+    expect(orgParentRefAsProposal(ORG_FIXTURE, { kind: "role", role_id: "chg-9" }, "fixture-user-me")).toBe("chg-9");
+  });
+});
+
+describe("a link into another workspace", () => {
+  test("a proposal names its workspace", async () => {
+    const { proposalWorkspace } = await import("./staffingModel");
+    const codecast = { kind: "team" as const, id: "fixture-team" };
+    expect(proposalWorkspace(P)).toEqual(codecast);
+    expect(proposalWorkspace({ scope_user_id: "u1" })).toEqual({ kind: "user", id: "u1" });
+  });
+
+  test("the DEV preview needs the flag in the live URL", async () => {
+    const { orgPreviewEnabled } = await import("./staffingModel");
+    expect(orgPreviewEnabled("?preview=1", true)).toBe(true);
+    expect(orgPreviewEnabled("?proposal=op-4", true)).toBe(false);
+    expect(orgPreviewEnabled("?preview=1", false)).toBe(false);
+    expect(orgPreviewEnabled("", true)).toBe(false);
+  });
+});
+
+describe("the org feeders follow the workspace pointer", () => {
+  // A workspace switch (hooks/useSwitchWorkspace) writes clientState.ui
+  // .active_team_id; every org feeder must key its query on that pointer so
+  // /org re-scopes in the same tick. A feeder that read anything else would
+  // keep the old team after a switch.
+  test("tree, health and proposals feeders read clientState.ui.active_team_id", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    for (const file of ["useSyncOrgTree.ts", "useSyncOrgHealth.ts", "useSyncOrgProposals.ts"]) {
+      const src = readFileSync(join(import.meta.dir, "..", "..", "hooks", file), "utf8");
+      expect(src).toMatch(/clientState\.ui\?\.active_team_id/);
+      expect(src).toMatch(/team_id: activeTeamId/);
+    }
+  });
+});
+
+describe("where a proposal came from (S15)", () => {
+  test("a session author reads as its title and short id, from the server's enrichment first, else the store row, else the bare kind", () => {
+    expect(resolveProposalAuthor({ kind: "session", id: "c1", name: "Org review", short_id: "jx7rev1" }, {})).toEqual({ kind: "session", sessionId: "c1", title: "Org review", shortId: "jx7rev1" });
+    expect(resolveProposalAuthor({ kind: "session", id: "c1" }, { session: { title: "From the store", short_id: "jx7sto1" } })).toEqual({ kind: "session", sessionId: "c1", title: "From the store", shortId: "jx7sto1" });
+    expect(resolveProposalAuthor({ kind: "session", id: "c1" }, {})).toEqual({ kind: "session", sessionId: "c1", title: "a session", shortId: null });
+  });
+
+  test("a role author reads as its name, handle and avatar and opens its scope page", () => {
+    const view = resolveProposalAuthor({ kind: "role", id: "r1", name: "Head of People", short_id: "or-9", handle: "head-of-people" }, {});
+    expect(view).toMatchObject({ kind: "role", roleId: "r1", name: "Head of People", handle: "head-of-people", href: "/org/or-9" });
+    expect(AVATAR_KEYS).toContain((view as { avatar: string }).avatar);
+    // The tree's row fills what the server left out; a chosen avatar wins over the handle's default.
+    const chosen = AVATAR_KEYS[AVATAR_KEYS.length - 1];
+    const fromTree = resolveProposalAuthor({ kind: "role", id: "r1" }, { role: { name: "Growth", handle: "growth", short_id: "or-1", avatar: chosen } });
+    expect(fromTree).toMatchObject({ name: "Growth", handle: "growth", href: "/org/or-1", avatar: chosen });
+    // Nothing known: still a pill, no link.
+    expect(resolveProposalAuthor({ kind: "role", id: "r1" }, {})).toMatchObject({ name: "a role", href: null });
+    expect(resolveProposalAuthor({ kind: "user", id: "u1", name: "Sam" }, {})).toEqual({ kind: "user", name: "Sam" });
+  });
+
+  test("the queue card finds its proposal in the decision's context", () => {
+    expect(proposalRefInContext("Summary.\n\n[Open op-12 on the org page](https://codecast.sh/org?proposal=op-12)\n\n- create role")).toBe("op-12");
+    expect(proposalRefInContext("[Open](/org?proposal=OP-3)")).toBe("op-3");
+    expect(proposalRefInContext("no link here")).toBeNull();
+    expect(proposalRefInContext(undefined)).toBeNull();
+  });
+});
+
+describe("a records group at scale (S9, the first real review)", () => {
+  const BIG = ORG_STAFFING_FIXTURE_BIG_PROPOSAL;
+
+  test("the fixture is the real review's shape: 129 changes, 111 records, the records group first", () => {
+    expect(BIG.changes.length).toBe(129);
+    const groups = groupChanges(BIG.changes);
+    expect(groups[0]).toMatchObject({ kind: "sync", sync: true });
+    expect(groups[0].changes.length).toBe(111);
+    expect(groups[0].changes.length).toBeGreaterThan(SYNC_CARD_THRESHOLD);
+    // The order between kinds is the contract's (other sessions tune it); the
+    // pane's own claims are the records first, and one group per kind.
+    const rest = (["file", "role", "project_meta", "scope", "routine", "adopt"] as const).slice().sort((a, b) => ORG_CHANGE_APPLY_RANK[a] - ORG_CHANGE_APPLY_RANK[b]);
+    const sizes: Record<string, number> = { file: 10, role: 1, project_meta: 4, scope: 1, routine: 1, adopt: 1 };
+    expect(groups.map((g) => `${g.kind}:${g.changes.length}`)).toEqual(["sync:111", ...rest.map((k) => `${k}:${sizes[k]}`)]);
+  });
+
+  test("the summary counts by kind, files carried tasks under their plan, and ranks the consequential lines first", () => {
+    const sync = groupChanges(BIG.changes)[0].changes;
+    const summary = syncGroupSummary(sync);
+    expect(summary.total).toBe(111);
+    expect(summary.remaining).toBe(111);
+    expect(summary.countLine).toBe("103 tasks, 8 plans");
+    expect(summary.byKind.map((k) => [k.kind, k.count])).toEqual([["task_status", 103], ["plan_status", 8]]);
+    // Three plans carry 4, 3 and 2 tasks: those nine rows leave the list and nest.
+    expect(Object.values(summary.nested).map((n) => n.length).sort()).toEqual([2, 3, 4]);
+    expect(summary.rows.length).toBe(111 - 9);
+    expect(summary.rows.some((c) => c.change.kind === "task_status" && (c.change as { task: string }).task === "ct-9001")).toBe(false);
+    expect(planCarriedTasks(sync.find((c) => c._id === "fixture-big-1")!.change)).toEqual(["ct-9001", "ct-9002", "ct-9003", "ct-9004"]);
+    expect(planCarriedTasks(sync.find((c) => c._id === "fixture-big-9")!.change)).toEqual([]);
+    // Plans before tasks; the plan carrying the most tasks first.
+    expect(summary.top.length).toBe(3);
+    expect(summary.top.map((c) => c.change.kind)).toEqual(["plan_status", "plan_status", "plan_status"]);
+    expect(summary.top[0]._id).toBe("fixture-big-1");
+    expect(summary.top[1]._id).toBe("fixture-big-2");
+    // The evidence summary sums the reasons into a few words, largest first.
+    expect(summary.evidence[0].count).toBeGreaterThanOrEqual(summary.evidence[1].count);
+    expect(summary.evidence.reduce((n, e) => n + e.count, 0)).toBe(111);
+    expect(summary.evidence.map((e) => e.label)).toContain("commits landed");
+    expect(summary.evidence.map((e) => e.label)).toContain("under a finished plan");
+  });
+
+  test("evidence buckets read the analyzer's own words", () => {
+    expect(evidenceBucket("the feature is on main: commit 602617b42")).toBe("commits landed");
+    expect(evidenceBucket("under pl-293, a plan already marked done; a task under a finished plan is finished")).toBe("under a finished plan");
+    expect(evidenceBucket("Its session ended with a done handoff 14 days ago")).toBe("its session ended");
+    expect(evidenceBucket("Every task closed 12 days ago.")).toBe("every task closed");
+    expect(evidenceBucket("No session and no commit naming it for 40 days.")).toBe("no activity");
+    expect(evidenceBucket("")).toBe("other evidence");
+  });
+
+  test("a small records group is rows, not a card; decided rows drop out of remaining", () => {
+    const small = groupChanges(P.changes)[0].changes;
+    expect(small.length).toBeLessThanOrEqual(SYNC_CARD_THRESHOLD);
+    const s = syncGroupSummary(small.map((c, i) => i === 0 ? { ...c, status: "applied" as const } : c));
+    expect(s).toMatchObject({ total: 2, remaining: 1 });
+    expect(s.byKind.map((k) => `${k.count} ${k.word}`).sort()).toEqual(["1 plan", "1 task"]);
+    expect(s.nested).toEqual({});
+  });
+});
+
+describe("a review the page started (Propose an org now)", () => {
+  const T = 1_800_000_000_000;
+  const run = { since: T, session_id: "conv-1", workspace: "team-1" };
+
+  test("reviewing while young, in its own workspace, with nothing landed", () => {
+    expect(reviewRunState(run, T + 60_000, "team-1", [], null)).toBe("reviewing");
+    expect(reviewRunState(null, T, "team-1", [], null)).toBe("none");
+    expect(reviewRunState(run, T + 60_000, "team-2", [], null)).toBe("none");
+    expect(reviewRunState(run, T + 60_000, null, [], null)).toBe("none");
+    expect(reviewRunState(run, T + REVIEW_TTL_MS, "team-1", [], null)).toBe("none");
+  });
+
+  test("a proposal of any status since the start ends it; an older one does not", () => {
+    expect(reviewRunState(run, T + 60_000, "team-1", [{ created_at: T + 30_000 }], null)).toBe("none");
+    expect(reviewRunState(run, T + 60_000, "team-1", [{ created_at: T - 1 }], null)).toBe("reviewing");
+  });
+
+  test("a session that stopped with nothing posted is ended, after the start grace", () => {
+    // A fresh session reads as idle for a moment before its first turn.
+    expect(reviewRunState(run, T + 30_000, "team-1", [], { is_idle: true })).toBe("reviewing");
+    expect(reviewRunState(run, T + REVIEW_START_GRACE_MS, "team-1", [], { is_idle: true })).toBe("ended");
+    expect(reviewRunState(run, T + REVIEW_START_GRACE_MS, "team-1", [], { status: "completed" })).toBe("ended");
+    expect(reviewRunState(run, T + REVIEW_START_GRACE_MS, "team-1", [], { is_idle: false, status: "active" })).toBe("reviewing");
+    // A session row this window does not hold says nothing either way.
+    expect(reviewRunState(run, T + REVIEW_START_GRACE_MS, "team-1", [], null)).toBe("reviewing");
+    // Ended, then the proposal lands late: nothing to say.
+    expect(reviewRunState(run, T + REVIEW_START_GRACE_MS, "team-1", [{ created_at: T + 5 }], { is_idle: true })).toBe("none");
+  });
+});

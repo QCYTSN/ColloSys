@@ -1,0 +1,248 @@
+import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkRatchet, codeOnly } from "@codecast/shared/ratchet";
+import { UNDO_POLICY } from "../../store/undo/policy";
+import { CLIENT_SYNC_REGISTRY, SYNCED_WRITER_MODULES } from "../../store/clientSyncRegistry";
+
+// A gesture that writes synced data through a Convex mutation of its own, past
+// the store action that owns the same write, is invisible to undo (nothing is
+// recorded, so Cmd+Z takes back an older entry instead) and to local-first
+// (nothing paints until the server echoes). The undo policy guard cannot see
+// it, because no store creator runs.
+//
+// The store action's server half is its named side effect in
+// convex/dispatch.ts, which runs the real mutation. So the mutations a
+// classified action owns are read from its handler there, and no surface may
+// call one of them itself: it calls the store action instead.
+
+const WEB = join(import.meta.dir, "..", "..");
+/** Files that call a synced module's mutation no store action owns. May only
+ *  fall. Pinned at 54 when the rule widened to bespoke-fed keys (`writtenBy`)
+ *  and to Convex client calls, with the team, org, PR and palette gestures it
+ *  first caught moved onto store actions. */
+const PIN_DIRECT_SYNCED_WRITES = 44;
+const CONVEX = join(WEB, "..", "convex", "convex");
+const DISPATCH = readFileSync(join(CONVEX, "dispatch.ts"), "utf8");
+
+// `api.mod.fn`, `api.dir.mod.fn`, `(api as any).mod.fn`, and an `_api` alias.
+const API_REF = /(?:^|[^\w$.])_?api(?:\s+as\s+any\))?\.((?:\w+\.)*\w+)/g;
+
+const withoutComments = (src: string) =>
+  src
+    .split("\n")
+    .map((line) => (/^\s*(\*|\/\*)/.test(line) ? "" : line.replace(/\s\/\/.*$/, "").replace(/^\s*\/\/.*$/, "")))
+    .join("\n");
+
+/** Each dispatch handler's body, by the action name it serves. */
+function dispatchHandlers(): Map<string, string> {
+  const handlers = new Map<string, string>();
+  let name: string | null = null;
+  let body: string[] = [];
+  for (const line of withoutComments(DISPATCH).split("\n")) {
+    const start = /^ {2}(\w+): async\b/.exec(line);
+    if (start || /^\};?\s*$/.test(line)) {
+      if (name) handlers.set(name, body.join("\n"));
+      name = start ? start[1]! : null;
+      body = [];
+    }
+    if (name) body.push(line);
+  }
+  return handlers;
+}
+
+// A server helper a handler runs as its write: `await helper(ctx, ...)` or
+// `return helper(ctx, ...)`. Auth and read helpers are not the write.
+const WRITE_HELPER = /\b(?:await|return)\s+([a-z]\w*)\(\s*ctx\b/g;
+const NOT_A_WRITE = /^(require|get|is|assert|load|resolve|find|can|check|ensure|read|lookup|list|fetch|verify|authorize)/;
+const writeHelpersOf = (body: string) =>
+  [...body.matchAll(WRITE_HELPER)].map((m) => m[1]!).filter((name) => !NOT_A_WRITE.test(name));
+
+/** Each public mutation's handler body in the Convex tree, by its api path. */
+function publicMutations(): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const f of new Bun.Glob("**/*.ts").scanSync({ cwd: CONVEX })) {
+    // dispatch.ts is the rail every store action rides, not a gesture's write.
+    if (/\.test\.ts$|(^|\/)_generated\/|^dispatch\.ts$/.test(f)) continue;
+    const mod = f.replace(/\.ts$/, "").split("/").join(".");
+    const src = withoutComments(readFileSync(join(CONVEX, f), "utf8"));
+    const starts = [...src.matchAll(/^export const (\w+) = mutation\(/gm)];
+    for (const m of starts) {
+      const end = src.slice(m.index! + 1).search(/^export /m);
+      const body = end === -1 ? src.slice(m.index!) : src.slice(m.index!, m.index! + 1 + end);
+      out.set(`${mod}.${m[1]}`, body);
+    }
+  }
+  return out;
+}
+
+/** mutation path → the classified store actions whose side effect runs it,
+ *  by name or by running the same server helper as the action's handler. */
+function ownedMutations(): Map<string, string[]> {
+  const owned = new Map<string, string[]>();
+  const own = (path: string, action: string) => {
+    if (!(owned.get(path) ?? []).includes(action)) owned.set(path, [...(owned.get(path) ?? []), action]);
+  };
+  const helperActions = new Map<string, string[]>();
+  for (const [action, body] of dispatchHandlers()) {
+    if (!(action in UNDO_POLICY)) continue;
+    for (const m of body.matchAll(API_REF)) own(m[1]!, action);
+    for (const helper of writeHelpersOf(body)) helperActions.set(helper, [...(helperActions.get(helper) ?? []), action]);
+  }
+  for (const [path, body] of publicMutations()) {
+    for (const helper of writeHelpersOf(body)) for (const action of helperActions.get(helper) ?? []) own(path, action);
+  }
+  return owned;
+}
+
+// A surface that calls an owned mutation for a write the store action does
+// not make. Keyed by file and mutation, so a new caller still fails.
+const NOT_THE_ACTIONS_WRITE: Record<string, string> = {
+  "app/settings/sync/page.tsx users.updateSyncSettings":
+    "writes sync_mode and the project lists; setCloudSessionSync writes only the cloud session fields through the same mutation",
+  "app/triggers/page.tsx agentTasks.webCreate":
+    "creates a trigger; createSession shares only startHostedConversationFor, which webCreate runs to start a hosted routine's home conversation",
+  "app/settings/migrate/page.tsx sessionMigrations.cancelBatch":
+    "cancels a cast migrate batch; a resource offload batch cancels through cancelResourceOffload in the same handler",
+  "components/ConfigEditor.tsx users.sendConfigCommand":
+    "lists, reads and writes agent config files through the daemon; editLineProfile sends only line.toml edits through the same command rail",
+  "hooks/useResourceActions.ts resourceOffload.start":
+    "the preflight's dry run writes nothing; the real start goes through startResourceOffload",
+};
+
+describe("surfaces write through the store action that owns the write", () => {
+  const owned = ownedMutations();
+
+  test("the dispatch handlers name the mutations their actions own", () => {
+    expect(owned.get("agentTasks.webUpdate")).toContain("setTriggerInterval");
+    expect(owned.get("agentTasks.webReactivate")).toContain("triggerAction");
+    // A public mutation running the same server helper as a handler is owned too.
+    expect(owned.get("teams.setTeamVisibility")).toContain("setTeamMembershipVisibility");
+    expect(owned.size).toBeGreaterThan(30);
+  });
+
+  test("no component, page, hook or lib calls a mutation a classified store action owns", () => {
+    const hits: string[] = [];
+    const seenAllowed = new Set<string>();
+    for (const dir of ["app", "components", "hooks", "lib"]) {
+      for (const f of new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: join(WEB, dir) })) {
+        if (/(^|\/)__tests__\/|\.test\.tsx?$|(^|\/)__fixtures__\//.test(f)) continue;
+        const rel = `${dir}/${f}`;
+        withoutComments(readFileSync(join(WEB, rel), "utf8")).split("\n").forEach((line, i) => {
+          for (const m of line.matchAll(API_REF)) {
+            const actions = owned.get(m[1]!);
+            if (!actions) continue;
+            const key = `${rel} ${m[1]}`;
+            if (key in NOT_THE_ACTIONS_WRITE) { seenAllowed.add(key); continue; }
+            hits.push(`${rel}:${i + 1} calls ${m[1]}; use the store action ${actions.join(" or ")}`);
+          }
+        });
+      }
+    }
+    expect(hits).toEqual([]);
+    // An exception whose call is gone is stale.
+    expect(Object.keys(NOT_THE_ACTIONS_WRITE).filter((k) => !seenAllowed.has(k))).toEqual([]);
+  }, 60_000);
+});
+
+// The wider class: a gesture on a synced collection with no store action at
+// all. The test above sees only mutations a classified action already owns,
+// so a surface that writes the rows a store feed paints through a mutation no
+// action runs (resolving a code review thread did) is invisible to it and to
+// the undo policy guard alike. A mutation in the same Convex module as a
+// registered feed, or in a module the registry names as a key's writer
+// (`writtenBy`), is taken to write that key's rows. The files that still
+// call one directly are listed with their count, and the list may only
+// shrink: the fix is a store action (a draft write plus a named dispatch side
+// effect, classified in store/undo/policy.ts), never a new entry.
+const SYNCED_MODULES = new Set(Object.keys(SYNCED_WRITER_MODULES));
+
+// A mutation whose whole effect is queueing a daemon command (a probe of a
+// machine, a login, an action on a session) writes no synced row, so there is
+// nothing for a store action to paint: it is not a write of the collection its
+// module feeds. Judged by what the handler writes: one or more inserts into
+// daemon_commands and no other write, no write helper, no scheduled or nested
+// function. A command mutation that also patches a synced row still counts.
+const DB_WRITE = /\bctx\.db\.(insert|patch|replace|delete)\(\s*(?:"(\w+)")?/g;
+function queuesOnlyACommand(body: string): boolean {
+  const writes = [...body.matchAll(DB_WRITE)];
+  return writes.length > 0
+    && writes.every((w) => w[1] === "insert" && w[2] === "daemon_commands")
+    && writeHelpersOf(body).length === 0
+    && !/\bctx\.(scheduler|runMutation|runAction)\b/.test(body);
+}
+const COMMAND_ONLY = new Set([...publicMutations()].filter(([, body]) => queuesOnlyACommand(body)).map(([path]) => path));
+// A hook (`useMutation(api.x.y)`) or a Convex client call (`convex.mutation(api.x.y, ...)`).
+const MUTATION_REF = /(?:useMutation|\.mutation)\(\s*\(?_?api(?:\s+as\s+any\))?\.((?:\w+\.)*\w+)/g;
+// A cast anywhere along the api path hides nothing: `(api.x as any).y`,
+// `(api as any).x.y` and `(api.x as unknown as T).y` all read as `api.x.y`.
+const API_CAST = /\(\s*(_?api(?:\.\w+)*)\s+as\s+[^()]*?\)/g;
+const mutationRefs = (src: string) => [...codeOnly(src).replace(API_CAST, "$1").matchAll(MUTATION_REF)].map((m) => m[1]!);
+const ownedByAction = ownedMutations();
+
+const directSyncedWrites = checkRatchet({
+  name: "direct mutation of a synced collection's module, owned by no store action",
+  root: WEB,
+  dirs: ["app", "components", "hooks", "lib"],
+  ignoreDirs: ["__tests__", "__fixtures__"],
+  // The guest call page (/meet/<token>) runs signed out: a guest is not a
+  // user and has no store to draft into, and every write there names the
+  // guest's own row by its secret. The store rule has nothing to route it to.
+  exempt: (rel) => /\.test\.tsx?$/.test(rel) || rel.startsWith("app/meet/"),
+  count: (src) =>
+    mutationRefs(src).filter((path) =>
+      SYNCED_MODULES.has(path.split(".").slice(0, -1).join(".")) && !ownedByAction.has(path) && !COMMAND_ONLY.has(path),
+    ).length,
+  allowlist: join(import.meta.dir, "storeActionMutations.allowlist.txt"),
+  pin: PIN_DIRECT_SYNCED_WRITES,
+  fix: "Add a store action for the gesture (draft write + named dispatch side effect in convex/dispatch.ts), classify it in store/undo/policy.ts, and call it.",
+  pruneCommand: "cd packages/web && RATCHET_WRITE=prune bun test lib/__tests__/storeActionMutations.guard.test.ts",
+  minScanned: 400,
+});
+
+describe("gestures on synced collections go through a store action", () => {
+  // A key fed by a bespoke hook registers no feeds, and a module beside a
+  // feed's own can write its rows: every server mirror says who writes it.
+  test("every localFirst key names the modules that write its rows", () => {
+    const silent = Object.entries(CLIENT_SYNC_REGISTRY)
+      .filter(([, e]: [string, any]) => e.localFirst && !e.feeds?.length && !e.writtenBy?.length)
+      .map(([k]) => k);
+    expect(silent).toEqual([]);
+  });
+
+  test("the registry names synced modules, and the code review thread verbs are owned", () => {
+    expect(SYNCED_MODULES.has("codeComments")).toBe(true);
+    for (const m of ["teams", "tasks", "docs", "orgSplit", "orgHandoff", "orgLineMerge", "orgRoles", "orgTemplates", "prShepherd"]) {
+      expect(SYNCED_MODULES.has(m)).toBe(true);
+    }
+    for (const m of ["codeComments.resolve", "codeComments.unresolve", "codeComments.update", "codeComments.remove"]) {
+      expect(ownedByAction.has(m)).toBe(true);
+    }
+  });
+
+  test("a cast on the api path never hides the mutation it reaches", () => {
+    expect(mutationRefs(`useMutation((api.devices as any).enqueueX)`)).toEqual(["devices.enqueueX"]);
+    expect(mutationRefs(`useMutation((api as any).devices.enqueueX)`)).toEqual(["devices.enqueueX"]);
+    expect(mutationRefs(`useMutation((api.devices as unknown as Api).enqueueX)`)).toEqual(["devices.enqueueX"]);
+    expect(mutationRefs(`convex.mutation((api.tasks as any).update, {})`)).toEqual(["tasks.update"]);
+    expect(mutationRefs(`useMutation(api.devices.enqueueX)`)).toEqual(["devices.enqueueX"]);
+  });
+
+  test("a mutation counts as queueing only a command by what it writes", () => {
+    for (const path of ["devices.enqueueAgentToolSetupCommand", "devices.enqueueCloudAgentLoginCommand", "devices.enqueueCloudAgentActionCommand"]) {
+      expect(COMMAND_ONLY.has(path), path).toBe(true);
+    }
+    // These also patch the device row the roster paints, so they stay writes.
+    for (const path of ["devices.enqueueProviderKeyCommand", "devices.setDeviceSnippet"]) {
+      expect(COMMAND_ONLY.has(path), path).toBe(false);
+    }
+    expect(queuesOnlyACommand(`await ctx.db.insert("daemon_commands", {}); await ctx.db.patch(id, {});`)).toBe(false);
+    expect(queuesOnlyACommand(`await ctx.db.insert("daemon_commands", {}); await ctx.scheduler.runAfter(0, x, {});`)).toBe(false);
+    expect(queuesOnlyACommand(`await ctx.db.insert("tasks", {});`)).toBe(false);
+    expect(queuesOnlyACommand(`return null;`)).toBe(false);
+  });
+
+  test("no new surface writes a synced collection's rows past the store", () => {
+    expect(directSyncedWrites.problems).toEqual([]);
+  }, 120_000);
+});

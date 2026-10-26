@@ -1,0 +1,169 @@
+import { describe, expect, test } from "bun:test";
+import { buildMentionItems, chatMentionOffers, mentionItemMatches } from "../useMentionQuery";
+import { mergeMentionSuggestions, mentionViewTimes } from "../../lib/mentionRanking";
+import type { MentionItem } from "../../components/editor/MentionList";
+import { useInboxStore } from "../../store/inboxStore";
+
+const item = (id: string, type = "session", updatedAt = 0): MentionItem => ({ id, type, label: `Mention ${id}`, updatedAt });
+
+describe("mention suggestions", () => {
+  test("viewed order wins across types, then update order fills in unvisited items", () => {
+    const times = mentionViewTimes({
+      _lastViewedAt: { older: 100, recent: 300 },
+      recentVisits: [
+        { kind: "session", key: "recent", ts: 200 },
+        { kind: "page", key: "page:/tasks/ct-1?panel=details", ts: 250 },
+        { kind: "page", key: "page:/docs/doc1#section", ts: 150 },
+        { kind: "view", key: "label:label1", ts: 50 },
+      ],
+    });
+    const candidates = [item("unseen-new", "session", 900), item("unseen-old", "doc", 800),
+      item("older", "session", 1000), { ...item("task1", "task"), shortId: "ct-1" },
+      item("doc1", "doc"), item("recent"), item("label1", "label")];
+    expect(mergeMentionSuggestions(candidates, [], times).map((m) => m.id))
+      .toEqual(["recent", "task1", "doc1", "older", "label1", "unseen-new", "unseen-old"]);
+  });
+
+  test("merges and sorts server hits before applying per-type limits, keeping local edits", () => {
+    const local = [item("old", "session", 1), { ...item("both", "session", 5), label: "Local title" }];
+    const remote = [{ ...item("both", "session", 10), label: "Stale server title" }, item("recent", "session", 20), item("task", "task", 3)];
+    const result = mergeMentionSuggestions(local, remote, new Map([["session:both", 100]]), 2);
+    expect(result.map((m) => m.id)).toEqual(["both", "recent", "task"]);
+    expect(result[0].label).toBe("Local title");
+    expect(local.map((m) => m.id)).toEqual(["old", "both"]);
+  });
+
+  test("equal viewing times fall back to updates and missing timestamps keep stable order", () => {
+    const times = new Map([["session:a", 10], ["session:b", 10]]);
+    expect(mergeMentionSuggestions([item("a", "session", 1), item("b", "session", 2), item("c"), item("d")], [], times)
+      .map((m) => m.id)).toEqual(["b", "a", "c", "d"]);
+  });
+
+  test("builds the same rich candidates from full store collections and windowed index", () => {
+    const state = {
+      ...useInboxStore.getState(),
+      currentUser: { _id: "me" }, teamMembers: [], buckets: {}, bucketAssignments: {},
+      mentionIndex: { tasks: { t1: { _id: "t1", title: "Stale task", team_id: "team", status: "open" } }, docs: {}, plans: {} },
+      tasks: { t1: { _id: "t1", title: "Live task", workspace: "team:team", status: "done", priority: "high", updated_at: 100 } },
+      docs: {
+        d1: { _id: "d1", title: "Live doc", workspace: "team:team", doc_type: "spec", updated_at: 200 },
+        secret: { _id: "secret", title: "Private", team_id: "team", workspace: "user:me" },
+      },
+      plans: { p1: { _id: "p1", title: "Plan", workspace: "team:team", status: "active", goal: "Launch release", updated_at: 300 } },
+      sessions: {
+        session1: { _id: "session1", title: "Session", team_id: "team", message_count: 8, agent_status: "working", agent_type: "codex", model: "gpt-6", updated_at: 400, last_heartbeat: Date.now() },
+        worker: { _id: "worker", title: "Worker", team_id: "team", is_subagent: true },
+      },
+      _lastViewedAt: { session1: 300 },
+      recentVisits: [{ kind: "page", key: "page:/tasks/t1", ts: 500 }],
+    } as unknown as ReturnType<typeof useInboxStore.getState>;
+    const result = buildMentionItems(state, { kind: "team", teamId: "team" });
+    expect(result.map((m) => m.id)).toEqual(["t1", "session1", "p1", "d1", "worker"]);
+    expect(result[4].worker).toBe(true);
+    expect(mentionItemMatches(result[4], "")).toBe(false);
+    expect(mentionItemMatches(result[4], "worker")).toBe(true);
+    expect(result[0]).toMatchObject({ label: "Live task", status: "done", priority: "high", updatedAt: 100, viewedAt: 500 });
+    // The status is the verdict, not the daemon's raw word: a "working" row
+    // quiet past the trust TTL while its daemon heartbeats reads idle.
+    expect(result[1]).toMatchObject({ status: "idle", agentType: "codex", model: "gpt-6", messageCount: 8 });
+    expect(result[3].label).toBe("Live doc");
+    expect(mentionItemMatches(result[2], "launch release")).toBe(true);
+    expect(mentionItemMatches(result[1], "session")).toBe(true);
+    expect(mentionItemMatches(result[1], "missing words")).toBe(false);
+  });
+
+  test("a Slack-only person whose handle a teammate answers to is that teammate's row", () => {
+    const state = {
+      teamMembers: [{ _id: "bot1", name: "Aivery", is_bot: true }],
+      chatSlackPeople: {
+        U1: { slack_user_id: "U1", team_id: "team", name: "Aivery", handle: "aivery" },
+        U2: { slack_user_id: "U2", team_id: "team", name: "Dana", handle: "dana" },
+      },
+      sessions: {}, tasks: {}, docs: {}, plans: {},
+    } as unknown as ReturnType<typeof useInboxStore.getState>;
+    const people = buildMentionItems(state, { kind: "team", teamId: "team" }).filter((m) => m.type === "person");
+    expect(people.map((m) => m.id)).toEqual(["bot1", "slack:U2"]);
+  });
+});
+
+describe("match strength leads once the reader has typed", () => {
+  const person = (id: string, label: string, handle?: string) =>
+    ({ id, type: "person", label, handle, sublabel: handle && `@${handle}` }) as any;
+  const session = (id: string, label: string, extra: Record<string, unknown> = {}) =>
+    ({ id, type: "session", label, updatedAt: 1_000, ...extra }) as any;
+
+  // The bug this pins: "@ash" put Ashot Petrosian 33rd, behind every session,
+  // task and doc that merely contained "ash" and had been touched more
+  // recently than never. Nothing stamps a clock on a teammate, so a purely
+  // recency-ordered list can never surface one.
+  test("a teammate named by prefix outranks recently-touched fuzzy hits", () => {
+    const items = [
+      session("s1", "Slack agent onboarding flow", { idleSummary: "ash rebase" }),
+      session("s2", "Chase Card Transaction (Ashot)"),
+      person("p1", "Ashot Petrosian", "ashot"),
+    ];
+    const ranked = mergeMentionSuggestions(items, [], new Map(), Infinity, "ash");
+    expect(ranked[0].id).toBe("p1");
+  });
+
+  test("a handle hit beats a match buried in a secondary field", () => {
+    const ranked = mergeMentionSuggestions(
+      [session("s1", "Nightly sweep", { idleSummary: "talked to samvit" }), person("p1", "Samvit Ramadurgam", "samvit")],
+      [], new Map(), Infinity, "samvit",
+    );
+    expect(ranked[0].id).toBe("p1");
+  });
+
+  // With nothing typed there is no naming signal, so the "recently viewed"
+  // header must keep telling the truth.
+  test("an empty query still orders purely by recency", () => {
+    const ranked = mergeMentionSuggestions(
+      [person("p1", "Ashot Petrosian", "ashot"), session("s1", "Recent work", { viewedAt: 500 })],
+      [], new Map(), Infinity, "",
+    );
+    expect(ranked[0].id).toBe("s1");
+  });
+  test("a typed query leads with sessions, title hits anywhere, and leaves closed tasks out", () => {
+    const candidates: MentionItem[] = [
+      { id: "t-done", type: "task", label: "Desk v2: the book as home", shortId: "ct-55348", status: "done", updatedAt: 900 },
+      { id: "t-open", type: "task", label: "Desk v2: iterative polish", shortId: "ct-55353", status: "in_review", updatedAt: 800 },
+      { id: "d1", type: "doc", label: "Desk v3: from the call", updatedAt: 700 },
+      { id: "s-mid", type: "session", label: "Broker desk v3 build", updatedAt: 100 },
+      { id: "s-pre", type: "session", label: "Desk v3 Polish", updatedAt: 50 },
+    ];
+    const times = new Map([["task:t-done", 1000], ["task:t-open", 999]]);
+    const ranked = mergeMentionSuggestions(candidates.filter((m) => mentionItemMatches(m, "desk")), [], times, Infinity, "desk");
+    expect(ranked.map((m) => m.id)).toEqual(["s-mid", "s-pre", "t-open", "d1"]);
+    // A closed task is still reachable by naming its short id.
+    expect(mentionItemMatches(candidates[0], "ct-55348")).toBe(true);
+    expect(mentionItemMatches(candidates[0], "")).toBe(false);
+  });
+
+  test("worker sessions answer to their name like ⌘K, one row per title, never as bare recents", () => {
+    const workers: MentionItem[] = [
+      { id: "w1", type: "session", label: "Desk v3 Polish", worker: true, updatedAt: 300 },
+      { id: "w2", type: "session", label: "Desk v3 Polish", worker: true, updatedAt: 200 },
+      { id: "w3", type: "session", label: "Desk v3 sign-in flow", worker: true, updatedAt: 100 },
+    ];
+    const ranked = mergeMentionSuggestions(workers.filter((m) => mentionItemMatches(m, "desk v3")), [], new Map(), Infinity, "desk v3");
+    expect(ranked.map((m) => m.id)).toEqual(["w1", "w3"]);
+    expect(workers.filter((m) => mentionItemMatches(m, ""))).toEqual([]);
+  });
+
+  test("chat offers sessions by title once typed, and only the room on a bare @", () => {
+    const pool: MentionItem[] = [
+      { id: "s1", type: "session", label: "CPU accounting for agent processes", updatedAt: 50 },
+      { id: "s2", type: "session", label: "Feedback processing pipeline design", updatedAt: 40 },
+      { id: "t1", type: "task", label: "Processed a four-hour fallback stall", shortId: "ct-1", status: "in_progress", updatedAt: 90 },
+      { id: "d1", type: "doc", label: "Process-Level Assessment", updatedAt: 10 },
+      { id: "p1", type: "person", label: "Ashot Petrosian", handle: "ashot" },
+      { id: "l1", type: "label", label: "processing" },
+    ];
+    const offered = (q: string) => mergeMentionSuggestions(
+      pool.filter((m) => chatMentionOffers(m, q) && mentionItemMatches(m, q)), [], new Map(), 10, q,
+    ).map((m) => m.id);
+    expect(offered("process")).toEqual(["s1", "s2", "t1", "d1"]);
+    expect(offered("").filter((id) => id.startsWith("s"))).toEqual([]);
+    expect(chatMentionOffers({ ...pool[0], contextAt: 1 }, "")).toBe(true);
+  });
+});

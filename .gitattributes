@@ -1,0 +1,3 @@
+# Preserve canonical LF source when cloning on Windows with autocrlf enabled.
+# The upstream verifier checks every file against its pinned Git blob.
+* text=auto eol=lf

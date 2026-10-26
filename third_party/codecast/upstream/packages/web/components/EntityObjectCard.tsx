@@ -1,0 +1,945 @@
+import React, { useCallback, useId, useRef, useState } from "react";
+import {
+  ChevronDown,
+  FileText,
+  Flag,
+  Folder,
+  FolderOpen,
+  GitBranch,
+  GitCommitHorizontal,
+  GitPullRequest,
+  MessageSquare,
+  Network,
+  Phone,
+  Film,
+  Rocket,
+  Signpost,
+  Radio,
+  Target,
+  Zap,
+  Hexagon,
+  UserRound,
+} from "lucide-react";
+import { taskVisual } from "./TaskStatusBadge";
+import { stripMarkdown, docContentPreview, docBodyMarkdown } from "../lib/notificationText";
+import { parseCallRef, parseReplayRef, replayRefStart, type EntityType } from "../lib/entityLinks";
+import { ACCENT, type Accent } from "../lib/entityCardAccent";
+import { SessionMark } from "./identity";
+import { cleanUserMessage } from "./sessionMessage";
+import { cleanTitle } from "../lib/conversationProcessor";
+import { sessionCardTitle } from "../lib/sessionCard";
+import { getLabelColor } from "../lib/labelColors";
+import { getProjectName } from "../store/inboxStore";
+import { imageBytes } from "../lib/imageByteCache";
+import { sessionCardSummary } from "../lib/sessionSummary";
+import { FormattedSummary } from "./FormattedSummary";
+import { MarkdownBlocks } from "./tools/MarkdownRenderer";
+import { clipFade } from "./CollapsibleBody";
+import { useOpenLinkedSession } from "../hooks/useOpenLinkedSession";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { describeTaskCadence, taskStateLabel } from "./triggerCadence";
+import { AuthorAvatar, SessionSummaryBlock, DiffStat, DottedRow, TaskPeople, type DottedPart } from "./entityDisplay";
+import { taskPriorityBadge } from "../lib/taskPriority";
+import {
+  STATUS_COLOR,
+  STATUS_LABEL,
+  TYPE_LABEL,
+  abbrevModel,
+  relativeTime,
+  taskPeople,
+  useEntityResolution,
+} from "../lib/entityDisplay";
+import { prState, repoObjectRefOf, repoObjectTitle } from "../lib/repoObjects";
+import { DocDates } from "./DocDates";
+import { FileDiffList } from "./FileDiffView";
+import { RevealButton, RevealOpenLink, type RevealTarget } from "./ObjectReveal";
+import { ProposalBody, ProposalMeta } from "./org/ProposalCard";
+import { useOrgHover } from "./org/proposalContexts";
+import { useProposalChanges } from "./org/proposalHooks";
+import { EntityIdPill } from "./EntityIdPill";
+import { TranscriptTurnList } from "./calls/TranscriptTurns";
+import { groupTurns } from "./calls/transcriptTurnModel";
+import { firstName, fmtCallLength } from "./calls/speakers";
+import { CallMomentFrame } from "./calls/CallMomentFrame";
+import { ProviderIcon, SOURCE_PROVIDER_LABEL, SOURCE_STATE, sourceFacts } from "./ops/parts";
+import { ReplayMomentEmbed } from "./ops/ReplayMomentEmbed";
+import { DecisionCompactCard } from "./decisions/DecisionCompactCard";
+import { replayFacts } from "./ops/opsModel";
+import { deployFacts } from "../lib/line/deployWords";
+
+// The preview card a SHARED object renders as — the rich sibling of the inline
+// pill. remarkEntityCards promotes a references-only paragraph (or list) into
+// a card row; each card previews its object usably in place (title, state, a
+// real snippet) and expands inline to full width for browsing without leaving
+// the conversation. One card alone in its row stretches and shows more; cards
+// sharing a row start compact and any of them expands to span the row.
+//
+// Rendering rides the same resolution as the pill (useEntityResolution): local
+// store seed on the first frame, live webGet keeping it fresh. The expanded
+// detail needs no extra queries — webGet already carries the deep fields
+// (doc content, plan tasks, task comments).
+
+const TYPE_ICON: Record<EntityType, any> = {
+  session: MessageSquare,
+  task: Target, // replaced by the status disc at render time
+  plan: Target,
+  doc: FileText,
+  trigger: Zap,
+  project: Folder,
+  initiative: Flag,
+  proposal: Network,
+  decision: Signpost,
+  pr: GitPullRequest,
+  commit: GitCommitHorizontal,
+  call: Phone,
+  replay: Film,
+  deploy: Rocket,
+  source: Radio,
+  role: Hexagon,
+  person: UserRound,
+};
+
+/** An object's mark as its card and every list of it draw it: a task's
+ *  status disc, a session's author, a pull request's state, else the kind's
+ *  glyph in its accent. */
+export function EntityKindIcon({ type, entity, className = "h-3.5 w-3.5" }: { type: EntityType; entity: any; className?: string }) {
+  if (type === "session" && (entity?.author_name || entity?.author_avatar)) {
+    return <AuthorAvatar name={entity.author_name} avatar={entity.author_avatar} size={16} />;
+  }
+  if (type === "task") {
+    const v = taskVisual(entity?.status);
+    return <v.icon className={`${className} ${v.color}`} />;
+  }
+  const Icon = TYPE_ICON[type];
+  return <Icon className={`${className} ${type === "pr" ? prState(entity?.state).color : ACCENT[type].text}`} />;
+}
+
+/** The words a call reference names (`cl-42:15-25`), as turns; null for a whole call. */
+export function CallTurns({ call, limit }: { call: any; limit?: number }) {
+  const turns = groupTurns(call.turns?.segments ?? []);
+  if (!call.turns) return null;
+  if (turns.length === 0) return <p className="text-[11px] italic text-sol-text-dim">Nothing was said in those lines.</p>;
+  const shown = limit ? turns.slice(0, limit) : turns;
+  const hidden = turns.length - shown.length;
+  return (
+    <div className="space-y-0.5">
+      <TranscriptTurnList turns={shown} callId={String(call._id)} />
+      {(hidden > 0 || (!limit && call.turns.more)) && (
+        <p className="text-[10px] text-sol-text-dim">{hidden > 0 ? `${hidden} more turns` : "More on the call page"}</p>
+      )}
+    </div>
+  );
+}
+
+/** The message body under a commit's subject line, or "" when it is a one-liner. */
+function commitBody(commit: any): string {
+  return String(commit?.message ?? "").split("\n").slice(1).join("\n").trim();
+}
+
+/**
+ * The one-line, type-specific state row under the title. Each item is bundled
+ * with its leading separator dot in one non-breaking span, so the line wraps
+ * BETWEEN items and a dot can never dangle at a line end; fixed chips
+ * (status, priority) never shrink, and only the wide chips (plan link,
+ * author) truncate.
+ */
+export function CardMetaLine({ type, entity }: { type: EntityType; entity: any }) {
+  const parts: DottedPart[] = [];
+  const push = (node: React.ReactNode, key: string, shrink = false) => {
+    parts.push({ key, node, shrink });
+  };
+
+  if (type === "task") {
+    const v = taskVisual(entity.status);
+    push(<span className={`whitespace-nowrap font-medium ${v.color}`}>{v.label}</span>, "status");
+    const priority = taskPriorityBadge(entity.priority);
+    if (priority) {
+      push(
+        <span className={`inline-flex items-center gap-0.5 whitespace-nowrap ${priority.color}`}>
+          <priority.icon className="h-2.5 w-2.5" />
+          {priority.label}
+        </span>,
+        "priority",
+      );
+    }
+    if (entity.plan?.title) {
+      push(
+        <span className="inline-flex min-w-0 items-center gap-1 text-sol-cyan">
+          <Target className="h-2.5 w-2.5 flex-shrink-0" />
+          <span className="truncate">{entity.plan.title}</span>
+        </span>,
+        "plan",
+        true,
+      );
+    }
+  } else if (type === "plan") {
+    const color = STATUS_COLOR[entity.status || "active"] || "text-gray-400";
+    push(<span className={`whitespace-nowrap font-medium ${color}`}>{STATUS_LABEL[entity.status] || entity.status || "Plan"}</span>, "status");
+  } else if (type === "session") {
+    const isActive = entity.status === "active";
+    push(
+      <span className={`whitespace-nowrap font-medium ${isActive ? "text-sol-green" : "text-sol-text-dim"}`}>
+        {isActive ? "Active" : entity.status || "Stopped"}
+      </span>,
+      "status",
+    );
+    if (entity.agent_type) push(<span className="whitespace-nowrap">{entity.agent_type}</span>, "agent");
+    const model = abbrevModel(entity.model);
+    if (model) push(<span className="whitespace-nowrap">{model}</span>, "model");
+    if (entity.author_name) push(<span className="truncate text-sol-text-muted">{entity.author_name}</span>, "author", true);
+  } else if (type === "doc") {
+    const typeLabel = entity.doc_type ? entity.doc_type.charAt(0).toUpperCase() + entity.doc_type.slice(1) : "Doc";
+    push(<span className="font-medium text-sol-green">{typeLabel}</span>, "type");
+    if (entity.created_at) push(<DocDates doc={entity} className="whitespace-nowrap" />, "dates");
+  } else if (type === "trigger") {
+    const failing = entity.last_run_failed || entity.last_run_needs_attention;
+    const color = entity.status === "paused" ? "text-sol-yellow" : failing ? "text-sol-red" : "text-sol-orange";
+    push(<span className={`whitespace-nowrap font-medium ${color}`}>{describeTaskCadence(entity)}</span>, "cadence");
+    push(<span className="whitespace-nowrap">{taskStateLabel(entity, Date.now())}</span>, "state");
+  } else if (type === "pr") {
+    const state = prState(entity.state);
+    push(<span className={`whitespace-nowrap font-medium ${state.color}`}>{state.label}</span>, "state");
+    if (entity.author_github_username) push(<span className="truncate">{entity.author_github_username}</span>, "author", true);
+    if (entity.head_ref) {
+      push(
+        <span className="inline-flex min-w-0 items-center gap-1 font-mono">
+          <span className="truncate text-sol-green">{entity.head_ref}</span>
+          {entity.base_ref && (
+            <>
+              <span className="text-sol-text-dim">→</span>
+              <span className="truncate text-sol-blue">{entity.base_ref}</span>
+            </>
+          )}
+        </span>,
+        "refs",
+        true,
+      );
+    }
+    if (entity.additions != null || entity.deletions != null || entity.changed_files != null) {
+      push(<DiffStat additions={entity.additions} deletions={entity.deletions} files={entity.changed_files} />, "stat");
+    }
+  } else if (type === "commit") {
+    if (entity.author_name) push(<span className="truncate">{entity.author_name}</span>, "author", true);
+    if (entity.branch) push(<span className="whitespace-nowrap font-mono">{entity.branch}</span>, "branch");
+    if (entity.insertions != null || entity.deletions != null || entity.files_changed != null) {
+      push(<DiffStat additions={entity.insertions} deletions={entity.deletions} files={entity.files_changed} />, "stat");
+    }
+  } else if (type === "call") {
+    const live = entity.status === "live";
+    push(
+      <span className={`whitespace-nowrap font-medium ${live ? "text-sol-green" : "text-sol-text-muted"}`}>
+        {live ? "Live" : fmtCallLength(entity.started_at, entity.ended_at)}
+      </span>,
+      "state",
+    );
+    const who = (entity.participants ?? []).map((p: any) => firstName(p.name)).join(", ");
+    if (who) push(<span className="truncate">{who}</span>, "who", true);
+  } else if (type === "source") {
+    const state = SOURCE_STATE[entity.status as keyof typeof SOURCE_STATE] ?? SOURCE_STATE.active;
+    push(<span className={`whitespace-nowrap font-medium ${state.ink}`}>{state.label}</span>, "state");
+    push(
+      <span className="inline-flex items-center gap-1 whitespace-nowrap">
+        <ProviderIcon provider={entity.provider} className="h-2.5 w-2.5" />
+        {SOURCE_PROVIDER_LABEL[entity.provider as keyof typeof SOURCE_PROVIDER_LABEL] ?? entity.provider}
+      </span>,
+      "provider",
+    );
+    sourceFacts(entity).forEach((fact, i) => push(<span className="whitespace-nowrap">{fact}</span>, `fact${i}`));
+  } else if (type === "deploy") {
+    deployFacts(entity).forEach((fact, i) => push(<span className="whitespace-nowrap">{fact}</span>, `fact${i}`, i === 0));
+  } else if (type === "replay") {
+    replayFacts(entity).forEach((fact, i) => push(<span className={i === 0 ? "truncate" : "whitespace-nowrap"}>{fact}</span>, `fact${i}`, i === 0));
+  } else {
+    push(<span className="font-medium text-sol-text-dim">{TYPE_LABEL[type]}</span>, "type");
+  }
+
+  return <DottedRow parts={parts} className="mt-0.5" />;
+}
+
+function planProgress(plan: any): { done: number; total: number; pct: number } | null {
+  // plans.webGet embeds tasks[]; the store seed carries a progress summary.
+  const tasks = Array.isArray(plan.tasks) ? plan.tasks : null;
+  const done = tasks ? tasks.filter((t: any) => t.status === "done").length : plan.progress?.done;
+  const total = tasks ? tasks.length : plan.progress?.total;
+  if (typeof done !== "number" || typeof total !== "number" || total === 0) return null;
+  return { done, total, pct: Math.round((done / total) * 100) };
+}
+
+function ProgressBar({ done, total, pct, bar }: { done: number; total: number; pct: number; bar: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-[color-mix(in_srgb,var(--sol-border)_45%,transparent)]">
+        <div className={`h-full rounded-full ${bar} transition-all`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="font-mono text-[10px] text-sol-text-dim">{done}/{total}</span>
+    </div>
+  );
+}
+
+/**
+ * A session shared in chat reads exactly like its inbox card — the "simple"
+ * card people already know: agent icon + title, the summary, the blue `>` last
+ * user line, then author / project / count / age on one footer line, with the
+ * image thumbnail on the right. Built from the SAME atoms the inbox card uses
+ * (AgentTypeIcon, cleanTitle, cleanUserMessage, sessionCardSummary,
+ * getLabelColor, imageBytes) so the two can't drift apart visually.
+ */
+function SessionCardBody({ session, expanded }: { session: any; expanded: boolean }) {
+  const thumbSrc = imageBytes.useSrc(session.image_preview_url || undefined);
+  const title = sessionCardTitle(session);
+  const summary = expanded ? session.subtitle || sessionCardSummary(session) : sessionCardSummary(session);
+  const userLine = cleanUserMessage(session.last_message_preview);
+  const project = getProjectName(undefined, session.project_path);
+  const projectColor = project ? getLabelColor(project) : null;
+  const isLive = !!session.is_active;
+
+  return (
+    <div className="flex items-start gap-2.5">
+      <div className="min-w-0 flex-1">
+        <div className="flex items-start gap-1.5 text-sm leading-snug text-sol-text">
+          {/* Who the session is (session-characters.md S3), the agent brand
+              on its corner; a plain row keeps the brand alone. */}
+          <SessionMark session={session} />
+          <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{title}</span>
+          {isLive && (
+            <span className="relative flex h-1.5 w-1.5 flex-shrink-0" title="Live">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sol-green opacity-75" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-sol-green" />
+            </span>
+          )}
+        </div>
+        {summary && (
+          <div className={`mt-0.5 text-[12px] leading-snug text-sol-text-muted ${expanded ? "whitespace-pre-line" : "line-clamp-2"}`}>
+            <FormattedSummary text={summary} />
+          </div>
+        )}
+        {userLine && (
+          <div className={`mt-0.5 text-[11px] font-semibold leading-snug text-sky-700 dark:text-sky-300 ${expanded ? "" : "truncate"}`}>
+            <span className="mr-0.5 text-sky-600/60 dark:text-sky-400/50">&gt;</span>
+            {userLine}
+          </div>
+        )}
+        <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[10px] text-sol-text-dim">
+          {(session.author_name || session.author_avatar) && (
+            <span className="inline-flex min-w-0 items-center gap-1">
+              <AuthorAvatar name={session.author_name} avatar={session.author_avatar} size={12} />
+              <span className="max-w-[120px] truncate text-sol-text-muted">{session.author_name}</span>
+            </span>
+          )}
+          {project && projectColor && (
+            <span className="inline-flex min-w-0 items-center gap-1">
+              <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${projectColor.dot}`} />
+              <span className={`max-w-[140px] truncate ${projectColor.text ?? "text-sol-text-muted"}`}>{project}</span>
+            </span>
+          )}
+          <span className="ml-auto flex flex-shrink-0 items-center gap-1.5">
+            {session.message_count > 0 && <span className="tabular-nums">{session.message_count}</span>}
+            {relativeTime(session.updated_at) && <span>{relativeTime(session.updated_at)}</span>}
+          </span>
+        </div>
+      </div>
+      {thumbSrc && (
+        <img
+          src={thumbSrc}
+          alt=""
+          className={`flex-shrink-0 rounded border border-sol-border object-cover ${expanded ? "max-h-40 max-w-[220px]" : "h-[46px] w-[46px]"}`}
+        />
+      )}
+    </div>
+  );
+}
+
+/** The usable snippet a collapsed card shows — the reason to expand, visible before it. */
+function CardSnippet({ type, entity, compact }: { type: EntityType; entity: any; compact: boolean }) {
+  const clamp = compact ? "line-clamp-2" : "line-clamp-3";
+
+  if (type === "task") {
+    const last = Array.isArray(entity.comments) && entity.comments.length > 0
+      ? [...entity.comments].sort((a: any, b: any) => (a.created_at ?? 0) - (b.created_at ?? 0)).at(-1)
+      : null;
+    if (!entity.description && !last) return null;
+    return (
+      <div className="space-y-1">
+        {entity.description && (
+          <p className={`text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>
+            {stripMarkdown(entity.description).slice(0, 400)}
+          </p>
+        )}
+        {last?.text && (
+          <div className="flex items-baseline gap-1 border-l-2 border-[color-mix(in_srgb,var(--sol-border)_70%,transparent)] pl-1.5 text-[10px] leading-snug">
+            {last.author && <span className="flex-shrink-0 font-medium text-sol-text-muted">{last.author}</span>}
+            <span className="min-w-0 truncate text-sol-text-dim">{stripMarkdown(last.text)}</span>
+            {last.created_at && <span className="ml-auto flex-shrink-0 text-sol-text-dim/70">{relativeTime(last.created_at)}</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (type === "plan") {
+    const progress = planProgress(entity);
+    return (
+      <div className="space-y-1.5">
+        {entity.goal && (
+          <p className={`text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>
+            {stripMarkdown(entity.goal).slice(0, 400)}
+          </p>
+        )}
+        {progress && <ProgressBar {...progress} bar={ACCENT.plan.bar} />}
+      </div>
+    );
+  }
+  if (type === "session") {
+    return <SessionSummaryBlock session={entity} />;
+  }
+  if (type === "doc") {
+    const preview = docContentPreview(entity.content, compact ? 260 : 700);
+    if (!preview) return null;
+    return (
+      <div className="overflow-hidden" style={{ maxHeight: compact ? 54 : 108, ...clipFade(28) }}>
+        <p className="whitespace-pre-line text-[12px] leading-relaxed text-sol-text-muted">{preview}</p>
+      </div>
+    );
+  }
+  if (type === "trigger") {
+    const text = entity.display_summary || entity.prompt;
+    if (!text) return null;
+    return (
+      <p className={`text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>
+        {stripMarkdown(text).slice(0, 400)}
+      </p>
+    );
+  }
+  if (type === "pr") {
+    if (!entity.body) return null;
+    return <p className={`text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>{stripMarkdown(entity.body).slice(0, 400)}</p>;
+  }
+  if (type === "call" && entity.turns) {
+    return (
+      <div className="overflow-hidden" style={{ maxHeight: compact ? 72 : 150, ...clipFade(28) }}>
+        <CallTurns call={entity} limit={4} />
+      </div>
+    );
+  }
+  if (type === "source") {
+    if (!entity.last_error) return null;
+    return <p className={`text-[12px] leading-relaxed text-sol-red ${clamp}`}>{entity.last_error}</p>;
+  }
+  if (type === "commit") {
+    const body = commitBody(entity);
+    if (!body) return null;
+    return <p className={`whitespace-pre-line text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>{body.slice(0, 400)}</p>;
+  }
+  const summary = entity.description || entity.goal || entity.summary;
+  if (!summary) return null;
+  return <p className={`text-[12px] leading-relaxed text-sol-text-muted ${clamp}`}>{stripMarkdown(summary).slice(0, 400)}</p>;
+}
+
+// Markdown rendered inside a card: the same shared blocks as doc transclusion,
+// with the same list-outside override (see DocEmbed for why).
+export function CardMarkdown({ content }: { content: string }) {
+  return (
+    <div className="min-w-0 text-[13px] [overflow-wrap:anywhere] [&_ol]:!list-outside [&_ol]:!pl-5 [&_ul]:!list-outside [&_ul]:!pl-5">
+      <MarkdownBlocks content={content} />
+    </div>
+  );
+}
+
+function CommentRows({ comments }: { comments: any[] }) {
+  const ordered = [...comments].sort((a, b) => (a.created_at ?? 0) - (b.created_at ?? 0));
+  if (ordered.length === 0) return null;
+  return (
+    <div className="space-y-1.5 border-t border-[color-mix(in_srgb,var(--sol-border)_55%,transparent)] pt-2">
+      {ordered.map((c: any, i: number) => (
+        <div key={c._id ?? i} className="space-y-1 text-[12px] leading-relaxed">
+          <div className="flex flex-wrap items-baseline gap-x-2 text-sol-text-muted">
+            <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{c.session_info?.title || c.author}</span>
+            {c.created_at && <span className="text-[11px] text-sol-text-dim">{relativeTime(c.created_at)}</span>}
+          </div>
+          <CardMarkdown content={c.text || ""} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlanTaskRows({ tasks }: { tasks: any[] }) {
+  if (!tasks || tasks.length === 0) return null;
+  return (
+    <div className="space-y-1">
+      {tasks.map((t: any) => {
+        const v = taskVisual(t.status);
+        return (
+          <div key={t._id} className="flex items-start gap-2 py-1 text-[13px]">
+            <v.icon className={`h-3 w-3 flex-shrink-0 ${v.color}`} />
+            <span className={`min-w-0 [overflow-wrap:anywhere] ${t.status === "done" ? "text-sol-text-dim line-through" : "text-sol-text-muted"}`}>
+              {t.title}
+            </span>
+            {t.assignee_info?.name && (
+              <span className="ml-auto flex-shrink-0 text-[10px] text-sol-text-dim">{t.assignee_info.name}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** The full inline browse — what expanding a card reveals. */
+function CardDetail({ type, entity }: { type: EntityType; entity: any }) {
+  if (type === "task") {
+    const { creator, assignee } = taskPeople(entity);
+    return (
+      <div className="space-y-2.5">
+        {entity.description ? (
+          <CardMarkdown content={entity.description} />
+        ) : (
+          <p className="text-[11px] italic text-sol-text-dim">No description.</p>
+        )}
+        {(creator || assignee || (entity.labels?.length ?? 0) > 0) && (
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5">
+            <TaskPeople task={entity} />
+            {(entity.labels ?? []).map((l: string) => (
+              <span key={l} className="rounded bg-sol-magenta/10 px-1.5 text-[10px] leading-[1.6] text-sol-magenta">
+                {l}
+              </span>
+            ))}
+          </div>
+        )}
+        {entity.comments?.length > 0 && <CommentRows comments={entity.comments} />}
+      </div>
+    );
+  }
+  if (type === "plan") {
+    const progress = planProgress(entity);
+    return (
+      <div className="space-y-2.5">
+        {entity.goal && <CardMarkdown content={entity.goal} />}
+        {(entity.doc_content || entity.body) && <CardMarkdown content={docBodyMarkdown(entity.doc_content || entity.body)} />}
+        {progress && <ProgressBar {...progress} bar={ACCENT.plan.bar} />}
+        {Array.isArray(entity.tasks) && <PlanTaskRows tasks={entity.tasks} />}
+        {entity.comments?.length > 0 && <CommentRows comments={entity.comments} />}
+      </div>
+    );
+  }
+  if (type === "session") {
+    const projectName = entity.project_path?.split("/").pop() ?? null;
+    return (
+      <div className="space-y-2.5">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-sol-text-dim">
+          {entity.message_count != null && <span className="font-mono">{entity.message_count} msgs</span>}
+          {projectName && (
+            <span className="inline-flex items-center gap-1 font-mono">
+              <FolderOpen className="h-2.5 w-2.5" />
+              {projectName}
+            </span>
+          )}
+          {entity.git_branch && (
+            <span className="inline-flex items-center gap-1 font-mono">
+              <GitBranch className="h-2.5 w-2.5" />
+              {entity.git_branch}
+            </span>
+          )}
+          {entity.started_at && <span>started {relativeTime(entity.started_at)}</span>}
+        </div>
+      </div>
+    );
+  }
+  if (type === "doc") {
+    return (
+      <CardMarkdown content={docBodyMarkdown(entity.content)} />
+    );
+  }
+  if (type === "trigger") {
+    const failing = entity.last_run_failed || entity.last_run_needs_attention;
+    return (
+      <div className="space-y-2.5">
+        {entity.prompt && (
+          <CardMarkdown content={entity.prompt} />
+        )}
+        {(entity.last_run_at || entity.run_count > 0) && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-sol-text-dim">
+            {entity.last_run_at && (
+              <span className={failing ? "text-sol-red" : ""}>
+                {failing ? "Last run failed" : "Last run"} {relativeTime(entity.last_run_at)}
+              </span>
+            )}
+            {entity.run_count > 0 && <span className="font-mono">{entity.run_count} runs</span>}
+          </div>
+        )}
+      </div>
+    );
+  }
+  if (type === "pr") {
+    return (
+      <div className="space-y-2.5">
+        {entity.body ? <CardMarkdown content={entity.body} /> : <p className="text-[11px] italic text-sol-text-dim">No description.</p>}
+        <FileDiffList files={entity.files} emptyText="No file changes synced yet" className="overflow-hidden rounded border border-sol-border/40" />
+      </div>
+    );
+  }
+  if (type === "commit") {
+    const body = commitBody(entity);
+    return (
+      <div className="space-y-2.5">
+        {body && <pre className="whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-sol-text-muted">{body}</pre>}
+        <FileDiffList files={entity.files} emptyText="No file changes synced" className="overflow-hidden rounded border border-sol-border/40" />
+      </div>
+    );
+  }
+  if (type === "source") {
+    return entity.last_error
+      ? <p className="text-[12px] leading-relaxed text-sol-red">{entity.last_error}</p>
+      : <p className="text-[11px] italic text-sol-text-dim">Its errors, checks and deploys are on the Ops page.</p>;
+  }
+  if (type === "replay") {
+    return <p className="text-[11px] italic text-sol-text-dim">Its events, console and network{entity.dom_chunks ? ", and the page itself," : ""} are on the replay page.</p>;
+  }
+  if (type === "call") {
+    if (entity.turns) return <CallTurns call={entity} />;
+    return entity.summary ? <CardMarkdown content={entity.summary} /> : <p className="text-[11px] italic text-sol-text-dim">No summary yet.</p>;
+  }
+  const summary = entity.description || entity.goal || entity.summary;
+  return summary ? <CardMarkdown content={summary} /> : <p className="text-[11px] italic text-sol-text-dim">Nothing more here.</p>;
+}
+
+/**
+ * The chrome every shared-object card shares — expand/collapse (animated open
+ * AND close, keyboard, selection-guarded click), the accent border, the
+ * header strip, the preview body, the not-available and loading states, and
+ * the footer with the id and the open link. The caller supplies the object:
+ * EntityObjectCard for entity references, SharedMessageCard for a message.
+ * `count` is how many cards share the row (from the remark plugin): alone it
+ * renders rich; in a group it starts compact and expanding spans the row.
+ */
+export function ObjectCardFrame({
+  accent,
+  count,
+  ariaLabel,
+  href,
+  onOpen,
+  openLabel,
+  hideOpen = false,
+  kind,
+  footerId,
+  resolved,
+  served,
+  header,
+  flatBody,
+  snippet,
+  detail,
+}: {
+  accent: Accent;
+  count: number;
+  ariaLabel: string;
+  href: string;
+  onOpen?: (e: React.MouseEvent) => void;
+  /** "Open task" — the footer link and the header arrow's tooltip. */
+  openLabel: string;
+  /** True when the card already sits on the page the link opens: no Open link in the head or the foot. */
+  hideOpen?: boolean;
+  /** The object's kind as `data-entity-card`, a hook for the one style a kind needs. */
+  kind?: string;
+  footerId: string;
+  /** True once the object is in hand. */
+  resolved: boolean;
+  /** True once the server has answered (so `!resolved` means no access). */
+  served: boolean;
+  /** Identity + state, always visible. Omitted when `flatBody` renders instead. */
+  header?: {
+    icon: React.ReactNode;
+    /** A function gets `expanded`: the strip clips a collapsed title, so an open card can show the full one. */
+    title: React.ReactNode | ((expanded: boolean) => React.ReactNode);
+    /** The type-specific state line; hidden in the strip and shown in the body when compact. */
+    meta?: React.ReactNode;
+    timeAgo?: string | null;
+    live?: boolean;
+  };
+  /** A card that reads as its own surface (a session reads as its inbox card): no strip, controls float. */
+  flatBody?: (expanded: boolean) => React.ReactNode;
+  /** The usable preview a collapsed card shows — the reason to expand, visible before it. */
+  snippet?: React.ReactNode;
+  /** The full inline browse — what expanding reveals. */
+  detail: React.ReactNode;
+}) {
+  const detailId = useId();
+  const [expanded, setExpanded] = useState(false);
+  // The detail stays mounted through the CLOSE animation — unmounting with the
+  // toggle would snap the card shut with nothing inside to shrink. Cleared on
+  // transitionend, with a timer fallback for reduced-motion (no transition, so
+  // no transitionend ever fires).
+  const [mounted, setMounted] = useState(false);
+  const unmountTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setOpen = useCallback((open: boolean) => {
+    if (unmountTimer.current) {
+      clearTimeout(unmountTimer.current);
+      unmountTimer.current = null;
+    }
+    setExpanded(open);
+    if (open) setMounted(true);
+    else unmountTimer.current = setTimeout(() => setMounted(false), 320);
+  }, []);
+  useMountEffect(() => () => {
+    if (unmountTimer.current) clearTimeout(unmountTimer.current);
+  });
+
+  const toggle = useCallback(() => {
+    // A click that ends a text selection is copying, not toggling.
+    const sel = typeof window !== "undefined" ? window.getSelection() : null;
+    if (sel && !sel.isCollapsed) return;
+    setOpen(!expanded);
+  }, [expanded, setOpen]);
+
+  const onKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.target !== e.currentTarget) return;
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        setOpen(!expanded);
+      }
+    },
+    [expanded, setOpen],
+  );
+
+  const openObject = useCallback(
+    (e: React.MouseEvent) => {
+      e.stopPropagation();
+      onOpen?.(e);
+    },
+    [onOpen],
+  );
+
+  const compact = count > 1 && !expanded;
+  const flat = resolved && !!flatBody;
+  // The full page, inline: the band opens after the message body (RevealHost)
+  // at the same href the open link goes to.
+  const reveal: RevealTarget = { href, title: ariaLabel, onOpen, openLabel };
+  const revealChrome = `text-sol-text-dim opacity-0 transition-opacity ${accent.hoverText} focus-visible:opacity-100 group-hover/card:opacity-100 aria-pressed:opacity-100`;
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      aria-controls={detailId}
+      // Explicit name: without it a screen reader would concatenate the whole
+      // card's text, including the nested "Open …" links, into the button name.
+      aria-label={ariaLabel}
+      onClick={toggle}
+      onKeyDown={onKeyDown}
+      style={expanded && count > 1 ? { gridColumn: "1 / -1" } : undefined}
+      // The surface stays the same open or closed; only the border raise and
+      // the chevron say the card is open, so expanding never recolors it.
+      className={`entity-card group/card relative min-w-0 cursor-pointer overflow-hidden rounded-md border bg-sol-card ${expanded ? accent.borderOpen : accent.border} ${accent.borderHover} text-left transition-colors focus-visible:outline-none focus-visible:ring-1 ${accent.ring}`}
+      data-entity-card={kind}
+    >
+      {/* A flat card renders as its own surface — no header strip; the
+          open/expand controls float over the top-right corner on hover.
+          Once open, the footer carries Open and the full-page toggle, so the
+          corner keeps only the chevron rather than a second copy of both. */}
+      {flat && (
+        <>
+          <div className="absolute right-1.5 top-1.5 z-[1] flex items-center gap-0.5 rounded bg-sol-card/80 opacity-0 backdrop-blur-sm transition-opacity focus-within:opacity-100 group-hover/card:opacity-100">
+            {resolved && !expanded && <RevealButton target={reveal} className={`text-sol-text-dim ${accent.hoverText}`} />}
+            {!expanded && !hideOpen && <RevealOpenLink href={href} label={openLabel} onOpen={openObject} variant="compact" />}
+            <ChevronDown
+              className={`h-3 w-3 text-sol-text-dim transition-transform duration-200 ${accent.chevronHover} ${expanded ? "rotate-180" : ""}`}
+            />
+          </div>
+          <div className={expanded ? "px-4 pb-1 pt-3" : "px-4 py-3"}>{flatBody!(expanded)}</div>
+        </>
+      )}
+
+      {/* Header strip: identity + state, always visible. */}
+      {!flat && header && (
+        // Wraps: the title claims a readable basis first, and when the controls
+        // cannot fit beside it they drop to their own line instead of
+        // squeezing the title to one letter per line.
+        <div className={`flex flex-wrap items-start gap-x-2.5 gap-y-1.5 border-b ${accent.stripBorder} ${expanded ? accent.stripOpen : accent.strip} px-4 py-3 transition-colors`}>
+          <span className="relative mt-[2px] flex-shrink-0">
+            {header.icon}
+            {header.live && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full border border-sol-bg bg-sol-green" />}
+          </span>
+          <div className="min-w-0 flex-1 basis-[9rem]">
+            <div className="text-sm font-medium leading-snug text-sol-text [overflow-wrap:anywhere]">
+              {typeof header.title === "function" ? header.title(expanded) : header.title}
+            </div>
+            {resolved && !compact && header.meta}
+          </div>
+          <div className="ml-auto mt-[1px] flex flex-shrink-0 items-center gap-1.5">
+            {header.timeAgo && !compact && <span className="text-[10px] text-sol-text-dim">{header.timeAgo}</span>}
+            {resolved && !expanded && <RevealButton target={reveal} className={revealChrome} />}
+            {resolved && !expanded && !hideOpen && <RevealOpenLink href={href} label={openLabel} onOpen={openObject} variant="compact" />}
+            <ChevronDown
+              className={`h-3 w-3 text-sol-text-dim transition-transform duration-200 ${accent.chevronHover} ${expanded ? "rotate-180" : ""}`}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* Preview body — the usable snippet, before any click. */}
+      {resolved && !expanded && !flat && (
+        <div className="px-4 py-3">
+          {compact && header?.meta}
+          <div className={compact ? "mt-1" : ""}>{snippet}</div>
+        </div>
+      )}
+      {!resolved &&
+        (served ? (
+          <div className="px-2.5 py-2 text-[11px] text-sol-text-dim">Not available to you.</div>
+        ) : (
+          <div className="space-y-1.5 px-2.5 py-2.5" aria-hidden>
+            <div className="h-2 w-3/4 animate-pulse rounded bg-[color-mix(in_srgb,var(--sol-border)_55%,transparent)]" />
+            <div className="h-2 w-1/2 animate-pulse rounded bg-[color-mix(in_srgb,var(--sol-border)_55%,transparent)]" />
+          </div>
+        ))}
+
+      {/* The inline browse: animated open AND close, scrollable inside. */}
+      <div
+        id={detailId}
+        className="entity-card-expand"
+        data-open={expanded || undefined}
+        inert={!expanded}
+        onTransitionEnd={(e) => {
+          if (e.target === e.currentTarget && !expanded) setMounted(false);
+        }}
+      >
+        <div>
+          {resolved && mounted && (
+            <div className={`cursor-auto ${expanded || mounted ? "px-3.5 pb-3 pt-2" : "px-2.5 pb-2.5 pt-2"}`} onClick={(e) => e.stopPropagation()}>
+              {detail}
+              <div className="mt-2.5 flex items-center justify-between border-t border-[color-mix(in_srgb,var(--sol-border)_55%,transparent)] pt-1.5">
+                <span className="font-mono text-[10px] text-sol-text-dim">{footerId}</span>
+                <span className="flex items-center gap-3">
+                  <RevealButton target={reveal} withLabel className={`text-[10px] text-sol-text-muted ${accent.hoverText} hover:underline`} />
+                  {!hideOpen && <RevealOpenLink href={href} label={openLabel} onOpen={openObject} variant="compact" />}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * A staffing proposal shared in a conversation (org-staffing.md S24, S39):
+ * its letter, a totals line, then its changes as entries, one plain sentence
+ * per subject (or one row per record group) with what it moves and why,
+ * each with Approve, Reject and Reply, and the foot. The row came through
+ * useEntityResolution (store-fed); the changes are read from the store here.
+ */
+function ProposalEntityCard({ rawId, entity, served, count, href }: { rawId: string; entity: any; served: boolean; count: number; href: string }) {
+  const changes = useProposalChanges(entity?._id);
+  const Icon = TYPE_ICON.proposal;
+  // On the org screen (the hover channel is fed there) the link would open the page the person is reading.
+  const onScreen = useOrgHover() !== null;
+  return (
+    <ObjectCardFrame
+      accent={ACCENT.proposal}
+      count={count}
+      ariaLabel={`${TYPE_LABEL.proposal}: ${entity?.title ?? rawId}`}
+      href={href}
+      openLabel="Open proposal"
+      hideOpen={onScreen}
+      kind="proposal"
+      footerId={entity?.short_id ?? rawId}
+      resolved={!!entity}
+      served={served}
+      header={{
+        icon: <Icon className={`h-3.5 w-3.5 ${ACCENT.proposal.text}`} />,
+        title: entity?.title ?? <span className="font-mono text-sol-text-dim">{rawId}</span>,
+        meta: entity ? <ProposalMeta proposal={entity} changes={changes} /> : undefined,
+        // No age: what waits is the meta line's, and a narrow pane needs the width for the title.
+      }}
+      snippet={entity ? <ProposalBody proposal={entity} changes={changes} compact={count > 1} /> : undefined}
+      detail={entity ? <ProposalBody proposal={entity} changes={changes} /> : null}
+    />
+  );
+}
+
+/** One shared entity (task, plan, session, doc, trigger, project), rendered as a browsable card. */
+export function EntityObjectCard({ refId, count, unresolved }: {
+  refId: string;
+  count: number;
+  /** What a pull request or commit reference renders as when codecast holds
+   *  no row for it. Unset, it degrades to the text as written; a reference
+   *  named by URL passes the certain pill, whose hover says where it lives. */
+  unresolved?: React.ReactNode;
+}) {
+  const { rawId, type, entity, served, label, href, changeSeq } = useEntityResolution(refId);
+  const openLinkedSession = useOpenLinkedSession();
+
+  const openObject = useCallback(
+    (e: React.MouseEvent) => {
+      if (type !== "session" || !entity?._id) return;
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      e.preventDefault();
+      openLinkedSession(entity);
+    },
+    [type, entity, openLinkedSession],
+  );
+
+  // Same degrade rule as the pill: an id that resolves to no entity table (or
+  // is still resolving) renders back as the text that was typed.
+  if (!type) return <span className="font-mono text-[11px] text-sol-text-dim">{refId}</span>;
+  if (type === "proposal") {
+    // One change alone on its line (`op-55#3`): the proposal's pill, opening the org screen with that change in focus.
+    return changeSeq != null
+      ? <EntityIdPill shortId={rawId} type="proposal" />
+      : <ProposalEntityCard rawId={rawId} entity={entity} served={served} count={count} href={href} />;
+  }
+  // A moment of a call (`cl-42@12:34`) is a picture, not a record to expand:
+  // the frame of the call's video at that second, linking to the page there.
+  if (type === "call" && parseCallRef(rawId)?.at_ms != null) {
+    return <CallMomentFrame rawId={rawId} entity={entity} served={served} href={href} />;
+  }
+  // A moment of a replay (`rp-12@1:23`), or a stretch of it, is the recorded
+  // page playing from that second, in the isolated player.
+  if (type === "replay" && replayRefStart(parseReplayRef(rawId)) != null) {
+    return <ReplayMomentEmbed rawId={rawId} entity={entity} served={served} href={href} />;
+  }
+  // A decision reads as the card the queue draws: the question, who asked,
+  // the reasoning, and the answers right there (or the answer once settled).
+  if (type === "decision" && entity) return <div className="min-w-0" data-entity-card="decision"><DecisionCompactCard decision={entity} /></div>;
+  const isRepoObject = type === "pr" || type === "commit";
+  // Same rule as the pill: a repository reference that names nothing codecast
+  // knows is the text it was written as, not a "not available" card. One
+  // named by URL is certain, so it keeps the pill and the pill's hover says
+  // where the object lives.
+  if (isRepoObject && served && !entity) {
+    return unresolved !== undefined ? <>{unresolved}</> : <span className="font-mono text-[11px] text-sol-text-dim">{refId}</span>;
+  }
+
+  const isSession = type === "session";
+  const openLabel = `Open ${TYPE_LABEL[type].toLowerCase()}`;
+  const title = entity
+    ? (type === "trigger" ? entity.display_title : undefined) || (isRepoObject ? repoObjectTitle(type, entity) : undefined) || entity.title || entity.display_title || entity.name || label
+    : null;
+
+  return (
+    <ObjectCardFrame
+      accent={ACCENT[type]}
+      count={count}
+      ariaLabel={`${TYPE_LABEL[type]}: ${title ?? rawId}`}
+      href={href}
+      onOpen={isSession ? openObject : undefined}
+      openLabel={openLabel}
+      footerId={(isRepoObject ? repoObjectRefOf(type, entity) : null) ?? (type === "call" ? rawId : entity?.short_id) ?? rawId}
+      resolved={!!entity}
+      served={served}
+      // A session reads as its inbox card — flat, no header strip.
+      flatBody={isSession ? (expanded) => <SessionCardBody session={entity} expanded={expanded} /> : undefined}
+      header={{
+        icon: <EntityKindIcon type={type} entity={entity} />,
+        title: title ?? <span className="font-mono text-sol-text-dim">{rawId}</span>,
+        meta: entity ? <CardMetaLine type={type} entity={entity} /> : undefined,
+        timeAgo: relativeTime(entity?.updated_at ?? entity?.timestamp ?? entity?.started_at),
+        live: (isSession && entity?.status === "active") || (type === "trigger" && entity?.status === "running") || (type === "call" && entity?.status === "live"),
+      }}
+      snippet={entity ? <CardSnippet type={type} entity={entity} compact={count > 1} /> : undefined}
+      detail={entity ? <CardDetail type={type} entity={entity} /> : null}
+    />
+  );
+}

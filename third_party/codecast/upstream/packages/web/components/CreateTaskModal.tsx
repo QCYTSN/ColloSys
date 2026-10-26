@@ -1,0 +1,332 @@
+import { useState, useCallback, useMemo, useRef } from "react";
+import { useQuery } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { useInboxStore } from "../store/inboxStore";
+import { createTaskAndAdopt } from "../lib/taskActions";
+import { useImageUpload } from "../hooks/useImageUpload";
+import { useWorkspaceArgs } from "../hooks/useWorkspaceArgs";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { AssigneeSelect } from "./AssigneeSelect";
+import type { AssigneeInfo } from "@codecast/shared/contracts/orgAssignee";
+import { Switch } from "./ui/switch";
+import { CreateDialog, CreateDialogTitle, CreateChipCaret, createChipClass, createMenuItemClass, CREATE_MENU_CLASS, CREATE_MENU_SEARCH_CLASS } from "./CreateDialog";
+import { DocEditor } from "./editor/DocEditor";
+import type { MentionItem } from "./editor/MentionList";
+import { toast } from "sonner";
+import { getLabelColor, DEFAULT_LABELS } from "../lib/labelColors";
+import { statusByKey, statusEntityOptions, statusWriteFields, useTeamTaskStatusList } from "../lib/taskStatuses";
+import {
+  Plus,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  Check,
+  Tag,
+  Search,
+  CheckSquare,
+} from "lucide-react";
+
+const api = _api as any;
+
+const CREATE_PRIORITY_OPTIONS = [
+  { key: "urgent", label: "Urgent", icon: AlertTriangle, color: "text-sol-red" },
+  { key: "high", label: "High", icon: ArrowUp, color: "text-sol-orange" },
+  { key: "medium", label: "Medium", icon: Minus, color: "text-sol-text-muted" },
+  { key: "low", label: "Low", icon: ArrowDown, color: "text-sol-text-dim" },
+];
+
+function PropertyChip<T extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: T;
+  options: { key: T; label: string; icon: any; color?: string }[];
+  onChange: (v: T) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = options.find((o) => o.key === value) || options[0];
+  const Icon = current.icon;
+
+  useWatchEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={createChipClass(false, open)}
+        aria-expanded={open}
+      >
+        <Icon className={`w-3.5 h-3.5 ${current.color || ""}`} />
+        <span>{current.label}</span>
+        <CreateChipCaret open={open} />
+      </button>
+      {open && (
+        <div className={CREATE_MENU_CLASS}>
+          {options.map((opt) => {
+            const OptIcon = opt.icon;
+            return (
+              <button
+                key={opt.key}
+                type="button"
+                onClick={() => { onChange(opt.key); setOpen(false); }}
+                className={createMenuItemClass(opt.key === value)}
+              >
+                <OptIcon className={`w-3.5 h-3.5 ${opt.color || ""}`} />
+                <span className="flex-1">{opt.label}</span>
+                {opt.key === value && <Check className="w-3.5 h-3.5 text-sol-cyan" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LabelsChip({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useWatchEffect(() => {
+    if (!open) return;
+    setTimeout(() => inputRef.current?.focus(), 0);
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  const filtered = [...new Set([...DEFAULT_LABELS, ...value])]
+    .filter((l) => !search.trim() || l.toLowerCase().includes(search.toLowerCase()));
+
+  const canCreate = search.trim() && !filtered.some((l) => l.toLowerCase() === search.trim().toLowerCase());
+
+  const toggle = (label: string) => {
+    onChange(value.includes(label) ? value.filter((l) => l !== label) : [...value, label]);
+  };
+
+  const createAndAdd = () => {
+    const name = search.trim().toLowerCase();
+    if (name && !value.includes(name)) {
+      onChange([...value, name]);
+    }
+    setSearch("");
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(!open)}
+        className={createChipClass(value.length > 0, open)}
+        aria-expanded={open}
+      >
+        <Tag className="w-3.5 h-3.5" />
+        {value.length > 0 ? (
+          <span>{value.length === 1 ? value[0] : `${value.length} labels`}</span>
+        ) : (
+          <span>Labels</span>
+        )}
+        <CreateChipCaret open={open} />
+      </button>
+      {open && (
+        <div className={`${CREATE_MENU_CLASS} w-52`}>
+          <div className={CREATE_MENU_SEARCH_CLASS}>
+            <Search className="w-3.5 h-3.5 text-sol-text-dim flex-shrink-0" />
+            <input
+              ref={inputRef}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search or create a label"
+              className="flex-1 text-xs bg-transparent text-sol-text placeholder:text-sol-text-dim outline-none"
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setOpen(false);
+                if (e.key === "Enter" && canCreate) { e.preventDefault(); createAndAdd(); }
+              }}
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto">
+            {canCreate && (
+              <button
+                type="button"
+                onClick={createAndAdd}
+                className={`${createMenuItemClass()} text-sol-cyan hover:text-sol-cyan`}
+              >
+                <Plus className="w-3 h-3 flex-shrink-0" />
+                <span className="flex-1 text-left">Create &quot;{search.trim()}&quot;</span>
+              </button>
+            )}
+            {filtered.map((label) => {
+              const color = getLabelColor(label);
+              return (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => toggle(label)}
+                  className={createMenuItemClass(value.includes(label))}
+                >
+                  <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${color.dot}`} />
+                  <span className="flex-1 text-left">{label}</span>
+                  {value.includes(label) && <Check className="w-3.5 h-3.5 text-sol-cyan flex-shrink-0" />}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CreateTaskModal({ onClose, teamMembers, currentUser, defaults }: { onClose: () => void; teamMembers?: any[] | null; currentUser?: any; defaults?: { project_id?: string; plan_id?: string } | null }) {
+  const createTask = useInboxStore((s) => s.createTask);
+  const workspaceArgs = useWorkspaceArgs();
+
+  // The team's full status list (per-team custom statuses; personal = the six
+  // defaults), same options every other picker offers. Value is a status id.
+  const teamId = workspaceArgs !== "skip" && workspaceArgs.workspace === "team" ? workspaceArgs.team_id : null;
+  const taskStatuses = useTeamTaskStatusList(teamId);
+  const statusOptions = useMemo(() => statusEntityOptions(taskStatuses), [taskStatuses]);
+
+  const [title, setTitle] = useState("");
+  const descriptionRef = useRef("");
+  const [priority, setPriority] = useState<string>("medium");
+  const [status, setStatus] = useState<string>(
+    () => statusOptions.find((o) => o.category === "open")?.key ?? statusOptions[0]?.key ?? "open",
+  );
+  const [assignee, setAssignee] = useState<string | null>(null);
+  const [assigneeInfo, setAssigneeInfo] = useState<AssigneeInfo | null>(null);
+  const [labels, setLabels] = useState<string[]>([]);
+  const [createMore, setCreateMore] = useState(false);
+  const [editorKey, setEditorKey] = useState(0);
+
+  const titleRef = useRef<HTMLInputElement>(null);
+
+  const mentionResults = useQuery(api.docs.mentionSearch, { query: "", limit: 20 });
+  const mentionResultsRef = useRef<MentionItem[]>([]);
+  if (mentionResults) mentionResultsRef.current = mentionResults;
+
+  const handleMentionQuery = useCallback(
+    async (query: string): Promise<MentionItem[]> => {
+      const results = mentionResultsRef.current;
+      if (!results.length) return [];
+      const q = query.toLowerCase();
+      if (!q) return results;
+      return results.filter(
+        (r: MentionItem) =>
+          r.label.toLowerCase().includes(q) ||
+          (r.sublabel && r.sublabel.toLowerCase().includes(q))
+      );
+    },
+    []
+  );
+
+  // Shared uploader (handles client-side compression + storage round-trip).
+  const handleImageUpload = useImageUpload();
+
+  const handleSubmit = useCallback(async () => {
+    if (!title.trim()) return;
+    const desc = descriptionRef.current.trim();
+    const wsArgs = workspaceArgs === "skip" ? {} : workspaceArgs;
+    // status holds a team status id; the write carries the category, plus the
+    // id only when it refines the category default (statusWriteFields).
+    const picked = statusByKey(taskStatuses, status);
+    const statusFields = picked ? statusWriteFields(picked) : { status: "open" as const, status_id: "" };
+    const opts: any = {
+      title: title.trim(),
+      description: desc || undefined,
+      task_type: "task",
+      priority,
+      status: statusFields.status,
+      ...(statusFields.status_id ? { status_id: statusFields.status_id } : {}),
+      assignee: assignee || undefined,
+      labels: labels.length > 0 ? labels : undefined,
+      ...wsArgs,
+      // Where the modal was opened from — a project's own list files the task
+      // into that project rather than into the unfiled pile.
+      ...(defaults?.project_id ? { project_id: defaults.project_id } : {}),
+      ...(defaults?.plan_id ? { plan_id: defaults.plan_id } : {}),
+    };
+    // Through the shared helper: mints a client_key so the stub altKey-supersedes
+    // to the real row (no lingering duplicate), and toasts on a server refusal.
+    void createTaskAndAdopt(opts);
+    toast.success(`Created: ${title.trim()}`);
+    if (createMore) {
+      setTitle("");
+      descriptionRef.current = "";
+      setEditorKey((k) => k + 1);
+      setTimeout(() => titleRef.current?.focus(), 0);
+    } else {
+      onClose();
+    }
+  }, [title, priority, status, taskStatuses, assignee, labels, createMore, createTask, onClose, workspaceArgs, defaults]);
+
+  return (
+    <CreateDialog
+      icon={<CheckSquare className="h-3 w-3 text-sol-cyan" />}
+      noun="task"
+      onClose={onClose}
+      onSubmit={handleSubmit}
+      canSubmit={!!title.trim()}
+      submitLabel="Create task"
+      width="lg"
+      footerStart={
+        <label className="flex cursor-pointer select-none items-center gap-2 text-xs text-sol-text-dim transition-colors hover:text-sol-text">
+          <Switch checked={createMore} onCheckedChange={setCreateMore} aria-label="Create another" />
+          <span>Create another</span>
+        </label>
+      }
+    >
+      <div className="px-5 pt-3">
+        <CreateDialogTitle
+          ref={titleRef}
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="Task title"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) e.preventDefault();
+          }}
+        />
+      </div>
+
+      <div className="px-5 pb-3 pt-1 min-h-[120px] max-h-[280px] overflow-y-auto doc-editor-compact">
+        <DocEditor
+          key={editorKey}
+          content=""
+          onUpdate={(md) => { descriptionRef.current = md; }}
+          onMentionQuery={handleMentionQuery}
+          onImageUpload={handleImageUpload}
+          placeholder="Add description... use @ to mention, paste images"
+          className="text-sm"
+        />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 px-5 pb-3.5">
+        <PropertyChip value={status as any} options={statusOptions as any} onChange={(v) => setStatus(v)} />
+        <PropertyChip value={priority as any} options={CREATE_PRIORITY_OPTIONS as any} onChange={(v) => setPriority(v)} />
+        <LabelsChip value={labels} onChange={setLabels} />
+        <AssigneeSelect
+          value={assignee}
+          valueInfo={assigneeInfo}
+          onChange={(id, info) => { setAssignee(id); setAssigneeInfo(info); }}
+          teamMembers={teamMembers}
+          currentUser={currentUser}
+        />
+      </div>
+    </CreateDialog>
+  );
+}

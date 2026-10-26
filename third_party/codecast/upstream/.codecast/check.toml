@@ -1,0 +1,20 @@
+# .codecast/check.toml: the TypeScript programs `cast check` verifies in this
+# tree, by the name a caller uses. Tracked, so every worktree inherits it. One
+# shared tsc watcher per project answers every session on the tree; never run
+# `tsc --noEmit` by hand. `cast check <name>` checks one, `cast check` all.
+[projects]
+# The CLI's own script widens rootDir here (tsconfig.json sets rootDir to src,
+# and the CLI imports the convex generated api, whose files sit outside it).
+cli = "packages/cli/tsconfig.typecheck.json"
+web = "packages/web/tsconfig.json"
+convex = "packages/convex/convex/tsconfig.json"
+mobile = "packages/mobile/tsconfig.json"
+# The multiplayer sim harness plus the legacy store sims, with bun types
+# (docs/architecture/multiplayer-sim-harness.md section 3.10).
+sim = "packages/web/store/__tests__/sim/tsconfig.json"
+# The eval home (docs/architecture/evals-home.md): its own code plus the
+# convex and cli files the surfaces import.
+evals = "packages/evals/tsconfig.json"
+# The playground (packages/playground/SPEC.md): its shell and its own Convex
+# deployment's functions, one program.
+playground = "packages/playground/tsconfig.json"

@@ -1,0 +1,391 @@
+"use client";
+import { RepositoryLinks } from "../../../components/repo/RepositoryLinks";
+import { ShortId } from "../../../components/ShortId";
+import { useCallback, useMemo, useState } from "react";
+import { useParams } from "next/navigation";
+import { useQuery } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { useMountEffect } from "../../../hooks/useMountEffect";
+import { useInboxStore } from "../../../store/inboxStore";
+import { AuthGuard } from "../../../components/AuthGuard";
+import { AppLoader } from "../../../components/AppLoader";
+import { DashboardLayout } from "../../../components/DashboardLayout";
+import { DocumentDetailLayout } from "../../../components/DocumentDetailLayout";
+import { ShareControl } from "../../../components/ShareControl";
+import "../../../components/editor/editor.css";
+import {
+  PlanProgressBar,
+  PlanTaskSection,
+  OrchestrationHeader,
+  OrchestrationTab,
+  StartWorkflowButton,
+  DriveRoundIndicator,
+  PlanExternalEvents,
+  PLAN_STATUS_CONFIG,
+} from "../../../components/PlanDetailPanel";
+import { WorkflowContextPanel } from "../../../components/WorkflowContextPanel";
+import { PlanBoardView } from "../../../components/PlanBoardView";
+import { PlanOriginSession } from "../../../components/PlanOriginSession";
+import { EntryTimeline } from "../../../components/EntryTimeline";
+import { PlanGraphView } from "../../../components/PlanGraphView";
+import { LivenessDot } from "../../../components/LivenessDot";
+import { mergeLiveTasks, computePlanProgress, findEntityInStore } from "../../../lib/liveEntities";
+import { CharterBlock } from "../../../components/charter/CharterBlock";
+import { charterOf, type CharterPatch } from "../../../components/charter/charterMeta";
+import { useSyncOrgTreeFeeder } from "../../../hooks/useSyncOrgTree";
+import { useOrgRoles } from "../../../hooks/useOrgRoles";
+import { ingestPlanDetail } from "../../../hooks/useSyncPlans";
+import { useConvexSync } from "../../../hooks/useConvexSync";
+import {
+  Clock,
+  CheckCircle2,
+  Zap,
+  Layers,
+  GitBranch,
+} from "lucide-react";
+import { toast } from "sonner";
+
+const api = _api as any;
+
+type PlanTab = "overview" | "orchestration" | "board" | "graph";
+
+function formatDate(ts: number) {
+  return new Date(ts).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function PlanStatusSelector({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const status = PLAN_STATUS_CONFIG[value] || PLAN_STATUS_CONFIG.draft;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className={`text-xs px-2 py-0.5 rounded-md border transition-colors cursor-pointer ${status.color} ${status.bg} hover:opacity-80`}
+      >
+        {status.label}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute top-full left-0 mt-1 bg-sol-bg border border-sol-border/50 rounded-lg shadow-xl py-1 z-50 min-w-[130px]">
+            {Object.entries(PLAN_STATUS_CONFIG).map(([key, cfg]) => (
+              <button
+                key={key}
+                onClick={() => {
+                  onChange(key);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                  key === value
+                    ? "bg-sol-bg-highlight text-sol-text"
+                    : "text-sol-text-muted hover:bg-sol-bg-alt"
+                }`}
+              >
+                <span className={cfg.color}>{cfg.label}</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function EnsureDocTrigger({ planId }: { planId: any }) {
+  const ensureDoc = useInboxStore((s) => s.ensurePlanDoc);
+  useMountEffect(() => {
+    ensureDoc(planId);
+  });
+  return (
+    <div className="flex items-center justify-center h-64 text-sol-text-dim text-sm">
+      Initializing plan document...
+    </div>
+  );
+}
+
+export default function PlanDetailPage() {
+  const params = useParams();
+  const id = params?.id as string | undefined;
+
+  // id can be transiently undefined while a tab pane mounts; skip until it
+  // resolves (same guard as projects/[id]).
+  const queryArgs = id ? (id.startsWith("pl-") ? { short_id: id } : { id }) : "skip";
+  const queryPlan = useQuery(api.plans.webGet, queryArgs);
+  // The detail row seeds the store: every inline write below (title, status,
+  // the charter) goes through updatePlan, which patches the store row and
+  // no-ops when there is none. A deep link or a fresh tab has no plans
+  // feeder mounted, so without this seed the first edit would wait a round
+  // trip. NULL (an access verdict) seeds nothing.
+  useConvexSync(queryPlan, ingestPlanDetail);
+  const webUpdate = useInboxStore((s) => s.updatePlan);
+
+  // plan.tasks / plan.progress / plan.status are a server-query snapshot, so
+  // optimistic edits (updateTask status/assignee, updatePlan status) wouldn't
+  // show here until the query re-runs. Overlay the live store rows (canonical
+  // helper) so dragged cards, status circles, assignee avatars, the progress
+  // bar and the plan status pill all update instantly — same as PlanDetailPanel.
+  const storeTasks = useInboxStore((s) => s.tasks);
+  const teamMembers = useInboxStore((s) => s.teamMembers);
+  const currentUser = useInboxStore((s) => s.currentUser);
+  const storePlans = useInboxStore((s) => s.plans);
+
+  const [activeTab, setActiveTab] = useState<PlanTab>("overview");
+
+  // Local-first first paint, same composite as PlanDetailPanel: while
+  // webGet's joins are in flight, the synced plan row + the live task
+  // collection render the page; the query replaces it when it lands. A NULL
+  // answer is an access verdict — never masked by cache.
+  const plan = useMemo(() => {
+    if (queryPlan !== undefined || !id) return queryPlan;
+    const cachedRow = findEntityInStore({ plans: storePlans }, "plan", id) as any;
+    if (!cachedRow) return undefined;
+    const tasks = (cachedRow.task_ids ?? [])
+      .map((tid: any) => storeTasks[String(tid)])
+      .filter((t: any) => t && !t.parent_id)
+      .map((t: any) => ({ ...t, activeSession: null }));
+    return { ...cachedRow, tasks };
+  }, [queryPlan, id, storePlans, storeTasks]);
+
+  const liveTasks = useMemo(
+    () => mergeLiveTasks((plan as any)?.tasks, storeTasks, teamMembers as any[], currentUser as any),
+    [plan, storeTasks, teamMembers, currentUser]
+  );
+  const liveProgress = useMemo(() => {
+    if (!Array.isArray(liveTasks)) return (plan as any)?.progress;
+    return { ...((plan as any)?.progress || {}), ...computePlanProgress(liveTasks) };
+  }, [liveTasks, plan]);
+  const storePlan = useMemo(() => {
+    if (!plan) return undefined;
+    return Object.values(storePlans).find(
+      (p: any) => p.short_id === plan.short_id || p._id === plan._id
+    ) as any;
+  }, [plan, storePlans]);
+  const liveStatus = storePlan?.status ?? plan?.status;
+
+  // The charter (org-staffing.md S7): the store row first, so an inline edit
+  // paints in the same tick; the query snapshot fills the rest. The org tree
+  // feeds the owner chip and the head of people link, per view as /org does;
+  // the page reads only the roles, so session churn under a node does not
+  // re-render it. Null roles until the tree lands: the chip says loading.
+  useSyncOrgTreeFeeder();
+  const { roles: orgRoles, workspace: orgWorkspace } = useOrgRoles();
+  const charterRoles = orgWorkspace ? orgRoles : null;
+  const charter = useMemo(() => charterOf({ ...(plan ?? {}), ...(storePlan ?? {}) }, "plan"), [plan, storePlan]);
+  const handleCharterChange = useCallback((patch: CharterPatch) => { if (plan) webUpdate(plan.short_id, patch); }, [plan, webUpdate]);
+
+  const handleTitleChange = useCallback(
+    (title: string) => {
+      if (!plan) return;
+      webUpdate(plan.short_id, { title });
+    },
+    [plan, webUpdate]
+  );
+
+  const handleStatusChange = useCallback(
+    (newStatus: string) => {
+      if (!plan) return;
+      webUpdate(plan.short_id, { status: newStatus });
+    },
+    [plan, webUpdate]
+  );
+
+  if (plan === undefined) {
+    return (
+      <AuthGuard>
+        <DashboardLayout>
+          <AppLoader className="min-h-[16rem] h-full" />
+        </DashboardLayout>
+      </AuthGuard>
+    );
+  }
+
+  if (plan === null) {
+    return (
+      <AuthGuard>
+        <DashboardLayout>
+          <div className="flex items-center justify-center h-64 text-sol-text-dim text-sm">
+            Plan not found
+          </div>
+        </DashboardLayout>
+      </AuthGuard>
+    );
+  }
+
+  if (!plan.doc_id) {
+    return (
+      <AuthGuard>
+        <DashboardLayout>
+          <EnsureDocTrigger planId={plan._id} />
+        </DashboardLayout>
+      </AuthGuard>
+    );
+  }
+
+  const hasTasks = (liveTasks || []).length > 0;
+  const hasActiveSessions = (plan.sessions || []).some((s: any) => s.is_active);
+
+  return (
+    <AuthGuard>
+      <DashboardLayout>
+        <div className="h-full min-w-0">
+          <DocumentDetailLayout
+          docId={plan.doc_id}
+          title={plan.title}
+          markdownContent={plan.doc_content || ""}
+          onTitleChange={handleTitleChange}
+          backHref="/plans"
+          linkedObjectId={plan._id}
+          placeholder="Write plan details, notes, or documentation..."
+          contextType="plan"
+          leadContent={
+            <>
+              <PlanOriginSession plan={plan} className="mb-3" />
+              <RepositoryLinks planId={plan._id} sessions={plan.sessions || []} conversationIds={plan.conversation_ids || []} />
+              <CharterBlock kind="plan" title={plan.title} charter={charter} canEdit onChange={handleCharterChange} roles={charterRoles} className="mt-2" />
+            </>
+          }
+          topBarLeft={
+            <>
+              <PlanStatusSelector value={liveStatus} onChange={handleStatusChange} />
+              {plan.drive_state && plan.drive_state.total_rounds > 0 && (
+                <DriveRoundIndicator driveState={plan.drive_state} />
+              )}
+            </>
+          }
+          topBarRight={
+            <ShareControl label="plan" path={`/plans/${plan.short_id}`} publicShare={{ kind: "plan", id: plan._id, token: (storePlan ?? plan).share_token }} />
+          }
+          metaContent={
+            <>
+              <div className="flex items-center gap-4 text-xs text-sol-text-dim flex-wrap">
+                {plan.author?.image && (
+                  <span className="flex items-center gap-1.5">
+                    <img
+                      src={plan.author.image}
+                      alt={plan.author.name || ""}
+                      className="w-4 h-4 rounded-full object-cover"
+                    />
+                    <span className="text-sol-text-muted">{plan.author.name}</span>
+                  </span>
+                )}
+                <ShortId id={plan.short_id} className="text-sol-text-dim" />
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3 h-3" />
+                  {formatDate(plan.created_at)}
+                </span>
+                {plan.updated_at !== plan.created_at && (
+                  <span>Updated {formatDate(plan.updated_at)}</span>
+                )}
+              </div>
+              {plan.acceptance_criteria?.length > 0 && (
+                <div className="mt-3">
+                  <h3 className="text-xs font-medium text-sol-text-dim uppercase tracking-wider mb-1">
+                    Acceptance Criteria
+                  </h3>
+                  <ul className="text-sm text-sol-text-muted space-y-0.5">
+                    {plan.acceptance_criteria.map((c: string, i: number) => (
+                      <li key={i} className="flex items-start gap-2">
+                        <span className="text-sol-text-dim mt-0.5">-</span>
+                        <span>{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {(() => {
+                const refs = (plan.comments || []).filter((e: any) => e.type === "reference");
+                return refs.length > 0 ? (
+                  <div className="mt-3">
+                    <h3 className="text-xs font-medium text-sol-text-dim uppercase tracking-wider mb-1">
+                      Context
+                    </h3>
+                    <div className="space-y-1">
+                      {refs.map((cp: any, i: number) => (
+                        <div key={i} className="flex items-center gap-2 text-sm">
+                          <span className="text-sol-text-dim">{cp.content}:</span>
+                          <span className="text-sol-text-muted font-mono text-xs">{cp.path_or_url}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null;
+              })()}
+            </>
+          }
+        >
+          {liveProgress && liveProgress.total > 0 && (
+            <PlanProgressBar progress={liveProgress} />
+          )}
+
+          {(plan as any).workflow_id && !(plan as any).workflow_run_id && (
+            <StartWorkflowButton workflowId={(plan as any).workflow_id} planId={plan._id} />
+          )}
+
+          {(plan as any).workflow_run_id && (
+            <div className="mb-5">
+              <WorkflowContextPanel workflowRunId={(plan as any).workflow_run_id} />
+            </div>
+          )}
+
+          {hasTasks && (
+            <div className="flex items-center gap-1 mb-5 border-b border-sol-border/15">
+              {([
+                { key: "overview", icon: CheckCircle2, label: "Overview" },
+                { key: "orchestration", icon: Zap, label: "Orchestration" },
+                { key: "board", icon: Layers, label: "Board" },
+                { key: "graph", icon: GitBranch, label: "Graph" },
+              ] as const).map(({ key, icon: Icon, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setActiveTab(key)}
+                  className={`flex items-center gap-1.5 px-3 py-2 text-xs font-medium transition-colors border-b-2 -mb-px ${
+                    activeTab === key
+                      ? "text-sol-text border-sol-cyan"
+                      : "text-sol-text-dim border-transparent hover:text-sol-text-muted"
+                  }`}
+                >
+                  <Icon className={`w-3.5 h-3.5 ${key === "orchestration" && hasActiveSessions ? "text-emerald-600 dark:text-emerald-400" : ""}`} />
+                  {label}
+                  {key === "orchestration" && hasActiveSessions && (
+                    <LivenessDot state="active" size="xs" />
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {activeTab === "graph" ? (
+            <PlanGraphView tasks={liveTasks || []} />
+          ) : activeTab === "board" ? (
+            <PlanBoardView tasks={liveTasks || []} planShortId={plan.short_id} />
+          ) : activeTab === "overview" ? (
+            <>
+              <OrchestrationHeader tasks={liveTasks || []} sessions={plan.sessions || []} />
+              <PlanTaskSection planShortId={plan.short_id} tasks={liveTasks || []} sessions={plan.sessions || []} />
+
+              <EntryTimeline entries={plan.comments} />
+
+              <PlanExternalEvents planId={plan._id} />
+            </>
+          ) : (
+            <OrchestrationTab tasks={liveTasks || []} sessions={plan.sessions || []} />
+          )}
+          </DocumentDetailLayout>
+        </div>
+      </DashboardLayout>
+    </AuthGuard>
+  );
+}

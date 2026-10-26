@@ -1,0 +1,87 @@
+import { describe, expect, test } from "bun:test";
+import { extractCommitBranchFromContent, extractCommitHashFromContent, extractFileChanges, hasFileChangeToolCall } from "./extractor";
+
+const patch = "*** Begin Patch\n*** Update File: example.ts\n@@\n-before\n+after\n*** End Patch";
+const changes = (name: string, input: unknown, isError = false) => extractFileChanges([{
+  _id: "message", timestamp: 1, tool_calls: [{ id: "tool", name, input: JSON.stringify(input) }],
+  tool_results: [{ tool_use_id: "tool", content: "done", is_error: isError }],
+}]);
+
+describe("shared file change formats", () => {
+  test.each(["Edit", "edit", "file_edit", "replace", "functions.edit", "search_replace"])("recognizes %s including deletion to empty text", (name) => {
+    expect(changes(name, { file_path: "a.ts", old_string: "old", new_string: "" })[0]).toMatchObject({ filePath: "a.ts", newContent: "" });
+    expect(hasFileChangeToolCall({ _id: "m", timestamp: 1, tool_calls: [{ id: "t", name, input: "{}" }] })).toBe(true);
+  });
+  test("Grok search_replace reads target_file when file_path is absent", () => {
+    expect(changes("search_replace", { target_file: "a.ts", old_string: "old", new_string: "new" })[0])
+      .toMatchObject({ filePath: "a.ts", oldContent: "old", newContent: "new" });
+  });
+  test("Muse edit_file names its strings find/replace and its path path", () => {
+    expect(changes("edit_file", { path: "a.ts", find: "old", replace: "new" })[0])
+      .toMatchObject({ filePath: "a.ts", changeType: "edit", oldContent: "old", newContent: "new" });
+  });
+  test("a client's own old_string/new_string wins over find/replace", () => {
+    expect(changes("edit_file", { path: "a.ts", old_string: "old", new_string: "new", find: "wrong", replace: "wrong" })[0])
+      .toMatchObject({ oldContent: "old", newContent: "new" });
+  });
+  test("Muse write_file lands as a whole-file write", () => {
+    expect(changes("write_file", { path: "a.ts", content: "body" })[0])
+      .toMatchObject({ filePath: "a.ts", changeType: "write", newContent: "body" });
+  });
+  test("Grok run_terminal_command git commits land on the same change list", () => {
+    expect(changes("run_terminal_command", { command: 'git commit -m "fix grok diffs"' })[0])
+      .toMatchObject({ changeType: "commit", commitMessage: "fix grok diffs" });
+  });
+  test("MultiEdit keeps every replacement with stable ids", () => {
+    expect(changes("MultiEdit", { file_path: "a.ts", edits: [
+      { old_string: "a", new_string: "b" }, { old_string: "c", new_string: "d" },
+    ] }).map((change) => change.id)).toEqual(["tool:0", "tool:1"]);
+  });
+  test("Codex code-mode patch calls are decoded without executing code", () => {
+    const code = `text(await tools.apply_patch(${JSON.stringify(patch)}));`;
+    expect(changes("exec", { input: code })[0]).toMatchObject({ filePath: "example.ts", oldContent: "before", newContent: "after" });
+    expect(changes("functions.exec", { input: code }, true)).toEqual([]);
+  });
+  test("literal templates work and interpolated templates are excluded", () => {
+    expect(changes("exec", { input: 'await tools.apply_patch(`' + patch + '`)' })).toHaveLength(1);
+    expect(changes("exec", { input: 'await tools.apply_patch(`' + patch.replace("before", "${before}") + '`)' })).toEqual([]);
+  });
+  test("patch calls inside comments or quoted examples are not edits", () => {
+    const code = `await tools.apply_patch(${JSON.stringify(patch)})`;
+    expect(changes("exec", { input: `text(${JSON.stringify(code)}); // ${code}\n/* ${code} */` })).toEqual([]);
+  });
+  test("Codex shell-command apply_patch heredocs keep the patch", () => {
+    expect(changes("shell_command", { command: `cd /repo && apply_patch <<'PATCH'\n${patch}\nPATCH` })[0]).toMatchObject({ filePath: "example.ts", newContent: "after" });
+    expect(changes("shell_command", { command: `cat <<'PATCH'\n${patch}\nPATCH` })).toEqual([]);
+    expect(changes("shell_command", { command: `cat <<'SCRIPT'\napply_patch <<'PATCH'\n${patch}\nPATCH\nSCRIPT` })).toEqual([]);
+  });
+  test("a result in another message is associated with its call", () => {
+    expect(extractFileChanges([
+      { _id: "call", timestamp: 1, tool_calls: [{ id: "t", name: "apply_patch", input: patch }] },
+      { _id: "result", timestamp: 2, tool_results: [{ tool_use_id: "t", content: "failed", is_error: true }] },
+    ])).toEqual([]);
+  });
+});
+
+describe("git commit output", () => {
+  test("names the branch and the hash", () => {
+    const out = "[feature/x 1a2b3c4] Fix the thing\n 1 file changed";
+    expect(extractCommitHashFromContent(out)).toBe("1a2b3c4");
+    expect(extractCommitBranchFromContent(out)).toBe("feature/x");
+    expect(extractCommitBranchFromContent("[main (root-commit) 1a2b3c4] init")).toBe("main");
+  });
+
+  test("a detached HEAD names no branch", () => {
+    expect(extractCommitBranchFromContent("[detached HEAD 1a2b3c4] wip")).toBeUndefined();
+  });
+
+  test("the commit change carries the branch", () => {
+    const [change] = extractFileChanges([{
+      _id: "m1",
+      timestamp: 1,
+      tool_calls: [{ id: "t1", name: "Bash", input: JSON.stringify({ command: 'git commit -m "Ship it"' }) }],
+      tool_results: [{ tool_use_id: "t1", content: "[main abc1234] Ship it" }],
+    }]);
+    expect(change).toMatchObject({ changeType: "commit", commitHash: "abc1234", commitBranch: "main" });
+  });
+});

@@ -1,0 +1,47 @@
+{
+  "manifest_version": 3,
+  "minimum_chrome_version": "116",
+  "name": "Codecast",
+  "short_name": "Codecast",
+  "version": "0.1.5",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtZOIMGI4YSJM4NP5uJHeZbUm1k1khxm7gDMW2h5O/pTRN7GSgZT9nqed8heIdk0jpgzEnrVvwIsmBgTSw6/iNhJZxiP3/VweQAvFbsGfgY4RuS4Vr9CWBg3y2fi3A/kNqpF9qGR8eUKz/OgVSYljvWAyGCERHNR8dhKldbE+aIoiaB73X2a2fnZWaX+ayyHplKVFsfM1ePDXM2Rvtnn0LLbjUcvFKRO8+kjH2UvBzUHwG4f8xKtabzHMHjiFJrcBZmnsZzkdfkCMx6ZpDLtSBkJV9vVrt37G9rENiXWcNNz1e2J5HrnCQ3QfqwMjOXRMn/9Orn4/hdzkzcvD2raPyQIDAQAB",
+  "description": "Lets Codecast agents open and drive their own tabs in this Chrome, in one tab group, over a local token authenticated bridge.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "debugger",
+    "tabs",
+    "tabGroups",
+    "storage",
+    "alarms",
+    "offscreen"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options.html",
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    },
+    "default_title": "Codecast: not connected",
+    "default_popup": "popup.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "options.html"
+      ],
+      "matches": [
+        "file:///*"
+      ]
+    }
+  ]
+}

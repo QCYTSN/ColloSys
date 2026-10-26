@@ -1,0 +1,623 @@
+/* The change card (the-line-end-to-end.md LE10), drawn natively by
+   ChangeCardView. Calm surfaces, one signature: the proof dots, one per case,
+   red before and green after. Themed only with --sol-* tokens. */
+
+/* Two strengths of each status tone. A fill (dots, wires, borders, tints)
+   keeps the accent's own color; ink (any status text) mixes it toward
+   --sol-text until it clears 4.5:1 on the page. Solarized green reads olive,
+   so both pull it toward cyan first. Light themes need a deeper mix than dark
+   (yellow and olive on cream sit near 3:1), hence --cc-ink per theme. */
+:root { --cc-ink: 58%; }
+.dark { --cc-ink: 84%; }
+/* After is the one tinted tile beside a neutral Before. On cream a faint
+   tint barely reads, so light themes fill deeper and draw a solid edge. */
+:root { --cc-after-fill: 17%; --cc-after-edge: var(--cc-green-fill); }
+.dark { --cc-after-fill: 10%; --cc-after-edge: color-mix(in srgb, var(--cc-green-fill) 45%, transparent); }
+:root {
+  --cc-green-fill: color-mix(in srgb, var(--sol-green) 68%, var(--sol-cyan));
+  --cc-green: color-mix(in oklab, var(--cc-green-fill) 82%, var(--sol-text));
+  --cc-green-ink: color-mix(in oklab, var(--cc-green-fill) var(--cc-ink), var(--sol-text));
+  --cc-yellow-ink: color-mix(in oklab, var(--sol-yellow) var(--cc-ink), var(--sol-text));
+  /* Red and blue are darker than green and yellow in light themes and dimmer
+     in dark ones, so one fixed mix clears 4.5:1 in both. */
+  --cc-red-ink: color-mix(in oklab, var(--sol-red) 74%, var(--sol-text));
+  --cc-blue-ink: color-mix(in oklab, var(--sol-blue) 74%, var(--sol-text));
+}
+.change-card, .change-card-answer {
+  --cc-gap: 1.25rem; color: var(--sol-text-muted); font-size: 13px;
+}
+.cc-text-green { color: var(--cc-green-ink); }
+.cc-text-yellow { color: var(--cc-yellow-ink); }
+.cc-text-red { color: var(--cc-red-ink); }
+.change-card.cc-inline { --cc-gap: 1rem; }
+
+.cc-tone-green { --cc-tone: var(--cc-green); --cc-tone-ink: var(--cc-green-ink); }
+.cc-tone-yellow { --cc-tone: var(--sol-yellow); --cc-tone-ink: var(--cc-yellow-ink); }
+.cc-tone-red { --cc-tone: var(--sol-red); --cc-tone-ink: var(--cc-red-ink); }
+.cc-tone-blue { --cc-tone: var(--sol-blue); --cc-tone-ink: var(--cc-blue-ink); }
+/* Settled with no verdict (withdrawn, dismissed): muted, never a status color. */
+.cc-tone-dim { --cc-tone: var(--sol-text-dim); --cc-tone-ink: var(--sol-text-muted); }
+
+.cc-full, .cc-inline {
+  border: 1px solid color-mix(in srgb, var(--sol-border) 80%, transparent);
+  border-radius: 12px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--sol-card) 70%, transparent), color-mix(in srgb, var(--sol-card) 30%, transparent));
+  padding: 1.1rem 1.25rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: var(--cc-gap);
+}
+/* In the transcript the card already sits in the message's own box, so it
+   draws no second one: a hairline parts it from the headline, as on the
+   decision page, and the width goes to the content. */
+.cc-inline { border: 0; border-radius: 0; background: none; padding: 1rem 0 0; border-top: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); }
+/* Under a verdict bar, whose own hairline already parts them. */
+.cc-verdict-bar ~ * .cc-inline { border-top: 0; padding-top: 0; }
+/* The card sizes itself to its own width, not the window's: it renders full
+   width on a phone and in split panes and side panels on a wide screen alike. */
+.cc-full, .cc-inline, .change-card-answer:not(.is-line) { container: cc / inline-size; }
+@media (max-width: 480px) { .cc-full { padding: 0.9rem 0.8rem 1rem; } }
+/* A card that draws its own head parts it from the evidence. */
+.change-card > header { padding-bottom: 0.15rem; }
+
+.cc-label-row { display: flex; align-items: baseline; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.6rem; min-width: 0; }
+/* Every section and fact names itself the same way: sentence case, dim, no tracking. */
+.cc-label { font-size: 12px; color: var(--sol-text-dim); font-weight: 500; }
+
+/* The head (ChangeCardHeadline), one order on every surface: the change in
+   bold, the asker's question, the muted cause with its task, then the goal
+   and the surface's facts. Only the change's size follows the surface. */
+.cc-head { display: flex; flex-direction: column; gap: 0.4rem; min-width: 0; }
+.cc-head-title { gap: 0.5rem; }
+.cc-head-title > .cc-cause { margin-top: 0.25rem; }
+.cc-context { margin: 2px 0 6px; font-size: 14px; line-height: 1.5; color: var(--sol-text-muted); max-width: 62ch; }
+.cc-head-title .cc-context { font-size: 15px; }
+.cc-asked { margin: 0; font-size: 13px; line-height: 1.4; color: var(--sol-text-dim); }
+.cc-head-row { gap: 0.25rem; }
+.cc-head-row .cc-asked { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-head > .cc-line-change { flex: none; font-size: 13px; -webkit-line-clamp: 3; text-wrap: wrap; }
+.cc-head-row a.cc-line-change { transition: color 140ms; }
+.cc-head-row a.cc-line-change:hover { color: var(--sol-blue); }
+.cc-head-row a.cc-line-change:focus-visible { outline: 2px solid color-mix(in srgb, var(--sol-blue) 70%, transparent); outline-offset: 2px; border-radius: 3px; }
+.cc-head.is-folded .cc-line-change { -webkit-line-clamp: 1; }
+/* cause: quiet lines under the change */
+.cc-cause { display: flex; flex-direction: column; gap: 0.3rem; font-size: 12px; line-height: 1.4; color: var(--sol-text-dim); min-width: 0; }
+.cc-head-row .cc-cause { gap: 0.15rem; font-size: 11.5px; }
+/* The task id is plain dim text that leads the cause's first line, a link
+   without a box; the title wraps beside it. */
+.cc-cause-head { margin: 0; }
+.cc-cause-ref { margin-right: 0.6rem; font-family: var(--font-mono, ui-monospace), monospace; font-size: 11px; color: var(--sol-text-dim); transition: color 120ms; }
+.cc-cause-ref:hover { color: var(--sol-violet); text-decoration: underline; text-underline-offset: 2px; }
+.cc-cause-title { color: var(--sol-text-muted); }
+/* The trace link trails the title (line-map.md LX4): quiet until hovered. */
+.cc-cause-trace { margin: 0 0 0 0.6rem; white-space: nowrap; }
+.cc-head-row .cc-cause-head { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+/* A row's one cause line: the title, then the row's own facts trailing it. */
+.cc-cause-fact.cc-nowrap { white-space: nowrap; }
+
+/* A wrapping row of facts whose separators never open a line (SepRow): each
+   item leads with its own, and the row is shifted left by one separator and
+   clipped, so whichever item starts a line hides its dot. */
+.cc-seprow { overflow-x: clip; }
+.cc-seprow-inner { display: flex; flex-wrap: wrap; align-items: baseline; row-gap: 0.3rem; margin-left: calc(-1ch - 0.5rem); min-width: 0; }
+.cc-seprow-item { display: inline-flex; align-items: baseline; min-width: 0; }
+.cc-seprow-item.is-end { margin-left: auto; }
+.cc-seprow-item.is-row { flex-basis: 100%; }
+.cc-seprow-item:has(> .cc-seprow-body:empty) { display: none; }
+.cc-seprow-body { display: inline-flex; align-items: baseline; min-width: 0; }
+.cc-seprow .cc-sep { display: inline-block; width: 1ch; margin: 0 0.25rem; text-align: center; flex-shrink: 0; }
+.cc-cause-facts .cc-seprow-body { white-space: normal; }
+.cc-cause-facts .cc-seprow-body.cc-nowrap { white-space: nowrap; }
+.cc-sep-inline { color: var(--sol-text-dim); opacity: 0.6; }
+
+/* the decision: what changes leads, what was wrong supports it */
+.cc-sentences { display: flex; flex-direction: column; gap: 0.6rem; }
+.cc-sentences > .cc-wrong-label, .cc-sentences > .cc-change-label { margin-bottom: -0.35rem; }
+/* The change sentence is one style everywhere it reads (the page's title,
+   the card's head, the transcript, the queue's row): mono, one weight, one
+   tracking. Only its size follows the density. */
+.cc-change, .cc-line-change { font-family: var(--font-mono, ui-monospace), monospace; font-weight: 600; letter-spacing: -0.01em; color: var(--sol-text); text-wrap: pretty; }
+.cc-change { font-size: 18px; line-height: 1.4; margin: 0; }
+.cc-inline .cc-change { font-size: 16px; }
+.cc-change-title { font-size: clamp(17px, 15px + 0.55vw, 22px); line-height: 1.35; }
+.cc-wrong { color: var(--sol-text-muted); font-size: 13.5px; line-height: 1.55; text-wrap: pretty; }
+/* Earlier shipped fixes (LW5): a rule down each, red where the problem came back, green where the watch ended quiet. */
+.cc-earlier { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.75rem; }
+.cc-earlier > li { display: flex; flex-direction: column; gap: 0.15rem; padding-left: 0.75rem; border-left: 2px solid var(--sol-border); }
+.cc-earlier > li.is-back { border-left-color: color-mix(in srgb, var(--sol-red) 70%, transparent); }
+.cc-earlier > li.is-held { border-left-color: var(--cc-green-fill); }
+.cc-goal { cursor: default; }
+
+/* the proof strip */
+/* The proof's sentence sits beside its dots at the queue row's size: the
+   dots are the signature, the words say what they count. */
+.cc-label-row:has(> .cc-proof-dots) { align-items: center; }
+.cc-proof-label { font-size: 12.5px; font-weight: 500; }
+.cc-proof { display: flex; flex-direction: column; gap: 0.15rem; }
+/* A two column table: the case's dot pair and its name; a row's own detail
+   stacks under its name. */
+.cc-proof-row {
+  display: grid;
+  grid-template-columns: 2.25rem minmax(0, 1fr);
+  align-items: baseline;
+  column-gap: 0.65rem;
+}
+/* A row's group (a test file) as a short dim prefix, when the rows differ. */
+.cc-proof-prefix { font-family: var(--font-mono, ui-monospace), monospace; font-size: 11px; color: var(--sol-text-dim); }
+.cc-proof-prefix { margin-right: 0.45rem; }
+.cc-proof-row {
+  row-gap: 0.1rem;
+  padding: 0.2rem 0.5rem;
+  margin: 0 -0.5rem;
+  border-radius: 6px;
+  transition: background-color 150ms;
+}
+.cc-proof-row:hover { background: color-mix(in srgb, var(--sol-bg-alt) 70%, transparent); }
+/* A row's pair is the proof dots' language at row scale: the before dot,
+   a dim rule, the after dot. The one motion moment, the first time a card
+   is seen (useFirstSight), is each after dot settling into its color. */
+.cc-proof-pair { display: inline-flex; align-items: center; align-self: center; }
+.cc-proof-row.is-red .cc-proof-pair, .cc-proof-row.is-broke .cc-proof-pair { align-self: start; margin-top: 0.3em; }
+.cc-animate .cc-proof-dot-after { animation: cc-settle 520ms cubic-bezier(0.3, 0.7, 0.2, 1) both; animation-delay: calc(120ms + var(--i, 0) * 70ms); }
+@keyframes cc-settle { from { opacity: 0; transform: scale(0.3); } to { opacity: 1; transform: none; } }
+.cc-proof-name { color: var(--sol-text); font-size: 12.5px; line-height: 1.4; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+/* before → after on one line: the before gives way first, both clip with a tooltip. */
+.cc-proof-detail { grid-column: 2; display: flex; gap: 0.4rem; align-items: baseline; font-size: 12px; line-height: 1.4; min-width: 0; }
+/* A fixed case is its name, in the muted ink of settled news; what still
+   fails reads in full text color, with its red detail under it. */
+.cc-proof-row.is-fixed .cc-proof-name { color: var(--sol-text-muted); }
+.cc-proof-fixed-name { display: flex; flex-wrap: wrap; align-items: baseline; min-width: 0; }
+.cc-proof-fixed-vals { margin-left: 0.5rem; color: var(--sol-text-dim); font-size: 12px; }
+/* A runner's raw log, folded under its counts. */
+.cc-proof-log { grid-column: 2; margin-top: 4px; font-size: 11.5px; color: var(--sol-text-dim); }
+.cc-proof-log > summary { cursor: pointer; width: fit-content; }
+.cc-proof-log > summary:hover { color: var(--sol-text); }
+.cc-proof-log-body { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.cc-proof-log-head { font-size: 11px; color: var(--sol-text-muted); }
+.cc-proof-log pre { margin: 0; padding: 8px 10px; border-radius: 6px; max-height: 14rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; background: color-mix(in srgb, var(--sol-text) 4%, transparent); color: var(--sol-text-muted); }
+/* The decision page: the change under the question, a step down from it. */
+.cc-change-sub { margin-top: 6px; font-size: 14px; line-height: 1.5; color: var(--sol-text-muted); }
+/* Both sides take only the width their words need, and give way together. */
+.cc-proof-before, .cc-proof-after { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cc-proof-before { color: var(--cc-red-ink); }
+.cc-arrow { color: var(--sol-text-dim); flex-shrink: 0; }
+/* A narrow card has no room for both on one line, and clipping the before
+   loses the red half of the row; each takes its own line instead. */
+@container cc (max-width: 480px) {
+  .cc-proof-detail { flex-direction: column; gap: 0; }
+  .cc-proof-before, .cc-proof-after { white-space: normal; overflow-wrap: anywhere; min-width: 0; }
+  .cc-proof-detail > .cc-arrow { display: none; }
+  .cc-proof-after::before { content: "\2192\00a0"; color: var(--sol-text-dim); }
+  /* A broke row and a still red row have no before to point from. */
+  .is-broke .cc-proof-after::before, .cc-proof-still::before { content: none; }
+}
+
+/* examples: the input is a quiet quote that opens in full; Before and After
+   are two tiles of one height and equal weight; the note speaks for the pair. */
+.cc-example-input {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  width: 100%; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere;
+  font-size: 11.5px; line-height: 1.45; color: var(--sol-text-dim);
+  cursor: pointer; transition: color 140ms;
+}
+.cc-example-for { color: var(--sol-text-dim); opacity: 0.75; }
+.cc-example-input:hover { color: var(--sol-text-muted); }
+.cc-example-input.is-open { -webkit-line-clamp: unset; display: block; color: var(--sol-text-muted); cursor: default; }
+.cc-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem; align-items: stretch; }
+@container cc (max-width: 640px) { .cc-pair { grid-template-columns: 1fr; } }
+.cc-side { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.55rem 0.7rem; border-radius: 8px; font-size: 13px; line-height: 1.45; border: 1px solid; color: var(--sol-text); }
+/* Before is the old behavior, not an error: a neutral tile with a tinted
+   label. Only After is tinted, so After reads as the one that wins. */
+.cc-before { border-color: color-mix(in srgb, var(--sol-border) 85%, transparent); background: color-mix(in srgb, var(--sol-bg-alt) 55%, transparent); color: var(--sol-text-muted); }
+.cc-after { border-color: var(--cc-after-edge); background: color-mix(in srgb, var(--cc-green-fill) var(--cc-after-fill), transparent); }
+.cc-side-label { font-size: 11px; font-weight: 600; }
+.cc-before .cc-side-label { color: var(--cc-red-ink); }
+.cc-after .cc-side-label { color: var(--cc-green-ink); }
+.cc-more { display: inline-flex; align-items: center; gap: 0.2rem; margin-top: 0.75rem; font-size: 12px; color: var(--sol-text-dim); border-radius: 4px; padding: 0.1rem 0.3rem; margin-left: -0.3rem; transition: color 140ms, background-color 140ms; }
+.cc-more:hover { color: var(--sol-text); background: color-mix(in srgb, var(--sol-bg-alt) 70%, transparent); }
+.cc-example-note { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; width: 100%; text-align: left; margin-top: 0.4rem; font-size: 12.5px; line-height: 1.5; color: var(--sol-text-muted); text-wrap: pretty; cursor: pointer; }
+.cc-example-note:hover { color: var(--sol-text); }
+.cc-example-note.is-open { display: block; -webkit-line-clamp: unset; cursor: default; }
+/* A side held to four lines until the pair is opened. */
+.cc-side-text.is-clamped { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+/* What one side says that the other does not. */
+.cc-changed { color: inherit; border-radius: 3px; padding: 0 0.1em; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.cc-changed-before { background: color-mix(in srgb, var(--sol-red) 14%, transparent); }
+.cc-changed-after { background: color-mix(in srgb, var(--sol-green) 18%, transparent); }
+
+/* facts, with the checks folded in as a count that opens */
+.cc-facts-block { padding-top: 0.9rem; border-top: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); }
+.cc-checks { display: flex; flex-direction: column; gap: 0.35rem; flex-basis: 100%; grid-column: 1 / -1; padding: 0.55rem 0.7rem; border-radius: 8px; background: color-mix(in srgb, var(--sol-bg-alt) 45%, transparent); animation: cc-rise 160ms ease-out both; }
+.cc-checks-toggle { display: inline-flex; align-items: baseline; text-align: left; gap: 0.3rem; border-radius: 6px; padding: 0.05rem 0.4rem 0.05rem 0.2rem; margin-left: -0.2rem; color: var(--sol-text); transition: background-color 140ms; }
+.cc-checks-toggle:hover { background: color-mix(in srgb, var(--sol-bg-alt) 70%, transparent); }
+.cc-caret { flex-shrink: 0; align-self: flex-start; margin-top: 0.22rem; color: var(--sol-text-dim); transition: transform 160ms ease-out, color 140ms; }
+.cc-checks-toggle:hover .cc-caret { color: var(--sol-text); }
+.cc-checks-toggle.is-open .cc-caret { transform: rotate(90deg); }
+.cc-check { display: flex; align-items: baseline; gap: 0.5rem; font-size: 12.5px; line-height: 1.45; }
+.cc-check-mark { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 999px; border: 1px solid color-mix(in srgb, var(--cc-tone) 45%, transparent); color: var(--cc-tone-ink); flex-shrink: 0; transform: translateY(3px); }
+/* The facts and the open check list share one container (the dl itself
+   lays out nothing), so the list lands as a full width row right under the
+   facts. One rule on every card: Checks, Diff and Cost take what their
+   words need, Risk takes the rest, and Cost is always last, at the right
+   edge. Risk wraps only when it is truly out of room, and the tracks span
+   the card, so the check list under them runs the card's full width. */
+.cc-facts-block { display: grid; grid-template-columns: max-content minmax(0, 1fr) max-content; gap: 0.75rem 1.75rem; }
+.cc-facts-block.has-checks { grid-template-columns: max-content max-content minmax(0, 1fr) max-content; }
+.cc-facts { display: contents; }
+/* Under a verdict bar the checks are a list, not a count: a row of their own under the facts. */
+.cc-fact-checks { grid-column: 1 / -1; order: 1; }
+/* A row across the grid adds nothing to the tracks it spans: its width is
+   the grid's, so a long check line never widens Diff or Cost. */
+.cc-facts-block > .cc-checks, .cc-fact-checks { width: 0; min-width: 100%; }
+.cc-fact-checks .cc-checks { margin-top: 0.2rem; }
+.cc-risk-reason.is-only { padding-left: 0; color: var(--sol-text-muted); text-wrap: pretty; }
+/* A narrow card keeps every fact in the grid, two by two (Checks, Diff,
+   Risk, Cost), with the open check list across the width under them; each
+   check's detail takes its own line under the name, at the name's indent. */
+@container cc (max-width: 640px) {
+  .cc-facts-block, .cc-facts-block.has-checks { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0.75rem 1.25rem; grid-auto-flow: row dense; }
+  /* Three facts (no Checks count) pair Diff with Cost and give the risk's reason the width. */
+  .cc-facts-block:not(.has-checks) .cc-fact-risk { grid-column: 1 / -1; }
+  .cc-checks, .cc-fact-checks { order: 1; grid-column: 1 / -1; }
+  .cc-check { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 0.5rem; row-gap: 0.05rem; }
+  .cc-check > :nth-child(3) { grid-column: 2; }
+}
+/* One label style (.cc-label), one value style, one dim sub line. */
+.cc-fact dt { margin-bottom: 0.15rem; }
+.cc-fact dd { color: var(--sol-text); font-size: 13px; line-height: 1.45; }
+.cc-risk { display: flex; align-items: baseline; gap: 0.45rem; }
+.cc-risk-reason { display: block; padding-left: calc(7px + 0.45rem); text-wrap: pretty; }
+.cc-risk-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; background: var(--cc-tone); transform: translateY(-1px); }
+.cc-fact-sub { color: var(--sol-text-dim); font-size: 12px; line-height: 1.45; }
+.cc-fact-sub .cc-seprow-inner { row-gap: 0; }
+.cc-nowrap { white-space: nowrap; }
+/* Diff counts stay neutral: on the card red and green only mean fail and pass. */
+.cc-diff { color: var(--sol-text); }
+.cc-diff-glyph { color: var(--sol-text-dim); margin-right: 0.05em; }
+.cc-pr { display: inline-flex; align-items: center; gap: 0.25rem; color: inherit; }
+.cc-pr:hover { color: var(--sol-text); text-decoration: underline; text-underline-offset: 2px; }
+
+/* The recommendation at a card's foot is the caption the answer row wears
+   (.cc-why); the card's gap spaces it. */
+.change-card > .cc-why { margin: 0; }
+/* A settled card's last word: what was decided, by whom, when. */
+.cc-outcome { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.35rem 0.6rem; font-size: 13px; line-height: 1.5; padding-top: 0.9rem; border-top: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); }
+.cc-outcome-verdict { color: var(--cc-tone-ink); font-weight: 600; }
+
+/* the queue's line */
+/* One row when it fits; short of room the facts wrap under the change,
+   never squeezing the change to a few letters. */
+.cc-line { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.9rem; min-width: 0; }
+/* The change is the fact the proof means something about, so it gets two
+   lines before it clips. */
+.cc-line-change { flex: 1 1 20rem; min-width: 0; color: var(--sol-text); font-family: var(--font-mono, ui-monospace), monospace; font-size: 12.5px; line-height: 1.45; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+/* The queue card's row: one grid on every card. The link and the line lay
+   out nothing themselves (display: contents), so the change spans the width,
+   the facts row takes the left column and the chips sit right of it on the
+   same line, whichever facts a card has. The row names its width, and a
+   short one drops the quiet facts. */
+.cc-card-row { container: cc-line / inline-size; display: flex; flex-wrap: wrap; align-items: center; column-gap: 0.75rem; row-gap: 0.45rem; min-width: 0; }
+.cc-card-row > .cc-line { display: contents; }
+.cc-card-row .cc-line > :not(.cc-line-row) { flex: 1 1 100%; }
+/* The proof line takes the width and the chips a row of their own under it,
+   from the left, on every card: the eye finds the answers in one place
+   whatever a card's facts run to. */
+.cc-card-row .cc-line-row { flex: 1 1 100%; }
+.cc-card-row .cc-verdicts.is-line { margin-left: 0; }
+/* The course the agent took trails the chips, so the chips start the row. */
+.cc-card-row .cc-verdicts.is-line > .cc-course-short { order: 1; margin: 0 0 0 0.4rem; }
+.cc-card-row .change-card-answer.is-line > :not(.cc-verdicts) { flex: 1 1 100%; }
+/* A phone's row: the chips take a row of their own, full width and a
+   thumb tall, the way the decision page's dock draws them. */
+@container cc-line (max-width: 30rem) {
+  .cc-card-row .cc-line-row, .cc-card-row .cc-verdicts.is-line { flex: 1 1 100%; }
+  .cc-card-row .cc-verdicts.is-line { margin-left: 0; gap: 0.4rem; }
+  .cc-card-row .cc-verdicts.is-line { align-items: stretch; }
+  .cc-card-row .cc-verdicts.is-line .cc-verdict { flex: 1 1 0; min-width: 0; min-height: 40px; font-size: 13px; border-radius: 8px; }
+  /* The fail tag says the same words as everywhere, under the word when the third of a phone is too narrow for both. */
+  .cc-card-row .cc-verdicts.is-line .cc-verdict:has(.cc-verdict-fails) { flex-wrap: wrap; white-space: normal; row-gap: 0.2rem; padding-block: 0.3rem; }
+}
+@container cc-line (max-width: 44rem) { .cc-line-row .cc-seprow-item:has(> .cc-line-quiet) { display: none; } }
+.cc-line-row { font-size: 11.5px; line-height: 1.5; min-width: 0; flex: 1 1 100%; }
+.cc-line-row .cc-seprow-inner { align-items: center; }
+.cc-line-row .cc-seprow-item, .cc-line-row .cc-seprow-body { align-items: center; }
+.cc-line-proof { display: inline-flex; align-items: center; gap: 0.6rem; }
+.cc-line-risk { display: inline-flex; align-items: center; gap: 0.35rem; }
+.cc-line-risk > .cc-risk-dot { transform: none; }
+.cc-sep { color: var(--sol-text-dim); opacity: 0.6; }
+.cc-line-verdict { margin-left: auto; padding: 0 0.45rem; border-radius: 999px; color: var(--cc-tone-ink); border: 1px solid color-mix(in srgb, var(--cc-tone) 40%, transparent); white-space: nowrap; }
+/* The line's own station adds one before and after between the head and
+   the proof row. */
+.cc-line-story { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+.cc-line-ex { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 0.15rem 0.55rem; align-items: baseline; padding: 0.4rem 0.55rem; border-radius: 6px; font-size: 12px; line-height: 1.4; background: color-mix(in srgb, var(--sol-bg-alt) 55%, transparent); border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent); }
+.cc-line-ex-label { font-size: 10.5px; font-weight: 600; }
+.cc-before-ink { color: var(--cc-red-ink); }
+.cc-after-ink { color: var(--cc-green-ink); }
+.cc-line-ex-text { min-width: 0; color: var(--sol-text); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.cc-line-ex-before { color: var(--sol-text-muted); }
+
+/* Ship / Revise / Drop. Each wears a faint hint of its tone at rest, so the
+   three never read as one grey row; the recommended one and an open Revise
+   are filled. The Revise note's border is Revise's yellow, tying the two. */
+.cc-verdicts { display: flex; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.cc-verdict {
+  display: inline-flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.9rem; border-radius: 8px; font-size: 13.5px; color: var(--sol-text);
+  border: 1px solid color-mix(in srgb, var(--cc-tone) 32%, var(--sol-border));
+  background: color-mix(in srgb, var(--cc-tone) 4%, color-mix(in srgb, var(--sol-card) 60%, transparent));
+  transition: background-color 140ms, border-color 140ms, transform 140ms;
+}
+.cc-verdicts.is-compact .cc-verdict { padding: 0.3rem 0.65rem; font-size: 12px; border-radius: 6px; }
+/* The queue's row: three small chips beside the proof line. */
+.change-card-answer.is-line { display: contents; }
+.cc-verdicts.is-line { flex-wrap: nowrap; gap: 0.3rem; flex-shrink: 0; }
+/* The course the agent took, said beside the chips on the queue's row. */
+.cc-course-short { font-size: 11px; color: var(--sol-text-dim); white-space: nowrap; margin-right: 0.2rem; }
+/* A phone's row says the course on a line of its own above the chips, so the
+   three keep the same equal columns as every other card. */
+@container cc-line (max-width: 30rem) {
+  .cc-card-row .cc-verdicts.is-line:has(> .cc-course-short) { flex-wrap: wrap; row-gap: 0.3rem; }
+  .cc-card-row .cc-verdicts.is-line > .cc-course-short { flex: 0 0 100%; margin: 0; order: 0; }
+}
+.cc-verdicts.is-line .cc-verdict { padding: 0.1rem 0.45rem; gap: 0.35rem; font-size: 11.5px; border-radius: 5px; }
+.change-card-answer.is-line .cc-note { flex-basis: 100%; margin-top: 0.25rem; }
+/* A selected answer on the line, waiting for return: filled in its tone, and
+   one line under the row saying what return will send. */
+.cc-verdict.is-armed { border-color: var(--cc-tone); background: color-mix(in srgb, var(--cc-tone) 22%, transparent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--cc-tone) 45%, transparent); font-weight: 600; }
+.cc-armed { flex-basis: 100%; display: flex; align-items: center; gap: 0.35rem; font-size: 11.5px; color: var(--cc-tone-ink); }
+.cc-armed > span + kbd { margin-left: 0.5rem; }
+.cc-verdict:hover { background: color-mix(in srgb, var(--cc-tone) 14%, transparent); border-color: color-mix(in srgb, var(--cc-tone) 60%, transparent); }
+.cc-verdict:active { transform: scale(0.98); }
+/* Every verdict stays one line and one height; what sets one apart is drawn
+   on the button (a ring, a check), and said in words under the row. */
+.cc-verdict { white-space: nowrap; justify-content: center; }
+/* Recommended: a thin solid ring in its tone and a light fill. */
+.cc-verdict.is-recommended { border-color: var(--cc-tone); box-shadow: 0 0 0 1px var(--cc-tone); background: color-mix(in srgb, var(--cc-tone) 12%, transparent); font-weight: 500; }
+.cc-verdict.is-open { border-color: var(--cc-tone); background: color-mix(in srgb, var(--cc-tone) 16%, transparent); font-weight: 500; }
+.cc-verdict-check { color: var(--cc-tone-ink); flex-shrink: 0; }
+/* Ship while a failing case is still red: drawn back, so the eye goes to the suggested answer. */
+.cc-verdict.is-weak { border-style: dashed; color: var(--sol-text-muted); background: transparent; }
+/* Every surface draws a weak Ship the same: dashed, with the failing count
+   in a small red tag inside the button. */
+.cc-verdict-fails { font-size: 10px; line-height: 1; padding: 0.15rem 0.3rem; border-radius: 4px; white-space: nowrap; color: var(--cc-red-ink); background: color-mix(in srgb, var(--sol-red) 14%, transparent); font-variant-numeric: tabular-nums; }
+/* The answer on record while a new pick may replace it: quiet, not pressable. */
+.cc-verdict.is-current { cursor: default; background: transparent; }
+.cc-course-verdict { color: var(--sol-text); font-weight: 500; }
+.cc-why-lead { color: var(--cc-tone-ink); font-weight: 500; }
+.cc-verdict.is-current:active { transform: none; }
+.cc-course { margin-bottom: 0.5rem; font-size: 12.5px; line-height: 1.5; color: var(--sol-text-muted); }
+/* Closing without an answer sits at the row's far end, apart from the three answers. */
+.cc-dismiss { margin-left: auto; display: inline-flex; align-items: center; gap: 0.35rem; font-size: 11.5px; color: var(--sol-text-dim); padding: 0.25rem; border-radius: 6px; transition: color 140ms; }
+.cc-dismiss:hover { color: var(--cc-red-ink); }
+/* Above the answers, the recommendation reads as the proof line's second line. */
+.cc-verdict-bar .change-card-answer > .cc-why:first-child { margin-top: -0.25rem; }
+.cc-why { margin: 0 0 0.6rem; font-size: 12.5px; line-height: 1.5; color: var(--sol-text-dim); text-wrap: pretty; }
+.cc-note { margin-top: 0.6rem; animation: cc-rise 180ms ease-out both; }
+.cc-note-field {
+  width: 100%; border-radius: 6px; padding: 0.4rem 0.55rem; font-size: 14px; color: var(--sol-text);
+  background: color-mix(in srgb, var(--cc-tone) 5%, var(--sol-card)); border: 1px solid var(--cc-tone);
+  transition: border-color 140ms, box-shadow 140ms;
+}
+.cc-note-field::placeholder { color: var(--sol-text-dim); }
+.cc-note-field:focus { outline: none; border-color: var(--cc-tone); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc-tone) 16%, transparent); }
+.cc-note-field.is-error { border-color: var(--sol-red); box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-red) 14%, transparent); }
+
+/* A touch screen has no keys to hint at. */
+@media (hover: none) and (pointer: coarse) {
+  .change-card-answer kbd { display: none; }
+}
+/* A narrow answer: the three verdicts share one row, and closing without an
+   answer takes a line of its own under them, at the right, still in words,
+   so a bare mark never sits beside Drop. */
+@container cc (max-width: 480px) {
+  .cc-verdicts { flex-wrap: wrap; gap: 0.4rem; }
+  .cc-verdict { flex: 1 1 0; min-width: 0; padding-inline: 0.5rem; }
+  .cc-dismiss { flex: 1 0 100%; justify-content: flex-end; margin-left: 0; padding: 0.15rem 0; }
+  .cc-dismiss kbd { display: none; }
+  /* A narrow row is a phone's: its width goes to the word and the fail badge, not keycaps. */
+  .cc-verdicts { align-items: stretch; }
+  .cc-verdict kbd { display: none; }
+  .cc-verdict:has(.cc-verdict-fails) { flex-wrap: wrap; white-space: normal; row-gap: 0.2rem; }
+  .cc-verdict { gap: 0.3rem; padding-inline: 0.4rem; }
+}
+
+@keyframes cc-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes cc-fill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+/* The decision page's verdict bar: the proof line beside the answer, pinned
+   to the top of the pane so the call is never a scroll away. */
+.cc-verdict-bar {
+  position: sticky; top: 0; z-index: 10;
+  margin: 1.5rem 0 0; padding: 0.75rem 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  background: color-mix(in srgb, var(--sol-bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  display: flex; flex-direction: column; gap: 0.6rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cc-animate .cc-proof-dot-after, .cc-note, .cc-checks, .cc-dock { animation: none; }
+  .change-card *, .change-card-answer * { transition: none; }
+}
+
+/* The surface the answer keys act on right now (a queue card under the
+   cursor, a transcript card holding focus) wears a ring, so 1 2 3 never
+   leave a doubt about which card they answer. */
+[data-keys-live] { box-shadow: 0 0 0 1px color-mix(in srgb, var(--sol-blue) 65%, transparent), 0 0 0 4px color-mix(in srgb, var(--sol-blue) 14%, transparent); }
+
+/* Every control on the card can be reached by tab, and shows it. */
+.change-card :is(a, button):focus-visible,
+.change-card-answer button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--sol-blue) 70%, transparent);
+  outline-offset: 2px;
+}
+.cc-example-input:focus-visible { border-radius: 3px; color: var(--sol-text-muted); }
+
+@media (max-width: 640px) {
+  /* A phone has no room to pin the bar; it leads the page and scrolls with
+     it, and the dock takes over once it is gone. */
+  .cc-verdict-bar { position: static; backdrop-filter: none; }
+}
+
+/* The phone's dock: three equal answers pinned to the screen's foot, shown
+   once the inline controls scroll away. Touch has no keys, so no hints. */
+.cc-dock {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 50;
+  display: flex; gap: 0.4rem;
+  padding: 0.55rem 0.75rem calc(0.55rem + env(safe-area-inset-bottom));
+  border-top: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  background: color-mix(in srgb, var(--sol-bg) 92%, transparent);
+  backdrop-filter: blur(8px);
+  animation: cc-dock-in 180ms ease-out both;
+}
+.cc-dock .cc-verdict { flex: 1 1 0; min-width: 0; padding: 0.45rem 0.5rem; }
+@media (min-width: 641px) { .cc-dock { display: none; } }
+@keyframes cc-dock-in { from { transform: translateY(100%); } to { transform: none; } }
+@container cc (max-width: 640px) { .cc-full .cc-change { font-size: 16px; } }
+
+/* The proof as dots: one per case, before then after, at the In build
+   stepper's current-step size, so each reads at 1x. Red is a failing case,
+   green a passing one. */
+.cc-proof-dots { display: inline-flex; align-items: center; gap: 5px; flex-shrink: 0; }
+.cc-proof-dots-row { display: inline-flex; align-items: center; gap: 3px; }
+.cc-proof-dot { width: 8px; height: 8px; border-radius: 9999px; background: var(--cc-red-ink, var(--sol-red)); }
+.cc-proof-dot[data-ok="true"] { background: var(--cc-green-ink, var(--sol-green)); }
+/* Before and after are parted by a dim rule with room on both sides, and a
+   case the change broke sits in a group of its own after the proven ones. */
+.cc-proof-dots-rule { display: inline-block; width: 10px; height: 1px; margin: 0 4px; flex-shrink: 0; background: var(--sol-text-dim); opacity: 0.7; }
+.cc-proof-dots > .cc-proof-dots-rule { width: 12px; margin: 0 3px; }
+.cc-proof-dots-gap { width: 4px; flex-shrink: 0; }
+
+/* A goal, in the shape of the line's project pills (LineProjects). */
+.cc-goal-chip {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 10.5px;
+  line-height: 15px;
+  padding: 0 7px;
+  border-radius: 9999px;
+  color: var(--sol-text-muted);
+  border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent);
+  background: color-mix(in srgb, var(--sol-card) 70%, transparent);
+}
+
+/* A queue card the cursor is not on: its change on one line, then the
+   proof. Opening it is a click or the cursor. */
+.cc-line-folded { gap: 0.2rem; }
+.cc-example > .cc-pair:first-child { margin-top: 0; }
+.cc-line-folded [data-cc-line-proof] { white-space: nowrap; }
+/* A card too narrow for keycaps beside three words spends the width on the
+   words; the keys still answer, and the footer names them. */
+@container cc-line (max-width: 18rem) {
+  .cc-card-row .cc-verdicts.is-line .cc-verdict kbd { display: none; }
+}
+
+/* Answers that say what they do (ChangeCardAnswer describe): three equal
+   columns, the word on top and its effect under it. */
+.cc-verdicts.is-described { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+.cc-verdicts.is-described .cc-verdict { white-space: normal; display: grid; grid-template-columns: 1fr auto; align-content: start; justify-content: stretch; text-align: left; padding: 0.6rem 0.8rem; row-gap: 0.35rem; column-gap: 0.5rem; }
+.cc-verdicts.is-described .cc-verdict > kbd { grid-column: 2; grid-row: 1; align-self: start; }
+.cc-verdicts.is-described .cc-verdict-stack { grid-column: 1; grid-row: 1; }
+.cc-verdicts.is-described .cc-verdict-fails { grid-column: 1; justify-self: start; }
+.cc-verdicts.is-described .cc-dismiss { grid-column: 1 / -1; justify-self: end; }
+.cc-verdict-stack { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0; }
+.cc-verdict-word { display: inline-flex; align-items: baseline; gap: 0.45rem; font-weight: 600; color: var(--cc-tone-ink); }
+.cc-verdict-rec { font-size: 10.5px; font-weight: 500; color: var(--cc-tone-ink); opacity: 0.85; }
+.cc-verdict-desc { font-size: 11.5px; line-height: 1.35; color: var(--sol-text-muted); font-weight: 400; }
+@container cc (max-width: 30rem) { .cc-verdicts.is-described { grid-template-columns: 1fr; } }
+
+/* The decision layout (ChangeCardDecision): today against after, the numbers
+   as tiles, then the answers. */
+.ccd-head { display: flex; flex-direction: column; gap: 0.35rem; }
+.ccd-context { font-size: 12px; color: var(--sol-text-dim); line-height: 1.45; }
+.ccd-title { font-size: 21px; line-height: 1.25; font-weight: 600; color: var(--sol-text); text-wrap: balance; }
+.ccd-shift { display: grid; grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+@container cc (max-width: 34rem) { .ccd-shift { grid-template-columns: 1fr; } }
+.ccd-side { border-radius: 8px; padding: 0.65rem 0.8rem; font-size: 13px; line-height: 1.5; color: var(--sol-text); border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); }
+.ccd-side-label { display: block; font-size: 11px; font-weight: 600; margin-bottom: 0.2rem; }
+.ccd-today { background: color-mix(in srgb, var(--sol-red) 6%, transparent); border-color: color-mix(in srgb, var(--sol-red) 25%, transparent); }
+.ccd-today .ccd-side-label { color: var(--cc-red-ink); }
+.ccd-after { background: color-mix(in srgb, var(--cc-green-fill) var(--cc-after-fill), transparent); border-color: var(--cc-after-edge); }
+.ccd-after .ccd-side-label { color: var(--cc-green-ink); }
+.ccd-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr)); gap: 1px; border-radius: 8px; overflow: hidden; background: color-mix(in srgb, var(--sol-border) 70%, transparent); border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); }
+.ccd-tile { background: var(--sol-bg); padding: 0.5rem 0.75rem; min-width: 0; }
+.ccd-tile-label { font-size: 11px; color: var(--sol-text-dim); }
+.ccd-tile-value { font-size: 17px; font-weight: 600; line-height: 1.3; color: var(--sol-text); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 0.4rem; white-space: nowrap; }
+.ccd-tile-open { text-align: left; cursor: pointer; transition: background-color 120ms ease; }
+.ccd-tile-open:hover, .ccd-tile-open[aria-expanded="true"] { background: var(--sol-bg-alt); }
+.ccd-tile-open .ccd-tile-label::after { content: " ▾"; opacity: 0.5; }
+.ccd-tile-open[aria-expanded="true"] .ccd-tile-label::after { content: " ▴"; }
+.ccd-tile-sub { font-size: 11px; line-height: 1.35; color: var(--sol-text-dim); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.ccd-checks { display: flex; flex-direction: column; gap: 0.35rem; }
+
+.ccd-seen { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 0.6rem; }
+.ccd-seen > li { border-radius: 8px; padding: 0.6rem 0.75rem; border: 1px solid color-mix(in srgb, var(--sol-border) 70%, transparent); background: color-mix(in srgb, var(--sol-red) 4%, transparent); display: flex; flex-direction: column; gap: 0.4rem; }
+.ccd-seen-asked { font-size: 12px; line-height: 1.4; color: var(--sol-text-muted); }
+.ccd-seen-asked .ccd-side-label { display: inline; margin-right: 0.4rem; color: var(--cc-green-ink); }
+.ccd-seen-quote.is-finding { border-left-style: dashed; color: var(--sol-text-muted); }
+.ccd-seen-quote { font-size: 13px; line-height: 1.5; color: var(--sol-text); border-left: 2px solid color-mix(in srgb, var(--sol-red) 45%, transparent); padding-left: 0.6rem; }
+/* A call's moment as it happened: time, who, words; the tip on the caller's screen sits between the contact and the caller. */
+.ccd-beats { display: grid; grid-template-columns: auto auto 1fr; gap: 0.3rem 0.7rem; margin: 0; padding: 0 0 0 0.6rem; list-style: none; border-left: 2px solid color-mix(in srgb, var(--sol-red) 45%, transparent); font-size: 13px; line-height: 1.45; }
+.ccd-beats > li { display: contents; }
+.ccd-beat-at { color: var(--sol-text-dim); font-size: 11.5px; padding-top: 1px; }
+.ccd-beat-who { color: var(--sol-text-dim); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding-top: 2px; white-space: nowrap; }
+.ccd-beat-text { color: var(--sol-text); }
+.ccd-beats > li.is-tip .ccd-beat-who { color: var(--sol-violet); }
+.ccd-beats > li.is-tip .ccd-beat-text { color: var(--sol-text-muted); }
+.ccd-beats > li.is-contact .ccd-beat-who { color: var(--sol-orange); }
+.ccd-seen-meta { display: flex; gap: 0.5rem; justify-content: space-between; font-size: 11px; color: var(--sol-text-dim); min-width: 0; }
+
+.ccd-foot { display: flex; flex-wrap: wrap; gap: 0.4rem 1.25rem; font-size: 11.5px; color: var(--sol-text-dim); font-variant-numeric: tabular-nums; border-top: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent); padding-top: 0.75rem; }
+.ccd-examples .cc-example-input { -webkit-line-clamp: unset; display: block; white-space: normal; overflow: visible; }
+.ccd-tile.is-partial .ccd-tile-sub { color: var(--cc-yellow-ink); }
+
+.ccd-seen-meta > span:first-child { white-space: normal; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+
+
+.ccd-seen-meta { flex-direction: column; gap: 0.15rem; }
+.ccd-seen-meta > span:last-child { color: var(--sol-text-dim); }
+[data-card-decision] .cc-why { color: var(--sol-text-muted); font-size: 13px; }
+
+.ccd-examples .cc-example-note { display: none; }
+
+
+.cc-verdicts.is-described .cc-verdict.is-weak { border-style: solid; color: var(--sol-text); background: color-mix(in srgb, var(--sol-card) 60%, transparent); }
+.cc-why-chip { display: inline-block; margin-left: 0.4rem; padding: 0 0.4rem; border-radius: 4px; font-size: 11.5px; color: var(--cc-tone-ink); border: 1px solid color-mix(in srgb, var(--cc-tone) 40%, transparent); background: color-mix(in srgb, var(--cc-tone) 8%, transparent); }
+.ccd-checkrow { display: flex; flex-wrap: wrap; gap: 0.3rem 1.2rem; }
+
+/* The proposal card (ProposalCardDecision): three tiles, the cause in words, where it lives as chips. */
+.ccd-tiles.ccd-tiles-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.ccd-tile-cause { display: block; overflow: visible; color: var(--sol-text); font-size: 12px; margin-top: 0.15rem; }
+.ccd-where { font-size: 11.5px; padding: 0.05rem 0.4rem; border-radius: 4px; background: color-mix(in srgb, var(--sol-blue) 10%, transparent); color: var(--sol-text-muted); }
+.ccd-doc > summary { list-style: none; }
+.ccd-doc > summary::before { content: "▸ "; color: var(--sol-text-dim); }
+.ccd-doc[open] > summary::before { content: "▾ "; }
+
+/* A tile whose sub line is a reason to read whole (risk, what stops): up to three lines, never cut mid-sentence by a clamp of two. */
+.ccd-tile.ccd-tile-wrap .ccd-tile-sub { -webkit-line-clamp: 3; }
+/* What a quoted message leaves out, under the quote. */
+/* An earlier call the change reverses: one line before the tiles, its label in the caution ink. */
+.ccd-overturns { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.45rem; margin-top: 0.6rem; padding: 0.45rem 0.7rem; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--sol-yellow) 35%, transparent); background: color-mix(in srgb, var(--sol-yellow) 7%, transparent); font-size: 12.5px; color: var(--sol-text); }
+.ccd-overturns .ccd-side-label { display: inline; margin: 0; color: var(--sol-yellow); }
+.ccd-overturns-why { flex-basis: 100%; display: flex; gap: 0.45rem; align-items: baseline; }
+.ccd-overturns-why .ccd-side-label { color: var(--sol-text-dim); }
+.ccd-tile-of { font-size: 12px; font-weight: 500; color: var(--sol-text-dim); margin-left: 0.2rem; }
+.ccd-seen-missing { font-size: 12px; line-height: 1.4; color: var(--sol-text-muted); }
+.ccd-seen-missing .ccd-side-label { display: inline; margin-right: 0.4rem; color: var(--cc-red-ink, var(--sol-red)); }
+
+/* CardFacts: what the card is decided against beyond its own words. */
+.ccd-facts { display: grid; gap: 0.3rem; margin: 0.6rem 0 0; font-size: 12.5px; line-height: 1.45; }
+.ccd-facts > div { display: grid; grid-template-columns: 7.5rem 1fr; gap: 0.6rem; align-items: baseline; padding: 0.35rem 0.7rem; border-radius: 6px; background: color-mix(in srgb, var(--sol-text) 4%, transparent); }
+.ccd-facts > div.is-warn { background: color-mix(in srgb, var(--sol-yellow) 8%, transparent); }
+.ccd-facts dt { font-size: 11px; color: var(--sol-text-dim); }
+.ccd-facts > div.is-warn dt { color: var(--sol-yellow); }
+.ccd-facts dd { margin: 0; color: var(--sol-text); }
+.ccd-fact-id { font-family: var(--font-mono, ui-monospace, monospace); font-size: 11.5px; color: var(--sol-text-muted); }
+.ccd-seen-claim { font-size: 12px; line-height: 1.4; color: var(--sol-text-muted); }
+.ccd-seen-claim .ccd-side-label { display: inline; margin-right: 0.4rem; color: var(--sol-yellow); }
+.ccd-nocase { margin: 0; font-size: 12.5px; color: var(--sol-text-muted); }
+.ccd-nocase b { color: var(--sol-yellow); font-weight: 500; }

@@ -1,0 +1,128 @@
+import { createContext, useCallback, useContext } from "react";
+import { toast } from "sonner";
+import { copyToClipboard, shareOrigin } from "./utils";
+import { openForwardToChat } from "./forwardToChat";
+import { formatMessageHash } from "./messageHash";
+import type { ToolCall, ToolResult } from "../components/conversation/types";
+import { cacheLocalDateFormat } from "./localDateCache";
+import { ansiSpans } from "./ansi";
+
+export function messageLink(conversationId: string | undefined, messageId: string, block?: number) {
+  return `${shareOrigin()}/conversation/${conversationId}${formatMessageHash(messageId, block)}`;
+}
+
+export function copyMessageLink(conversationId: string | undefined, messageId: string) {
+  const url = messageLink(conversationId, messageId);
+  setTimeout(() => { copyToClipboard(url).then(() => toast.success("Link copied!")).catch(() => toast.error("Failed to copy link")); });
+}
+
+export function forwardMessageToChat(conversationId: string | undefined, messageId: string) {
+  openForwardToChat({ url: messageLink(conversationId, messageId), label: "message" });
+}
+
+/** Ensure a value is a string before rendering as a React child.
+ *  Guards against intermittent race conditions where content fields
+ *  are briefly non-string during store hydration or subscription updates. */
+export function safeString(value: any): string {
+  if (typeof value === 'string') return value;
+  if (value == null) return '';
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+export function formatMessagePartsForCopy(
+  content: string | undefined,
+  toolCalls: ToolCall[] | undefined,
+  toolResults: ToolResult[] | undefined,
+): string {
+  const parts: string[] = [];
+  if (content?.trim()) {
+    parts.push(content);
+  }
+  if (toolCalls?.length) {
+    for (const tc of toolCalls) {
+      let input = tc.input;
+      try { input = JSON.stringify(JSON.parse(tc.input), null, 2); } catch {}
+      parts.push(`[Tool: ${tc.name}]\n${input}`);
+    }
+  }
+  if (toolResults?.length) {
+    for (const tr of toolResults) {
+      const errPrefix = tr.is_error ? " (error)" : "";
+      parts.push(`[Result${errPrefix}]\n${tr.content}`);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+const formatTimestamp = cacheLocalDateFormat((date) => date.toLocaleTimeString([], {
+  hour: "2-digit",
+  minute: "2-digit",
+}));
+
+const formatCalendarDate = cacheLocalDateFormat((date) => date.toLocaleDateString([], { month: "short", day: "numeric" }));
+
+/** How long from `startTs` to `endTs` (now, unless the session's span ended: a mirrored cloud task's last message). */
+export function formatDuration(startTs: number, endTs = Date.now()): string {
+  const diff = endTs - startTs;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return '';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainMin = minutes % 60;
+  if (hours < 24) return remainMin ? `${hours}h ${remainMin}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ${hours % 24}h`;
+}
+
+export { stripAnsiCodes } from "./ansi";
+
+export function renderAnsi(text: string): React.ReactNode {
+  const spans = ansiSpans(text);
+  if (spans.length === 0) return text;
+  return spans.map((sp, i) => sp.color || sp.bold
+    ? <span key={i} style={{ color: sp.color, fontWeight: sp.bold ? 700 : undefined }}>{sp.text}</span>
+    : sp.text);
+}
+
+/**
+ * The instant relative times are measured from: the wall clock, unless a
+ * surface that renders a film of fixtures (the marketing hero) fixes it to the
+ * moment its fixtures are stamped against, so a frame's "2m ago" depends on
+ * its fixtures alone, never on how long the page has been open.
+ */
+export const RelativeTimeNow = createContext<number | null>(null);
+
+/** `formatRelativeTime` measured from the surface's instant (RelativeTimeNow), for a component's render. */
+export function useRelativeTime(): (ts: number) => string {
+  const now = useContext(RelativeTimeNow);
+  return useCallback((ts: number) => formatRelativeTime(ts, now ?? Date.now()), [now]);
+}
+
+/** The instant a surface's times are measured from: the sandbox's (RelativeTimeNow) under a film, the wall clock elsewhere. Pass it as the `now` of any age or day formatter a view calls. */
+export function useStampNow(): number {
+  return useContext(RelativeTimeNow) ?? Date.now();
+}
+
+export function formatRelativeTime(ts: number, now = Date.now()): string {
+  const diff = now - ts;
+  const seconds = Math.floor(diff / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+
+  if (seconds < 60) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  if (hours < 24) return `${hours}h ago`;
+  if (days < 7) return `${days}d ago`;
+  return formatCalendarDate(ts);
+}
+
+export const formatFullTimestamp = cacheLocalDateFormat((date) => date.toLocaleString([], {
+  month: "short",
+  day: "numeric",
+  year: "numeric",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+}));

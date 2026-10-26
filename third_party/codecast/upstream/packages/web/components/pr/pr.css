@@ -1,0 +1,184 @@
+/* The pull request page.
+ *
+ * One idea carries the look: the PR's state is a color, and that color is the
+ * page's weather. `--pr-accent` is set once on the root from the state (green
+ * open, violet merged, red closed, muted draft); the header band, the rails
+ * between the status figures and every focus ring read it. Nothing here names
+ * a color of its own, so light and dark follow the solarized tokens. */
+
+.pr-page {
+  --pr-accent: var(--sol-green);
+  --pr-wash: color-mix(in srgb, var(--pr-accent) 8%, transparent);
+  /* The rail collapses on the PAGE's width, not the window's: this page can be
+   * one cell of a split stage, or sit next to the inbox rail, and a viewport
+   * media query would keep a 320px rail in a 600px pane. */
+  container-type: inline-size;
+}
+
+/* The header band: a fine diagonal hatch in the state color, fading out
+ * downward so the title sits on quiet ground. */
+.pr-band {
+  position: relative;
+  isolation: isolate;
+  background-color: color-mix(in srgb, var(--pr-accent) 4%, var(--sol-bg));
+}
+
+.pr-band::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: repeating-linear-gradient(
+    45deg,
+    var(--pr-wash) 0px,
+    var(--pr-wash) 1px,
+    transparent 1px,
+    transparent 7px
+  );
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 85%);
+  mask-image: linear-gradient(to bottom, black, transparent 85%);
+}
+
+/* One staggered reveal on load. `--d` is the element's place in the sequence. */
+@keyframes pr-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.pr-rise {
+  animation: pr-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--d, 0ms);
+}
+
+/* The checks bar: coloured segments that grow into place from nothing. */
+.pr-seg {
+  height: 100%;
+  transition: width 640ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pr-seg-track {
+  display: flex;
+  height: 4px;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--sol-text-dim) 18%, transparent);
+}
+
+/* The status and the verbs live on the top row, with the repository path.
+ * They wrap onto their own line before they ever sit beside the title, so
+ * the title keeps the full width of the pane. Below 560px the type steps
+ * down: a 26px title of a long sentence would otherwise fill a narrow pane. */
+.pr-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+}
+
+.pr-head-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+  max-width: 100%;
+}
+
+.pr-title {
+  width: 100%;
+  overflow-wrap: break-word;
+}
+
+.pr-branch {
+  min-width: 0;
+}
+
+@container (max-width: 560px) {
+  .pr-title,
+  .pr-title-input {
+    font-size: 18px;
+  }
+  .pr-band {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+  .pr-figures {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem 1.25rem;
+  }
+}
+
+/* A day divider that stays put while its day scrolls past. */
+.pr-day {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  backdrop-filter: blur(6px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pr-rise {
+    animation: none;
+  }
+  .pr-seg {
+    transition: none;
+  }
+}
+
+/* A note in a review not yet submitted: drawn as a draft, dashed and warm, so
+ * the reader never mistakes what they have said for what they are about to. */
+.pr-pending {
+  border-left-style: dashed;
+  border-left-color: color-mix(in srgb, var(--sol-yellow) 60%, transparent);
+  background: color-mix(in srgb, var(--sol-yellow) 5%, transparent);
+}
+
+/* The action bar's primary verb wears the page's weather. */
+.pr-verb {
+  background: color-mix(in srgb, var(--pr-accent) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--pr-accent) 40%, transparent);
+  color: var(--pr-accent);
+}
+.pr-verb:hover {
+  background: color-mix(in srgb, var(--pr-accent) 22%, transparent);
+}
+.pr-verb:disabled {
+  opacity: 0.5;
+}
+
+/* The thread the reader jumped to, lit for a moment so the eye lands on it. */
+@keyframes pr-land {
+  from { box-shadow: 0 0 0 3px color-mix(in srgb, var(--sol-cyan) 45%, transparent); }
+  to { box-shadow: 0 0 0 0 transparent; }
+}
+.pr-thread-landed {
+  animation: pr-land 1.2s ease-out both;
+  border-radius: 6px;
+}
+
+/* A narrow page (a phone, or a thin pane of the app) keeps every tab in view
+ * rather than scrolling the strip sideways: the icons and the key hints go,
+ * the words stay. The review bar keeps its count and its button. */
+@container (max-width: 560px) {
+  .pr-tabs .pr-tab-icon,
+  .pr-tabs .pr-tab-key,
+  .pr-tabs .pr-mini-title {
+    display: none;
+  }
+  .pr-tabs a {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  .pr-review-hint,
+  .pr-head .repo-github-label {
+    display: none;
+  }
+}

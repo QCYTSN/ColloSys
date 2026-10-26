@@ -1,0 +1,990 @@
+// THE ROW DRAWS THE MODEL, AND NOTHING ELSE (pl-756 F2).
+//
+// Every state the model can hand a face lands on the circle as one attribute;
+// every link kind is a bridge before the face it points at; my own face sits
+// at the head while I am engaged; a click opens the three actions; and the
+// engagement card renders each of the model's cards with the buttons the model
+// said it has, each handing the card back to its action. Built on hand made
+// rows so what is under test is the drawing, never the derivation.
+import type { Root } from "react-dom/client";
+import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { act } from "react";
+import { JSDOM } from "jsdom";
+import { replaceGlobals } from "../../../test-helpers/globals";
+import { closeDomWindow } from "../../../test-helpers/domGlobals";
+import type { FaceCard, FaceEntry, FaceRow as FaceRowModel, FaceState, Link, LinkKind } from "../../../lib/faces/faceRow";
+import type { PushToTalk } from "../../../hooks/useWalkie";
+
+// ── the world the row talks to ──────────────────────────────────────────────
+//
+// A faithful stand in, never a stub: the real hooks/useWalkie with exactly one
+// export replaced, the hook that would otherwise open a microphone; and the
+// real hooks/useChatSync with the DM's server feeder replaced, so the card
+// reads the conversation the test seeds into the store.
+const realWalkieHooks = await import("../../../hooks/useWalkie");
+const ptt: PushToTalk = {
+  holding: false,
+  locked: false,
+  live: false,
+  dropped: false,
+  capturing: false,
+  reason: null,
+  press: () => {},
+  release: () => {},
+};
+mock.module("../../../hooks/useWalkie", () => ({ ...realWalkieHooks, usePushToTalk: () => ptt }));
+
+// The card's session lookups: a router context and a server query.
+const realOpenSession = await import("../../../hooks/useOpenSession");
+mock.module("../../../hooks/useOpenSession", () => ({ ...realOpenSession, useOpenSession: () => () => {} }));
+const realMissingRow = await import("../../../hooks/useMissingSessionRow");
+mock.module("../../../hooks/useMissingSessionRow", () => ({ ...realMissingRow, useMissingSessionRow: () => null }));
+
+const realChatSync = await import("../../../hooks/useChatSync");
+mock.module("../../../hooks/useChatSync", () => ({ ...realChatSync, useChannelMessagesSync: () => ({}) }));
+
+// Where the card sent the reader in chat.
+const openedChat: string[] = [];
+mock.module("../../../hooks/useOpenDm", () => ({
+  useOpenDm: () => () => {},
+  useOpenChatPath: () => (path: string) => openedChat.push(path),
+}));
+
+// The camera tiles and the walkie's status, as the engine publishes them:
+// the same subscribe/snapshot pair, fed by the test instead of LiveKit.
+const realCallManager = { ...(await import("../../../lib/calls/callManager")) };
+let tiles: any[] = [];
+const rungInto: Array<[string, string[]]> = [];
+const tileSubs = new Set<() => void>();
+function setTiles(next: any[]) {
+  tiles = next;
+  for (const cb of tileSubs) cb();
+}
+mock.module("../../../lib/calls/callManager", () => ({
+  ...realCallManager,
+  ringInto: async (roomKey: string, ids: string[]) => {
+    rungInto.push([roomKey, ids]);
+    return [];
+  },
+  getCallTiles: () => tiles,
+  subscribeCallTiles: (cb: () => void) => {
+    tileSubs.add(cb);
+    return () => tileSubs.delete(cb);
+  },
+}));
+
+const realWalkie = { ...(await import("../../../lib/calls/walkie")) };
+let walkieOver: Record<string, unknown> = {};
+const walkieSubs = new Set<() => void>();
+function emitWalkie(over: Record<string, unknown>) {
+  walkieOver = over;
+  for (const cb of walkieSubs) cb();
+}
+mock.module("../../../lib/calls/walkie", () => ({
+  ...realWalkie,
+  getWalkieStatus: () => ({ ...realWalkie.getWalkieStatus(), ...walkieOver }),
+  subscribeWalkie: (cb: () => void) => {
+    walkieSubs.add(cb);
+    return () => walkieSubs.delete(cb);
+  },
+}));
+
+const dom = new JSDOM("<!doctype html><html><body></body></html>", { pretendToBeVisual: true });
+const restoreGlobals = replaceGlobals({
+  window: dom.window,
+  document: dom.window.document,
+  navigator: dom.window.navigator,
+  HTMLElement: dom.window.HTMLElement,
+  Element: dom.window.Element,
+  Node: dom.window.Node,
+  Event: dom.window.Event,
+  MouseEvent: dom.window.MouseEvent,
+  KeyboardEvent: dom.window.KeyboardEvent,
+  getComputedStyle: dom.window.getComputedStyle,
+  // The crop loop and the float's hit measure both ask for a frame.
+  requestAnimationFrame: (cb: FrameRequestCallback) => setTimeout(() => cb(0), 0),
+  cancelAnimationFrame: (id: number) => clearTimeout(id),
+  IS_REACT_ACT_ENVIRONMENT: true,
+});
+const { createRoot } = await import("react-dom/client");
+const { FaceRow, FloatingFaceRow } = await import("../FaceRow");
+const { faceRowSize, floatingRowSize } = await import("../../../lib/faces/layout");
+const { EngagementCard } = await import("../EngagementCard");
+const { walkieStageWords } = await import("../../../hooks/useWalkie");
+const { useInboxStore } = await import("../../../store/inboxStore");
+const { dmKeyFor } = await import("@codecast/shared/chat");
+const { activeTeamIdOf } = await import("../../../lib/activeTeam");
+const faceChat = await import("../../../lib/chat/faceChat");
+
+afterAll(() => {
+  mock.module("../../../lib/calls/callManager", () => realCallManager);
+  mock.module("../../../lib/calls/walkie", () => realWalkie);
+  closeDomWindow(dom);
+  restoreGlobals();
+});
+
+// ── rows by hand ────────────────────────────────────────────────────────────
+
+const ME = "u-me";
+const ANN = "u-ann";
+const BO = "u-bo";
+const CY = "u-cy";
+
+function entry(id: string, name: string, over: Partial<FaceEntry> = {}): FaceEntry {
+  return {
+    id,
+    name,
+    image: undefined,
+    me: false,
+    tier: "online",
+    state: "online",
+    level: null,
+    video: null,
+    muted: false,
+    followed: false,
+    joinedAgo: null,
+    unread: 0,
+    ask: 0,
+    ...over,
+  };
+}
+function me(over: Partial<FaceEntry> = {}): FaceEntry {
+  return entry(ME, "Me", { me: true, tier: "me", state: "in-call", ...over });
+}
+function rowOf(entries: FaceEntry[], links: Link[] = [], card: FaceCard = { kind: "none" }): FaceRowModel {
+  const mine = entries.find((e) => e.me) ?? null;
+  return { entries, links, card, me: mine, room: mine ? "dm:u-ann:u-me" : null };
+}
+const link = (to: string, kind: LinkKind): Link => ({ from: ME, to, kind });
+
+let root: Root | null = null;
+let host: HTMLElement | null = null;
+// The card reads the person from the roster: seed one for each face by hand.
+beforeEach(() => {
+  useInboxStore.setState({
+    currentUser: { _id: ME, name: "Me" },
+    teamMembers: [
+      { _id: ME, name: "Me", presence_state: "active", status: "available" },
+      { _id: ANN, name: "Ann", presence_state: "active", github_username: "ann" },
+      { _id: BO, name: "Bo", presence_state: "active", github_username: "bo" },
+    ],
+    followLeaderId: null,
+  } as any);
+});
+
+afterEach(async () => {
+  await act(async () => root?.unmount());
+  root = null;
+  host?.remove();
+  host = null;
+  ptt.holding = false;
+  setTiles([]);
+  walkieOver = {};
+});
+
+async function mount(node: React.ReactNode) {
+  host = dom.window.document.body.appendChild(dom.window.document.createElement("div"));
+  root = createRoot(host);
+  await act(async () => root!.render(node));
+  return {
+    draw: async (next: React.ReactNode) => {
+      await act(async () => root!.render(next));
+    },
+    q: <T extends Element = HTMLElement>(sel: string) => host!.querySelector(sel) as T | null,
+    all: (sel: string) => Array.from(host!.querySelectorAll(sel)) as HTMLElement[],
+    circle: (id: string) => host!.querySelector(`[data-face-id="${id}"] .face`) as HTMLElement,
+    click: async (el: Element) => {
+      await act(async () => {
+        el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+    },
+  };
+}
+
+const bar = (row: FaceRowModel, extra: Record<string, unknown> = {}) => (
+  <FaceRow row={row} density="bar" viewerId={ME} {...extra} />
+);
+
+// ── every state ─────────────────────────────────────────────────────────────
+
+const STATES: FaceState[] = [
+  "offline",
+  "away",
+  "idle",
+  "online",
+  "busy",
+  "in-call",
+  "speaking",
+  "ringing-them",
+  "ringing-me",
+  "talking-to-me",
+  "hearing-me",
+  "live-with-me",
+  "joining",
+];
+const PRESENCE: FaceState[] = ["offline", "away", "idle", "online", "busy"];
+
+describe("one circle, one attribute", () => {
+  test("every state the model can hand a face lands on its circle", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    for (const state of STATES) {
+      await h.draw(bar(rowOf([entry(ANN, "Ann", { state })])));
+      const circle = h.circle(ANN);
+      expect(circle.getAttribute("data-state")).toBe(state);
+      // A plain face wears the presence dot; an engaged face wears a ring instead.
+      expect(h.q(`[data-face-id="${ANN}"] .face-pres`) !== null).toBe(PRESENCE.includes(state));
+      // Speaking is the call circles' own attribute, so their stylesheet answers.
+      expect(circle.getAttribute("data-speaking")).toBe(state === "speaking" ? "true" : null);
+    }
+    // Away and offline fade the picture the way every roster does.
+    await h.draw(bar(rowOf([entry(ANN, "Ann", { state: "away" })])));
+    expect(h.circle(ANN).classList.contains("pres-av-away")).toBe(true);
+    await h.draw(bar(rowOf([entry(ANN, "Ann", { state: "offline" })])));
+    expect(h.circle(ANN).classList.contains("pres-av-offline")).toBe(true);
+    await h.draw(bar(rowOf([entry(ANN, "Ann", { state: "online" })])));
+    expect(h.circle(ANN).className).toBe("face");
+  });
+
+  test("the marks on a person: mute, unread, ask, followed, the join", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    expect(h.q(".face-mute")).toBeNull();
+    expect(h.q(".face-unread")).toBeNull();
+    expect(h.q(".face-ask")).toBeNull();
+    await h.draw(
+      bar(rowOf([entry(ANN, "Ann", { state: "live-with-me", muted: true, unread: 3, ask: 2, followed: true })])),
+    );
+    expect(h.q(".face-mute")).not.toBeNull();
+    expect(h.q(".face-unread")!.textContent).toBe("3");
+    expect(h.q(".face-ask")).not.toBeNull();
+    expect(h.q(`[data-face-id="${ANN}"]`)!.getAttribute("data-ask")).toBe("2");
+    expect(h.circle(ANN).getAttribute("data-followed")).toBe("true");
+    // The join is the ring and the card's words, never a label under the
+    // chin: the card in the band would cover it.
+    await h.draw(bar(rowOf([entry(ANN, "Ann", { state: "joining" })])));
+    expect(h.circle(ANN).getAttribute("data-state")).toBe("joining");
+    expect(h.q(".people-face-joined")).toBeNull();
+    // In the bar the card carries the name: nothing hangs under the chin
+    // that a card could stack on.
+    expect(h.q(".face-name")).toBeNull();
+  });
+
+  test("my own face sits at the head while I am engaged, and keys nothing", async () => {
+    const h = await mount(bar(rowOf([me({ level: "mic" }), entry(ANN, "Ann", { state: "hearing-me" })])));
+    const seats = h.all("[data-face-id]");
+    expect(seats.map((s) => s.dataset.faceId)).toEqual([ME, ANN]);
+    const mine = h.circle(ME);
+    expect(mine.getAttribute("data-me")).toBe("1");
+    expect(mine.getAttribute("data-level")).toBe("mic");
+    expect(mine.getAttribute("aria-label")).toBe("Me (you)");
+    expect(mine.getAttribute("data-walkie-state")).toBeNull();
+  });
+
+  test("a face with a camera is a video in the same circle; without one, a picture", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann", { state: "live-with-me", image: "https://x/ann.png" })])));
+    expect(h.q(`[data-face-id="${ANN}"] video`)).toBeNull();
+    expect(h.q(`[data-face-id="${ANN}"] img, [data-face-id="${ANN}"] .face-avatar-fallback`)).not.toBeNull();
+    const track = { attached: 0, attach() { this.attached++; }, detach() { this.attached--; } };
+    await act(async () => setTiles([{ key: "ann", identity: ANN, name: "Ann", isLocal: false, kind: "camera", track }]));
+    await h.draw(bar(rowOf([entry(ANN, "Ann", { state: "live-with-me", video: "remote", image: "https://x/ann.png" })])));
+    expect(h.q(`[data-face-id="${ANN}"] video`)).not.toBeNull();
+    expect(track.attached).toBe(1);
+  });
+});
+
+// ── the links ───────────────────────────────────────────────────────────────
+
+describe("the link is how 'I am talking to them' reads", () => {
+  test("every link kind is a bridge before the face it points at", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    expect(h.q(".face-link")).toBeNull();
+    for (const kind of ["tx", "rx", "both", "call", "ring"] as LinkKind[]) {
+      await h.draw(bar(rowOf([me(), entry(ANN, "Ann", { state: "hearing-me", tier: "linked" })], [link(ANN, kind)])));
+      const bridges = h.all(".face-link");
+      expect(bridges.length).toBe(1);
+      expect(bridges[0].getAttribute("data-link-kind")).toBe(kind);
+      // Between me and them: the bridge is the element right before their seat.
+      const seat = h.q(`[data-face-id="${ANN}"]`)!;
+      expect(seat.previousElementSibling).toBe(bridges[0]);
+      expect(bridges[0].previousElementSibling).toBe(h.q(`[data-face-id="${ME}"]`));
+    }
+  });
+
+  test("two linked faces chain: me, then each of them behind its own bridge", async () => {
+    const h = await mount(
+      bar(
+        rowOf(
+          [
+            me(),
+            entry(ANN, "Ann", { state: "live-with-me", tier: "linked" }),
+            entry(BO, "Bo", { state: "live-with-me", tier: "linked" }),
+          ],
+          [link(ANN, "call"), link(BO, "call")],
+        ),
+      ),
+    );
+    const kids = Array.from(h.q(".face-row")!.children).map((c) => (c as HTMLElement).dataset.faceId ?? "link");
+    expect(kids).toEqual([ME, "link", ANN, "link", BO]);
+  });
+
+  test("holding the key dims every face but the one I am talking to", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann"), entry(BO, "Bo")])));
+    expect(h.q(".face-row")!.getAttribute("data-holding")).toBeNull();
+    // The walkie's own facts: my key is open into Ann's room.
+    ptt.holding = true;
+    await act(async () => emitWalkie({ sending: { roomKey: "dm:u-ann:u-me", live: true, heardLive: false } }));
+    expect(h.q(".face-row")!.getAttribute("data-holding")).toBe("1");
+    expect(h.q(`[data-face-id="${ANN}"]`)!.getAttribute("data-hold")).toBe("1");
+    ptt.holding = false;
+    await act(async () => emitWalkie({ sending: null }));
+    expect(h.q(".face-row")!.getAttribute("data-holding")).toBeNull();
+  });
+});
+
+// ── the gesture ─────────────────────────────────────────────────────────────
+
+describe("a face opens one card", () => {
+  test("a click pins the card with Talk and Huddle over a reply box; Escape closes it", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    const circle = h.circle(ANN);
+    expect(circle.getAttribute("aria-expanded")).toBe("false");
+    await h.click(circle);
+    expect(circle.getAttribute("aria-expanded")).toBe("true");
+    const card = h.q("[data-member-card]")!;
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain("Ann");
+    expect(h.all(".face-action-word").map((w) => w.textContent)).toEqual(["Talk", "Huddle"]);
+    expect(h.q<HTMLInputElement>(".fc-reply input")?.placeholder).toBe("Message Ann…");
+    await act(async () => {
+      circle.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(h.q("[data-member-card]")).toBeNull();
+  });
+
+  test("calls off: the card names them and keeps the reply box, with no call buttons", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")]), { callsEnabled: false }));
+    await h.click(h.circle(ANN));
+    expect(h.q("[data-member-card]")).not.toBeNull();
+    expect(h.all(".face-action-word")).toEqual([]);
+    expect(h.q(".fc-reply input")).not.toBeNull();
+  });
+
+  test("the card shows your DMs with them, both sides, and still shows them after it closes and reopens", async () => {
+    const DM = "chatchannels:dm-ann";
+    const now = Date.now();
+    useInboxStore.setState({
+      chatChannels: { [DM]: { _id: DM, kind: "dm", dm_key: dmKeyFor(activeTeamIdOf(useInboxStore.getState()) ?? "", [ME, ANN]) } },
+      chatMessages: {
+        m1: { _id: "m1", channel_id: DM, user_id: ANN, content: "is the deploy green?", created_at: now - 120_000 },
+        m2: { _id: "m2", channel_id: DM, user_id: ME, content: "yes, shipped", created_at: now - 60_000 },
+      },
+      chatReads: {},
+    } as any);
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    const read = () => h.all(".fc-row").map((r) => [r.dataset.me ? "me" : "them", r.querySelector(".fc-text")?.textContent]);
+    await h.click(h.circle(ANN));
+    expect(read()).toEqual([["them", "is the deploy green?"], ["me", "yes, shipped"]]);
+    await h.click(h.q(".face-card-close")!);
+    await h.click(h.circle(ANN));
+    expect(read()).toEqual([["them", "is the deploy green?"], ["me", "yes, shipped"]]);
+  });
+
+  test("a thread line in the card names its thread, opens it in chat, and the reply goes into it", async () => {
+    const TEAM = "chatchannels:team";
+    const now = Date.now();
+    useInboxStore.setState({
+      chatChannels: { [TEAM]: { _id: TEAM, kind: "channel", name: "team" } },
+      chatMessages: {
+        r1: { _id: "r1", channel_id: TEAM, user_id: BO, content: "Deploys no longer re-run the tests", created_at: now - 300_000 },
+        t1: { _id: "t1", channel_id: TEAM, user_id: ANN, thread_root_id: "r1", content: "agree, ship it", created_at: now - 120_000 },
+        r2: { _id: "r2", channel_id: TEAM, user_id: BO, content: "Who owns the desktop build?", created_at: now - 200_000 },
+        t2: { _id: "t2", channel_id: TEAM, user_id: ANN, thread_root_id: "r2", content: "I can take it", created_at: now - 60_000 },
+      },
+      chatReads: {},
+    } as any);
+    const off = faceChat.registerFaceChatLayer({ canShow: () => true } as any);
+    // As the rail hands them over: replies whose roots it never named.
+    for (const [id, at] of [["t1", now - 120_000], ["t2", now - 60_000]] as const) {
+      faceChat.deliverChatToFace(ANN, { messageId: id, channelId: TEAM, channelName: "team", isDm: false, inThread: true, preview: "…", at, loud: false, count: 1 }, () => {});
+    }
+    try {
+      const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+      await h.click(h.circle(ANN));
+      const seps = h.all(".fc-sep-link");
+      expect(seps.map((b) => [b.querySelector(".fc-sep-channel")?.textContent, b.querySelector(".fc-sep-root")?.textContent])).toEqual([
+        ["#team", "Deploys no longer re-run the tests"],
+        ["#team", "Who owns the desktop build?"],
+      ]);
+      expect(h.q<HTMLInputElement>(".fc-reply input")!.placeholder).toBe("Reply in the #team thread…");
+      openedChat.length = 0;
+      await h.click(seps[0]);
+      expect(openedChat).toEqual([`/chat/${TEAM}?m=t1`]);
+    } finally {
+      off();
+      faceChat.__resetFaceChat();
+    }
+  });
+
+  test("the card closes from its own close button", async () => {
+    const h = await mount(bar(rowOf([entry(ANN, "Ann")])));
+    await h.click(h.circle(ANN));
+    expect(h.q("[data-member-card]")).not.toBeNull();
+    await h.click(h.q(".face-card-close")!);
+    expect(h.q("[data-member-card]")).toBeNull();
+    expect(h.circle(ANN).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  test("an agent's face is marked and its card offers no call or message", async () => {
+    useInboxStore.setState({
+      teamMembers: [...useInboxStore.getState().teamMembers, { _id: "u-head", name: "Chief", is_bot: true, bot_kind: "anchor" }],
+    } as any);
+    const h = await mount(bar(rowOf([entry("u-head", "Chief", { bot: true })])));
+    expect(h.circle("u-head").getAttribute("data-bot")).toBe("1");
+    expect(h.q(".face-bot")!.getAttribute("aria-label")).toBe("agent");
+    // Its face is its animal, not a letter.
+    expect(h.q(`[data-face-id="u-head"] img`)?.getAttribute("src") ?? "").toMatch(/\.webp|avatars/);
+    await h.click(h.circle("u-head"));
+    expect(h.q("[data-member-card] .face-card-agent")).not.toBeNull();
+    expect(h.q("[data-member-card] .face-action")).toBeNull();
+  });
+
+  test("my own face opens my card: the status switch, no actions on myself", async () => {
+    const h = await mount(bar(rowOf([me()])));
+    await h.click(h.circle(ME));
+    const card = h.q("[data-member-card]")!;
+    expect(card).not.toBeNull();
+    expect(card.textContent).toContain("you");
+    expect(h.all(".face-card-status").map((b) => b.textContent)).toEqual(["available", "busy", "away"]);
+    expect(h.q(".face-action")).toBeNull();
+  });
+});
+
+// ── the densities ───────────────────────────────────────────────────────────
+
+describe("two densities, one row", () => {
+  test("the bar and the float say which they are, and the float sizes its window", async () => {
+    const sizes: { width: number; height: number }[] = [];
+    const bridge = { setInteractive() {}, setContentSize: (s: { width: number; height: number }) => sizes.push(s), setDragging() {} };
+    const row = rowOf([me(), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" })], [link(ANN, "call")]);
+    const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={bridge} />);
+    expect(h.q(".face-row")!.getAttribute("data-density")).toBe("float");
+    expect(sizes[0]).toEqual(floatingRowSize(2, 1, 0));
+    // Every circle is a hit region the window lifts click through for.
+    expect(h.all("[data-face-hit]").length).toBe(2);
+    await h.draw(bar(row));
+    expect(h.q(".face-row")!.getAttribute("data-density")).toBe("bar");
+  });
+
+  test("the float's controls: a grip that moves the window, Expand for a call, and a way to put it away, only while the pointer is in", async () => {
+    const drags: boolean[] = [];
+    const bridge = { setInteractive() {}, setContentSize() {}, setDragging: (on: boolean) => drags.push(on) };
+    const row = rowOf([me(), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" })], [link(ANN, "call")]);
+    let closed = 0;
+    let opened = 0;
+    const chrome = { onExpand: () => opened++, onClose: () => closed++, closeWord: "Hide", closeTitle: "Hide the faces" };
+    // jsdom has no pointer capture; the grip's own calls are no-ops here.
+    const proto = dom.window.HTMLElement.prototype as any;
+    proto.setPointerCapture ??= () => {};
+    proto.releasePointerCapture ??= () => {};
+    proto.hasPointerCapture ??= () => false;
+    const Pointer = (dom.window as any).PointerEvent ?? dom.window.MouseEvent;
+    const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={bridge} chrome={chrome} />);
+    // Away from the pointer the window is only its faces: no card, no controls.
+    expect(h.q(".face-row-chrome")).toBeNull();
+    expect(h.q(".face-row-below")).toBeNull();
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    const bar = h.q(".face-row-chrome")!;
+    expect(bar).not.toBeNull();
+    // The controls are the footer of the one card beside the row, alone
+    // until a face is pointed at: no legend, which ran off the card's edge.
+    expect(bar.closest(".face-row-below")).not.toBeNull();
+    expect(h.q(".face-row-below")!.children.length).toBe(1);
+    expect(bar.getAttribute("data-chrome-hit")).not.toBeNull();
+    expect(h.all(".face-row-chrome .faces-btn-word").map((w) => w.textContent)).toEqual(["Move", "Expand", "Hide"]);
+    // The grip: held, the window follows the cursor.
+    const grip = h.q('[data-chrome-btn="move"]')!;
+    await act(async () => {
+      grip.dispatchEvent(new Pointer("pointerdown", { bubbles: true, button: 0, pointerId: 1 }));
+    });
+    expect(drags).toEqual([true]);
+    await act(async () => {
+      grip.dispatchEvent(new Pointer("pointerup", { bubbles: true, button: 0, pointerId: 1 }));
+    });
+    expect(drags).toEqual([true, false]);
+    await h.click(h.q('[data-chrome-btn="open"]')!);
+    expect(opened).toBe(1);
+    await h.click(h.q('[data-chrome-btn="close"]')!);
+    expect(closed).toBe(1);
+    // No call: nothing to open, the grip and the way out stay.
+    await h.draw(<FloatingFaceRow row={rowOf([entry(ANN, "Ann")])} viewerId={ME} bridge={bridge} chrome={{ ...chrome, closeWord: "Close" }} />);
+    // The release armed the chrome's hide; the pointer is still in.
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    expect(h.all(".face-row-chrome .faces-btn-word").map((w) => w.textContent)).toEqual(["Move", "Close"]);
+  });
+
+  test("a live card from a call another window holds still offers Expand", async () => {
+    // The voice window's own call slice is idle while another window (or
+    // the walkie, or a seat the server lists) holds the call, and the row
+    // still draws the live card. Open read that idle slice, so the float
+    // showed a huddle with no way to open it (2026-10-03). It reads the row.
+    expect((useInboxStore.getState() as any).call?.phase ?? "idle").toBe("idle");
+    const huddle: FaceCard = { kind: "live", roomKey: "dm:u-ann:u-me", title: "Huddle", end: true, mute: true, muted: false, camera: true, cameraOn: false, words: null, hearing: null };
+    const row = rowOf([me({ state: "live-with-me" as FaceState }), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" })], [link(ANN, "call")], huddle);
+    let opened = 0;
+    const chrome = { onExpand: () => opened++, onClose() {}, closeWord: "Hide", closeTitle: "Hide" };
+    const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={{ setInteractive() {}, setContentSize() {}, setDragging() {} }} chrome={chrome} />);
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    expect(h.all(".face-row-chrome .faces-btn-word").map((w) => w.textContent)).toContain("Expand");
+    await h.click(h.q('[data-chrome-btn="open"]')!);
+    expect(opened).toBe(1);
+  });
+
+  test("the float drags from a face or the strip's frame, never from a control, and a drag pins no card", async () => {
+    // A face is a handle as well as a button: the click its release fires
+    // after the window moved is swallowed, and a still press is a click.
+    const drags: boolean[] = [];
+    const proto = dom.window.HTMLElement.prototype as any;
+    proto.setPointerCapture ??= () => {};
+    proto.releasePointerCapture ??= () => {};
+    proto.hasPointerCapture ??= () => false;
+    const Pointer = (dom.window as any).PointerEvent ?? dom.window.MouseEvent;
+    const h = await mount(
+      <FloatingFaceRow row={rowOf([entry(ANN, "Ann"), entry(BO, "Bo")])} viewerId={ME} bridge={{ setInteractive() {}, setContentSize() {}, setDragging: (on: boolean) => drags.push(on) }}>
+        <div className="strip-body"><button type="button" className="strip-btn">End</button></div>
+      </FloatingFaceRow>,
+    );
+    const face = h.q(`.face-seat[data-face-id="${ANN}"] .face`)!;
+    // The picture is never a drag of its own: it would carry off the press.
+    expect(face.querySelector("img")?.getAttribute("draggable") ?? "false").toBe("false");
+    const press = async (el: Element, moveBy: number, click = true) => {
+      await act(async () => {
+        el.dispatchEvent(new Pointer("pointerdown", { bubbles: true, button: 0, pointerId: 1, screenX: 100, screenY: 100 }));
+        dom.window.document.dispatchEvent(new Pointer("pointermove", { bubbles: true, pointerId: 1, screenX: 100 + moveBy, screenY: 100 }));
+        el.dispatchEvent(new Pointer("pointerup", { bubbles: true, button: 0, pointerId: 1, screenX: 100 + moveBy, screenY: 100 }));
+        if (click) el.dispatchEvent(new dom.window.MouseEvent("click", { bubbles: true, cancelable: true }));
+      });
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 5));
+      });
+    };
+    await press(face, 60);
+    expect(drags).toEqual([true, false]);
+    expect(h.q("[data-member-card]")).toBeNull();
+    await press(face, 0);
+    expect(h.q("[data-member-card]")?.textContent ?? "").toContain("Ann");
+    drags.length = 0;
+    await press(h.q(".strip-body")!, 60, false);
+    expect(drags).toEqual([true, false]);
+    drags.length = 0;
+    await press(h.q(".strip-btn")!, 0, false);
+    expect(drags).toEqual([]);
+  });
+
+  test("pointed at, the float's others circle opens them as a stack, and a press spreads them", async () => {
+    const row = rowOf([me({ state: "live-with-me" as FaceState }), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" }), entry(BO, "Bo"), entry(CY, "Cy")], [link(ANN, "call")]);
+    const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={{ setInteractive() {}, setContentSize() {}, setDragging() {} }} />);
+    const seat = (id: string) => h.q(`.face-seat[data-face-id="${id}"]`) as HTMLElement;
+    expect(seat(BO).hasAttribute("data-folded")).toBe(true);
+    // jsdom lays nothing out: point the hit test at the circle by hand.
+    const others = h.q(".face-row-others") as HTMLElement;
+    others.getBoundingClientRect = () => ({ left: 0, top: 0, right: 30, bottom: 30, width: 30, height: 30, x: 0, y: 0, toJSON() {} }) as DOMRect;
+    await act(async () => {
+      dom.window.dispatchEvent(new dom.window.Event("resize"));
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 15, clientY: 15 }));
+    });
+    expect(seat(BO).hasAttribute("data-folded")).toBe(false);
+    expect(seat(BO).hasAttribute("data-stacked")).toBe(true);
+    expect(seat(CY).hasAttribute("data-stacked")).toBe(true);
+    // A stacked face opens no card; its press spreads the team.
+    await h.click(seat(BO).querySelector(".face")!);
+    expect(h.q("[data-member-card]")).toBeNull();
+    expect(seat(BO).hasAttribute("data-stacked")).toBe(false);
+    expect(seat(BO).hasAttribute("data-folded")).toBe(false);
+  });
+
+  test("hanging below the faces, the float's controls lead the card so they never move", async () => {
+    const chrome = { onClose() {}, closeWord: "Hide", closeTitle: "Hide" };
+    const h = await mount(<FloatingFaceRow row={rowOf([entry(ANN, "Ann"), entry(BO, "Bo")])} viewerId={ME} bridge={{ setInteractive() {}, setContentSize() {}, setDragging() {} }} chrome={chrome} />);
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    await h.click(h.q(`.face-seat[data-face-id="${ANN}"] .face`)!);
+    const band = h.q(".face-row-below")!;
+    expect(band.children.length).toBe(2);
+    expect(band.firstElementChild!.classList.contains("face-row-chrome")).toBe(true);
+  });
+
+  test("on a call the float draws the rest of the team at half size", async () => {
+    // Pointed at, the others fade in beside the call: as a roster, not a
+    // second row of portraits the size of the people on the call.
+    useInboxStore.getState().updateClientUI({ float_face_size: 128 } as any);
+    try {
+      const row = rowOf([me({ state: "live-with-me" as FaceState }), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" }), entry(BO, "Bo")], [link(ANN, "call")]);
+      const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={{ setInteractive() {}, setContentSize() {}, setDragging() {} }} />);
+      const seat = (id: string) => h.q(`.face-seat[data-face-id="${id}"]`) as HTMLElement;
+      expect(seat(BO).style.getPropertyValue("--face")).toBe("64px");
+      expect(seat(ANN).style.getPropertyValue("--face")).toBe("");
+      expect((h.q(".face-row") as HTMLElement).style.getPropertyValue("--face")).toBe("128px");
+    } finally {
+      useInboxStore.getState().updateClientUI({ float_face_size: undefined } as any);
+    }
+  });
+
+  test("the float's faces come in the row's size and the call circles' two bigger ones, remembered per device", async () => {
+    const sizes: { width: number; height: number }[] = [];
+    const bridge = { setInteractive() {}, setContentSize: (s: { width: number; height: number }) => sizes.push(s), setDragging() {} };
+    const chrome = { onClose() {}, closeWord: "Dock", closeTitle: "Dock", docks: true };
+    const ui = () => (useInboxStore.getState() as any).clientState?.ui ?? {};
+    useInboxStore.getState().updateClientUI({ float_face_size: undefined } as any);
+    const row = rowOf([entry(ANN, "Ann"), entry(BO, "Bo")]);
+    const h = await mount(<FloatingFaceRow row={row} viewerId={ME} bridge={bridge} chrome={chrome} />);
+    await act(async () => {
+      dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: 0, clientY: 0 }));
+    });
+    const smaller = h.q('[data-chrome-btn="smaller"]') as HTMLButtonElement;
+    const larger = h.q('[data-chrome-btn="larger"]') as HTMLButtonElement;
+    // The row's own size to start: nothing smaller.
+    expect(smaller.disabled).toBe(true);
+    expect((h.q(".face-row") as HTMLElement).style.getPropertyValue("--face")).toBe("64px");
+    await h.click(larger);
+    expect(ui().float_face_size).toBe(96);
+    await h.click(larger);
+    expect(ui().float_face_size).toBe(128);
+    expect((h.q(".face-row") as HTMLElement).style.getPropertyValue("--face")).toBe("128px");
+    // The biggest: nothing larger; and the window was told the bigger row.
+    expect(larger.disabled).toBe(true);
+    expect(sizes.at(-1)!.height).toBeGreaterThanOrEqual(floatingRowSize(2, 0, 0, undefined, 128).height);
+    // The dock reads as docking: its own word and icon, not a bare X.
+    expect(h.q('[data-chrome-btn="close"] .faces-btn-word')!.textContent).toBe("Dock");
+    await h.click(smaller);
+    expect(ui().float_face_size).toBe(96);
+    useInboxStore.getState().updateClientUI({ float_face_size: undefined } as any);
+  });
+
+  test("the pointer alone opens a face's card, and the window never changes size for it", async () => {
+    // On see-through glass the seats' mouseenter did not always arrive, so a
+    // hover opened the card only some of the time and a click was the other
+    // way in. The float opens it from the same hit test that lifts
+    // click-through, and keeps the card's room at all times, so the window
+    // (and with it every face) holds still through the hover.
+    const sizes: { width: number; height: number; pinY?: number }[] = [];
+    const bridge = { setInteractive() {}, setContentSize: (sz: any) => sizes.push(sz), setDragging() {} };
+    const chrome = { onClose() {}, closeWord: "Dock", closeTitle: "Dock", docks: true };
+    const proto = dom.window.HTMLElement.prototype as any;
+    const realRect = proto.getBoundingClientRect;
+    // Ann's circle at x 8..72, Bo's at 82..146; the row's box around both.
+    proto.getBoundingClientRect = function (this: HTMLElement) {
+      const seat = this.closest?.("[data-face-id]") as HTMLElement | null;
+      if (this.hasAttribute?.("data-face-hit") && seat) {
+        const left = seat.dataset.faceId === ANN ? 8 : 82;
+        return { left, top: 8, right: left + 64, bottom: 72, width: 64, height: 64, x: left, y: 8 } as DOMRect;
+      }
+      if (this.classList?.contains("face-row")) return { left: 0, top: 0, right: 154, bottom: 80, width: 154, height: 80, x: 0, y: 0 } as DOMRect;
+      return realRect.call(this);
+    };
+    try {
+      const h = await mount(<FloatingFaceRow row={rowOf([entry(ANN, "Ann"), entry(BO, "Bo")])} viewerId={ME} bridge={bridge} chrome={chrome} />);
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 10));
+      });
+      const before = JSON.stringify(sizes.at(-1));
+      const move = (x: number, y: number) =>
+        act(async () => {
+          dom.window.document.dispatchEvent(new dom.window.MouseEvent("mousemove", { bubbles: true, clientX: x, clientY: y }));
+        });
+      // Glass beside the row: nothing comes up.
+      await move(300, 300);
+      expect(h.q(".face-row-chrome")).toBeNull();
+      // Onto Bo's face: the controls, then his card after the dwell. No mouseenter anywhere.
+      await move(114, 40);
+      expect(h.q(".face-row-chrome")).not.toBeNull();
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 200));
+      });
+      expect(h.q("[data-member-card]")?.textContent ?? "").toContain("Bo");
+      // Across to Ann: the card follows at once.
+      await move(40, 40);
+      expect(h.q("[data-member-card]")?.textContent ?? "").toContain("Ann");
+      // Through all of it the window was asked for one size.
+      for (const sz of sizes.slice(sizes.findIndex((x) => JSON.stringify(x) === before))) expect(JSON.stringify(sz)).toBe(before);
+    } finally {
+      proto.getBoundingClientRect = realRect;
+    }
+  });
+
+  test("the float's card hangs from the pointed face by a notch, and nothing hangs under a chin", async () => {
+    const bridge = { setInteractive() {}, setContentSize() {}, setDragging() {} };
+    const h = await mount(<FloatingFaceRow row={rowOf([entry(ANN, "Ann"), entry(BO, "Bo")])} viewerId={ME} bridge={bridge} />);
+    expect(h.q(".face-name")).toBeNull();
+    await h.click(h.circle(BO));
+    const band = h.q(".face-row-below") as HTMLElement;
+    expect(band.getAttribute("data-notch")).toBe("1");
+    expect(band.style.left).toMatch(/px$/);
+    expect(band.style.getPropertyValue("--notch-x")).toMatch(/px$/);
+    expect(band.querySelector("[data-member-card]")).not.toBeNull();
+  });
+});
+
+// ── the card ────────────────────────────────────────────────────────────────
+
+type Pressed = { action: string; card: FaceCard };
+
+function actionsInto(log: Pressed[]) {
+  const on = (action: string) => (card: FaceCard) => log.push({ action, card });
+  return {
+    join: on("join"),
+    snooze: on("snooze"),
+    end: on("end"),
+    mute: on("mute"),
+    camera: on("camera"),
+    answer: on("answer"),
+    decline: on("decline"),
+    cancel: on("cancel"),
+  };
+}
+
+const ROOM = "dm:u-ann:u-me";
+const incomingWords = walkieStageWords({
+  sending: null,
+  incoming: true,
+  locked: false,
+  muted: false,
+  dropped: false,
+  micDenied: false,
+  name: "Ann",
+});
+const talkingWords = walkieStageWords({
+  sending: { live: true, heardLive: true },
+  incoming: false,
+  locked: false,
+  muted: false,
+  dropped: false,
+  micDenied: false,
+  name: "Ann",
+});
+
+describe("the engagement card renders the model's card", () => {
+  test("none renders nothing", async () => {
+    const h = await mount(<EngagementCard card={{ kind: "none" }} density="bar" />);
+    expect(h.q(".engagement-card")).toBeNull();
+  });
+
+  test("incoming: the live words, talk back, join live and snooze", async () => {
+    const log: Pressed[] = [];
+    const card: FaceCard = { kind: "incoming", roomKey: ROOM, from: ANN, name: "Ann", reply: true, join: true, snooze: true, words: incomingWords };
+    const h = await mount(<EngagementCard card={card} density="bar" actions={actionsInto(log)} />);
+    const el = h.q(".engagement-card")!;
+    expect(el.getAttribute("data-card")).toBe("incoming");
+    expect(el.getAttribute("data-density")).toBe("bar");
+    expect(el.classList.contains("walkie-strip-rx")).toBe(true);
+    expect(h.q(".walkie-stage-badge")).toBeNull();
+    expect(h.q(".walkie-stage")!.textContent).toBe("Ann is talking to you");
+    expect(h.q(".walkie-key")).not.toBeNull();
+    await h.click(h.q('[data-card-action="join"]')!);
+    await h.click(h.q('[data-card-action="snooze"]')!);
+    expect(log.map((p) => p.action)).toEqual(["join", "snooze"]);
+    expect(log[0].card).toBe(card);
+    // The line is still open but nobody can answer: no key, no join.
+    await h.draw(<EngagementCard card={{ ...card, reply: false, join: false, snooze: false }} density="bar" actions={actionsInto(log)} />);
+    expect(h.q(".walkie-key")).toBeNull();
+    expect(h.q('[data-card-action="join"]')).toBeNull();
+    expect(h.q('[data-card-action="snooze"]')).toBeNull();
+  });
+
+  test("live: end and mute, the stage words while the walkie holds the room, and who hears me", async () => {
+    const log: Pressed[] = [];
+    const card: FaceCard = {
+      kind: "live",
+      roomKey: ROOM,
+      title: "Ann",
+      end: true,
+      mute: false,
+      muted: false,
+      words: talkingWords,
+      hearing: { state: "hears", text: "Ann hears you" },
+    };
+    const h = await mount(<EngagementCard card={card} density="float" actions={actionsInto(log)} />);
+    const el = h.q(".engagement-card")!;
+    expect(el.getAttribute("data-density")).toBe("float");
+    expect(el.classList.contains("walkie-strip-tx")).toBe(true);
+    expect(h.q(".walkie-stage-badge")!.textContent).toBe("Talking");
+    // On the track beside Ann's face: the stage alone, the sentence its tooltip.
+    expect(h.q(".walkie-stage-with")).toBeNull();
+    expect(h.q(".walkie-stage")!.getAttribute("title")).toBe(talkingWords.hint);
+    // The roster's fact rides the same line after the stage, and no caption
+    // plate under it.
+    expect(h.q(".walkie-stage")!.textContent).toBe("Talking · hears you");
+    // The whole verdict is the tooltip.
+    expect(h.q(".engagement-card-hearing")!.getAttribute("title")).toBe("Ann hears you");
+    expect(h.q(".walkie-strip-hint")).toBeNull();
+    expect(h.q('[data-card-action="mute"]')).toBeNull();
+    await h.click(h.q('[data-card-action="end"]')!);
+    expect(log.map((p) => p.action)).toEqual(["end"]);
+
+    // A huddle: no walkie words, the room's name, and a mute that toggles.
+    const huddle: FaceCard = { kind: "live", roomKey: ROOM, title: "Ann", end: true, mute: true, muted: true, camera: true, cameraOn: false, words: null, hearing: null };
+    await h.draw(<EngagementCard card={huddle} density="float" actions={actionsInto(log)} />);
+    expect(h.q(".walkie-stage-badge")).toBeNull();
+    expect(h.q(".engagement-card-title")!.textContent).toBe("Ann");
+    const mute = h.q('[data-card-action="mute"]')!;
+    expect(mute.getAttribute("aria-label")).toBe("Unmute");
+    expect(mute.getAttribute("aria-pressed")).toBe("false");
+    // The camera switch beside it, off in this card.
+    expect(h.q('[data-card-action="camera"]')!.getAttribute("aria-pressed")).toBe("false");
+    await h.click(h.q('[data-card-action="camera"]')!);
+    expect(log.at(-1)).toMatchObject({ action: "camera", card: huddle });
+    await h.click(mute);
+    expect(log.at(-1)).toMatchObject({ action: "mute", card: huddle });
+  });
+
+  test("a call's card carries the host's accessory first in its controls", async () => {
+    const huddle: FaceCard = { kind: "live", roomKey: ROOM, title: "Ann", end: true, mute: true, muted: false, camera: false, cameraOn: false, words: null, hearing: null };
+    const h = await mount(<EngagementCard card={huddle} density="float" accessory={<button data-card-action="chat">3</button>} />);
+    const controls = h.all(".walkie-strip-actions [data-card-action]").map((el) => el.getAttribute("data-card-action"));
+    expect(controls).toEqual(["chat", "mute", "end"]);
+  });
+
+  test("joined notice: the sentence, with the live controls under it", async () => {
+    const log: Pressed[] = [];
+    const card: FaceCard = { kind: "joined-notice", roomKey: ROOM, text: "Ann joined", end: true, mute: true, muted: false };
+    const h = await mount(<EngagementCard card={card} density="bar" actions={actionsInto(log)} />);
+    expect(h.q(".engagement-card")!.classList.contains("walkie-strip-joined")).toBe(true);
+    expect(h.q('[role="status"]')!.textContent).toBe("Ann joined");
+    expect(h.q('[data-card-action="mute"]')!.getAttribute("aria-label")).toBe("Mute");
+    await h.click(h.q('[data-card-action="end"]')!);
+    expect(log[0]).toMatchObject({ action: "end", card });
+  });
+
+  test("ring in: answer and decline", async () => {
+    const log: Pressed[] = [];
+    const card: FaceCard = { kind: "ring-in", roomKey: ROOM, from: ANN, name: "Ann", answer: true, decline: true };
+    const h = await mount(<EngagementCard card={card} density="bar" actions={actionsInto(log)} />);
+    expect(h.q(".engagement-card-title")!.textContent).toBe("Ann");
+    expect(h.q(".ring-card-line")!.textContent).toBe("Ann is calling");
+    await h.click(h.q('[data-card-action="answer"]')!);
+    await h.click(h.q('[data-card-action="decline"]')!);
+    expect(log.map((p) => p.action)).toEqual(["answer", "decline"]);
+  });
+
+  test("ring out: the status and a cancel", async () => {
+    const log: Pressed[] = [];
+    const card: FaceCard = { kind: "ring-out", roomKey: ROOM, to: ANN, name: "Ann", cancel: true, status: "ringing", hangUp: false };
+    const h = await mount(<EngagementCard card={card} density="bar" actions={actionsInto(log)} />);
+    expect(h.q(".ring-card-line")!.textContent).toBe("Ringing Ann");
+    await h.click(h.q('[data-card-action="cancel"]')!);
+    expect(log[0]).toMatchObject({ action: "cancel", card });
+  });
+
+  test("the card hangs under the row it is given to", async () => {
+    const card: FaceCard = { kind: "ring-out", roomKey: ROOM, to: ANN, name: "Ann", cancel: true, status: "ringing", hangUp: false };
+    const row = rowOf([me({ state: "ringing-them" }), entry(ANN, "Ann", { state: "ringing-them", tier: "linked" })], [link(ANN, "ring")]);
+    const h = await mount(
+      <FaceRow row={row} density="bar" viewerId={ME}>
+        <EngagementCard card={card} density="bar" />
+      </FaceRow>,
+    );
+    expect(h.q(".face-row > .face-row-strip > .engagement-card")).not.toBeNull();
+    // Beside the faces, never under them: under a face is that face's card.
+    expect(h.q(".face-row-below")).toBeNull();
+  });
+
+  test("on a call the rest of the team folds into a stack that spreads and folds back", async () => {
+    const card: FaceCard = { kind: "live", roomKey: ROOM, title: "Huddle", end: true, mute: true, muted: false, camera: false, cameraOn: false, words: null, hearing: null };
+    const row = rowOf(
+      [
+        me(),
+        entry(ANN, "Ann", { state: "live-with-me", tier: "linked" }),
+        entry(BO, "Bo"),
+        entry("u-cy", "Cy", { state: "idle", tier: "idle" }),
+      ],
+      [link(ANN, "call")],
+    );
+    const h = await mount(
+      <FaceRow row={row} density="bar" viewerId={ME}>
+        <EngagementCard card={card} density="bar" />
+      </FaceRow>,
+    );
+    const stackedIds = () => h.all(".face-seat[data-stacked]").map((el) => (el as HTMLElement).dataset.faceId);
+    expect(h.q(".face-row")!.getAttribute("data-stacked")).toBe("1");
+    expect(stackedIds()).toEqual([BO, "u-cy"]);
+    // A press on the stack spreads it; it opens no card.
+    await h.click(h.circle(BO));
+    expect(stackedIds()).toEqual([]);
+    expect(h.q("[data-member-card]")).toBeNull();
+    // Spread, each face is an ordinary face again, and the fold closes it.
+    await h.click(h.circle(BO));
+    expect(h.q("[data-member-card]")).not.toBeNull();
+    await h.click(h.q(".face-row-fold")!);
+    expect(stackedIds()).toEqual([BO, "u-cy"]);
+    expect(h.q("[data-member-card]")).toBeNull();
+    // One face off the call is not a stack.
+    await h.draw(
+      <FaceRow row={rowOf(row.entries.slice(0, 3), row.links)} density="bar" viewerId={ME}>
+        <EngagementCard card={card} density="bar" />
+      </FaceRow>,
+    );
+    expect(stackedIds()).toEqual([]);
+  });
+
+  test("on a call, a teammate's card adds them to it", async () => {
+    const { fakeFaceRowInput } = await import("../../../lib/faces/faceRow");
+    const room = "dm:u-ann:u-me";
+    fakeFaceRowInput({
+      input: {
+        call: { phase: "connected", roomKey: room, muted: false, micDenied: false, camera: false, speaking: [] },
+        occupancy: { [room]: [{ user_id: ME }, { user_id: ANN }] },
+      } as any,
+    });
+    try {
+      const h = await mount(bar(rowOf([me(), entry(ANN, "Ann", { state: "live-with-me", tier: "linked" }), entry(BO, "Bo")], [link(ANN, "call")])));
+      await h.click(h.circle(BO));
+      const add = h.q("[data-member-card] .face-action-ring")!;
+      expect(add.textContent).toBe("Add to call");
+      rungInto.length = 0;
+      await h.click(add);
+      await new Promise((r) => setTimeout(r, 0));
+      expect(rungInto).toEqual([[room, [BO]]]);
+    } finally {
+      fakeFaceRowInput(null);
+    }
+  });
+
+  test("the controls sit on the call: right after the linked faces, on one track, with the rest of the team after", async () => {
+    const card: FaceCard = { kind: "ring-in", roomKey: ROOM, from: ANN, name: "Ann", answer: true, decline: true };
+    const row = rowOf(
+      [
+        me({ state: "ringing-me" }),
+        entry(ANN, "Ann", { state: "ringing-me", tier: "linked" }),
+        entry("u-bob", "Bob", { state: "online", tier: "online" }),
+      ],
+      [link(ANN, "ring")],
+    );
+    const h = await mount(
+      <FaceRow row={row} density="float" viewerId={ME}>
+        <EngagementCard card={card} density="float" />
+      </FaceRow>,
+    );
+    const order = Array.from(h.q(".face-row")!.children).map(
+      (el) => (el as HTMLElement).dataset.faceId ?? el.className.split(" ")[0],
+    );
+    // The float folds everyone off the call behind one circle after the
+    // strip; the seat keeps its room so the window never changes width.
+    expect(order).toEqual(["face-row-track", ME, "face-link", ANN, "face-row-strip", "__others", "u-bob"]);
+    expect(h.q('[data-face-id="u-bob"]')!.dataset.folded).toBe("1");
+    expect(h.q(".face-row-track")!.getAttribute("data-link-kind")).toBe("ring");
+    expect(h.q(".face-row-strip")!.getAttribute("data-track")).toBe("1");
+    // Nobody linked: no track, and the strip goes back to the row's end.
+    await h.draw(
+      <FaceRow row={rowOf([entry("u-bob", "Bob", { state: "online", tier: "online" })])} density="float" viewerId={ME}>
+        <EngagementCard card={card} density="float" />
+      </FaceRow>,
+    );
+    expect(h.q(".face-row-track")).toBeNull();
+    expect(h.q(".face-row")!.lastElementChild!.className).toBe("face-row-strip");
+  });
+});

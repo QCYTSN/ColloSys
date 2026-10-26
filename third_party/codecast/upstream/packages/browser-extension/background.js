@@ -1,0 +1,1161 @@
+/**
+ * Codecast browser bridge: the MV3 service worker.
+ *
+ * Connects OUT to the cast bridge host on localhost (an extension cannot
+ * listen), proves it holds the token the human paired through the options
+ * page and makes the host prove the same back (below), and executes the small
+ * op set the cast CLI sends: tab management, chrome.debugger attach/detach,
+ * and raw CDP commands per tab.
+ *
+ * The token never goes on the wire. Any local account can bind the bridge
+ * port while no host is running, and a socket that merely opened proves
+ * nothing, so the handshake is mutual: we send a fresh nonce with
+ * HMAC(token, "ext:" + nonce), the host answers HMAC(token, nonce), and not
+ * one op is executed before that answer checks out. A host that cannot
+ * answer is treated like a bad token: the socket is closed and the retry
+ * alarm stays quiet until the human runs setup again.
+ *
+ * Visibility is a feature, not an accident: chrome.debugger shows Chrome's own
+ * "is debugging this browser" banner for as long as a tab is attached, and we
+ * add signals of our own. A Chrome tab group per session (the host asks for
+ * it on tabs.create) whose title shows cycling dots while a session works and
+ * a checkmark for a moment after; the extension remembers the groups it made
+ * and never touches one the human made. A thin border in the group's colour
+ * around the driven page, injected through the debugger session so it needs
+ * no host permission and no content script; hidden for every screenshot so
+ * captures stay clean, and kept alive by a heartbeat so a cancelled banner or
+ * a crashed host cannot leave it behind. A CAST badge on the extension icon
+ * for the driven tab, which Chrome shows only when the icon is pinned.
+ * Detaching removes the badge and the border; the group empties itself when
+ * its tabs close.
+ *
+ * Staying alive is this worker's own job. Chrome ends an MV3 service worker
+ * after 30 s without an extension API call or a WebSocket message, and the
+ * open socket alone does not count: something has to move on it. The host
+ * pings every 20 s, but the host is another process, and on a loaded
+ * machine (load average 300, 2026-09-13) its timer slipped past the 30 s
+ * mark and Chrome ended the worker every few minutes. So the worker also
+ * calls an extension API and pings the host itself every 20 s, from timers
+ * that run in the same process as Chrome's idle clock and drift with it. A
+ * dropped socket is retried after 1 s, then 2 s, then every 5 s for as long
+ * as the worker lives: each attempt reads storage, which is an API call, so
+ * a disconnected worker keeps itself awake and finds a restarted host within
+ * seconds instead of waiting on an alarm. A chrome.alarms tick every 30 s is
+ * the backstop that reconnects after the worker is ever torn down, and it
+ * keeps ticking after a token rejection too: a host that could not prove the
+ * token once (a stale host on the port, a machine under load) is not a
+ * reason to stay silent until a person runs setup. A connect that is not
+ * proven within 10 s is closed and retried: a socket stuck in CONNECTING
+ * while the host was starved otherwise held every reconnect off until
+ * Chrome's own handshake timeout, minutes later. The hello names this
+ * worker's boot, why it connected and the last few things that happened to
+ * it, so the host log can tell a worker that died from a socket that
+ * dropped, and say what the worker saw in between.
+ *
+ * Two more things stand between a session and a blocked command. Any
+ * debugger call is bounded at CDP_CALL_MAX_MS: Chrome ends a worker whose
+ * single API call runs past five minutes, and a tab whose renderer is
+ * frozen never answers, so the tab is detached (which fails the call) rather
+ * than let one wedged page take the whole bridge down. And a `wake` message
+ * from the options page (opened by the CLI when nothing else brought this
+ * worker back) drops whatever socket is stuck and connects afresh.
+ */
+
+// The colour table and the status vocabulary shared with the options page and the popup.
+importScripts("status.js");
+
+const PROTOCOL = 4;
+const DEFAULT_CAST_GROUP = { title: "Cast", color: "red" };
+
+let ws = null;
+let status = { state: "no-config", detail: "not paired yet" };
+// tabIds we hold a debugger session on. Every change re-checks the session
+// this worker holds on itself (holdSelf).
+const attached = new (class extends Set {
+  add(tabId) {
+    super.add(tabId);
+    holdSelf();
+    return this;
+  }
+  delete(tabId) {
+    const had = super.delete(tabId);
+    if (had) holdSelf();
+    return had;
+  }
+})();
+
+// Chrome stops a running service worker that leaves its ping unanswered for
+// 30 s (ServiceWorkerVersion::OnPingTimeout). This worker's process runs in
+// Chrome's throttled background priority, and on a loaded Mac a stall that
+// long is ordinary, so Chrome ended the worker in the middle of commands and
+// a fresh one booted seconds later (reproduced 2026-09-15 by freezing the
+// extension process for 90 s). A DevTools session on the worker itself
+// cancels that stop (EmbeddedWorkerInstance::StopIfNotAttachedToDevTools).
+// Any session shows Chrome's debugging banner, which is already up while a
+// tab is attached, so the worker holds this one exactly while it holds a tab.
+let selfTarget = null;
+let selfSync = Promise.resolve();
+
+function holdSelf() {
+  selfSync = selfSync.then(async () => {
+    const want = attached.size > 0;
+    if (want === (selfTarget !== null)) return;
+    if (!want) {
+      const targetId = selfTarget;
+      selfTarget = null;
+      await bounded(chrome.debugger.detach({ targetId }), "debugger.detach").catch(() => {});
+      return note("released own worker session");
+    }
+    const self = (await bounded(chrome.debugger.getTargets(), "debugger.getTargets")).find((t) => t.type === "worker" && t.url === chrome.runtime.getURL("background.js"));
+    if (!self) return note("own service worker is not a debugger target");
+    await attachDebugger({ targetId: self.id });
+    selfTarget = self.id;
+    note("holding own worker session");
+  }).catch((err) => note(`self session failed: ${String((err && err.message) || err)}`));
+  return selfSync;
+}
+
+// This worker's identity for the host log: a new boot means Chrome ended the
+// previous worker (and its socket with it); the same boot on a reconnect
+// means the socket dropped under a living worker.
+const BOOT = { id: randomHex(4), at: Date.now() };
+
+// --------------------------------------------------------------------------
+// Connection management
+// --------------------------------------------------------------------------
+
+let bridgeConfig = null;
+let configVersion = 0;
+
+async function getConfig() {
+  if (bridgeConfig) return bridgeConfig;
+  const version = configVersion;
+  const { bridge } = await chrome.storage.local.get("bridge");
+  if (version !== configVersion) return getConfig();
+  return (bridgeConfig = bridge || null);
+}
+
+function setStatus(state, detail) {
+  status = { state, detail: detail || "" };
+  chrome.action.setTitle({ title: `Codecast: ${state}${detail ? `, ${detail}` : ""}` });
+  // A global badge only when something is wrong, so "working" is quiet.
+  if (state === "bad-token") {
+    chrome.action.setBadgeText({ text: "ERR" });
+    chrome.action.setBadgeBackgroundColor({ color: "#b71c1c" });
+  } else {
+    chrome.action.setBadgeText({ text: "" });
+  }
+}
+
+/**
+ * Retries after a drop: quick at first, then every 5 s for as long as the
+ * worker lives. Never given up on: a host comes back whenever the next
+ * `cast browser` command starts one, and the only way to be there when it
+ * does is to keep asking. The alarm covers the case where the worker itself
+ * is gone.
+ */
+const RETRY_MS = [1000, 2000, 5000];
+let retries = 0;
+let retryTimer = null;
+
+function scheduleRetry() {
+  if (retryTimer) return;
+  const delay = RETRY_MS[Math.min(retries++, RETRY_MS.length - 1)];
+  retryTimer = setTimeout(() => {
+    retryTimer = null;
+    connect("retry");
+  }, delay);
+}
+
+// --------------------------------------------------------------------------
+// What happened to this worker lately, for the host log. Kept in memory and
+// in storage, so a worker that was ended and restarted still hands the host
+// the tail of its predecessor's story in its first hello.
+// --------------------------------------------------------------------------
+
+const RECENT_MAX = 24;
+let recent = [];
+let recentLoaded = chrome.storage.local
+  .get("recent")
+  .then(({ recent: saved }) => {
+    if (Array.isArray(saved)) recent = [...saved, ...recent].slice(-RECENT_MAX);
+  })
+  .catch(() => {});
+
+function note(what) {
+  const stamp = new Date().toISOString().slice(11, 19);
+  // A retry every 5 s for an hour is one line with a count, not the whole history.
+  const last = recent[recent.length - 1];
+  const same = last && /^\S+ (\S+) (.*?)(?: x(\d+))?$/.exec(last);
+  if (same && same[1] === BOOT.id && same[2] === what) {
+    recent[recent.length - 1] = `${stamp} ${BOOT.id} ${what} x${(parseInt(same[3] || "1", 10) + 1)}`;
+  } else {
+    recent.push(`${stamp} ${BOOT.id} ${what}`);
+    if (recent.length > RECENT_MAX) recent = recent.slice(-RECENT_MAX);
+  }
+  chrome.storage.local.set({ recent }).catch(() => {});
+}
+
+// Every 20 s while connected: one extension API call (what Chrome counts as
+// activity, whatever the host is doing) and one ping to the host (traffic on
+// the socket, and the host's own view of our liveness). 20 s sits well
+// inside Chrome's 30 s idle teardown even with timer drift.
+const KEEPALIVE_MS = 20_000;
+let keepaliveTimer = null;
+
+function startKeepalive() {
+  stopKeepalive();
+  keepaliveTimer = setInterval(() => {
+    chrome.runtime.getPlatformInfo().catch(() => {});
+    send({ op: "ping" });
+  }, KEEPALIVE_MS);
+}
+
+function stopKeepalive() {
+  clearInterval(keepaliveTimer);
+  keepaliveTimer = null;
+}
+
+/** A connect that has not been proven by then is abandoned and retried. */
+const CONNECT_TIMEOUT_MS = 10_000;
+
+function resetRetries() {
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  retries = 0;
+}
+
+async function connect(trigger = "boot") {
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  note(`connect via ${trigger}`);
+  const cfg = await getConfig();
+  if (!cfg || !cfg.token || !cfg.port) {
+    setStatus("no-config", "not paired yet; run `cast browser extension setup` in a terminal");
+    return;
+  }
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const sock = new WebSocket(`ws://127.0.0.1:${cfg.port}/ext`);
+  ws = sock;
+  // A token rejection stays on the badge until a host proves the token; the
+  // attempt itself is silent so the badge does not flicker every 5 s.
+  if (status.state !== "bad-token") setStatus("connecting", `127.0.0.1:${cfg.port}`);
+  const nonce = randomHex(32);
+  let proven = false;
+  let proving = null;
+  hostProven = false;
+  const deadline = setTimeout(() => {
+    if (proven || ws !== sock) return;
+    try {
+      sock.close(4408, "connect timed out");
+    } catch {}
+  }, CONNECT_TIMEOUT_MS);
+
+  sock.onopen = async () => {
+    await recentLoaded;
+    send({
+      op: "hello",
+      nonce,
+      auth: await hmacHex(cfg.token, "ext:" + nonce),
+      version: chrome.runtime.getManifest().version,
+      protocol: PROTOCOL,
+      userAgent: navigator.userAgent,
+      boot: BOOT.id,
+      bootAt: BOOT.at,
+      trigger,
+      recent: recent.slice(-12),
+    });
+  };
+
+  sock.onmessage = async (e) => {
+    if (ws !== sock) return;
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    // Nothing is executed for a host that has not proved it holds the token.
+    if (!proven) {
+      if (msg.op === "welcome") {
+        if (!proving) proving = (async () => {
+          const valid = sameHex(msg.proof, await hmacHex(cfg.token, nonce));
+          if (ws !== sock || sock.readyState !== WebSocket.OPEN) return;
+          if (valid) {
+            proven = true;
+            hostProven = true;
+            clearTimeout(deadline);
+            resetRetries();
+            startKeepalive();
+            note("proven");
+            setStatus("connected", `127.0.0.1:${cfg.port}`);
+          } else {
+            // Close first, then set the status: the close handler reads it.
+            note("host proof failed");
+            sock.close(4401, "host could not prove the token");
+            setStatus("bad-token", "the host on that port could not prove it holds the token; run `cast browser extension setup` again");
+          }
+        })();
+        await proving;
+        return;
+      }
+      if (!proving) return;
+      await proving;
+      if (!proven || ws !== sock) return;
+    }
+    if (msg.op === "ping") return send({ op: "pong" });
+    if (msg.op === "pong") return;
+    if (typeof msg.id !== "number") return;
+    try {
+      const result = await handle(msg);
+      if (ws === sock) send({ id: msg.id, ok: true, ...result });
+    } catch (err) {
+      if (ws === sock) send({ id: msg.id, ok: false, error: String((err && err.message) || err) });
+    }
+  };
+
+  sock.onclose = (e) => {
+    clearTimeout(deadline);
+    if (ws !== sock) return;
+    ws = null;
+    hostProven = false;
+    stopKeepalive();
+    note(`close ${e.code}${e.reason ? " " + e.reason : ""}${proven ? "" : " (unproven)"}`);
+    // 4401 is the "bad token" close, from either side. The badge says so
+    // until a host proves the token; the quick retries stop (the same token
+    // five seconds later is the same answer) and the alarm keeps asking
+    // every 30 s, because the host that answered may be a stale one about
+    // to be replaced. Our own close already set a more specific status.
+    if (status.state === "bad-token") {
+      /* keep it */
+    } else if (e.code === 4401) {
+      setStatus("bad-token", "the host rejected the token; run `cast browser extension setup` again, it hands this extension the current token");
+    } else {
+      setStatus("disconnected", "the bridge host is not running; it starts with the next `cast browser` command in real mode");
+      scheduleRetry();
+    }
+    // Losing the host means nobody can detach us later; release every tab so
+    // the human's browser is not left wearing debugger banners forever.
+    detachAll();
+  };
+
+  sock.onerror = () => {
+    /* onclose follows and handles it */
+  };
+}
+
+// Until the host has proved it holds the token, the only thing it hears is
+// our hello: not a tab title, not a URL, not an event. A squatter on the
+// port learns nothing about this browser.
+let hostProven = false;
+
+function send(msg) {
+  if (!hostProven && msg.op !== "hello") return;
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+}
+
+/** Drop the current socket and connect afresh, with the retry ladder reset. */
+function reconnect(refreshConfig = true) {
+  if (refreshConfig) {
+    bridgeConfig = null;
+    configVersion++;
+  }
+  if (ws) {
+    try {
+      ws.close();
+    } catch {}
+    ws = null;
+  }
+  hostProven = false;
+  stopKeepalive();
+  resetRetries();
+  status = { state: "disconnected", detail: "" };
+  connect("reconnect");
+}
+
+// --------------------------------------------------------------------------
+// The handshake's arithmetic: HMAC-SHA256 as hex, mirroring bridgeProof in
+// packages/cli/src/browser/bridge/protocol.ts.
+// --------------------------------------------------------------------------
+
+function randomHex(bytes) {
+  return [...crypto.getRandomValues(new Uint8Array(bytes))].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function hmacHex(key, message) {
+  const enc = new TextEncoder();
+  const k = await crypto.subtle.importKey("raw", enc.encode(key), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const sig = await crypto.subtle.sign("HMAC", k, enc.encode(message));
+  return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** Constant-time equality for hex strings of the same length. */
+function sameHex(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// --------------------------------------------------------------------------
+// The keeper: an offscreen document in this extension's process
+// --------------------------------------------------------------------------
+
+/**
+ * One hidden page (offscreen.html) that messages this worker every 20 s.
+ * It is what makes the worker dependable rather than disposable: see
+ * offscreen.js for the measurements. Created at every boot and checked on
+ * every alarm, because Chrome drops it with the extension on a reload and
+ * nothing else brings it back. A Chrome without the offscreen API (before
+ * 109) runs as before, on the alarm and the worker's own timers.
+ */
+let keeperPending = null;
+function ensureKeeper() {
+  if (!chrome.offscreen || keeperPending) return keeperPending || Promise.resolve();
+  keeperPending = (async () => {
+    try {
+      if (await chrome.offscreen.hasDocument()) return;
+      await chrome.offscreen.createDocument({
+        url: "offscreen.html",
+        // WORKERS carries no lifetime limit; an AUDIO_PLAYBACK page is closed after 30 s of silence.
+        reasons: [chrome.offscreen.Reason.WORKERS],
+        justification: "Keeps the local bridge connection's service worker running so agent commands are answered promptly.",
+      });
+      note("keeper page created");
+    } catch (err) {
+      // "Only a single offscreen document may be created" is a race with ourselves: fine.
+      if (!/single offscreen/i.test(String(err && err.message))) note(`keeper page: ${String((err && err.message) || err)}`);
+    }
+  })().finally(() => {
+    keeperPending = null;
+  });
+  return keeperPending;
+}
+ensureKeeper();
+
+// Reconnect backstop: fires even after the service worker was torn down.
+// It asks in every state, a token rejection included: the answer is one
+// small HMAC every 30 s, and it is what heals a pairing the moment the
+// right host is back on the port.
+chrome.alarms.create("cast-bridge-reconnect", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name !== "cast-bridge-reconnect") return;
+  ensureKeeper();
+  connect("alarm");
+});
+chrome.runtime.onStartup.addListener(() => connect("startup"));
+chrome.runtime.onInstalled.addListener(() => connect("installed"));
+connect("boot");
+
+// The options page asks for status and pokes reconnects through here.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // The keeper page's heartbeat: receiving it is the point (it is an event,
+  // so the idle clock restarts). It also finds a socket that dropped while
+  // the worker was starved, without waiting for the 30 s alarm.
+  if (msg && msg.op === "keeper-beat") {
+    if (!ws) connect("keeper");
+    return false;
+  }
+  if (msg && msg.op === "status") {
+    sendResponse({ ...status, attached: [...attached] });
+    return false;
+  }
+  if (msg && msg.op === "reconnect") {
+    reconnect();
+    sendResponse({ ok: true });
+    return false;
+  }
+  // The CLI's last resort (bridge/realChrome.ts wakeExtension): it opened
+  // the options page with #wake because nothing else brought this worker
+  // back. The page's message alone woke a dead worker; a live one drops
+  // whatever socket it was stuck on. The page is closed again so the
+  // human's window is as it was, unless it is the only tab there.
+  if (msg && msg.op === "wake") {
+    note("wake from the options page");
+    if (!hostProven || ws?.readyState !== WebSocket.OPEN) reconnect(false);
+    const tab = sender && sender.tab;
+    if (tab && tab.id !== undefined) {
+      chrome.tabs
+        .query({ windowId: tab.windowId })
+        .then((tabs) => (tabs.length > 1 ? chrome.tabs.remove(tab.id) : undefined))
+        .catch(() => {});
+    }
+    sendResponse({ ok: true });
+    return false;
+  }
+  return false;
+});
+
+// Exposed for the smoke script, which seeds storage over CDP and reconnects.
+globalThis.__castReconnect = reconnect;
+
+// --------------------------------------------------------------------------
+// Ops
+// --------------------------------------------------------------------------
+
+async function handle(m) {
+  switch (m.op) {
+    case "ping":
+      return { version: chrome.runtime.getManifest().version, protocol: PROTOCOL };
+
+    case "tabs.list": {
+      await loadOwnership();
+      // Under the host's 40 s listing budget; a frozen process answers when it wakes.
+      const tabs = await bounded(chrome.tabs.query({}), "Chrome tabs.query", 30_000);
+      return { tabs: tabs.filter((t) => t.id !== undefined).map(describeTab) };
+    }
+
+    case "tabs.create": {
+      await loadOwnership();
+      const group = m.group || DEFAULT_CAST_GROUP;
+      // Into the window that already holds this group, so cast tabs stay
+      // together instead of a second group appearing per window.
+      const windowId = windowOfOwnedGroup(group.title);
+      const t = await createTab({ url: m.url || "about:blank", active: !m.background, ...(windowId !== undefined ? { windowId } : {}) });
+      ownedTabs.add(t.id);
+      persistOwned();
+      // The tab exists from here on. A grouping failure must not become a
+      // failed create: the caller never learns the tab's id, cannot close it,
+      // and each retry leaves one more tab behind. The tab stays ours and
+      // joins the group on its next attach.
+      await placeInGroup(t, group).catch((err) => note(`tab ${t.id} left ungrouped: ${String((err && err.message) || err)}`));
+      return { tabId: t.id };
+    }
+
+    case "tabs.close":
+      await detachTab(m.tabId).catch(() => {});
+      await chrome.tabs.remove(m.tabId);
+      return {};
+
+    case "tabs.activate": {
+      await chrome.tabs.update(m.tabId, { active: true });
+      const t = await chrome.tabs.get(m.tabId);
+      await chrome.windows.update(t.windowId, { focused: true });
+      return {};
+    }
+
+    case "attach":
+      if (m.owned === true) {
+        ownedTabs.add(m.tabId);
+        persistOwned();
+      }
+      await attachTab(m.tabId);
+      return {};
+
+    case "detach":
+      await detachTab(m.tabId);
+      return {};
+
+    case "cdp": {
+      if (!attached.has(m.tabId)) await attachTab(m.tabId);
+      const screenshot = m.method === "Page.captureScreenshot";
+      try {
+        if (screenshot) await setBorderVisible(m.tabId, false);
+        else if (m.method === "Input.dispatchMouseEvent") movePointer(m.tabId, m.params || {});
+        const result = await boundedCdp(m.tabId, m.method, m.params || {});
+        return { result: result || {} };
+      } finally {
+        if (screenshot) await setBorderVisible(m.tabId, true);
+      }
+    }
+
+    case "reload":
+      // Reply first: the reload tears this worker down, socket included. An
+      // unpacked extension reads its files again only on a reload, which is
+      // how an edited background.js reaches a running Chrome without a trip
+      // to chrome://extensions. The host is found again on the way back up.
+      setTimeout(() => chrome.runtime.reload(), 50);
+      return {};
+
+    default:
+      throw new Error("unknown op: " + m.op);
+  }
+}
+
+/**
+ * A tab in a normal window. Chrome started by the CLI with --no-startup-window
+ * (bridge/realChrome.ts launchRealChrome) runs with no window at all, and
+ * tabs.create has nowhere to put a tab; so a window is made, behind whatever
+ * the human is doing. A tab in an existing window is created as asked.
+ *
+ * With no window named, tabs.create uses the last focused window, and that can
+ * be an installed web app's window. Chrome allows tab groups only in normal
+ * windows, so placeInGroup then fails on every attempt ("Tabs can only be moved
+ * to and from normal windows"). So the tab goes to the last focused NORMAL one.
+ */
+async function createTab(props) {
+  const windows = await chrome.windows.getAll({ windowTypes: ["normal"] }).catch(() => []);
+  if (windows.length) {
+    if (props.windowId !== undefined) return chrome.tabs.create(props);
+    const w = await chrome.windows.getLastFocused({ windowTypes: ["normal"] }).catch(() => windows[0]);
+    return chrome.tabs.create({ ...props, windowId: (w || windows[0]).id });
+  }
+  const w = await chrome.windows.create({ url: props.url, focused: false, type: "normal" });
+  const t = (w && w.tabs && w.tabs[0]) || (await chrome.tabs.query({ windowId: w.id }))[0];
+  if (!t) throw new Error("Chrome opened a window but reports no tab in it");
+  return t;
+}
+
+/**
+ * chrome.debugger.sendCommand has no timeout of its own: a tab whose renderer
+ * is frozen, throttled in a background window, or discarded by memory saver
+ * simply never answers, and one such tab stalled every client of the bridge
+ * for the host's 20 s attach budget. Every debugger call on the attach path is
+ * bounded, so a tab that cannot answer is reported as such.
+ *
+ * The bound is generous on purpose. This worker's process runs at background
+ * priority, and on a loaded Mac it is not scheduled for tens of seconds at a
+ * time; a 5 s bound fired after such a stall on calls that answered the
+ * moment the process ran again (ct-51246). The host gives an attach 40 s, so
+ * the two steps that answer from the renderer share that budget.
+ */
+const ATTACH_STEP_MS = 20_000;
+/**
+ * When the clock fires, the call gets this much longer before it counts as
+ * unanswered. A timer measures wall time, and this process is frozen for
+ * seconds at a stretch: the timer and the call's answer are both queued
+ * while it sleeps, and the timer can run first. Failing the call then throws
+ * away an answer that arrives a moment later (seen on tabs.list and the
+ * attach steps, ct-51246). A call that is truly hung costs this extra wait.
+ */
+const STALL_GRACE_MS = 3_000;
+function bounded(promise, what, timeoutMs = ATTACH_STEP_MS) {
+  let timer;
+  let settled = false;
+  const tracked = promise.then(
+    (v) => ((settled = true), v),
+    (e) => {
+      settled = true;
+      throw e;
+    },
+  );
+  const clock = new Promise((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+  });
+  const late = () => new Promise((resolve) => setTimeout(resolve, STALL_GRACE_MS));
+  return Promise.race([tracked, clock.then(() => (settled ? tracked : Promise.race([tracked, late()])))])
+    .then((v) => {
+      if (!settled) {
+        // Chrome runs this extension's process at background priority, which
+        // macOS schedules on the efficiency cores only: a call that has not
+        // answered was not scheduled, or its tab cannot answer.
+        throw new Error(`${what} did not answer within ${timeoutMs}ms (this extension's process runs at background priority and was not scheduled, or the tab is unresponsive)`);
+      }
+      return v;
+    })
+    .finally(() => clearTimeout(timer));
+}
+
+/**
+ * Chrome ends a service worker whose single API call has run for five
+ * minutes, and the socket, every session and every other tab go with it. A
+ * debugger call that has not answered in CDP_CALL_MAX_MS is on a tab that
+ * will not answer (renderer frozen, page hung); detaching the tab is what
+ * makes Chrome fail the call, and the next command attaches afresh.
+ */
+const CDP_CALL_MAX_MS = 240_000;
+async function boundedCdp(tabId, method, params) {
+  let timer;
+  const clock = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      note(`${method} on tab ${tabId} hung ${CDP_CALL_MAX_MS / 1000}s; detaching`);
+      detachTab(tabId).catch(() => {});
+      reject(new Error(`${method} did not answer within ${CDP_CALL_MAX_MS / 1000}s; the tab was detached (page hung or renderer frozen)`));
+    }, CDP_CALL_MAX_MS);
+  });
+  try {
+    return await Promise.race([chrome.debugger.sendCommand({ tabId }, method, params), clock]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Chrome keeps an extension's debugger sessions across service worker lives;
+ * our bookkeeping does not. A session this worker's predecessor held is still
+ * on the target, and only a detach clears it. The detach succeeds for our own
+ * session alone: another extension's, or open DevTools, leaves an error worth
+ * naming.
+ */
+async function attachDebugger(debuggee) {
+  try {
+    await bounded(chrome.debugger.attach(debuggee, "1.3"), "debugger.attach");
+  } catch (err) {
+    if (!/already attached/i.test(String((err && err.message) || err))) throw err;
+    const ours = await bounded(chrome.debugger.detach(debuggee), "debugger.detach").then(() => true, () => false);
+    if (!ours) throw new Error(`another debugger holds this target (DevTools, or another extension); close it there first`);
+    await bounded(chrome.debugger.attach(debuggee, "1.3"), "debugger.attach");
+  }
+}
+
+async function attachTab(tabId) {
+  await loadOwnership();
+  const t = await chrome.tabs.get(tabId).catch(() => null);
+  if (ownedTabs.has(tabId) && t?.groupId === NO_GROUP) await placeInGroup(t, DEFAULT_CAST_GROUP).catch((err) => note(`tab ${tabId} still ungrouped: ${String((err && err.message) || err)}`));
+  if (!attached.has(tabId)) {
+    if (t && t.discarded) throw new Error("this tab was discarded by Chrome's memory saver; activate it once to wake it");
+    await attachDebugger({ tabId });
+    attached.add(tabId);
+    markDriven(tabId, true);
+  }
+  // Re-enabling is idempotent and cheap; a fresh CLI process may follow a
+  // navigation that reset domain state. A tab that answers none of these is
+  // reported rather than waited on.
+  await bounded(
+    Promise.all(["Page", "DOM", "Runtime", "Accessibility", "Network"].map((domain) => chrome.debugger.sendCommand({ tabId }, domain + ".enable", {}).catch(() => {}))),
+    "domain enable",
+  );
+  // The frame is a courtesy, not a step of the attach. Painting it into the
+  // live document is a Runtime.evaluate, which waits on the page's main
+  // thread, and a page still parsing holds that thread for seconds. Awaiting
+  // it here failed the whole attach on google.com under load (2026-09-15),
+  // over a frame the on-new-document script would have painted anyway. So the
+  // install runs alongside the client's first commands; the tab is usable now.
+  if (!borderScripts.has(tabId) && !borderPending.has(tabId)) {
+    borderPending.add(tabId);
+    bounded(installBorder(tabId), "overlay install", CDP_CALL_MAX_MS)
+      .catch((err) => note(`overlay install on tab ${tabId}: ${String((err && err.message) || err)}`))
+      .finally(() => borderPending.delete(tabId));
+  }
+}
+
+async function detachTab(tabId) {
+  if (attached.has(tabId)) {
+    markDriven(tabId, false);
+    try {
+      await bounded(removeBorder(tabId), "overlay removal").catch(() => {});
+    } finally {
+      await bounded(chrome.debugger.detach({ tabId }), "debugger.detach").catch(() => {}).finally(() => attached.delete(tabId));
+    }
+  }
+}
+
+function detachAll() {
+  for (const tabId of [...attached]) detachTab(tabId);
+}
+
+/** Per-tab badge on the extension icon (visible when the icon is pinned). */
+function markDriven(tabId, on) {
+  chrome.action.setBadgeText({ tabId, text: on ? "CAST" : "" }).catch(() => {});
+  if (on) {
+    chrome.action.setBadgeBackgroundColor({ tabId, color: "#c62828" }).catch(() => {});
+    chrome.action.setTitle({ tabId, title: "cast is driving this tab" }).catch(() => {});
+  }
+}
+
+/** The tab shape the host turns into CDP TargetInfo. A group is reported
+ *  only when this extension created it: the host adopts the group of a tab
+ *  a client attaches to, and a group the human made must never be adopted. */
+function describeTab(t) {
+  const g = ownedGroups.has(t.groupId) ? groups.get(t.groupId) : null;
+  return {
+    tabId: t.id,
+    url: t.url || "",
+    title: t.title || "",
+    active: !!t.active,
+    windowId: t.windowId,
+    attached: attached.has(t.id),
+    owned: ownedTabs.has(t.id),
+    ...(g ? { group: { title: plainOf(g.title), color: g.color } } : {}),
+  };
+}
+
+// --------------------------------------------------------------------------
+// Tab groups: one per session
+// --------------------------------------------------------------------------
+
+const NO_GROUP = -1; // chrome.tabGroups.TAB_GROUP_ID_NONE
+const groups = new Map(); // groupId → chrome.tabGroups.TabGroup (title as Chrome shows it)
+const tabGroupOf = new Map(); // tabId → groupId, kept current by tab events
+
+/**
+ * Groups this extension created. Everything that touches a group (the
+ * animated title, the border colour, what the host is told) is limited to
+ * these, so a group the human made is never renamed, animated or handed to a
+ * session. Persisted in session storage: a service worker restart must not
+ * make us forget which groups are ours, and a browser restart (which empties
+ * session storage) also drops every group id, so nothing stale survives.
+ */
+const ownedGroups = new Set();
+const ownedTabs = new Set(); // tabs this extension opened; the only ones that belong in an owned group
+let ownershipLoaded = null;
+function loadOwnership() {
+  if (!ownershipLoaded) {
+    ownershipLoaded = bounded(chrome.storage.session.get(["ownedGroups", "ownedTabs"]), "Chrome storage.session.get")
+      .then(async ({ ownedGroups: gids, ownedTabs: tids }) => {
+        for (const id of gids || []) ownedGroups.add(id);
+        for (const id of tids || []) ownedTabs.add(id);
+        // Always: the host re-marks a few tabs the moment it reconnects, so
+        // "memory is empty" is rarely true by the first listing, while the
+        // groups a reload orphaned are still sitting there unowned.
+        await adoptCastGroups();
+      }).catch(error => {
+        ownershipLoaded = null;
+        throw error;
+      });
+  }
+  return ownershipLoaded;
+}
+
+/**
+ * Session storage empties on an extension reload and on a browser restart,
+ * and with it every mark of which tabs are ours. The tab group survives
+ * both: it is the one marker Chrome keeps. A group carrying exactly our
+ * title and colour was made by this extension (a person names a group
+ * "Cast" in red by accident about never), so when memory is empty, those
+ * groups and the tabs in them are ours again. Without this, every agent tab
+ * left behind after a reload looked like the human's: the host would not
+ * list it, and the reaper could not close it (2026-09-17: a strip full of
+ * dead sessions' tabs, all reloading against the dev server).
+ */
+async function adoptCastGroups() {
+  // Short bounds: this runs inside the first listing after a reload, and a
+  // group query that does not answer must not hold that listing back. The
+  // next listing tries again (ownedGroups stays empty until one succeeds).
+  // By colour, then the plain title: an older build left "Cast ..." or
+  // "Cast ✓" on a group it was animating, and a query by the exact title
+  // would miss those.
+  const red = await bounded(chrome.tabGroups.query({ color: DEFAULT_CAST_GROUP.color }), "Chrome tabGroups.query", 5_000).catch(() => []);
+  for (const g of red) {
+    const plain = plainOf(g.title);
+    if (plain === DEFAULT_CAST_GROUP.title && g.title !== plain) chrome.tabGroups.update(g.id, { title: plain }).catch(() => {});
+  }
+  const found = red.filter((g) => plainOf(g.title) === DEFAULT_CAST_GROUP.title && !ownedGroups.has(g.id));
+  if (!found.length) return;
+  for (const g of found) {
+    ownedGroups.add(g.id);
+    groups.set(g.id, g);
+    const tabs = await bounded(chrome.tabs.query({ groupId: g.id }), "Chrome tabs.query", 5_000).catch(() => []);
+    for (const t of tabs) if (t.id !== undefined) ownedTabs.add(t.id);
+  }
+  persistOwned();
+  note(`adopted ${found.length} Cast group(s) after ownership memory was empty`);
+}
+
+/** Both sets outlive this worker (session storage), so a restart keeps telling ours from the human's. */
+function persistOwned() {
+  chrome.storage.session.set({ ownedGroups: [...ownedGroups], ownedTabs: [...ownedTabs] }).catch(() => {});
+}
+
+async function refreshGroups() {
+  groups.clear();
+  for (const g of await chrome.tabGroups.query({})) groups.set(g.id, g);
+}
+refreshGroups().catch(() => {});
+
+/**
+ * Put a fresh tab in the named group, joining a group of ours with the same
+ * title in the same window when one exists so a session's tabs share one
+ * group. A group the human happened to name the same way is not ours to
+ * join.
+ */
+async function placeInGroup(tab, group) {
+  const existing = [...groups.values()].find(
+    (g) => ownedGroups.has(g.id) && g.windowId === tab.windowId && plainOf(g.title) === group.title,
+  );
+  const groupId = await chrome.tabs.group({ tabIds: [tab.id], ...(existing ? { groupId: existing.id } : {}) });
+  tabGroupOf.set(tab.id, groupId);
+  if (!existing) {
+    ownedGroups.add(groupId);
+    persistOwned();
+    const g = await chrome.tabGroups.update(groupId, { title: group.title, color: group.color });
+    groups.set(groupId, g);
+  }
+}
+
+/** The window of a group we made with this plain title, if one is open. */
+function windowOfOwnedGroup(title) {
+  const g = [...groups.values()].find((x) => ownedGroups.has(x.id) && plainOf(x.title) === title);
+  return g ? g.windowId : undefined;
+}
+
+async function groupOfTab(tabId) {
+  if (!tabGroupOf.has(tabId)) {
+    const t = await chrome.tabs.get(tabId).catch(() => null);
+    tabGroupOf.set(tabId, t ? t.groupId : NO_GROUP);
+  }
+  return tabGroupOf.get(tabId);
+}
+
+/** The tab's group when it is one of ours, else NO_GROUP. */
+async function ownedGroupOf(tabId) {
+  const groupId = await groupOfTab(tabId);
+  return ownedGroups.has(groupId) ? groupId : NO_GROUP;
+}
+
+/**
+ * A group title without the dots or checkmark an older build animated onto
+ * it, so a group left mid frame still matches and the host never sees one.
+ */
+const plainOf = (title) => (title || "").replace(/( \.{1,3} {0,2}| ✓)$/, "");
+
+chrome.tabGroups.onCreated.addListener((g) => groups.set(g.id, g));
+chrome.tabGroups.onUpdated.addListener((g) => groups.set(g.id, g));
+chrome.tabGroups.onRemoved.addListener((g) => {
+  groups.delete(g.id);
+  if (ownedGroups.delete(g.id)) persistOwned();
+});
+
+// --------------------------------------------------------------------------
+// Border overlay: a coloured frame around the driven page
+// --------------------------------------------------------------------------
+
+/**
+ * Everything the overlay does runs in an isolated world named for us, never
+ * in the page's own: the page cannot wrap document.getElementById there to
+ * learn when a screenshot is about to be taken, and cannot reach our script
+ * at all. The DOM itself is shared, so a hostile page can still hide or
+ * remove the element; what it loses is the timing signal. The element id is
+ * random per attach, so no stylesheet written in advance can target it.
+ *
+ * The frame lives on a lease. Every BEAT_MS this worker writes a timestamp
+ * into the world of each attached tab, and the page side script hides the
+ * frame once LEASE_MS pass with no fresh timestamp. Detaching removes the
+ * frame outright; the lease covers the paths that cannot: the human pressing
+ * Cancel on Chrome's banner (the session is gone before we can act) and a
+ * host or worker that died.
+ */
+const WORLD = "cast-browser-bridge";
+const BEAT_MS = 3000;
+const LEASE_MS = 8000;
+const borderScripts = new Map(); // tabId → Page.addScriptToEvaluateOnNewDocument identifier
+const borderPending = new Set(); // tabIds whose overlay install is still running (attachTab does not wait for it)
+const borderIds = new Map(); // tabId → this attach's element id
+const worlds = new Map(); // tabId → executionContextId of our isolated world in the top frame
+
+/**
+ * The page-side script. Fixed, inset, pointer-events none, so it never takes
+ * a click and never answers elementFromPoint (the driver's click checks use
+ * that). Top frame only. Runs before the document has an element on a fresh
+ * navigation, so it waits for one when it must. `__castBeat` is the lease:
+ * set at mount, refreshed by the worker, checked once a second.
+ */
+function borderSource(id, color) {
+  return `(() => {
+    if (window !== window.top) return;
+    // Tell the page an agent drives this tab. codecast's own pages read the
+    // key before deciding whether to hand the page to the desktop app, and a
+    // page already parsing when we attached hears the event instead. Storage
+    // and DOM events are shared with the page's world; nothing else here is.
+    // Same names as packages/cli/src/browser/observe.ts (agentTabStampSource).
+    try { sessionStorage.setItem("codecast-agent-tab", "1"); } catch {}
+    try { document.dispatchEvent(new Event("cast:driven")); } catch {}
+    const ID = ${JSON.stringify(id)};
+    const LEASE_MS = ${LEASE_MS};
+    globalThis.__castBeat = Date.now();
+    const mount = () => {
+      const root = document.documentElement;
+      if (!root) return false;
+      let el = document.getElementById(ID);
+      if (!el) {
+        el = document.createElement("div");
+        el.id = ID;
+        el.setAttribute("aria-hidden", "true");
+        root.appendChild(el);
+      }
+      // The colour the frame is drawn from, readable by anything that looks
+      // at the page: the border itself is a gradient image, which computed
+      // style reports as transparent.
+      el.dataset.castColor = ${JSON.stringify(color)};
+      el.style.cssText = "position:fixed;inset:0;z-index:2147483647;pointer-events:none;box-sizing:border-box;margin:0;padding:0;" +
+        "border:3px solid transparent;border-image:linear-gradient(135deg,color-mix(in srgb,${color} 55%,white),${color} 55%,color-mix(in srgb,${color} 70%,black)) 1;" +
+        "box-shadow:inset 0 0 26px 0 color-mix(in srgb,${color} 16%,transparent);background:transparent;";
+      // The pointer: an arrow in the frame's colour that glides to where the
+      // agent's mouse events land and pulses on a press, then fades when the
+      // agent has been still for a while. A child of the frame, so whatever
+      // hides the frame (a screenshot) hides it too.
+      let cur = el.firstElementChild;
+      if (!cur) {
+        cur = document.createElement("div");
+        cur.style.cssText = "position:absolute;left:0;top:0;width:28px;height:36px;opacity:0;transform:translate(-100px,-100px);" +
+          "transition:transform 160ms cubic-bezier(.2,.7,.2,1),opacity 300ms ease;will-change:transform;";
+        cur.innerHTML = '<svg width="28" height="36" viewBox="0 0 28 36" style="position:absolute;left:0;top:0;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))">' +
+          '<path d="M3 2 L3 27 L9 21 L13 31 L17 29 L13 20 L22 20 Z" fill="${color}" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>' +
+          '<span style="position:absolute;left:-14px;top:-14px;width:36px;height:36px;border-radius:50%;border:2px solid ${color};opacity:0;transform:scale(.4)"></span>';
+        el.appendChild(cur);
+      }
+      return true;
+    };
+    let hideTimer = null;
+    globalThis.__castPointer = (x, y, kind) => {
+      const el = document.getElementById(ID);
+      const cur = el && el.firstElementChild;
+      if (!cur) return;
+      cur.style.transform = "translate(" + x + "px," + y + "px)";
+      cur.style.opacity = "1";
+      if (kind === "down") {
+        const ring = cur.lastElementChild;
+        ring.style.transition = "none";
+        ring.style.opacity = "0.9";
+        ring.style.transform = "scale(.4)";
+        requestAnimationFrame(() => {
+          ring.style.transition = "transform 420ms ease-out, opacity 420ms ease-out";
+          ring.style.opacity = "0";
+          ring.style.transform = "scale(1.4)";
+        });
+      }
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => { cur.style.opacity = "0"; }, 4000);
+    };
+    const lease = () => {
+      const el = document.getElementById(ID);
+      if (el) el.style.display = Date.now() - (globalThis.__castBeat || 0) > LEASE_MS ? "none" : "block";
+    };
+    if (!mount()) document.addEventListener("DOMContentLoaded", mount, { once: true });
+    if (!globalThis.__castLease) globalThis.__castLease = setInterval(lease, 1000);
+  })();`;
+}
+
+async function borderColor(tabId) {
+  const g = groups.get(await ownedGroupOf(tabId));
+  return GROUP_COLOR_HEX[g && g.color] || "#c62828";
+}
+
+/**
+ * Our isolated world's context in the tab's top frame, created on first use
+ * and again after every navigation (Runtime.executionContextsCleared drops
+ * the cached id). Chrome keys isolated worlds by name per frame, so the
+ * world the on-new-document script ran in is the one this returns.
+ */
+async function worldContext(tabId) {
+  const cached = worlds.get(tabId);
+  if (cached) return cached;
+  const { frameTree } = await chrome.debugger.sendCommand({ tabId }, "Page.getFrameTree", {});
+  const { executionContextId } = await chrome.debugger.sendCommand({ tabId }, "Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: WORLD,
+    grantUniveralAccess: false,
+  });
+  worlds.set(tabId, executionContextId);
+  return executionContextId;
+}
+
+/** Run a script in our world; a stale context (a navigation raced us) is retried once. */
+async function evalInWorld(tabId, expression) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const contextId = await worldContext(tabId);
+      return await chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", { expression, contextId });
+    } catch (err) {
+      worlds.delete(tabId);
+      if (attempt) throw err;
+    }
+  }
+}
+
+async function installBorder(tabId) {
+  const id = "cast-" + randomHex(8);
+  borderIds.set(tabId, id);
+  const source = borderSource(id, await borderColor(tabId));
+  const r = await chrome.debugger
+    .sendCommand({ tabId }, "Page.addScriptToEvaluateOnNewDocument", { source, worldName: WORLD })
+    .catch(() => null);
+  if (r && r.identifier) borderScripts.set(tabId, r.identifier);
+  await evalInWorld(tabId, source).catch(() => {});
+}
+
+async function removeBorder(tabId) {
+  const identifier = borderScripts.get(tabId);
+  const id = borderIds.get(tabId);
+  borderScripts.delete(tabId);
+  borderIds.delete(tabId);
+  if (identifier) {
+    await chrome.debugger.sendCommand({ tabId }, "Page.removeScriptToEvaluateOnNewDocument", { identifier }).catch(() => {});
+  }
+  if (id) {
+    await evalInWorld(tabId, `(() => { const e = document.getElementById(${JSON.stringify(id)}); if (e) e.remove(); })()`).catch(() => {});
+  }
+  worlds.delete(tabId);
+}
+
+/** The pointer follows the agent's mouse events; a press pulses. Never awaited: it is a courtesy, not a step. */
+function movePointer(tabId, p) {
+  if (typeof p.x !== "number" || typeof p.y !== "number" || !borderIds.has(tabId)) return;
+  const kind = p.type === "mousePressed" ? "down" : "move";
+  evalInWorld(tabId, `globalThis.__castPointer && __castPointer(${p.x}, ${p.y}, ${JSON.stringify(kind)})`).catch(() => {});
+}
+
+/** Hidden around a screenshot so the capture shows the page, not our frame. */
+async function setBorderVisible(tabId, visible) {
+  const id = borderIds.get(tabId);
+  if (!id) return;
+  await evalInWorld(
+    tabId,
+    `(() => { const e = document.getElementById(${JSON.stringify(id)}); if (e) e.style.visibility = ${JSON.stringify(visible ? "visible" : "hidden")}; })()`,
+  ).catch(() => {});
+}
+
+// The lease heartbeat: one evaluate per attached tab, straight to the
+// debugger (not through the `cdp` op, so it never counts as work).
+setInterval(() => {
+  for (const tabId of attached) {
+    if (borderIds.has(tabId)) evalInWorld(tabId, "globalThis.__castBeat = Date.now()").catch(() => {});
+  }
+}, BEAT_MS);
+
+// --------------------------------------------------------------------------
+// Debugger and tab plumbing
+// --------------------------------------------------------------------------
+
+// Events no client reads, never relayed. A websocket frame event carries the
+// whole frame: a Convex app tab streams megabytes a second of them, and
+// forwarding them queued every command reply behind traffic nobody wanted
+// (2026-10-01). The host drops the same set (bridge/frames.ts UNRELAYED_EVENTS).
+const UNRELAYED_EVENTS = new Set(["Network.webSocketFrameReceived", "Network.webSocketFrameSent"]);
+
+chrome.debugger.onEvent.addListener((source, method, params) => {
+  // A navigation tore every context down, our world with it.
+  if (method === "Runtime.executionContextsCleared" && source.tabId) worlds.delete(source.tabId);
+  if (UNRELAYED_EVENTS.has(method)) return;
+  if (source.tabId && attached.has(source.tabId)) {
+    send({ op: "event", tabId: source.tabId, method, params: params || {} });
+  }
+});
+
+// The user can cancel via Chrome's banner; keep our books straight when they
+// do. The border cannot be removed (the session is gone); its lease hides it.
+chrome.debugger.onDetach.addListener((source) => {
+  if (source.targetId && source.targetId === selfTarget) {
+    selfTarget = null;
+    holdSelf();
+  }
+  if (source.tabId && attached.has(source.tabId)) {
+    attached.delete(source.tabId);
+    borderScripts.delete(source.tabId); // the session is gone, and its scripts with it
+    borderIds.delete(source.tabId);
+    worlds.delete(source.tabId);
+    markDriven(source.tabId, false);
+    send({ op: "detached", tabId: source.tabId });
+  }
+});
+
+// Tab lifecycle, so the host can emit Target.targetCreated/Destroyed/InfoChanged
+// to clients that asked to discover targets — including tabs the human opens.
+chrome.tabs.onCreated.addListener((t) => {
+  if (t.id !== undefined) {
+    tabGroupOf.set(t.id, t.groupId);
+    send({ op: "tab", kind: "created", tab: describeTab(t) });
+  }
+});
+chrome.tabs.onUpdated.addListener((tabId, info, t) => {
+  if (info.groupId !== undefined) {
+    tabGroupOf.set(tabId, info.groupId);
+    // Chrome opens a new tab inside the active tab's group, so a tab the
+    // human opens next to an agent's lands in the Cast group and wears its
+    // colour. The group means "agent tabs": anything we neither opened nor
+    // hold goes back out.
+    if (ownedGroups.has(info.groupId) && !ownedTabs.has(tabId) && !attached.has(tabId)) {
+      chrome.tabs.ungroup([tabId]).catch(() => {});
+    }
+  }
+  send({ op: "tab", kind: "updated", tab: describeTab(t) });
+});
+chrome.tabs.onRemoved.addListener((tabId, info) => {
+  attached.delete(tabId);
+  if (ownedTabs.delete(tabId)) persistOwned();
+  tabGroupOf.delete(tabId);
+  borderScripts.delete(tabId);
+  borderIds.delete(tabId);
+  worlds.delete(tabId);
+  send({ op: "tab", kind: "removed", tab: { tabId, url: "", title: "", active: false, windowId: info.windowId, attached: false } });
+});

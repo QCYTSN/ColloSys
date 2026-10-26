@@ -1,0 +1,185 @@
+// Sync-log cargo → store row fields (docs/architecture/sync-log-cargo.md E6/E7).
+//
+// The log carries RAW document fields. The store renders ENRICHED rows (the
+// byIds/list channels join users, plans, conversations onto them). This module
+// is the pure, unit-tested bridge: per collection it says which raw fields land
+// directly, how they are renamed or normalized, which derived twins to recompute
+// from the merged row, and when the row still needs a byIds refetch for joins
+// the replica cannot derive (the enrichment audit's verdicts, pl-498).
+import {
+  INBOX_FACT_FIELDS,
+  isInboxRowField,
+  isSettleVerdictCurrent,
+  userRestOf,
+} from "@codecast/shared/contracts";
+
+export type CargoCollection = "sessions" | "tasks" | "docs" | "plans" | "projects";
+
+export type Cargo = {
+  patch?: Record<string, any>;
+  unset?: string[];
+  full?: boolean;
+  partial?: boolean;
+  omitted?: string[];
+};
+
+export type CargoPlan = {
+  // Fields to merge onto the row (after rename/normalize/twins).
+  fields: Record<string, any>;
+  // Keys to remove (sessions rows null them instead — enrichment spells
+  // "absent" as null, and Convex drops undefined keys on the wire).
+  unset: string[];
+  // A byIds refetch is needed for joins the replica cannot derive from this
+  // patch (or because the server flagged the cargo partial).
+  refetch: boolean;
+};
+
+// Raw field changes that invalidate a join the replica does not hold
+// (enrichment audit, pl-498). A patch touching one of these applies its raw
+// fields first (the visible change is instant) and then refetches the row.
+export const ENRICH_TRIGGER_FIELDS: Record<CargoCollection, ReadonlySet<string>> = {
+  // last_comment_at: stamped by every task_comments insert — the comments
+  // join lives on another table, so this is the only signal a replica gets.
+  tasks: new Set(["plan_id", "last_comment_at"]),
+  docs: new Set(["plan_id", "doc_type"]),
+  plans: new Set([]),
+  projects: new Set([]),
+  sessions: new Set(["active_plan_id", "active_task_id", "workflow_run_id"]),
+};
+
+// Sessions rows rename three raw fields (enrichInboxSessionRow).
+const SESSION_RENAMES: Record<string, string> = {
+  has_pending_messages: "has_pending",
+  unresolved_comment_count: "open_comment_threads",
+  last_message_preview: "last_user_message",
+};
+
+const FACT_FIELDS = new Set<string>(INBOX_FACT_FIELDS as readonly string[]);
+
+function teamIdFromWorkspace(ws: unknown): string | undefined {
+  return typeof ws === "string" && ws.startsWith("team:") ? ws.slice(5) : undefined;
+}
+
+// Pure. `existing` is the row currently in the store (undefined when absent —
+// the caller only asks for a plan when it has a base or the cargo is full).
+// Project rows carry member COUNTS the server joins (task_counts by status,
+// plan_count, active_plan_count, doc_count). A cargo patch on a member cannot
+// move those, so the applier refetches the project whenever a member change
+// can change a count: a create, a delete, a project move, or a status change
+// on a task or plan. Returns the project ids whose counts may have moved (the
+// applier keeps only the ones this replica holds). Pure; unit-tested.
+export function projectCountTouched(
+  coll: string,
+  action: { op: string; patch?: Record<string, any>; unset?: string[] },
+  existing: Record<string, any> | undefined,
+): string[] {
+  if (coll !== "tasks" && coll !== "plans" && coll !== "docs") return [];
+  const out = new Set<string>();
+  const add = (pid: unknown) => { if (typeof pid === "string" && pid) out.add(pid); };
+  const prev = existing?.project_id;
+  if (action.op !== "upsert") { add(prev); return [...out]; }
+  const raw = action.patch ?? {};
+  if (!existing) { add(raw.project_id); return [...out]; }
+  if ("project_id" in raw && raw.project_id !== prev) { add(prev); add(raw.project_id); }
+  if (action.unset?.includes("project_id")) add(prev);
+  if (coll !== "docs" && "status" in raw && raw.status !== existing.status) { add(prev); add(raw.project_id ?? prev); }
+  return [...out];
+}
+
+export function planCargoApply(
+  coll: CargoCollection,
+  cargo: Cargo,
+  existing: Record<string, any> | undefined,
+): CargoPlan {
+  const raw = cargo.patch ?? {};
+  const unsetIn = cargo.unset ?? [];
+  const triggers = ENRICH_TRIGGER_FIELDS[coll];
+  let refetch = !!cargo.partial;
+  // A trigger fires on a CHANGED value, never on presence: a coalesced or
+  // full cargo re-ships every field it ever carried (plan_id on a task that
+  // has always had one), and a refetch per re-shipped field would put every
+  // coalesced row back on the byIds path.
+  const same = (a: unknown, b: unknown) =>
+    a === b || (a != null && b != null && typeof a === "object" && typeof b === "object" && JSON.stringify(a) === JSON.stringify(b));
+  for (const k of Object.keys(raw)) {
+    if (triggers.has(k) && !(existing && same(existing[k], raw[k]))) refetch = true;
+  }
+  for (const k of unsetIn) {
+    if (triggers.has(k) && !(existing && existing[k] === undefined)) refetch = true;
+  }
+
+  if (coll === "sessions") return planSessions(raw, unsetIn, existing, refetch);
+
+  const fields: Record<string, any> = { ...raw };
+  const unset = [...unsetIn];
+  if (coll === "docs" || coll === "plans") {
+    // The list channels stamp team_id to the EFFECTIVE team (the workspace
+    // key's team, or none for personal); the server never ships raw team_id
+    // for these two (payload denylist), so derive it from `workspace` here.
+    if ("workspace" in raw) {
+      const t = teamIdFromWorkspace(raw.workspace);
+      if (t) fields.team_id = t; else unset.push("team_id");
+    }
+  }
+  if (coll === "tasks") {
+    if ("conversation_ids" in raw) fields.session_count = Array.isArray(raw.conversation_ids) ? raw.conversation_ids.length : 0;
+  }
+  if (coll === "docs" && cargo.omitted?.includes("content") && existing?.source === "plan_mode") {
+    // display_title derives from the body for plan-mode docs; the body never
+    // rides the log, so a content change means the title may have moved.
+    refetch = true;
+  }
+  return { fields, unset, refetch };
+}
+
+function planSessions(
+  raw: Record<string, any>,
+  unsetIn: string[],
+  existing: Record<string, any> | undefined,
+  refetchIn: boolean,
+): CargoPlan {
+  // Every non-fact raw change, renamed: the inputs the derived twins read.
+  // The liveness overlay is the single writer of fact fields (convergence
+  // C1), so a conversations patch never writes them, even the raw ones like
+  // updated_at/message_count.
+  const changed: Record<string, any> = {};
+  let refetch = refetchIn;
+  for (const [k, v] of Object.entries(raw)) {
+    if (FACT_FIELDS.has(k)) continue;
+    let value = v;
+    if (k === "loop_state" && value && typeof value === "object" && value.status === "stopped") value = null;
+    changed[SESSION_RENAMES[k] ?? k] = value === undefined ? null : value;
+  }
+  // Absent → null: enrichment spells every optional as `?? null`.
+  for (const k of unsetIn) {
+    if (FACT_FIELDS.has(k)) continue;
+    changed[SESSION_RENAMES[k] ?? k] = null;
+  }
+  // Only the row's own fields land (INBOX_ROW_FIELDS). Any other raw column
+  // (title_gen_scheduled_at, persistent, short_id...) is not on the row the
+  // list and byIds write, so landing it would flap on their next push.
+  const fields: Record<string, any> = {};
+  for (const [k, v] of Object.entries(changed)) if (isInboxRowField(k)) fields[k] = v;
+  const unset: string[] = [];
+  // Derived twins, recomputed from the merged row with the shared helpers.
+  const merged = { ...(existing ?? {}), ...changed };
+  if ("inbox_pinned_at" in changed) fields.is_pinned = !!changed.inbox_pinned_at;
+  if ("anchor_id" in changed) fields.is_anchor = !!changed.anchor_id;
+  if ("is_subagent" in changed) fields.is_subagent = changed.is_subagent === true;
+  const updatedAt = typeof merged.updated_at === "number" ? merged.updated_at : 0;
+  if ("inbox_deferred_at" in changed) {
+    fields.is_deferred = !!merged.inbox_deferred_at && merged.inbox_deferred_at >= updatedAt;
+  }
+  if ("inbox_rest" in changed || "inbox_rest_at" in changed) {
+    fields.user_rest = userRestOf({ inbox_rest: merged.inbox_rest, inbox_rest_at: merged.inbox_rest_at, updated_at: updatedAt });
+  }
+  if ("settle_verdict" in changed || "settle_verdict_at" in changed) {
+    fields.settle_verdict = isSettleVerdictCurrent({ settle_verdict_at: merged.settle_verdict_at, updated_at: updatedAt })
+      ? (merged.settle_verdict ?? null)
+      : null;
+  }
+  // A row leaving the inbox's admitted statuses would be OMITTED by byIds
+  // (pruned), which a patch alone cannot express — refetch decides.
+  if ("status" in raw && raw.status !== "active" && raw.status !== "completed") refetch = true;
+  return { fields, unset, refetch };
+}

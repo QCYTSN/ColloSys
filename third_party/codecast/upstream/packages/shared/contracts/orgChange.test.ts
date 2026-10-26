@@ -1,0 +1,353 @@
+import { describe, expect, test } from "bun:test";
+import { changeLine, takeoverPhrase } from "./orgProposal";
+import {
+  dependentBatches,
+  invertRow,
+  addedRecordWords,
+  leftAloneLine,
+  mergeFact,
+  movedFields,
+  ORG_DIFF_FIELDS,
+  ORG_INVERSE_KIND,
+  orgAppliedDiff,
+  orgLogEffectLines,
+  orgLogEntryLine,
+  orgLogLine,
+  orgLogRowChange,
+  rowChangedSomething,
+  rowRoleIds,
+  undoVerdict,
+  type OrgLandedRow,
+  type OrgLogKind,
+  type OrgLogRow,
+  type OrgOpenRow,
+} from "./orgChange";
+
+const LABELS = { r1: "@growth", r2: "@ops", u1: "Ashot", p1: "Website", p2: "Billing", pl1: "pl-7", s1: "jx7abcd", s2: "jx7efgh" };
+let seq = 0;
+const row = (kind: OrgLogKind, over: Partial<OrgLogRow> = {}): OrgLogRow => ({
+  _id: `row${++seq}`, batch: "b1", seq, kind,
+  subject: { type: "role", id: "r1", short_id: "or-1", label: "@growth" },
+  before: {}, after: {}, effects: {}, labels: LABELS, role_ids: ["r1"], at: 1,
+  ...over,
+});
+const open = (over: Partial<OrgOpenRow> = {}): OrgOpenRow => ({ kind: "lead", before: {}, after: {}, effects: {}, labels: {}, ...over });
+
+describe("mergeFact: one gesture is one row", () => {
+  test("a lead that widens a scope and takes over two sessions is one row with both effects", () => {
+    const project = { type: "project" as const, id: "p1", label: "Website" };
+    const role = { type: "role" as const, id: "r1", label: "@growth" };
+    let r = open({ subject: project });
+    r = mergeFact(r, { kind: "lead", subject: project, before: { owner_role_id: null }, after: { owner_role_id: "r1" }, labels: { r1: "@growth" } });
+    r = mergeFact(r, { kind: "scope", subject: role, before: { scope: { project_ids: ["p2"], plan_ids: [] } }, after: { scope: { project_ids: ["p2", "p1"], plan_ids: [] } } });
+    for (const id of ["s1", "s2"]) {
+      r = mergeFact(r, { kind: "session", subject: { type: "session", id, short_id: LABELS[id as "s1"], label: LABELS[id as "s1"] }, before: { parent: { owner_user_ids: ["u1"] } }, after: { parent: { owner_user_ids: ["u1"], org_role_id: "r1" } }, labels: { r1: "@growth" } });
+    }
+    r = mergeFact(r, { kind: "session", subject: role, effects: { takeover: { role_id: "r1", handle: "growth", sessions: [], kept_in_front: ["jx7abcd"], over_cap: 3, told: { sessions: 2 } } } });
+    expect(r.before).toEqual({ owner_role_id: null });
+    expect(r.after).toEqual({ owner_role_id: "r1" });
+    expect(r.effects.scope_gained).toEqual({ role_id: "r1", handle: "growth", project_ids: ["p1"], plan_ids: [] });
+    expect(r.effects.takeover?.sessions.map((s) => s.short_id)).toEqual(["jx7abcd", "jx7efgh"]);
+    expect(r.effects.takeover?.sessions[0].before).toEqual({ owner_user_ids: ["u1"] });
+    expect(r.effects.takeover?.kept_in_front).toEqual(["jx7abcd"]);
+    expect(r.effects.takeover?.over_cap).toBe(3);
+    // The sentence the proposal page writes reads the same arrays.
+    expect(takeoverPhrase("growth", r.effects.takeover, true)).toContain("2 sessions now report to @growth");
+  });
+
+  test("a hire opens with no subject and takes the created role; the first before of a field stands", () => {
+    const role = { type: "role" as const, id: "r1", label: "@growth" };
+    let r = open({ kind: "role" });
+    r = mergeFact(r, { kind: "role", subject: role, before: { status: null }, after: { status: "active", name: "Growth", handle: "growth" } });
+    r = mergeFact(r, { kind: "budget", subject: role, before: { caps: { hands_per_day: 3 } }, after: { caps: { hands_per_day: 5 } } });
+    r = mergeFact(r, { kind: "budget", subject: role, before: { caps: { hands_per_day: 5 } }, after: { caps: { hands_per_day: 8 } } });
+    expect(r.subject).toEqual(role);
+    expect(r.before.caps).toEqual({ hands_per_day: 3 });
+    expect(r.after.caps).toEqual({ hands_per_day: 8 });
+  });
+
+  test("lists of effects grow across nested cores", () => {
+    const role = { type: "role" as const, id: "r1", label: "@growth" };
+    let r = open({ kind: "retire", subject: role });
+    r = mergeFact(r, { kind: "retire", subject: role, effects: { tasks_handed: [{ task_id: "t1", short_id: "ct-1", from: "role:r1", to: "u1" }] } });
+    r = mergeFact(r, { kind: "retire", subject: role, effects: { tasks_handed: [{ task_id: "t2", short_id: "ct-2", from: "role:r1", to: "u1" }] } });
+    expect(r.effects.tasks_handed?.map((t) => t.short_id)).toEqual(["ct-1", "ct-2"]);
+  });
+
+  test("a save that moved nothing writes nothing", () => {
+    const m = movedFields({ name: "Growth", trust: "decide", avatar: undefined as any }, { name: "Growth", trust: "direct", avatar: null });
+    expect(m).toEqual({ before: { trust: "decide" }, after: { trust: "direct" } });
+    expect(rowChangedSomething({ ...movedFields({ name: "a" }, { name: "a" }), effects: {} })).toBe(false);
+    expect(rowChangedSomething({ before: {}, after: {}, effects: { seat: { conversation_id: "s1", short_id: "jx7abcd" } } })).toBe(true);
+  });
+
+  test("rowRoleIds names every role the row touches", () => {
+    expect(rowRoleIds({ subject: { type: "session", id: "s1", label: "jx7abcd" }, before: { parent: { owner_user_ids: ["u1"], org_role_id: "r2" } }, after: { parent: { owner_user_ids: ["u1"], org_role_id: "r1" } }, effects: {} }).sort()).toEqual(["r1", "r2"]);
+    expect(rowRoleIds({ subject: { type: "project", id: "p1", label: "Website" }, before: {}, after: { owner_role_id: "r1" }, effects: { children_moved: [{ role_id: "r3", handle: "x", before: { kind: "role", role_id: "r2" } }] } }).sort()).toEqual(["r1", "r2", "r3"]);
+  });
+});
+
+describe("the sentence is rendered from the row, by the proposal page's writers", () => {
+  test("every proposal kind reaches changeLine", () => {
+    const hire = row("role", { before: { status: null }, after: { status: "active", name: "Head of Growth", handle: "growth", reports_to: { kind: "user", user_id: "u1" }, scope: { project_ids: ["p1"], plan_ids: ["pl1"] } } });
+    expect(orgLogLine(hire)).toBe(changeLine({ kind: "role", name: "Head of Growth", handle: "growth", reports_to: "Ashot", scope: { projects: ["Website"], plans: ["pl-7"] } }));
+    expect(orgLogLine(row("retire", { before: { status: "active" }, after: { status: "retired" } }))).toBe("Retire @growth; its sessions go back to their owners");
+    expect(orgLogLine(row("scope", { before: { scope: { project_ids: ["p2"], plan_ids: [] } }, after: { scope: { project_ids: ["p1"], plan_ids: [] } } }))).toBe("@growth also looks after Website and stops looking after Billing");
+    expect(orgLogLine(row("move", { before: { reports_to: { kind: "user", user_id: "u1" } }, after: { reports_to: { kind: "role", role_id: "r2" } } }))).toBe("Move @growth under @ops");
+    // The switch (org-staffing.md S23.1): history says what the person did, and decide reads as on.
+    expect(orgLogLine(row("trust", { before: { trust: "understand" }, after: { trust: "decide" } }))).toBe("Turned on starting work on its own for @growth");
+    expect(orgLogLine(row("budget", { after: { caps: { hands_per_day: 4 } } }))).toBe(changeLine({ kind: "budget", handle: "growth", caps: { hands_per_day: 4 } }));
+    expect(orgLogLine(row("routine", { after: { routine: { agent_task_id: "a1", title: "Weekly review", every: "7d" } } }))).toBe(changeLine({ kind: "routine", handle: "growth", title: "Weekly review", prompt: "", every: "7d" }));
+    expect(orgLogLine(row("plan_status", { subject: { type: "plan", id: "pl1", short_id: "pl-7", label: "Launch" }, before: { status: "active" }, after: { status: "done" } }))).toBe("Mark done: Launch (pl-7)");
+    // A subject with no title reads by its id, and a project's title is its ref: never said twice.
+    expect(orgLogLine(row("task_status", { subject: { type: "task", id: "t1", short_id: "ct-3", label: "ct-3" }, before: { status: "open" }, after: { status: "done" } }))).toBe("Mark task ct-3 done");
+    expect(orgLogLine(row("project_status", { subject: { type: "project", id: "p1", label: "Website" }, before: { status: "active" }, after: { status: "paused" } }))).toBe("Mark project Website paused");
+    expect(orgLogLine(row("file", { subject: { type: "plan", id: "pl1", short_id: "pl-7", label: "Launch" }, before: { project_id: null }, after: { project_id: "p1" } }))).toBe("Put plan pl-7 under the project Website");
+    expect(orgLogLine(row("projects", { subject: { type: "project", id: "p1", label: "Website" }, after: { projects: [{ op: "create", project_id: "p1", title: "Website" }] } }))).toBe("Create the project Website");
+  });
+
+  test("the kinds the proposal vocabulary lacks have their own sentence, and orgLogRowChange says null", () => {
+    const moved = row("session", { subject: { type: "session", id: "s1", short_id: "jx7abcd", label: "jx7abcd" }, before: { parent: { owner_user_ids: ["u1"] } }, after: { parent: { owner_user_ids: ["u1"], org_role_id: "r1" } } });
+    expect(orgLogRowChange(moved)).toBeNull();
+    expect(orgLogLine(moved)).toBe("Session jx7abcd now reports to @growth");
+    expect(orgLogLine(invertRow(moved))).toBe("Session jx7abcd now reports to Ashot");
+    const lead = row("lead", { subject: { type: "project", id: "p1", label: "Website" }, before: { owner_role_id: null }, after: { owner_role_id: "r1" } });
+    expect(orgLogLine(lead)).toBe("@growth now leads the project Website");
+    expect(orgLogLine(invertRow(lead))).toBe("The project Website has no lead");
+    expect(orgLogLine(row("initiative_cancel", { subject: { type: "initiative", id: "i1", short_id: "in-1", label: "Reach 1k teams" }, before: { status: "proposed" }, after: { status: "cancelled" } }))).toBe("Cancel the goal Reach 1k teams; it stays on the goals page as cancelled");
+    expect(orgLogLine(row("role_edit", { before: { name: "Growth", avatar: "a" }, after: { name: "Head of Growth", avatar: "b" } }))).toBe("Change the name and face of @growth");
+  });
+
+  // The goals (initiatives-projects-role-page.md "I1, revised"): a set goal,
+  // projects added to one and an owner named read as the proposal did, and
+  // each inverse says what goes back.
+  test("goal rows read as the proposal's sentence both ways", () => {
+    const set = row("initiative", { subject: { type: "initiative", id: "i1", short_id: "in-1", label: "Reach 1k teams" }, before: { status: null, owner: null, project_ids: null }, after: { status: "proposed", owner: { kind: "role", role_id: "r1" }, project_ids: ["p1"] }, labels: { r1: "@growth", p1: "Website" } });
+    expect(orgLogLine(set)).toBe("Set a goal: Reach 1k teams, carried by Website, owned by @growth");
+    expect(orgLogLine(invertRow(set))).toBe("Cancel the goal Reach 1k teams; it stays on the goals page as cancelled");
+    const added = row("initiative_projects", { subject: { type: "initiative", id: "i1", short_id: "in-1", label: "Reach 1k teams" }, before: { project_ids: ["p1"] }, after: { project_ids: ["p1", "p2"] }, labels: { p1: "Website", p2: "Billing" } });
+    expect(orgLogLine(added)).toBe("Add Billing to the goal Reach 1k teams");
+    expect(orgLogLine(invertRow(added))).toBe("Remove Billing from the goal Reach 1k teams");
+    const owner = row("initiative_owner", { subject: { type: "initiative", id: "i1", short_id: "in-1", label: "Reach 1k teams" }, before: { owner: null }, after: { owner: { kind: "role", role_id: "r1" } } });
+    expect(orgLogLine(owner)).toBe("Make @growth the owner of the goal Reach 1k teams");
+    expect(orgLogLine(invertRow(owner))).toBe("The goal Reach 1k teams has no owner");
+    // A goal an entry set is something later entries can depend on.
+    const later = { batch: "b2", undone: false, rows: [row("initiative_owner", { batch: "b2", subject: { type: "initiative", id: "i1", label: "Reach 1k teams" }, after: { owner: { kind: "role", role_id: "r1" } }, role_ids: ["r1"] })] };
+    expect(dependentBatches({ batch: "b1", rows: [set] }, [later]).map((d) => d.batch)).toEqual(["b2"]);
+  });
+
+  // The intent record (initiatives-projects-role-page.md I5): a shape row
+  // carries the words and the lists as the row stores them. What it added
+  // reads as the proposal's sentence; an entry edited, closed or removed, and
+  // the way back of an add, name the lists that moved.
+  test("a goal's record reads as what was written down, and as what changed on the way back", () => {
+    const subject = { type: "initiative" as const, id: "i1", short_id: "in-1", label: "Reach 1k teams" };
+    const beta = { key: "private_beta_open", title: "Private beta open", date: 1_800_000_000_000 };
+    const wrote = row("initiative_shape", { subject, before: { why: null, milestones: null, questions: null, sources: [{ kind: "task", ref: "ct-1" }] }, after: { why: "Teams that run an agent weekly stay.", milestones: [beta], questions: [{ key: "price", text: "Do we price per seat?", at: 5 }], sources: [{ kind: "task", ref: "ct-1" }, { kind: "call", ref: "cl-42:14", quote: "a thousand teams" }] } });
+    expect(orgLogRowChange(wrote)).toEqual({ kind: "initiative_shape", initiative: "in-1", title: "Reach 1k teams", why: "Teams that run an agent weekly stay.", milestones: [{ title: "Private beta open", date: 1_800_000_000_000 }], questions: ["Do we price per seat?"], sources: ["cl-42:14"] });
+    expect(orgLogLine(wrote)).toBe("Record on the goal Reach 1k teams: why it matters, the milestone Private beta open, an open question and where it was stated");
+    expect(orgLogLine(invertRow(wrote))).toBe("Change the purpose, milestones, open questions and sources of the goal Reach 1k teams");
+    const reached = row("initiative_shape", { subject, before: { milestones: [beta] }, after: { milestones: [{ ...beta, done_at: 9 }] } });
+    expect(orgLogRowChange(reached)).toBeNull();
+    expect(orgLogLine(reached)).toBe("Change the milestones of the goal Reach 1k teams");
+    // A row that places the goal and writes its record says both.
+    const placed = row("initiative_shape", { subject, before: { parent_initiative_id: null, decisions: null }, after: { parent_initiative_id: "i2", decisions: [{ key: "brokers", text: "Ship to brokers first", at: 5 }] }, labels: { i2: "Win the market" } });
+    expect(orgLogLine(placed)).toBe("Put the goal Reach 1k teams under Win the market, and record a decision");
+    // Its way back names the record it takes off as well as the placement.
+    expect(orgLogLine(invertRow(placed))).toBe("Change the parent goal and decisions of the goal Reach 1k teams");
+    // A row that only places the goal reads as the placement both ways, and one that clears the words names them.
+    const moved = row("initiative_shape", { subject, before: { parent_initiative_id: null }, after: { parent_initiative_id: "i2" }, labels: { i2: "Win the market" } });
+    expect(orgLogLine(invertRow(moved))).toBe("Make the goal Reach 1k teams a top level goal");
+    expect(orgLogLine(row("initiative_shape", { subject, before: { parent_initiative_id: "i2", why: "It pays." }, after: { parent_initiative_id: null, why: null } }))).toBe("Change the parent goal and purpose of the goal Reach 1k teams");
+    expect(undoVerdict(reached, { milestones: [beta] })).toEqual({ apply: false, reason: "its milestones changed after this" });
+    expect(movedFields({ why: "a", done_when: null }, { why: "a", done_when: "b" })).toEqual({ before: { done_when: null }, after: { done_when: "b" } });
+  });
+
+  // A project's fields (S39): the log says them in the card's words, with the
+  // priority read against what it was, and never prints what was written down.
+  test("a project's fields read as the proposal's sentence, the priority against what it was", () => {
+    const subject = { type: "project" as const, id: "p1", short_id: "pr-1", label: "Website" };
+    const set = row("project_meta", { subject, before: { priority: null }, after: { priority: "p0" } });
+    expect(orgLogLine(set)).toBe("Make Website the top priority");
+    const raised = row("project_meta", { subject, before: { priority: "p2" }, after: { priority: "p1" } });
+    expect(orgLogLine(raised)).toBe("Raise Website to a high priority");
+    expect(orgLogLine(invertRow(raised))).toBe("Lower Website to a medium priority");
+    expect(orgLogLine(row("project_meta", { subject, before: { priority: "p2" }, after: { priority: "p0" } }))).toBe("Make Website the top priority");
+    const whole = row("project_meta", { subject, before: { priority: null, owner_role_id: null, goal: null, success_metrics: null }, after: { priority: "p1", owner_role_id: "r1", goal: "Double signups", success_metrics: ["100 signups"] } });
+    expect(orgLogRowChange(whole)).toEqual({ kind: "project_meta", project: "Website", owner: "@growth", priority: "p1", goal: "Double signups", success_metrics: ["100 signups"] });
+    expect(orgLogLine(whole)).toBe("Make Website a high priority, make @growth its lead and write down what it is for and how it is measured");
+    expect(orgLogLine(whole)).toBe(changeLine(orgLogRowChange(whole)!));
+    expect(orgLogLine(row("project_meta", { subject, before: { risks: null }, after: { risks: ["one engineer"] } }))).toBe("Write down the risks to Website");
+    // The way back of a first setting clears the fields: the row names the project.
+    expect(orgLogLine(invertRow(set))).toBe("Change the project Website");
+    for (const r of [set, raised, whole]) expect(orgLogLine(r)).not.toMatch(/charter|\bp[0-3]\b|Double signups|100 signups/);
+  });
+
+  test("a kind this build does not know still reads as a sentence", () => {
+    expect(orgLogLine(row("rename" as any))).toBe('A change this version of codecast cannot show yet ("rename")');
+  });
+
+  test("effects read forward on a row and backward on its inverse", () => {
+    const hire = row("role", { after: { status: "active", name: "Growth", handle: "growth" }, effects: { takeover: { role_id: "r1", handle: "growth", sessions: [{ conversation_id: "s1", short_id: "jx7abcd", before: { owner_user_ids: ["u1"] } }], kept_in_front: [], over_cap: 0 }, routines_started: [{ agent_task_id: "a1", title: "Weekly" }] } });
+    expect(orgLogEffectLines(hire)).toEqual(["1 session now reports to @growth and leaves your needs input", "1 routine started"]);
+    expect(orgLogEffectLines(invertRow(hire))).toEqual(["1 session goes back to where it was", "1 routine stopped"]);
+  });
+});
+
+describe("the way back", () => {
+  test("every kind has an inverse kind, and inverting twice gives the kind back", () => {
+    for (const [kind, inverse] of Object.entries(ORG_INVERSE_KIND) as Array<[OrgLogKind, OrgLogKind]>) {
+      expect(ORG_INVERSE_KIND[inverse]).toBeDefined();
+      // A hire's inverse is a retire, whose inverse brings the same role back: a restore, never a second hire.
+      if (kind !== "role") expect(ORG_INVERSE_KIND[inverse]).toBe(kind);
+    }
+    expect(ORG_INVERSE_KIND[ORG_INVERSE_KIND.role]).toBe("restore");
+  });
+
+  test("an inverse swaps before and after, points at its row, and inverts back to it", () => {
+    const r = row("trust", { before: { trust: "understand" }, after: { trust: "decide" }, undone_by: "x" });
+    const inv = invertRow(r);
+    expect(inv).toMatchObject({ kind: "trust", before: { trust: "decide" }, after: { trust: "understand" }, undoes: r._id, inverse: true });
+    expect(inv.undone_by).toBeUndefined();
+    expect(orgLogLine(inv)).toBe("Turned off starting work on its own for @growth");
+    const twice = invertRow(inv);
+    expect({ kind: twice.kind, before: twice.before, after: twice.after, inverse: twice.inverse }).toEqual({ kind: r.kind, before: r.before, after: r.after, inverse: false });
+    expect(orgLogLine(invertRow(row("role", { after: { status: "active", name: "Growth", handle: "growth" } })))).toBe("Retire @growth; its sessions go back to their owners");
+    expect(orgLogLine(invertRow(row("retire", { before: { status: "active" }, after: { status: "retired" } })))).toBe("Bring back @growth, with its area of work, its limits and its routines");
+  });
+
+  test("undo never overwrites a later decision", () => {
+    const r = row("trust", { before: { trust: "understand" }, after: { trust: "decide" } });
+    expect(undoVerdict(r, { trust: "decide" })).toEqual({ apply: true });
+    expect(undoVerdict(r, { trust: "direct" })).toEqual({ apply: false, reason: "its trust changed after this" });
+    expect(undoVerdict(r, null)).toEqual({ apply: false, reason: "it no longer exists" });
+    // Key order and an absent field against null are the same reading.
+    const scope = row("scope", { after: { scope: { project_ids: ["p1"], plan_ids: [] }, charter: null } });
+    expect(undoVerdict(scope, { scope: { plan_ids: [], project_ids: ["p1"] } })).toEqual({ apply: true });
+    expect(leftAloneLine(3, 100)).toBe("3 of 100 records were changed after this and stay as they are");
+    expect(leftAloneLine(1, 1)).toBe("1 of 1 record was changed after this and stays as it is");
+    expect(leftAloneLine(0, 5)).toBe("");
+  });
+
+  test("a later entry that touches what this one made is offered with it, and so is what THAT one made", () => {
+    const hire = { batch: "b1", rows: [row("role", { batch: "b1", after: { status: "active", name: "Growth", handle: "growth" } })] };
+    const lead = { batch: "b2", undone: false, rows: [row("lead", { batch: "b2", subject: { type: "project", id: "p1", label: "Website" }, after: { owner_role_id: "r1" }, role_ids: ["r1"] })] };
+    const owner = { batch: "b3", undone: false, rows: [row("initiative_owner", { batch: "b3", subject: { type: "initiative", id: "i1", label: "Reach 1k" }, after: { owner: { kind: "role", role_id: "r1" } }, role_ids: ["r1"] })] };
+    const unrelated = { batch: "b4", undone: false, rows: [row("trust", { batch: "b4", subject: { type: "role", id: "r2", label: "@ops" }, after: { trust: "decide" }, role_ids: ["r2"] })] };
+    const alreadyUndone = { batch: "b5", undone: true, rows: [row("trust", { batch: "b5", after: { trust: "decide" } })] };
+    const itsOwnUndo = { batch: "b6", undone: false, undoes: "b1", rows: [row("retire", { batch: "b6" })] };
+    const deps = dependentBatches(hire, [lead, owner, unrelated, alreadyUndone, itsOwnUndo]);
+    expect(deps.map((d) => d.batch)).toEqual(["b2", "b3"]);
+    expect(deps[0].reason).toBe("@growth now leads the project Website: it needs what this entry made");
+    // A change to fields of a role that already stood depends on nothing.
+    expect(dependentBatches({ batch: "b4", rows: unrelated.rows }, [lead, owner])).toEqual([]);
+    // A project this entry created, then filed into by a later one.
+    const created = { batch: "b7", rows: [row("projects", { batch: "b7", subject: { type: "project", id: "p9", label: "New" }, after: { projects: [{ op: "create", project_id: "p9", title: "New" }] }, role_ids: [] })] };
+    const filed = { batch: "b8", undone: false, rows: [row("file", { batch: "b8", subject: { type: "plan", id: "pl1", short_id: "pl-7", label: "Launch" }, after: { project_id: "p9" }, role_ids: [] })] };
+    expect(dependentBatches(created, [filed]).map((d) => d.batch)).toEqual(["b8"]);
+  });
+});
+
+describe("an entry reads as one sentence with the count of rows inside", () => {
+  const lead = row("plan_status", { subject: { type: "plan", id: "pl1", short_id: "pl-7", label: "Launch" }, after: { status: "done" } });
+  const actor = { user_id: "u1", name: "Ashot" };
+  test("an accepted ask names the ask", () => {
+    expect(orgLogEntryLine({ gesture: "accept_ask", actor: { ...actor, ask: { index: 0, title: "Close the plans and tasks the work has already passed" } }, row_count: 100, lead }))
+      .toBe('Accepted "Close the plans and tasks the work has already passed": 100 records');
+  });
+  test("an undo names the original hire rather than the retirement it performed", () => {
+    const hire = row("role", { after: { status: "active", name: "Growth", handle: "growth" } });
+    expect(orgLogEntryLine({ gesture: "undo", actor, row_count: 1, lead: invertRow(hire), undoes_lead: hire })).toBe(`Undid "${orgLogLine(hire)}"`);
+    expect(orgLogEntryLine({ gesture: "undo", actor, row_count: 1, lead: invertRow(hire) })).toBe("Undid a change");
+  });
+  test("a reply names the proposal and counts what it approved; without a proposal it reads like any entry", () => {
+    expect(orgLogEntryLine({ gesture: "reply", actor: { ...actor, proposal: { short_id: "op-55", title: "Rank Union's projects by the goals they carry" } }, row_count: 3, lead }))
+      .toBe(`You answered "Rank Union's projects by the goals they carry": 3 approved`);
+    expect(orgLogEntryLine({ gesture: "reply", actor: { ...actor, proposal: { short_id: "op-55" } }, row_count: 1, lead })).toBe("You answered op-55: 1 approved");
+    expect(orgLogEntryLine({ gesture: "reply", actor, row_count: 1, lead })).toBe("Mark done: Launch (pl-7)");
+  });
+  test("one row is its own sentence; undo and redo say so", () => {
+    expect(orgLogEntryLine({ gesture: "save", actor, row_count: 1, lead })).toBe("Mark done: Launch (pl-7)");
+    expect(orgLogEntryLine({ gesture: "save", actor, row_count: 3, lead })).toBe("Mark done: Launch (pl-7), and 2 more changes");
+    expect(orgLogEntryLine({ gesture: "undo", actor, row_count: 1, lead: invertRow(lead), undoes_lead: lead })).toBe('Undid "Mark done: Launch (pl-7)"');
+    expect(orgLogEntryLine({ gesture: "redo", actor, row_count: 2, lead })).toBe('Applied again "Mark done: Launch (pl-7)": 2 records');
+  });
+});
+
+// The stamp (org-staffing.md S39): what accepting one proposal change moved,
+// cut from the log rows the apply wrote to the fields a card draws.
+describe("the stamp a proposal's accept leaves on its change", () => {
+  const landed = (kind: OrgLogKind, over: Partial<OrgLandedRow> = {}): OrgLandedRow => ({ kind, subject: { type: "role", id: "r1", short_id: "or-1", label: "@growth" }, before: {}, after: {}, labels: LABELS, ...over });
+  const project = { type: "project" as const, id: "p1", short_id: "pr-1", label: "Website" };
+  const goal = { type: "initiative" as const, id: "i1", short_id: "in-1", label: "Reach 1k teams" };
+
+  test("a priority move keeps the priority, its subject and its entry, and no label it does not mention", () => {
+    // (The file's toy ids p1 and p2 read like priorities, so this row brings its own labels.)
+    const labels = { r1: "@growth", r2: "@ops", u1: "Ashot" };
+    expect(orgAppliedDiff([landed("project_meta", { subject: project, before: { priority: "p2" }, after: { priority: "p1" }, labels, batch: "b7" })]))
+      .toEqual([{ kind: "project_meta", subject: project, before: { priority: "p2" }, after: { priority: "p1" }, labels: {}, batch: "b7" }]);
+    // A field that went from nothing keeps its null, so the card can say "not set".
+    const [first] = orgAppliedDiff([landed("project_meta", { subject: project, before: { priority: null, owner_role_id: null }, after: { priority: "p0", owner_role_id: "r1" }, labels })])!;
+    expect(first.before).toEqual({ priority: null, owner_role_id: null });
+    expect(first.labels).toEqual({ r1: "@growth" });
+    expect("batch" in first).toBe(false);
+  });
+
+  test("a limit and a role's face never survive; its charter does (S39)", () => {
+    expect(orgAppliedDiff([landed("budget", { before: { caps: { hands_per_day: 3 } }, after: { caps: { hands_per_day: 8 } } })])).toBeUndefined();
+    const [hire] = orgAppliedDiff([landed("role", {
+      before: { status: null },
+      after: { status: "active", name: "Head of Growth", handle: "growth", avatar: "fox", charter: "Owns the funnel.", tenure: { kind: "standing" }, review_backend: "codex", caps: { tokens_per_day: 800_000 }, trust: "direct", reports_to: { kind: "user", user_id: "u1" }, scope: { project_ids: ["p1"], plan_ids: ["pl1"] } },
+    })])!;
+    expect(hire.before).toEqual({ status: null });
+    expect(hire.after).toEqual({ status: "active", name: "Head of Growth", charter: "Owns the funnel.", trust: "direct", reports_to: { kind: "user", user_id: "u1" }, scope: { project_ids: ["p1"], plan_ids: ["pl1"] } });
+    expect(hire.labels).toEqual({ u1: "Ashot", p1: "Website", pl1: "pl-7" });
+    expect(JSON.stringify(hire)).not.toMatch(/800000|caps|avatar|tenure|codex|"handle"/);
+    for (const dropped of ["caps", "tenure", "avatar", "handle", "review_backend", "parent", "milestones", "questions", "decisions", "sources"]) expect(ORG_DIFF_FIELDS as readonly string[]).not.toContain(dropped);
+  });
+
+  test("a goal's record arrives as what was added, in words, never as the whole lists", () => {
+    const beta = { key: "private_beta_open", title: "Private beta open", date: 1_800_000_000_000 };
+    const before = { parent_initiative_id: null, why: null, milestones: [{ key: "alpha", title: "Alpha" }], questions: null, decisions: null, sources: [{ kind: "task" as const, ref: "ct-1" }] };
+    const after = {
+      parent_initiative_id: "i2", why: "Teams that run an agent weekly stay.",
+      milestones: [{ key: "alpha", title: "Alpha" }, beta],
+      questions: [{ key: "price", text: "Do we price per seat?", at: 5 }],
+      decisions: [{ key: "brokers", text: "Ship to brokers first", at: 5 }],
+      sources: [{ kind: "task" as const, ref: "ct-1" }, { kind: "call" as const, ref: "cl-42:14", quote: "a thousand teams" }, { kind: "chat" as const, quote: "said in passing" }],
+    };
+    expect(addedRecordWords(before, after)).toEqual({ milestones: ["Private beta open"], questions: ["Do we price per seat?"], decisions: ["Ship to brokers first"], sources: ["cl-42:14", "said in passing"] });
+    expect(addedRecordWords(before, { ...before, why: "x" })).toBeUndefined();
+    expect(addedRecordWords({}, { milestones: [beta] })).toEqual({ milestones: ["Private beta open"] });
+    const [stamp] = orgAppliedDiff([landed("initiative_shape", { subject: goal, before, after, labels: { i2: "Win the market", ct1: "unused" } })])!;
+    expect(stamp).toEqual({
+      kind: "initiative_shape", subject: goal,
+      before: { parent_initiative_id: null, why: null },
+      after: { parent_initiative_id: "i2", why: "Teams that run an agent weekly stay." },
+      added: { milestones: ["Private beta open"], questions: ["Do we price per seat?"], decisions: ["Ship to brokers first"], sources: ["cl-42:14", "said in passing"] },
+      labels: { i2: "Win the market" },
+    });
+    expect(JSON.stringify(stamp)).not.toMatch(/Alpha|ct-1|"key"/);
+    // A row that only added to the record still stamps, with no field on either side.
+    expect(orgAppliedDiff([landed("initiative_shape", { subject: goal, before: { questions: null }, after: { questions: [{ key: "price", text: "Do we price per seat?", at: 5 }] } })]))
+      .toEqual([{ kind: "initiative_shape", subject: goal, before: {}, after: {}, added: { questions: ["Do we price per seat?"] }, labels: {} }]);
+    // The log's sentence reads the same derivation.
+    expect(orgLogRowChange(row("initiative_shape", { subject: goal, before, after }))).toMatchObject({ milestones: [{ title: "Private beta open", date: 1_800_000_000_000 }], questions: ["Do we price per seat?"], decisions: ["Ship to brokers first"], sources: ["cl-42:14", "said in passing"] });
+  });
+
+  test("one stamp row per log row, a row with nothing to draw dropped, and no rows is no stamp", () => {
+    const created = landed("projects", { subject: project, after: { projects: [{ op: "create", project_id: "p1", title: "Website" }] } });
+    const folded = landed("projects", { subject: { type: "project", id: "p2", label: "Billing" }, after: { projects: [{ op: "merge", from_id: "p2", into_id: "p1" }] } });
+    const faceOnly = landed("role_edit", { before: { avatar: "a" }, after: { avatar: "b" } });
+    const stamp = orgAppliedDiff([created, faceOnly, folded])!;
+    expect(stamp.map((r) => r.subject.label)).toEqual(["Website", "Billing"]);
+    expect(stamp[1].labels).toEqual({ p1: "Website", p2: "Billing" });
+    expect(orgAppliedDiff([faceOnly])).toBeUndefined();
+    expect(orgAppliedDiff([])).toBeUndefined();
+    // A goal's projects and owner carry the names of the ids on both sides.
+    const [carried] = orgAppliedDiff([landed("initiative_projects", { subject: goal, before: { project_ids: ["p1"] }, after: { project_ids: ["p1", "p2"] } })])!;
+    expect(carried).toMatchObject({ before: { project_ids: ["p1"] }, after: { project_ids: ["p1", "p2"] }, labels: { p1: "Website", p2: "Billing" } });
+    const [owned] = orgAppliedDiff([landed("initiative_owner", { subject: goal, before: { owner: { kind: "user", user_id: "u1" } }, after: { owner: { kind: "role", role_id: "r2" } } })])!;
+    expect(owned.labels).toEqual({ u1: "Ashot", r2: "@ops" });
+  });
+});

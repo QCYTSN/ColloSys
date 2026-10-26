@@ -1,0 +1,93 @@
+import { useInboxStore } from "../../store/inboxStore";
+import { pathLabel } from "../../lib/pathLabel";
+import { borrowsTabShell } from "../../lib/desktop";
+import { settingsSectionForPath } from "../../lib/settingsSections";
+import { isNonTabRoute, routerNavigate } from "../../lib/tabRoutes";
+import { tabSafePath } from "../../lib/tabSafePath";
+
+// Re-exported so callers of the routing layer keep one import; the rule itself
+// lives in lib/tabRoutes (pure, no store import) so the store can apply it too.
+export { isNonTabRoute };
+
+
+
+/**
+ * In-app navigations to a settings SECTION open the settings modal in place
+ * instead of routing to the legacy full-page /settings/* routes (those routes
+ * remain for hard loads — SettingsLayout bounces them back into the modal).
+ * Returns null when the path isn't a modal section, so flow pages like
+ * /settings/team/create keep real navigation. When the settings URL carried a
+ * query string (OAuth error returns, the team-setup handoff), `carryUrl` is
+ * the current location with that query attached — the caller should
+ * replace()-navigate to it so URL-param readers inside the modal panels see it.
+ */
+export function interceptSettingsNav(path: string): { carryUrl: string | null } | null {
+  const hit = settingsSectionForPath(path);
+  if (!hit) return null;
+  useInboxStore.getState().openSettingsModal(hit.section);
+  return { carryUrl: hit.search ? `${window.location.pathname}?${hit.search}` : null };
+}
+
+function isExternal(path: string): boolean {
+  return path.startsWith("http") || path.startsWith("mailto:") || path.startsWith("#");
+}
+
+/**
+ * Decide whether a navigation to `targetPath` should route within the active tab
+ * (replaceState + updateTab) instead of via React Router. True only when tabs are
+ * active AND both the current and target routes live inside the dashboard shell.
+ * `currentPath` defaults to the live URL; pass it explicitly in tests.
+ */
+export function shouldUseTabRouting(
+  targetPath: string,
+  currentPath: string = typeof window !== "undefined" ? window.location.pathname : "/",
+): boolean {
+  if (isExternal(targetPath)) return false;
+  // A detached tab window or a browser pane's page has no tab shell of its own
+  // — its store still hydrates the SHARED tabs, so routing "within the active
+  // tab" here would silently rewrite a tab another window owns. Navigate for real.
+  if (borrowsTabShell()) return false;
+  if (isNonTabRoute(targetPath)) return false;
+  if (isNonTabRoute(currentPath)) return false;
+  const { tabs, activeTabId } = useInboxStore.getState();
+  return tabs.length > 0 && !!activeTabId;
+}
+
+/**
+ * Navigate within the active tab: update the tab's stored path AND the browser URL.
+ *
+ * `"push"` grows the browser history stack so the navigation is traversable with
+ * back/forward; `"replace"` overwrites the current entry (URL canonicalization that
+ * should not add history, e.g. dropping a `?highlight=` param). A push whose target
+ * equals the current URL is downgraded to replace so we never stack duplicate
+ * entries. The history `state` is tagged so the global popstate handler can tell a
+ * tab navigation apart from an inbox session selection (`{ inboxId }`).
+ */
+export function tabNavigate(to: string, mode: "push" | "replace" = "push", fromTabId?: string, userState?: unknown) {
+  // The tab, its title, the recents rail and the history entry all take the storable spelling (lib/tabSafePath).
+  const path = tabSafePath(to);
+  // No tab here is this document's to move (borrowsTabShell). Callers that
+  // reach this directly — a pane gesture whose stage could not take the page —
+  // still mean "go there", so it goes there for real.
+  if (borrowsTabShell()) {
+    routerNavigate(path, mode, userState === undefined ? null : { usr: userState });
+    return;
+  }
+  const store = useInboxStore.getState();
+  const tabId = fromTabId ?? store.activeTabId;
+  if (tabId) store.updateTab(tabId, { path, title: pathLabel(path) });
+  // A BACKGROUND pane navigating (a hidden prewarm tab canonicalizing its own
+  // deep link, e.g. /files?path=…) moves only its tab's stored path. The
+  // browser URL and history belong to the tab the user is looking at.
+  if (fromTabId && fromTabId !== store.activeTabId) return;
+  const current = window.location.pathname + window.location.search;
+  // A caller's own state rides where react-router keeps it (`usr`), so
+  // `location.state` reads it the same with tabs or without.
+  const state = { tabNav: true, tabId, ...(userState === undefined ? {} : { usr: userState }) };
+  if (mode === "push" && path !== current) {
+    window.history.pushState(state, "", path);
+    // Recents follow what the tab shows (lib/visitRecorder), not this call.
+  } else {
+    window.history.replaceState(state, "", path);
+  }
+}

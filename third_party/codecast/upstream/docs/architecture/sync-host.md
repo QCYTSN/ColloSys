@@ -1,0 +1,207 @@
+# Sync host: one window syncs, the rest replicate
+
+## Problem
+
+Every window (main, detached tabs, palette, people, the prewarmed spare) runs a
+full copy of the sync layer: the same ~25 workspace-wide subscriptions, the
+same heartbeat churn, its own IndexedDB write-through. N windows pay N times
+for one workspace of data, and a change made in one window reaches the others
+only after a server round trip.
+
+## Design
+
+![The host window holds the Web Lock, mounts the global feeders, writes every patch to IndexedDB and broadcasts rows to follower windows over a BroadcastChannel; followers send hello and mut back and dispatch their own writes to Convex](../diagrams/sync-host.svg)
+
+Exactly one window per origin is the **sync host**. Every other window is a
+**follower**. Both run the same store, the same components, the same actions.
+
+The host:
+- mounts the global feeders (`useSyncCore` and the other always-on feeder
+  hooks), exactly as every window did before;
+- owns IndexedDB write-through and the storage watchdog;
+- broadcasts every change to replicated keys over a `BroadcastChannel`.
+
+A follower:
+- skips every global feeder (they mount inside `HostFeeders` in
+  `DashboardLayout`, or gate on `useIsSyncHost()`, both reading `syncRole`);
+- wires `_setIDBWrite` to persist only its per-window `local` keys
+  (`followerPersistencePatches`); the host is the single writer of the
+  shared state tables;
+- applies the host's broadcasts through `syncTable`, so its own pending
+  protection and no-op bails behave exactly as if the rows came from Convex.
+  The one difference is the overlay facts on a sessions row: a follower
+  mounts no overlay, so the host's row is their only writer and they land
+  verbatim, a null included, where a base channel's null would be preserved;
+- keeps its own Convex client, dispatch, and outbox: writes go to the server
+  directly, and per-view queries (a conversation's messages, a doc body)
+  subscribe as before.
+
+The engine (`@platform/engine`) gains only pure pieces: the message protocol
+and the patch-to-row extraction. Election, transport, and wiring are web-side.
+Mobile, SSR, and tests have no `BroadcastChannel`/locks and resolve to host
+in-process, so their code path is unchanged.
+
+## Why the tee is cheap
+
+`mutativeMiddleware` computes a patch list for every store write (actions and
+sync() alike) and hands it to the IDB write-through binding. The host wraps
+that binding: persist, then extract the patches touching replicated keys into
+row-level updates (`{key, upserts, removes}` for collections, `{key, value}`
+for singletons, read from post-write state) and broadcast them. No middleware
+changes; raw `setState` writes bypass the tee, and that is correct: they are
+ephemeral by house rule.
+
+## What replicates
+
+The classification lives in `clientSyncRegistry.ts` as
+`REPLICATION_CLASSIFICATION`, a `Record` over every registry key whose value
+is `"shared"` or `"local"`:
+
+- **shared** (server-backed keys): everything with `feeds`, a
+  `dispatchTable`/`dispatchFieldTable`, or a `sync` entry, plus explicitly
+  marked server-fed keys without registered feeds (`currentUser`, `teams`, …).
+- **local** (per-window state that only rides IDB for boot): `pending`,
+  `drafts`, `sidePanelSessionId`, and similar. `pending` must never replicate:
+  it is the record of THIS window's unacknowledged writes.
+
+Everything not in the registry (component state, `messages`, view pointers) was
+never shared and stays per-window. The `Record` type makes an unclassified
+new key a compile error, and `syncReplication.test.ts` pins the classified set
+to the registry, so every key is classified consciously.
+
+## Protocol
+
+All messages carry `{hostId, seq}`. Followers track `lastSeq`; a gap or a new
+`hostId` triggers a fresh snapshot request. Messages:
+
+- `hello` (follower → host): request a snapshot. `snapshotRequest` is a fresh
+  request token that opts into bounded delivery.
+- `snapshotChunk` (host → follower): `{seq, to, request, index, done, updates}`.
+  The host captures one immutable state and sequence position, then sends at
+  most 256 collection rows or eight keys per batch, yielding between batches.
+  Singleton values remain whole. The follower applies each batch through the
+  normal row path and buffers live updates until the final batch arrives.
+  Missing or reordered chunks, a changed host, or a full update buffer trigger
+  a fresh request; chunks from obsolete requests are ignored.
+- `snapshot` (host → follower): the legacy `{seq, entries: {key: value}}` response
+  for followers without a request token. New followers also accept this
+  response from older hosts. Identical rows no-op through the same engine path.
+- `update` (host → all): the teed row updates.
+- `mut` (follower → host): the follower's own action writes. A row the action
+  EDITED ships as exactly the fields it wrote (`fields`, from the action's
+  patches, with the action time); a row it created or replaced ships whole.
+  The host lands the fields on its own copy under the same field locks the
+  follower holds (`applyReplicatedFields`) and its tee rebroadcasts; a whole
+  row merges through `syncTable` with every lock the host already held on it
+  carried across the merge (`protectReplicatedWrite`), because the row's
+  value echo would otherwise retire the gesture bridge's lock a moment after
+  it was planted. The same write can reach the host by the bridge and by the
+  mut, in either order with its acknowledgement, so both paths keep the
+  acknowledgement a lock already carries, and a field write that finds the
+  value already landed with no lock on it (acknowledged and echoed) plants
+  none. A field write older than the host's own lock on that field (the mut
+  waited in the channel while the host wrote the field again) is dropped:
+  it would put back the value the newer write replaced, under a lock the
+  server, holding the newer write, never echoes. So the origin window and its host both hold protection for
+  the write, and a stale feed push on the host cannot revert it before the
+  server echo. A whole-row overlay of a follower's copy would put the host's
+  fresher fields back a step (the follower's copy is a replication hop
+  behind), which is why edits ship as fields.
+- `ack` (gesture bridge, origin → siblings): the sync-log positions the
+  origin's dispatch landed at, with the dispatched patches. Sibling windows
+  stamp the same acknowledgement onto their mirrored locks, and the mirrored
+  lock retires at the same position the origin's does. A later remote write
+  (a restore right after a kill) must not wait for a value echo that never
+  comes.
+- `sessionsProjection` rides `update` as a whole value (REPLICATED_EPHEMERAL_KEYS):
+  only the host subscribes to the liveness overlay, and a follower without the
+  slot buckets rows by the client-only sweep and disagrees with its host. The
+  follower re-stamps the slot's receipt clock on arrival (`performance.now()`
+  is per window).
+
+Follower boot: hydrate from IDB read-only, subscribe and buffer, `hello`,
+apply snapshot batches, replay buffered updates past the snapshot seq, then
+publish that the follower is synced. Snapshot progress refreshes the retry
+deadline; stopping the runtime cancels outstanding send timers.
+
+## Election
+
+`navigator.locks.request("codecast-sync-host:<principal>")`: the first holder is
+host, release on window death promotes the next in line. Web Locks and
+BroadcastChannel are both per-origin and shared across Electron windows of one
+session partition, so desktop and multi-tab web use the same mechanism.
+Windows that do not mount the full shell (palette, people) never request the
+lock: they follow a living host, and run solo (feeders on, own write-through)
+when no host has answered for 8 seconds (`SOLO_FALLBACK_MS`), as any follower
+does. Every window boots as host and demotes only when a host's snapshot
+lands. Where the Locks API is missing (React Native,
+SSR, old engines) the window is host with no transport, which is today's behavior.
+
+Both names carry the account the window acts for (the principal the stored
+JWT names, `lib/authPrincipal.ts`): `codecast-replication-v1:<principal>` and
+`codecast-sync-host:<principal>`. A host and its followers therefore share one
+account by construction, and a window that just signed in as someone else can
+never take a snapshot, an update or a mut from the previous account's host.
+A window with no account (signed out, a guest share page) runs no transport.
+
+## Account boundary
+
+Every window observes the same boundary: the JWT key changing in
+localStorage, through the wrapper's own write in the window that signs out or
+in, and through the native storage event in every sibling
+(`@platform/auth/web` authPrincipal; the auth library's own listener never
+fires, because it compares the event's storage area to the wrapper object).
+At the boundary `store/principalBoundary.ts` runs synchronously, before React
+renders anything for the next account: replication stops (channel closed, lock
+released), `clearProtectedInboxMemory` drops every row and unbinds dispatch,
+the outbox and write-through, a hydration still in flight is fenced by epoch,
+the disk cache is purged when an account was left, and persistence reboots
+when one was entered. The auth subtree remounts per principal epoch
+(`lib/authRoot.tsx`), so the provider re-reads storage. A token rotated for
+the same user is not a boundary: nothing above runs.
+
+The disk cache (`codecast-store`) belongs to one account: the one whose
+server-confirmed user row it holds (`meta.currentUser`). Hydration serves it
+only to a window whose stored JWT names that same principal; a cache someone
+else owns, or nobody does, is purged before any reader sees it. Write-through
+and outbox writes refuse the moment the stored JWT names someone else, which
+covers the gap between a sibling's sign-out and this window's storage event.
+
+Promotion (a follower wins the lock): flip `syncRole` to host in the store.
+The feeder gate is reactive, so subscriptions mount; wire `_setIDBWrite` and
+the storage-health callback; start serving snapshots. `syncMeta` (the change
+feed cursors) replicates from the host, so a promoted follower resumes the
+sync log from where the dead host stopped. Followers never stamp a CURSOR of
+their own (it would run ahead of what they applied), but they do stamp their
+own write acknowledgements onto their locks: the host tees in commit order and
+stamps the cursor after a page's rows, so when the replicated cursor reaches a
+position the rows through it have already landed, and the follower retires its
+acked locks at that moment (`retireAckedPending` on the replicated `syncMeta`).
+
+## Writes
+
+Unchanged. Actions run locally (synchronous returns, optimistic drafts,
+pending protection), dispatch goes straight from each window to
+`api.dispatch.dispatch`, parked writes ride the shared Dexie outbox exactly as
+today. The only new write behavior is the `mut` broadcast, which is how a
+follower's optimistic write appears in other windows before the echo.
+
+## Invariants
+
+1. One host per origin and account at a time; every window is exactly one of host/follower.
+2. A follower never runs a registered global feeder and never writes state
+   tables to IDB (outbox excluded).
+3. `pending` never crosses the wire.
+4. Replicated updates enter a follower only through `syncTable`/row apply, so
+   local pending protection always wins until the value echoes.
+5. An unclassified registry key fails to compile and fails `syncReplication.test.ts`.
+6. No window renders, persists or dispatches for an account after the stored
+   JWT stopped naming it; no row of one account is ever served to another.
+
+The multiplayer sim ([sync-sim.md](sync-sim.md)) checks two of these at every
+settle. `INV-followers` requires each follower's `snapshotEntries` over
+`REPLICATED_STORE_KEYS` to equal the host's byte for byte, which is what
+invariants 2 to 4 are for. `INV-fixpoint` re-runs every feeder a host mounted, one
+catch-up and a byIds pass over every held id, and requires no store write beyond
+`syncMeta` and `syncProgress`: replicated data that disagrees with the server
+shows there before any follower copies it.

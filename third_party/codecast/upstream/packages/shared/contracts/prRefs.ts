@@ -1,0 +1,155 @@
+// How a pull request is named, in one place.
+//
+// People write a pull request four ways: a bare number, an owner and name with
+// a number, a GitHub pull request URL, and a codecast PR page URL. The CLI
+// parses what a person typed, the Convex resolver parses what the CLI forwards,
+// and the web builds the same links. Without one parser each of the three
+// invents its own idea of what "owner/repo#12" means, and they drift.
+//
+// Everything here is pure string work, so it runs in the CLI, in a Convex
+// query and in the browser with no environment of its own.
+
+/** A reference names a repository, a number, or both. */
+export interface ParsedPrRef {
+  repository?: string;
+  number?: number;
+}
+
+// GitHub allows letters, digits, dot, dash and underscore in an owner or a
+// repository name.
+const NAME = "[A-Za-z0-9._-]+";
+const REPO_ONLY = new RegExp(`^${NAME}/${NAME}$`);
+
+/**
+ * One spelling for a repository, or for an owner alone.
+ *
+ * GitHub treats an owner and a repository name as case insensitive but keeps
+ * the case it was given, so the same repository reaches us as
+ * "Codecast-SH/Codecast" from a person typing it, from a git remote, and as
+ * "codecast-sh/codecast" from a webhook. Every index we look it up by is a byte
+ * comparison, so the value stored and the value searched for both go through
+ * here and one spelling wins. A surface that shows the name may keep whatever
+ * case it was handed; the indexed field is always this form.
+ */
+export function normalizeRepository<T extends string | undefined | null>(repository: T): T {
+  return (typeof repository === "string" ? repository.trim().toLowerCase() : repository) as T;
+}
+
+/**
+ * `owner/name` canonicalized (trimmed, lowercased, `.git` dropped), or null
+ * when the value is not one. The spelling every installation lookup, token
+ * mint and credential helper accepts.
+ */
+export function parseOwnerRepo(value: string | undefined | null): string | null {
+  if (!value) return null;
+  const repo = normalizeRepository(value.trim().replace(/\.git$/, ""));
+  return /^[a-z0-9._-]+\/[a-z0-9._-]+$/.test(repo) ? repo : null;
+}
+
+/** The canonical owner of "owner/name", the key every installation lookup uses. */
+export function repositoryOwner(repository: string): string {
+  return normalizeRepository(repository).split("/")[0];
+}
+
+const ref = (repository: string, number?: number): ParsedPrRef =>
+  number == null ? { repository: normalizeRepository(repository) } : { repository: normalizeRepository(repository), number };
+
+/**
+ * Read a pull request reference. Returns null when the text names no pull
+ * request, so a caller can tell "nothing was given" from "this is a number".
+ */
+export function parsePrRef(raw: string | null | undefined): ParsedPrRef | null {
+  const text = (raw ?? "").trim();
+  if (!text) return null;
+
+  // A GitHub pull request URL, with any trailing path or fragment:
+  // https://github.com/owner/name/pull/12/files#discussion_r1
+  const github = text.match(new RegExp(`github\\.com/(${NAME})/(${NAME})/pulls?/(\\d+)`));
+  if (github) return ref(`${github[1]}/${github[2]}`, Number(github[3]));
+
+  // A codecast PR page: https://codecast.sh/pr/owner/name/12
+  const codecast = text.match(new RegExp(`/pr/(${NAME})/(${NAME})/(\\d+)`));
+  if (codecast) return ref(`${codecast[1]}/${codecast[2]}`, Number(codecast[3]));
+
+  // owner/name#12, and the slash form people also type.
+  const pair = text.match(new RegExp(`^(${NAME}/${NAME})(?:#|/)(\\d+)$`));
+  if (pair) return ref(pair[1], Number(pair[2]));
+
+  // A bare number, with or without the hash people put in front of it.
+  const bare = text.match(/^#?(\d+)$/);
+  if (bare) return { number: Number(bare[1]) };
+
+  // owner/name alone names a repository and no pull request.
+  if (REPO_ONLY.test(text)) return ref(text);
+
+  return null;
+}
+
+/**
+ * The "owner/name" a git remote points at, or null when the remote is not a
+ * GitHub one. Covers the three shapes git writes: the scp style ssh remote,
+ * the https remote, and the ssh:// URL. The answer is the canonical spelling,
+ * whatever case the remote was cloned with.
+ */
+export function extractRepoFromRemoteUrl(remoteUrl: string | null | undefined): string | null {
+  const url = (remoteUrl ?? "").trim().replace(/\/+$/, "").replace(/\.git$/, "");
+  if (!url) return null;
+  const match = url.match(new RegExp(`github\\.com[:/](${NAME})/(${NAME})$`));
+  return match ? normalizeRepository(`${match[1]}/${match[2]}`) : null;
+}
+
+/** The path of the codecast page for a pull request. */
+export function codecastPrPath(repository: string, number: number): string {
+  return `/pr/${repository}/${number}`;
+}
+
+/** The full codecast page URL for a pull request. */
+export function codecastPrUrl(repository: string, number: number, origin = "https://codecast.sh"): string {
+  return `${origin.replace(/\/+$/, "")}${codecastPrPath(repository, number)}`;
+}
+
+/**
+ * How a check is named wherever checks are listed.
+ *
+ * A workflow that runs one job on both `push` and `pull_request` produces two
+ * check runs with the same name on the same commit, and GitHub lists both. The
+ * triggering event is the only thing that tells them apart, so it rides along
+ * in the label the way GitHub prints it: `test (ubuntu) (push)`.
+ */
+export function checkLabel(check: { name: string; event?: string }): string {
+  return check.event ? `${check.name} (${check.event})` : check.name;
+}
+
+export type ShepherdPrState = {
+  state?: string;
+  draft?: boolean;
+  mergeable?: boolean | null;
+  mergeable_state?: string;
+  behind_by?: number;
+  checks_state?: string;
+  review_decision?: string;
+};
+
+/**
+ * The PR's status in one word, ordered by what the shepherd must handle first.
+ *
+ * Merged and closed end the story. Then come the states only the author can
+ * clear (conflicts, a stale base, red CI, requested changes), then the states
+ * that mean waiting (CI still running, nobody has reviewed), and finally the
+ * good news. A card and a wake prompt both read this one value, so they can
+ * never disagree about where the PR stands.
+ */
+export function foldShepherdState(pr: ShepherdPrState): string {
+  if (pr.state === "merged") return "merged";
+  if (pr.state === "closed") return "closed";
+  if (pr.mergeable === false || pr.mergeable_state === "dirty") return "conflicts";
+  if ((pr.behind_by ?? 0) > 0 || pr.mergeable_state === "behind") return "behind";
+  if (pr.checks_state === "failure") return "ci_red";
+  if (pr.review_decision === "changes_requested") return "changes_requested";
+  if (pr.checks_state === "pending") return "ci_pending";
+  if (!pr.review_decision || pr.review_decision === "none" || pr.review_decision === "review_required") {
+    return "review_pending";
+  }
+  if (pr.review_decision === "approved") return "approved";
+  return "ready";
+}

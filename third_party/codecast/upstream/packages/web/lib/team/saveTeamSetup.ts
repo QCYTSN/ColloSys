@@ -1,0 +1,66 @@
+import { useMutation } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import type { Id } from "@codecast/convex/convex/_generated/dataModel";
+import type { TeamVisibility } from "./visibilityLevels";
+import { useInboxStore } from "../../store/inboxStore";
+import { isMappedToTeam, type UserWorkspace } from "../../hooks/useTeamWorkspaceSuggestions";
+
+type SetVisibility = (args: { team_id: Id<"teams">; visibility: TeamVisibility }) => Promise<unknown>;
+type MapDirectory = (args: {
+  path_prefix: string;
+  team_id: Id<"teams">;
+  auto_share: boolean;
+  include_past?: boolean;
+  share_since?: number;
+}) => Promise<unknown>;
+
+export type SaveTeamSetupInput = {
+  teamId: Id<"teams">;
+  visibility: TeamVisibility;
+  /** path -> selected. Only true entries are mapped. */
+  selectedPaths: Record<string, boolean>;
+  /** A share start stamps each new mapping: sessions before it stay private. Null shares everything. */
+  shareSince?: number | null;
+  /** The viewer's workspaces; paths already mapped to the team are skipped. */
+  allProjects?: UserWorkspace[];
+};
+
+/**
+ * Persist a member's team setup: their visibility on the team, then one
+ * directory mapping per newly selected workspace. Returns how many mappings
+ * were written so the caller can word its confirmation.
+ */
+export async function saveTeamSetup(
+  input: SaveTeamSetupInput,
+  mutations: { setTeamVisibility: SetVisibility; updateDirectoryMapping: MapDirectory },
+): Promise<{ mapped: number }> {
+  const { teamId, visibility, selectedPaths, allProjects, shareSince = null } = input;
+  await mutations.setTeamVisibility({ team_id: teamId, visibility });
+
+  let mapped = 0;
+  for (const [path, selected] of Object.entries(selectedPaths)) {
+    if (!selected) continue;
+    const ws = allProjects?.find((p) => p.path === path);
+    if (ws && isMappedToTeam(ws, teamId)) continue;
+    await mutations.updateDirectoryMapping({
+      path_prefix: path,
+      team_id: teamId,
+      auto_share: true,
+      include_past: shareSince == null,
+      share_since: shareSince ?? undefined,
+    });
+    mapped++;
+  }
+  return { mapped };
+}
+
+/** Binds the two writes so a component calls `save(input)` directly. The
+ *  member's level goes through the store action every other surface uses
+ *  (setTeamMembershipVisibility), so it paints at once and is classified. */
+export function useSaveTeamSetup() {
+  const setMembershipVisibility = useInboxStore((s) => s.setTeamMembershipVisibility);
+  const setTeamVisibility: SetVisibility = async ({ team_id, visibility }) => setMembershipVisibility(team_id, visibility);
+  const updateDirectoryMapping = useMutation(api.users.updateDirectoryTeamMapping);
+  return (input: SaveTeamSetupInput) =>
+    saveTeamSetup(input, { setTeamVisibility, updateDirectoryMapping });
+}

@@ -1,0 +1,317 @@
+import { test, expect, describe } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { isJumpReadyToScroll, shouldFollowStreaming, shouldLoadOlder, shouldLoadNewer, shouldAdjustScrollForResize, jumpRowForMessage, initialScrollEdge, shouldResumeFollow } from "./conversationScroll";
+
+describe("shouldFollowStreaming", () => {
+  test("follows normally before the user scrolls away", () => {
+    expect(shouldFollowStreaming(false)).toBe(true);
+  });
+
+  test("never follows new chunks after the user scrolls away", () => {
+    expect(shouldFollowStreaming(true)).toBe(false);
+  });
+
+  test("unsigned share-link visitors never follow the tail on open", () => {
+    expect(shouldFollowStreaming(false, true)).toBe(false);
+    expect(shouldFollowStreaming(true, true)).toBe(false);
+  });
+});
+
+describe("initialScrollEdge", () => {
+  test("signed-in viewers open at the live tail", () => {
+    expect(initialScrollEdge({ guest: false, hasExplicitTarget: false })).toBe("bottom");
+  });
+
+  test("unsigned share-link visitors open at the top", () => {
+    expect(initialScrollEdge({ guest: true, hasExplicitTarget: false })).toBe("top");
+  });
+
+  test("a message hash or highlight keeps ownership of the landing spot", () => {
+    expect(initialScrollEdge({ guest: true, hasExplicitTarget: true })).toBe(null);
+    expect(initialScrollEdge({ guest: false, hasExplicitTarget: true })).toBe(null);
+  });
+});
+
+describe("isJumpReadyToScroll", () => {
+  const ready = {
+    direction: "start" as "start" | "end" | null,
+    hasTimeline: true,
+    isLoadingOlder: false,
+    isLoadingNewer: false,
+  };
+
+  test("scrolls once the destination is loaded (start)", () => {
+    expect(isJumpReadyToScroll({ ...ready, direction: "start" })).toBe(true);
+  });
+
+  test("scrolls once the destination is loaded (end)", () => {
+    expect(isJumpReadyToScroll({ ...ready, direction: "end" })).toBe(true);
+  });
+
+  test("never scrolls when no jump is pending", () => {
+    expect(isJumpReadyToScroll({ ...ready, direction: null })).toBe(false);
+  });
+
+  test("never scrolls before any content exists", () => {
+    expect(isJumpReadyToScroll({ ...ready, hasTimeline: false })).toBe(false);
+  });
+
+  // THE REGRESSION: jump-to-top must hold while the first page is loading.
+  test("does NOT scroll while the top page is still loading", () => {
+    expect(isJumpReadyToScroll({ ...ready, direction: "start", isLoadingOlder: true })).toBe(false);
+  });
+
+  // THE REGRESSION the user reported: jump-to-bottom scrolled against stale
+  // content because the normal-mode LoadingFirstPage state (mapped into
+  // isLoadingNewer) wasn't treated as "still loading".
+  test("does NOT scroll while the bottom page is still loading", () => {
+    expect(isJumpReadyToScroll({ ...ready, direction: "end", isLoadingNewer: true })).toBe(false);
+  });
+
+  test("a still-loading jump only becomes ready once loading clears", () => {
+    const loading = { ...ready, direction: "end" as const, isLoadingNewer: true };
+    expect(isJumpReadyToScroll(loading)).toBe(false);
+    expect(isJumpReadyToScroll({ ...loading, isLoadingNewer: false })).toBe(true);
+  });
+});
+
+describe("shouldLoadOlder", () => {
+  const can = {
+    nearTop: true,
+    userScrolled: true,
+    hasMoreAbove: true,
+    isLoadingOlder: false,
+    isLoadingNewer: false,
+    cooldownActive: false,
+    underfilled: false,
+  };
+
+  test("loads when the user has scrolled up to near the top", () => {
+    expect(shouldLoadOlder(can)).toBe(true);
+  });
+
+  // THE REGRESSION the user reported: "loading up page randomly triggered
+  // without user input — the up arrow spins and we start jumping."
+  //
+  // On a freshly-opened live session the first page is 40 messages. If they
+  // render shorter than the viewport + the ~2000px preload band, the bottom of
+  // the conversation is ALSO inside the band (the content-top sentinel never
+  // leaves it), so `nearTop` is true while parked at the live tail. The old
+  // trigger was `nearTop && hasMoreAbove && …` with no scroll-intent gate, so
+  // the rAF pump auto-paginated upward page after page with the user doing
+  // nothing — each 200-message prepend jolting the scroll. Concretely: a 1500px
+  // window in an 800px viewport bottoms out at scrollTop 700, which is < 1200,
+  // i.e. "near top" AND "at the bottom" simultaneously.
+  test("does NOT load while parked at the bottom of a short window (the reported bug)", () => {
+    expect(shouldLoadOlder({ ...can, userScrolled: false })).toBe(false);
+  });
+
+  test("does NOT load on initial open before the user has scrolled", () => {
+    // Initial render snaps to the bottom; userScrolled starts false.
+    expect(shouldLoadOlder({ ...can, userScrolled: false, nearTop: true })).toBe(false);
+  });
+
+  test("does NOT load when the user is scrolled up but not near the top", () => {
+    expect(shouldLoadOlder({ ...can, nearTop: false })).toBe(false);
+  });
+
+  test("does NOT load when there is nothing older", () => {
+    expect(shouldLoadOlder({ ...can, hasMoreAbove: false })).toBe(false);
+  });
+
+  test("does NOT re-enter while an older page is already loading", () => {
+    expect(shouldLoadOlder({ ...can, isLoadingOlder: true })).toBe(false);
+  });
+
+  test("does NOT fight an in-flight newer/tail load", () => {
+    expect(shouldLoadOlder({ ...can, isLoadingNewer: true })).toBe(false);
+  });
+
+  test("stands down during a pagination/jump cooldown", () => {
+    expect(shouldLoadOlder({ ...can, cooldownActive: true })).toBe(false);
+  });
+
+  // A tail window of tool calls folds to one short row in condensed and compact,
+  // so the list never scrolls and no scroll-up can ever ask for the prompt and
+  // the reply above it: the reader saw a blank conversation. A list that cannot
+  // scroll loads older pages until it can, without waiting for intent.
+  test("loads while the window does not fill the viewport, with no scroll intent", () => {
+    expect(shouldLoadOlder({ ...can, userScrolled: false, nearTop: true, underfilled: true })).toBe(true);
+  });
+
+  test("an underfilled window still waits for in-flight loads and the cooldown", () => {
+    const fill = { ...can, userScrolled: false, underfilled: true };
+    expect(shouldLoadOlder({ ...fill, isLoadingOlder: true })).toBe(false);
+    expect(shouldLoadOlder({ ...fill, isLoadingNewer: true })).toBe(false);
+    expect(shouldLoadOlder({ ...fill, cooldownActive: true })).toBe(false);
+    expect(shouldLoadOlder({ ...fill, hasMoreAbove: false })).toBe(false);
+  });
+
+  test("resumes once the user scrolls up after following the tail", () => {
+    // Parked at the tail → suppressed; then a genuine scroll-up → allowed.
+    expect(shouldLoadOlder({ ...can, userScrolled: false })).toBe(false);
+    expect(shouldLoadOlder({ ...can, userScrolled: true })).toBe(true);
+  });
+});
+
+describe("shouldLoadNewer", () => {
+  const can = {
+    nearBottom: true,
+    hasMoreBelow: true,
+    isLoadingOlder: false,
+    isLoadingNewer: false,
+    cooldownActive: false,
+  };
+
+  test("loads when the user has scrolled down to near the bottom", () => {
+    expect(shouldLoadNewer(can)).toBe(true);
+  });
+
+  test("does NOT load outside target mode (no content below the window)", () => {
+    expect(shouldLoadNewer({ ...can, hasMoreBelow: false })).toBe(false);
+  });
+
+  test("does NOT load when the bottom is still far away", () => {
+    expect(shouldLoadNewer({ ...can, nearBottom: false })).toBe(false);
+  });
+
+  test("does NOT re-enter while a newer page is already loading", () => {
+    expect(shouldLoadNewer({ ...can, isLoadingNewer: true })).toBe(false);
+  });
+
+  test("does NOT fight an in-flight older load", () => {
+    expect(shouldLoadNewer({ ...can, isLoadingOlder: true })).toBe(false);
+  });
+
+  // THE REGRESSION the user reported: loading a newer page snapped the view to
+  // the new bottom (the virtualizer's end-anchor), which re-entered the trigger
+  // band and looped through every remaining page. The pin-back layout effect
+  // holds this cooldown while it restores the pre-load position; auto-load must
+  // stand down for that whole window so the snap can't chain another load.
+  test("stands down during a pagination/jump cooldown (the loop breaker)", () => {
+    expect(shouldLoadNewer({ ...can, cooldownActive: true })).toBe(false);
+  });
+});
+
+describe("shouldAdjustScrollForResize", () => {
+  const above = { itemStart: 1000, scrollOffset: 5000, held: false, scrollDirection: null as const };
+
+  test("a row above the viewport shifts scrollTop by its delta", () => {
+    expect(shouldAdjustScrollForResize(above)).toBe(true);
+  });
+
+  // THE REGRESSION the user reported: scrolling up, the content lurched under
+  // the pointer on every wheel tick. Rows above the viewport render for the
+  // first time on the way up and replace their estimate with a real height;
+  // the correction was skipped whenever the scroll direction was backward, so
+  // every estimate error became a visible jump.
+  test("still shifts while scrolling UP (backward)", () => {
+    expect(shouldAdjustScrollForResize({ ...above, scrollDirection: "backward" })).toBe(true);
+  });
+
+  test("still shifts while scrolling down (forward)", () => {
+    expect(shouldAdjustScrollForResize({ ...above, scrollDirection: "forward" })).toBe(true);
+  });
+
+  test("a row at or below the viewport top leaves scrollTop alone", () => {
+    expect(shouldAdjustScrollForResize({ ...above, itemStart: 5000 })).toBe(false);
+    expect(shouldAdjustScrollForResize({ ...above, itemStart: 7000 })).toBe(false);
+  });
+
+  test("a held row (in-row disclosure just toggled) leaves scrollTop alone even above the viewport", () => {
+    expect(shouldAdjustScrollForResize({ ...above, held: true })).toBe(false);
+  });
+});
+
+describe("jumpRowForMessage", () => {
+  const aggregates = {
+    absorbed: new Set(["absorbed"]),
+    receiptOf: new Map([
+      ["owner", [{ messageId: "owner" }, { messageId: "absorbed" }]],
+    ]),
+    turnKeyOf: new Map([
+      ["absorbed", "turn-1"],
+      ["owner", "turn-1"],
+      ["other", "turn-2"],
+    ]),
+  };
+
+  test("full density scrolls the message itself", () => {
+    expect(jumpRowForMessage("absorbed", "full", aggregates)).toEqual({ scrollToId: "absorbed", expandKey: null });
+  });
+
+  test("condensed expands the owner receipt and scrolls the owner", () => {
+    expect(jumpRowForMessage("absorbed", "condensed", aggregates)).toEqual({ scrollToId: "owner", expandKey: "owner" });
+  });
+
+  test("condensed on the owner itself still opens its receipt", () => {
+    expect(jumpRowForMessage("owner", "condensed", aggregates)).toEqual({ scrollToId: "owner", expandKey: "owner" });
+  });
+
+  test("compact opens the turn containing the message", () => {
+    expect(jumpRowForMessage("absorbed", "compact", aggregates)).toEqual({ scrollToId: "absorbed", expandKey: "turn-1" });
+  });
+
+  test("a folded working turn opens first, then the density's own rule applies", () => {
+    const lastTextOf = new Map([["turn-1", "reply"]]);
+    const closed = { expanded: new Set<string>(), lastTextOf };
+    expect(jumpRowForMessage("absorbed", "condensed", aggregates, closed)).toEqual({ scrollToId: "owner", expandKey: "turn-1" });
+    expect(jumpRowForMessage("absorbed", "full", aggregates, closed)).toEqual({ scrollToId: "absorbed", expandKey: "turn-1" });
+    const open = { expanded: new Set(["turn-1"]), lastTextOf };
+    expect(jumpRowForMessage("absorbed", "condensed", aggregates, open)).toEqual({ scrollToId: "owner", expandKey: "owner" });
+    expect(jumpRowForMessage("absorbed", "full", aggregates, open)).toEqual({ scrollToId: "absorbed", expandKey: null });
+  });
+
+  test("a folded turn's visible reply needs no opening", () => {
+    const withReply = { ...aggregates, turnKeyOf: new Map([...aggregates.turnKeyOf, ["reply", "turn-1"]]) };
+    const fold = { expanded: new Set<string>(), lastTextOf: new Map([["turn-1", "reply"]]) };
+    expect(jumpRowForMessage("reply", "full", withReply, fold)).toEqual({ scrollToId: "reply", expandKey: null });
+  });
+
+  test("a folded nudge jumps to the run head in every density", () => {
+    const withNudges = {
+      ...aggregates,
+      nudgeHeadOf: new Map([
+        ["head", "head"],
+        ["later", "head"],
+      ]),
+    };
+    expect(jumpRowForMessage("later", "full", withNudges)).toEqual({ scrollToId: "head", expandKey: null });
+    expect(jumpRowForMessage("later", "condensed", withNudges)).toEqual({ scrollToId: "head", expandKey: null });
+    expect(jumpRowForMessage("head", "full", withNudges)).toEqual({ scrollToId: "head", expandKey: null });
+  });
+});
+
+describe("unsigned share-link wiring", () => {
+  const view = readFileSync(join(import.meta.dir, "ConversationView.tsx"), "utf8");
+  const page = readFileSync(join(import.meta.dir, "../app/conversation/[id]/ConversationPageClient.tsx"), "utf8");
+
+  test("ConversationView asks initialScrollEdge and holds guests at the top", () => {
+    expect(view).toContain("initialScrollEdge");
+    expect(view).toContain("guestStayAtTop");
+    expect(view).toContain("shouldFollowStreaming(userScrolled, guestStayAtTop)");
+  });
+
+  test("the unauthenticated share path marks the view as guest", () => {
+    const guestView = page.slice(page.indexOf("function GuestConversationView"), page.indexOf("function ConversationLoadingSkeleton"));
+    expect(guestView).toMatch(/^\s*guest$/m);
+    expect(page).toContain("if (!treatAsAuthed)");
+  });
+});
+
+describe("shouldResumeFollow", () => {
+  test("resumes when the reader scrolls down to the bottom", () => {
+    expect(shouldResumeFollow({ nearBottom: true, scrolledDown: true, readerMovingDown: true })).toBe(true);
+  });
+
+  test("does not resume when the virtualizer shifts the view down near the bottom", () => {
+    // A streamed chunk grows the tall last row; the view shifts by the growth
+    // and the reader who scrolled up a little stays scrolled up.
+    expect(shouldResumeFollow({ nearBottom: true, scrolledDown: true, readerMovingDown: false })).toBe(false);
+  });
+
+  test("does not resume away from the bottom", () => {
+    expect(shouldResumeFollow({ nearBottom: false, scrolledDown: true, readerMovingDown: true })).toBe(false);
+  });
+});

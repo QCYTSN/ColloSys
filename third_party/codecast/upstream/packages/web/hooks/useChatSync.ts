@@ -1,0 +1,700 @@
+// Chat's sync layer: Convex queries in, store collections out.
+//
+// Same shape as every other feed in the app (useSyncBuckets, useConversationComments):
+// useQuery → useConvexSync → syncTable. Two things are chat-specific.
+//
+// PAGING. The newest window of a channel is a LIVE subscription; older pages are
+// one-shot `convex.query()` calls overlaid as deltas — the same split
+// reconcileCrawl uses, and for the same reason: one live subscription per
+// history page is how a busy team saturates the backend. History does not
+// change, so a subscription on it buys nothing.
+//
+// WAKE SIGNATURES. chatMessages and chatReactions carry a `transform`, which
+// bypasses syncTable's no-change early return — so every push hands back a new
+// collection ref even when nothing changed. An always-mounted reader subscribed
+// to the raw map would re-render on all of it. Every reader below therefore
+// subscribes to a SIGNATURE of the fields it renders (store/wakeSig.ts) and
+// reads the raw collection in the body.
+
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useIsSyncHost } from "./useSyncRole";
+import { agentName, agentTitle, type AnchorRow } from "./useSyncAnchors";
+import { useConvex } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import {
+  useInboxStore,
+  useTrackedStore,
+  selectChatRail,
+  selectChannelMessages,
+  selectThreadReplies,
+  selectChannelReadMarker,
+  teamChannelPushOpts,
+  chatSendState,
+  type ChatMessageRow,
+  type ChatChannelRow,
+  type ChatSlackLinkRow,
+  type ChatReactionRow,
+  type ChatReadRow,
+  type ChatRailRow,
+  type ChatRailChannel,
+  type ChatRailScope,
+} from "../store/inboxStore";
+import { channelsSig, messagesSig, railMessagesSig, railSig, reactionsSig, readsSig, seatSig, sessionOriginSig, slackLinksSig } from "../store/chatWakeSigs";
+import { memberListSig } from "./useTeamRoster";
+import { useConvexSync } from "./useConvexSync";
+import { useQueryNoThrow } from "./useQueryNoThrow";
+import { useTeamFeature } from "../lib/teamFeatures";
+import { isChatRailLive, markChatRailLive, subscribeChatRailLive } from "../lib/chatLive";
+import { isConvexId } from "../lib/entityLinks";
+import { activeTeamIdOf } from "../lib/activeTeam";
+import {
+  buildHandleSets,
+  foldReactions,
+  memberName,
+  type RoleSeat,
+  threadRollups,
+  toMessageViews,
+  type ChatMember,
+  type HandleSets,
+} from "../lib/chatViews";
+import type { ChatMessageView } from "../components/chat/chatTypes";
+import { CHAT_PAGE_SIZE, ingestChatPage } from "../lib/ingestChatPage";
+import { holdChatFocus } from "../lib/chatFocus";
+
+import { useWatchEffect } from "./useWatchEffect";
+import { useSyncCollection } from "./useSyncCollection";
+const api = _api as any;
+
+/** One live page. Deliberately at the server's own default so a cold open costs
+ *  one round trip and lands on a full screen of history. */
+const PAGE_SIZE = CHAT_PAGE_SIZE;
+
+// teamMembers is an ARRAY that re-pushes on teammates' presence heartbeats, so it
+// gets the same treatment: subscribe to the shared identity signature.
+
+// ── Channels, reads, rail ───────────────────────────────────────────────────
+
+/**
+ * The team's channels, this viewer's read rows, and the server's own unread
+ * numbers. ONE subscription, mounted app-wide (DashboardSyncEffects) rather than
+ * on the chat page: the rail badges, the sidebar badge and the arrival toasts
+ * all need it whether or not chat is open.
+ */
+export function useChatChannelsSync(): { error?: Error } {
+  const teamId = useInboxStore(activeTeamIdOf);
+  const syncTable = useInboxStore((s) => s.syncTable);
+  // Chat is a per-team opt-in. Off = no subscription AND an empty rail, so the
+  // unread badge, the title count and the arrival toasts — which all read the
+  // rail — go quiet along with the nav row. The server refuses the query for
+  // an off team anyway; skipping it keeps the console clean.
+  const chatOn = useTeamFeature("chat");
+  const isSyncHost = useIsSyncHost();
+  useWatchEffect(() => {
+    if (!chatOn) syncTable("chatRail", []);
+  }, [chatOn, syncTable]);
+  // useQueryNoThrow, not useQuery: chat is local-first — the components read the
+  // STORE, and this subscription only feeds it. A backend that is down (or a
+  // client running ahead of a deploy) must leave the reader with the cached
+  // channels they already had, not unmount the surface into an ErrorBoundary.
+  const { data: result, error } = useQueryNoThrow(
+    api.chat.listChannels,
+    // Explicit team or nothing. Passing {} lets the SERVER pick a team from
+    // users.active_team_id — a second source of truth that can disagree with
+    // the workspace the client is actually showing. In the personal workspace
+    // chat has no scope at all, so there is nothing to subscribe to.
+    // Follower windows receive the channel rail over replication instead.
+    chatOn && isSyncHost && teamId && isConvexId(teamId) ? { team_id: teamId } : "skip",
+  );
+
+  // The workspace's people, on the same gate. Its own subscription because a
+  // profile refresh (users.info, on a TTL) must not re-push the channel rail.
+  const feedPeople = !!(chatOn && isSyncHost && teamId && isConvexId(teamId));
+  useSyncCollection(
+    "chatSlackPeople",
+    api.slackSync.listSlackPeople,
+    feedPeople ? { team_id: teamId } : "skip",
+    useMemo(() => ({
+      select: (d: any) => d === null ? [] : d?.people?.map((p: any) => ({ ...p, _id: p.slack_user_id, team_id: teamId })),
+    }), [teamId]),
+  );
+
+  useConvexSync(
+    result,
+    useCallback(
+      (data: any) => {
+        if (!data) return;
+        // The team's complete visible set: a cached room of this team the
+        // push omits is one the viewer can no longer read. No team (a signed
+        // out answer) means no scope to prune.
+        const prune = data.team_id ? teamChannelPushOpts(String(data.team_id)) : undefined;
+        syncTable("chatChannels", data.channels ?? [], prune);
+        syncTable("chatReads", data.reads ?? [], prune);
+        syncTable("chatSlackLinks", data.slack_links ?? []);
+        syncChatRail(syncTable, data.rail ?? [], "team");
+        // This rail came from the server, not from IndexedDB. Only now is a
+        // change in it evidence that something ARRIVED — see lib/chatLive.
+        markChatRailLive();
+      },
+      [syncTable],
+    ),
+  );
+
+  // Handed back rather than dropped: the rail itself degrades to its cached
+  // rows (that is the whole point of useQueryNoThrow here), but a caller that
+  // wants to say so has the fact.
+  return { error };
+}
+
+// The rail meta is ONE list (registry kind "list": a push replaces it), and
+// two feeders write it: the workspace's rail above and the community rail
+// below. Each push therefore keeps the other scope's rows — a community
+// page open beside the team's chat must not blank the team's badges, and the
+// team feeder's next tick must not erase the public rooms' previews. The two
+// scopes are told apart by the channel row's kind, which both feeders have
+// synced before they write the rail. (A team whose active workspace IS the
+// community team lists its community rooms in both; the fresher push wins,
+// and the rows agree because railFor computes them.)
+function syncChatRail(
+  syncTable: (field: any, rows: any) => void,
+  incoming: ChatRailRow[],
+  scope: ChatRailScope,
+): void {
+  const s = useInboxStore.getState() as any;
+  const isCommunity = (row: ChatRailRow) => s.chatChannels?.[String(row.channel_id)]?.kind === "community";
+  const incomingIds = new Set(incoming.map((r) => String(r.channel_id)));
+  const kept = ((s.chatRail ?? []) as ChatRailRow[]).filter((row) =>
+    !incomingIds.has(String(row.channel_id))
+    && (scope === "community" ? !isCommunity(row) : isCommunity(row)));
+  syncTable("chatRail", [...kept, ...incoming]);
+}
+
+/**
+ * The public rail: every community channel, for a visitor or a member alike
+ * (chat.listCommunityChannels needs no identity). A per-view feeder — the
+ * community page mounts it, nothing else does — so it runs in follower
+ * windows too and never gates on the sync host.
+ */
+export function useCommunityChannelsSync(enabled: boolean): { error?: Error; loading: boolean } {
+  const syncTable = useInboxStore((s) => s.syncTable);
+  const { data: result, error } = useQueryNoThrow(api.chat.listCommunityChannels, enabled ? {} : "skip");
+  useConvexSync(
+    result,
+    useCallback(
+      (data: any) => {
+        if (!data) return;
+        syncTable("chatChannels", data.channels ?? []);
+        syncTable("chatReads", data.reads ?? []);
+        syncChatRail(syncTable, data.rail ?? [], "community");
+        markChatRailLive();
+      },
+      [syncTable],
+    ),
+  );
+  return { error, loading: enabled && result === undefined && !error };
+}
+
+// ── One channel's messages ──────────────────────────────────────────────────
+
+export type ChannelFeed = {
+  /** The first page has not landed yet. */
+  loading: boolean;
+  /** The query failed terminally. `loading` is false in this state: an errored
+   *  query never resolves, so a caller that only watches `loading` waits for a
+   *  page that is never coming and renders a blank rectangle forever. */
+  error?: Error;
+  /** The server answered, and will not show this viewer the room: it is gone, or
+   *  it was never theirs. Not an error (nothing failed) and not an empty room,
+   *  so the surface must neither offer a retry nor invite a post. */
+  unavailable: boolean;
+  hasMoreAbove: boolean;
+  isLoadingOlder: boolean;
+  loadOlder: () => void;
+  /** The oldest created_at the feed has paged to without a gap: the view
+   *  shows rows at or above it. 0 once history is exhausted; null before the
+   *  first page lands (the reader then shows only the newest cached page). */
+  floor: number | null;
+  /** One-shot refetch of the newest page, for the error state's retry. The live
+   *  subscription cannot be re-armed (its args have not changed), but the store
+   *  is what the surface renders, so filling it is a real recovery. */
+  retry: () => void;
+};
+
+/**
+ * The newest page of a channel, live, plus backwards paging on demand.
+ *
+ * Older pages are fetched once and overlaid as deltas — a channel's collection
+ * only ever grows here, which is what lets the store hold three open channels at
+ * once without any of them pruning the others.
+ *
+ * Growing without pruning has one cost: the collection can hold rows the
+ * current pages do not reach (a page from an earlier visit, a line delivered
+ * live, history imported behind the pages). Rendered as one list they read as
+ * a room with holes: last June beside today, nothing between. So the feed
+ * also reports the FLOOR it has paged to contiguously, and the reader shows
+ * only rows at or above it. Every page lowers the floor; exhausting history
+ * drops it to zero.
+ */
+export function useChannelMessagesSync(channelId: string | undefined): ChannelFeed {
+  const syncTable = useInboxStore((s) => s.syncTable);
+  const convex = useConvex();
+  const live = channelId && isConvexId(channelId);
+  const { data: result, error: queryError } = useQueryNoThrow(
+    api.chat.listMessages,
+    live ? { channel_id: channelId, limit: PAGE_SIZE } : "skip",
+  );
+  const [recovered, setRecovered] = useState(false);
+
+  // The cursor the NEXT older page starts at. Seeded from the live page, then
+  // advanced by each fetch. Reset whenever the channel changes.
+  const [olderCursor, setOlderCursor] = useState<string | null>(null);
+  const [olderExhausted, setOlderExhausted] = useState(false);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [floor, setFloor] = useState<number | null>(null);
+  const channelRef = useRef(channelId);
+  if (channelRef.current !== channelId) {
+    channelRef.current = channelId;
+    // Synchronous during render on a channel switch, so the first paint of the
+    // new channel never inherits the old one's paging state.
+    if (olderCursor !== null) setOlderCursor(null);
+    if (olderExhausted) setOlderExhausted(false);
+    if (isLoadingOlder) setIsLoadingOlder(false);
+    if (recovered) setRecovered(false);
+    if (floor !== null) setFloor(null);
+  }
+  // A page lowers the floor to its oldest row; the last page drops it to 0.
+  const lowerFloor = (messages: ChatMessageRow[], hasMore: boolean) =>
+    setFloor((prev) => {
+      if (!hasMore) return 0;
+      if (messages.length === 0) return prev;
+      const oldest = Math.min(...messages.map((m) => m.created_at));
+      return prev === null ? oldest : Math.min(prev, oldest);
+    });
+
+  useConvexSync(
+    result,
+    useCallback(
+      (data: any) => {
+        if (!data) return;
+        if (data.unavailable) {
+          // The server's word on a room this client cached: retire it, so no
+          // surface keeps offering a room the server refuses.
+          if (channelId) useInboxStore.getState().retireChatChannel(channelId);
+          return;
+        }
+        const messages = ingestChatPage(data, convex);
+        // Only seed the history cursor; never let a live re-push rewind a
+        // cursor the reader has already paged past.
+        setOlderCursor((prev) => (prev === null ? (data.next_cursor ?? null) : prev));
+        lowerFloor(messages, !!data.has_more);
+      },
+      [syncTable, convex, channelId],
+    ),
+  );
+
+  const loadOlder = useCallback(() => {
+    if (!live || !olderCursor || isLoadingOlder || olderExhausted) return;
+    const forChannel = channelId;
+    setIsLoadingOlder(true);
+    void convex
+      .query(api.chat.listMessages, { channel_id: forChannel, cursor: olderCursor, limit: PAGE_SIZE })
+      .then((page: any) => {
+        // The reader switched channels while the page was in flight — its rows
+        // belong to a channel nothing is showing, so drop them.
+        if (channelRef.current !== forChannel) return;
+        const messages = ingestChatPage(page, convex);
+        setOlderCursor(page?.next_cursor ?? null);
+        if (!page?.has_more) setOlderExhausted(true);
+        lowerFloor(messages, !!page?.has_more);
+      })
+      .catch(() => {
+        // Leave the cursor where it was: the affordance stays, and the next
+        // click retries. A silent permanent "no more history" would be a lie.
+      })
+      .finally(() => {
+        if (channelRef.current === forChannel) setIsLoadingOlder(false);
+      });
+  }, [convex, live, channelId, olderCursor, isLoadingOlder, olderExhausted]);
+
+  const retry = useCallback(() => {
+    if (!live) return;
+    const forChannel = channelId;
+    void convex
+      .query(api.chat.listMessages, { channel_id: forChannel, limit: PAGE_SIZE })
+      .then((page: any) => {
+        if (channelRef.current !== forChannel) return;
+        const messages = ingestChatPage(page, convex);
+        setOlderCursor((prev) => (prev === null ? (page?.next_cursor ?? null) : prev));
+        lowerFloor(messages, !!page?.has_more);
+        setRecovered(true);
+      })
+      .catch(() => {
+        // Still broken. The error state stays up and the button stays live.
+      });
+  }, [convex, live, channelId]);
+
+  const error = queryError && !recovered ? queryError : undefined;
+  return {
+    loading: !!live && result === undefined && !error,
+    error,
+    unavailable: !!result?.unavailable,
+    floor,
+    hasMoreAbove: !!olderCursor && !olderExhausted,
+    isLoadingOlder,
+    loadOlder,
+    retry,
+  };
+}
+
+// ── One thread ──────────────────────────────────────────────────────────────
+
+/** A thread's root and replies, live. Threads are short by construction (the
+ *  server's page is 200), so this has no backwards paging of its own. */
+export function useThreadSync(rootId: string | undefined): {
+  loading: boolean;
+  error?: Error;
+  unavailable: boolean;
+  /** The server's word on whether a plain reply here reaches the anchor, and
+   *  its name (getThread.anchor). Enrichment: undefined until the page lands. */
+  anchor?: { armed: boolean; name?: string };
+} {
+  const convex = useConvex();
+  const live = rootId && isConvexId(rootId);
+  const { data: result, error } = useQueryNoThrow(api.chat.getThread, live ? { root_id: rootId } : "skip");
+
+  useConvexSync(
+    result,
+    useCallback(
+      (data: any) => {
+        if (!data) return;
+        ingestChatPage(data, convex);
+      },
+      [convex],
+    ),
+  );
+
+  // Same flag as a channel feed's: the server will not show this viewer the
+  // room the thread lives in, so a composer here could only post a refusal.
+  return {
+    loading: !!live && result === undefined && !error,
+    error,
+    unavailable: !!result?.unavailable,
+    anchor: result?.anchor ?? undefined,
+  };
+}
+
+// ── Readers ─────────────────────────────────────────────────────────────────
+
+/** The viewer plus the team roster, as chat identity. Bots (the anchor) are
+ *  members too — chat.ts resolves their handles off the roster, so the client
+ *  must draw its faces from the same list. */
+export function useChatMembers(): { members: ChatMember[]; byId: Map<string, ChatMember>; viewerId: string; handles: HandleSets } {
+  const s = useTrackedStore([
+    (s: any) => memberListSig(s.teamMembers),
+    (s: any) => s.currentUser?._id,
+    (s: any) => s.currentUser?.name,
+    (s: any) => s.currentUser?.image,
+    (s: any) => anchorBotsSig(s.anchors),
+    (s: any) => s.chatAuthors,
+  ]);
+  const viewerId = String(s.currentUser?._id ?? "");
+  const roster: any[] = s.teamMembers ?? [];
+  const sig = memberListSig(roster);
+  const botsSig = anchorBotsSig((s as any).anchors);
+  const authors = (s as any).chatAuthors as Record<string, ChatMember> | undefined;
+  const me = s.currentUser;
+  return useMemo(() => {
+    const byId = new Map<string, ChatMember>();
+    for (const m of roster) if (m?._id) byId.set(String(m._id), m as ChatMember);
+    // The viewer is in their own team roster, but a just-joined client can hold
+    // the user before the roster lands.
+    if (viewerId && !byId.has(viewerId) && me) byId.set(viewerId, me as ChatMember);
+    // Handles and pickers come from the ROSTER only: a team anchor is on it,
+    // a personal one is not (it belongs to one person, not the team).
+    const members = [...byId.values()];
+    const handles = buildHandleSets(members, viewerId);
+    // Names and faces come from the roster PLUS every anchor bot the viewer can
+    // see (lib/chatViews' known-agent registry, kept by the anchors feeder),
+    // so a DM from a personal anchor is titled with its name rather than
+    // "Someone". Lookup only — it never becomes a mention target here.
+    for (const bot of anchorBots((s as any).anchors)) {
+      if (!byId.has(bot._id)) byId.set(bot._id, bot);
+    }
+    // Last: the authors the message pages themselves named, for lines by
+    // people outside the roster (a community room's public). The roster wins
+    // when both know a person — it carries the face, the page carries a name.
+    for (const id in authors ?? {}) {
+      if (!byId.has(id)) byId.set(id, authors![id]);
+    }
+    return { members, byId, viewerId, handles };
+    // The signatures are the deps, not the arrays: both collections re-push.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig, botsSig, viewerId, me, authors]);
+}
+
+function anchorBots(anchors: Record<string, any> | undefined): ChatMember[] {
+  const out: ChatMember[] = [];
+  for (const id in anchors ?? {}) {
+    const a = anchors![id];
+    if (!a?.bot_user_id || a.status === "decommissioned") continue;
+    out.push({ _id: String(a.bot_user_id), name: a.role?.name ?? a.bot_name ?? a.name ?? "Workspace agent", image: a.bot_avatar ?? null, is_bot: true } as ChatMember);
+  }
+  return out;
+}
+
+function anchorBotsSig(anchors: Record<string, any> | undefined): string {
+  let out = "";
+  for (const id in anchors ?? {}) {
+    const a = anchors![id];
+    out += `${a?.bot_user_id ?? ""}|${a?.bot_name ?? ""}|${a?.bot_avatar ?? ""}|${a?.status ?? ""}\n`;
+  }
+  return out;
+}
+
+/** The channel rail, already sorted and counted. */
+export function useChatRail(scope: ChatRailScope = "team"): ChatRailChannel[] {
+  // Once a server payload has landed, a room missing from the rail is gone.
+  const railLive = useSyncExternalStore(subscribeChatRailLive, isChatRailLive, () => false);
+  const s = useTrackedStore([
+    (s: any) => channelsSig(s.chatChannels),
+    (s: any) => readsSig(s.chatReads),
+    (s: any) => railSig(s.chatRail),
+    (s: any) => railMessagesSig(s.chatMessages),
+    (s: any) => slackLinksSig(s.chatSlackLinks),
+    (s: any) => s.currentUser?._id,
+    activeTeamIdOf,
+  ]);
+  // The active workspace as this platform scopes it (lib/activeTeam).
+  // No currentUser.team_id fallback: undefined MEANS the personal workspace, and
+  // falling back to a team would resurrect team rooms the user left.
+  const teamId = activeTeamIdOf(s);
+  return selectChatRail(s as any, String(s.currentUser?._id ?? ""), teamId ? String(teamId) : undefined, scope, railLive);
+}
+
+export function useMessageViews(
+  rows: ChatMessageRow[],
+  reactionRows: Record<string, ChatReactionRow>,
+  byId: Map<string, ChatMember>,
+  viewerId: string,
+  rollupSource: Record<string, ChatMessageRow>,
+  summaries?: Record<string, any>,
+): ChatMessageView[] {
+  // Live session identities for lines a session typed. Signature-gated: the
+  // sessions collection churns on heartbeats, and a transcript only cares when
+  // a title or agent changes.
+  const st = useTrackedStore([(s: any) => sessionOriginSig(s.sessions)]);
+  const sessionsSig = sessionOriginSig(st.sessions);
+  const sessionFor = useMemo(() => {
+    const map = new Map<string, { title?: string; agentType?: string }>();
+    for (const row of Object.values(st.sessions ?? {}) as any[]) {
+      if (!row?.session_id) continue;
+      map.set(String(row.session_id), {
+        title: row.display_title || row.title || undefined,
+        agentType: row.agent_type,
+      });
+    }
+    return (id: string) => map.get(id);
+    // The signature is the real dep: the raw map ref flips on every push.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionsSig]);
+  const sa = useTrackedStore([(s: any) => seatSig(s.anchors)]);
+  const seatsSig = seatSig(sa.anchors);
+  const seatFor = useMemo(() => {
+    const map = new Map<string, RoleSeat>();
+    for (const a of Object.values(sa.anchors ?? {}) as AnchorRow[]) {
+      if (!a?.bot_user_id || !a.role?.short_id || a.status === "decommissioned") continue;
+      map.set(String(a.bot_user_id), { name: agentName(a), title: agentTitle(a) ?? a.role.name, shortId: a.role.short_id, handle: a.role.handle, avatar: a.role.avatar });
+    }
+    return (id: string) => map.get(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [seatsSig]);
+  return useMemo(() => {
+    const rollups = threadRollups(Object.values(rollupSource));
+    const byMessage = new Map<string, ChatReactionRow[]>();
+    for (const id in reactionRows) {
+      const r = reactionRows[id];
+      const list = byMessage.get(r.message_id);
+      if (list) list.push(r);
+      else byMessage.set(r.message_id, [r]);
+    }
+    const nameOf = (userId: string) => memberName(byId.get(userId));
+    return toMessageViews(rows, {
+      members: byId,
+      viewerId,
+      rollups,
+      summaries,
+      sendState: chatSendState,
+      sessionFor,
+      seatFor,
+      reactionsFor: (messageId) => {
+        const list = byMessage.get(messageId);
+        return list ? foldReactions(list, viewerId, nameOf) : undefined;
+      },
+    });
+  }, [rows, reactionRows, byId, viewerId, rollupSource, summaries, sessionFor, seatFor]);
+}
+
+/** One channel's timeline, ready to render. Roots only — replies live in the
+ *  thread panel. */
+/** The rows the view may show: those the feed has paged to without a gap.
+ *  Before the first page lands (`floor` null) the newest cached page stands
+ *  in, so a warm cache still paints instantly and never shows a hole. */
+export function windowRows<T extends { created_at: number; pending?: unknown }>(
+  rows: T[],
+  floor: number | null | undefined,
+  pageSize = PAGE_SIZE,
+): T[] {
+  if (floor === undefined) return rows;
+  if (floor === null) return rows.length > pageSize ? rows.slice(rows.length - pageSize) : rows;
+  // A line typed here and not yet acknowledged has a created_at of now; it is
+  // never below the floor, so pending rows always show.
+  return rows.filter((r) => r.created_at >= floor);
+}
+
+export function useChannelMessages(channelId: string | undefined, floor?: number | null): ChatMessageView[] {
+  const { byId, viewerId } = useChatMembers();
+  const s = useTrackedStore([
+    (s: any) => messagesSig(s.chatMessages),
+    (s: any) => reactionsSig(s.chatReactions),
+    // Ref identity: syncTable's no-change bail keeps it stable, so this wakes
+    // only when a delivery actually changed some root's rollup.
+    (s: any) => s.chatThreadSummaries,
+  ]);
+  const rows = useMemo(
+    () => (channelId ? windowRows(selectChannelMessages(s as any, channelId), floor) : []),
+    // The signature is the real dep: the raw map ref flips on every push.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [channelId, floor, messagesSig(s.chatMessages)],
+  );
+  return useMessageViews(rows, s.chatReactions, byId, viewerId, s.chatMessages, s.chatThreadSummaries);
+}
+
+/** A thread: its root message and its replies, both ready to render. */
+export function useThreadMessages(rootId: string | undefined): {
+  root: ChatMessageView | null;
+  replies: ChatMessageView[];
+} {
+  const { byId, viewerId } = useChatMembers();
+  const s = useTrackedStore([
+    (s: any) => messagesSig(s.chatMessages),
+    (s: any) => reactionsSig(s.chatReactions),
+  ]);
+  const rows = useMemo(() => {
+    if (!rootId) return [] as ChatMessageRow[];
+    const rootRow = (s.chatMessages as Record<string, ChatMessageRow>)[rootId];
+    return [...(rootRow ? [rootRow] : []), ...selectThreadReplies(s as any, rootId)];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootId, messagesSig(s.chatMessages)]);
+  const views = useMessageViews(rows, s.chatReactions, byId, viewerId, s.chatMessages);
+  const rootRow = rootId ? (s.chatMessages as Record<string, ChatMessageRow>)[rootId] : undefined;
+  return {
+    root: rootRow ? views[0] ?? null : null,
+    replies: rootRow ? views.slice(1) : views,
+  };
+}
+
+/**
+ * Where a dead stub channel id went.
+ *
+ * A channel is created optimistically and navigated to by its stub id, so the
+ * rail can select it in the same tick. When the server row lands, the altKey
+ * supersede deletes the stub and rekeys everything pointing at it — including
+ * the tab path — but a URL that arrived some other way (a paste, a reload, a
+ * window with no tab shell) can still be holding the dead id. The server row
+ * keeps the stub id as its `client_id`, which is the forwarding address.
+ *
+ * Returns undefined while the stub is alive: the reader is on their new channel
+ * and nothing needs to move.
+ */
+export function useSupersededChannelId(channelId: string | undefined): string | undefined {
+  const s = useTrackedStore([(s: any) => channelsSig(s.chatChannels)]);
+  return supersededChannelId(s.chatChannels as Record<string, ChatChannelRow>, channelId);
+}
+
+/** The plain-function core of useSupersededChannelId, for callers that already
+ *  hold the channels map (the sidebar's pin resolution runs per pin, where a
+ *  hook per item can't). */
+export function supersededChannelId(
+  channels: Record<string, ChatChannelRow>,
+  channelId: string | undefined,
+): string | undefined {
+  // A stub id that the server row superseded, OR a real room that merged into
+  // another one (two Slack people turning out to be the same person). Either
+  // way the surviving row carries the old id as its client_id.
+  if (!channelId || channels[channelId]) return undefined;
+  for (const id in channels) {
+    if (channels[id]?.client_id === channelId) return id;
+  }
+  return undefined;
+}
+
+/** The channel a message belongs to — the permalink's missing half when the URL
+ *  carries `?m=` for a message whose channel is already open. */
+export function useChatMessageRow(messageId: string | undefined): ChatMessageRow | undefined {
+  const s = useTrackedStore([(s: any) => messagesSig(s.chatMessages)]);
+  if (!messageId) return undefined;
+  return (s.chatMessages as Record<string, ChatMessageRow>)[messageId];
+}
+
+/** Unread totals across every channel, for the sidebar and the document title.
+ *  Weight is the count of unread channels; only mentions produce a number.
+ *  Threads have their own badge (hooks/useThreadsSync useThreadUnread). */
+export function useChatUnread(): { channels: number; mentions: number } {
+  const rail = useChatRail();
+  return useMemo(() => chatUnreadTotals(rail), [rail]);
+}
+
+/** The plain-function core of useChatUnread, for a caller totalling a subset
+ *  of the rail (the sidebar's Chat row leaves out channels pinned above it). */
+export function chatUnreadTotals(
+  rows: ReadonlyArray<{ unreadCount?: number; mentionCount?: number; muted?: boolean }>,
+): { channels: number; mentions: number } {
+  let channels = 0;
+  let mentions = 0;
+  for (const c of rows) {
+    if ((c.unreadCount ?? 0) > 0 && !c.muted) channels++;
+    mentions += c.mentionCount ?? 0;
+  }
+  return { channels, mentions };
+}
+
+/** Fetch one message by id when the store has never seen it — the permalink
+ *  landing case where `?m=` points into history the client has not paged to. */
+export function useEnsureChatMessage(messageId: string | undefined): void {
+  const convex = useConvex();
+  const known = !!useChatMessageRow(messageId);
+  const askedRef = useRef<string | null>(null);
+  useWatchEffect(() => {
+    if (!messageId || !isConvexId(messageId) || known) return;
+    if (askedRef.current === messageId) return;
+    askedRef.current = messageId;
+    void convex
+      .query(api.chat.getMessage, { message_id: messageId })
+      .then((res: any) => {
+        ingestChatPage(res, convex);
+      })
+      .catch(() => {});
+  }, [convex, messageId, known]);
+}
+
+/**
+ * The chat page's read law for a room shown somewhere else (a Threads row,
+ * the dock on a conversation): while the reader has it on screen, the room is
+ * marked read and re-marked as `wake` moves (pass what changes when a message
+ * lands), and it counts as on screen for the toast rule. The marker is the
+ * newest message in the ROOM, replies included, so a badge a thread reply
+ * raised clears too. Never for a room the server refuses: the mark would only
+ * come back as "Channel not found".
+ */
+export function useReadWhileSeen(channelId: string | undefined, seen: boolean, feed: ChannelFeed, wake: unknown): void {
+  useWatchEffect(() => {
+    if (!channelId || !seen || feed.loading || feed.unavailable) return;
+    const state = useInboxStore.getState();
+    const marker = selectChannelReadMarker(state as any, channelId);
+    state.markChannelRead(channelId, marker?._id);
+  }, [seen, channelId, wake, feed.loading, feed.unavailable]);
+
+  useWatchEffect(() => {
+    if (!seen || !channelId) return;
+    return holdChatFocus({ channelId });
+  }, [seen, channelId]);
+}

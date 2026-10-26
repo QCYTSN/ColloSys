@@ -1,0 +1,416 @@
+// Pure scroll-decision logic for ConversationView, extracted so it can be
+// unit-tested without a DOM (settleTimelineItemAtOffset takes the scroller and
+// its rows as arguments, so a fake stands in). See conversationScroll.test.ts
+// and conversationScroll.settle.test.ts.
+//
+// Streaming follows the tail until the user deliberately scrolls away. Once
+// that intent latch is set, geometry must not override it: a row re-measure or
+// new chunk can make the viewport look "near bottom" without the reader asking
+// to be moved there.
+
+import { cssZoomOf } from "../lib/cssZoom";
+
+export function shouldFollowStreaming(userScrolled: boolean, openAtTop = false): boolean {
+  // Unsigned share-link visitors start at the top of the transcript. End-follow
+  // would pin them to the live tail as rows measure in, which is the authed
+  // default and the wrong first paint for a guest reading a shared session.
+  if (openAtTop) return false;
+  return !userScrolled;
+}
+
+export type InitialScrollEdge = "top" | "bottom" | null;
+
+/**
+ * Where a freshly mounted conversation should land. Signed-in viewers snap to
+ * the live tail (the session they already know). Unsigned share-link visitors
+ * start at the top so the thread reads from the beginning. A hash, highlight,
+ * or message target owns the landing spot instead — return null and leave it.
+ */
+export function initialScrollEdge(i: {
+  guest: boolean;
+  hasExplicitTarget: boolean;
+}): InitialScrollEdge {
+  if (i.hasExplicitTarget) return null;
+  return i.guest ? "top" : "bottom";
+}
+
+export interface JumpReadyInput {
+  /** The in-flight jump's direction, or null when no jump is pending. */
+  direction: "start" | "end" | null;
+  /** The timeline currently has at least one item to scroll to. */
+  hasTimeline: boolean;
+  /** The destination page is still being fetched (older side / top). */
+  isLoadingOlder: boolean;
+  /**
+   * The destination page is still being fetched (newer side / bottom). For a
+   * jump-to-end this MUST include the normal-mode "LoadingFirstPage" state —
+   * the live tail isn't in the store yet, so scrolling now lands on stale
+   * content and then jumps again when the real page arrives.
+   */
+  isLoadingNewer: boolean;
+}
+
+/**
+ * The single gate for "perform the jump's one scroll now". The whole point of
+ * the jump UX is that we MUST NOT scroll until the destination data is actually
+ * present — the view stays frozen (spinner up) through the entire load, then
+ * this returns true exactly once and we do a single atomic scroll to the edge.
+ *
+ * Returns false when there's no jump, nothing to scroll to, or either side is
+ * still loading. The caller clears the jump direction after acting, so this
+ * naturally fires only on the first ready frame.
+ */
+export function isJumpReadyToScroll(i: JumpReadyInput): boolean {
+  if (!i.direction || !i.hasTimeline) return false;
+  if (i.isLoadingOlder || i.isLoadingNewer) return false;
+  return true;
+}
+
+export interface LoadOlderInput {
+  /**
+   * The content-top is near the viewport: either scrollTop is inside the
+   * preload band, or the top sentinel is inside the IntersectionObserver's
+   * margin. On a SHORT loaded window (content barely taller than the viewport)
+   * this is true even while parked at the very bottom — the content-top never
+   * leaves the band — which is exactly why `nearTop` alone is not enough.
+   */
+  nearTop: boolean;
+  /**
+   * The user has scrolled up off the live tail. FALSE on initial load and
+   * while following the stream at the bottom. This is the discriminator that
+   * `nearTop` can't provide on a short window: "reaching back for history"
+   * (scrolled up) vs "following the tail" (parked at the bottom).
+   */
+  userScrolled: boolean;
+  hasMoreAbove: boolean;
+  isLoadingOlder: boolean;
+  /** A jump-to-end / live-tail fetch is in flight; don't fight it. */
+  isLoadingNewer: boolean;
+  /** A pagination/jump cooldown is active; auto-load must stand down. */
+  cooldownActive: boolean;
+  /**
+   * The loaded window renders no taller than the viewport, so the list cannot
+   * scroll and no scroll-up can ever ask for what sits above it (a tail of
+   * tool calls folds to a single row in condensed and compact).
+   */
+  underfilled: boolean;
+}
+
+/**
+ * Decide whether to auto-load the previous (older) page.
+ *
+ * The trigger is "the top is approaching" — but acting on that ALONE made the
+ * view spontaneously paginate upward and jump: on any conversation whose loaded
+ * window is shorter than the preload band, the content-top sits permanently
+ * inside the band, so sitting at the live tail satisfied `nearTop` and the rAF
+ * pump fired `loadOlder` page after page with no user input (the spinning
+ * up-arrow + scroll jumping). Requiring a real scroll-up (`userScrolled`) gates
+ * that out: we only pull history once the user has actually left the tail to go
+ * looking for it, which is the only time it's wanted.
+ */
+export function shouldLoadOlder(i: LoadOlderInput): boolean {
+  if (!i.hasMoreAbove || i.isLoadingOlder || i.isLoadingNewer || i.cooldownActive) return false;
+  // Nothing on screen can move while the list cannot scroll, and loading stops
+  // once the content overflows, so filling the viewport needs no intent.
+  if (i.underfilled) return true;
+  if (!i.userScrolled) return false;
+  return i.nearTop;
+}
+
+export interface LoadNewerInput {
+  /** The content-bottom is near the viewport (distance from bottom inside the preload band). */
+  nearBottom: boolean;
+  /** Only target mode (jumped into the middle) ever has content below the window. */
+  hasMoreBelow: boolean;
+  isLoadingOlder: boolean;
+  isLoadingNewer: boolean;
+  /** A pagination/jump cooldown is active; auto-load must stand down. */
+  cooldownActive: boolean;
+}
+
+/**
+ * Decide whether to auto-load the next (newer) page — the mirror of
+ * shouldLoadOlder for scrolling DOWN through a deep-linked (target-mode)
+ * window. Like the older direction, the position trigger alone is forgeable:
+ * when a newer page mounts below while the user sits at the bottom of the
+ * loaded window, the virtualizer's native end-anchor snaps the view to the NEW
+ * bottom, which re-enters the trigger band with no user input and rips through
+ * every remaining page. The caller therefore also gates on a wheel-down "arm"
+ * (consumed per load) exactly as load-older does — that intent state lives
+ * outside this pure function, same as loadOlderArmedRef — except while the
+ * window cannot scroll: then nothing can snap and loading stops once it
+ * overflows, so it fills without intent.
+ */
+export function shouldLoadNewer(i: LoadNewerInput): boolean {
+  if (!i.hasMoreBelow || i.isLoadingOlder || i.isLoadingNewer || i.cooldownActive) return false;
+  return i.nearBottom;
+}
+
+export interface ResizeAdjustInput {
+  /** The resized row's start offset in the virtualizer's coordinate space. */
+  itemStart: number;
+  /** The virtualizer's current scroll offset plus its pending adjustments. */
+  scrollOffset: number;
+  /**
+   * The virtualizer's scroll direction while a scroll is in flight
+   * ("forward" = down, "backward" = up), null when idle. Present so the rule's
+   * independence from it is explicit and tested — see below.
+   */
+  scrollDirection: "forward" | "backward" | null;
+  /** A per-row hold (an in-row disclosure just toggled): that row's resize must leave scrollTop alone. */
+  held: boolean;
+}
+
+/**
+ * Decide whether a row's size change shifts scrollTop by the delta — the
+ * virtualizer's `shouldAdjustScrollPositionOnItemSizeChange`.
+ *
+ * The library rule: a row that starts above the viewport top grew or shrank
+ * above the reader, so scrollTop moves by the same amount and the visible
+ * content stays put. The one exception is a held row (a tool group opened in
+ * place under its chip): that growth is below the visible chip even though the
+ * row starts above the viewport, so the shift would throw the chip off the top.
+ *
+ * The rule must NOT depend on scroll direction. virtual-core's own default
+ * skips the shift while scrolling backward, on the assumption that the
+ * browser's scroll anchoring handles it; this feed sets overflow-anchor:none,
+ * so nothing else compensates. Scrolling UP is exactly when rows above the
+ * viewport render for the first time and swap their estimate for a measured
+ * height, so with the direction clause every estimate error became a visible
+ * lurch under the pointer (measured: 22 jumps, ~3600px, over 60 wheel ticks;
+ * none without the clause).
+ */
+export function shouldAdjustScrollForResize(i: ResizeAdjustInput): boolean {
+  if (i.held) return false;
+  return i.itemStart < i.scrollOffset;
+}
+
+/**
+ * Hand the view back to the reader. Every virtualizer scrollToIndex/scrollToEnd
+ * leaves a reconcile loop running for up to 5s that re-scrolls to its target
+ * whenever the target moves, and nothing the reader does stops it. At the tail
+ * of a streaming session each append issues a fresh scrollToEnd, so a reader
+ * who wheeled away was pulled back the moment a row grew or a row below
+ * mounted and measured. The loop's state is private, so clear it by name.
+ */
+export function releaseScrollTarget(virtualizer: object): void {
+  (virtualizer as { scrollState: unknown }).scrollState = null;
+}
+
+/**
+ * Whether a scroll event hands the view back to tail-follow. Only the reader
+ * moving down to the bottom does. The virtualizer also moves scrollTop down on
+ * its own: a row that starts above the viewport and grows shifts the view by
+ * the growth, which is every streamed chunk once the last row is taller than
+ * the screen. That shift keeps the reader's distance from the bottom, so
+ * counting it as a return re-pinned a reader who had scrolled up a little.
+ */
+export function shouldResumeFollow(i: { nearBottom: boolean; scrolledDown: boolean; readerMovingDown: boolean }): boolean {
+  return i.nearBottom && i.scrolledDown && i.readerMovingDown;
+}
+
+// How long after a downward wheel, key or touch its scroll events still count
+// as the reader's. Trackpad momentum keeps sending wheel events, so it renews.
+export const READER_SCROLL_WINDOW_MS = 400;
+
+export type FeedJumpDensity = "full" | "condensed" | "compact";
+
+export type JumpReceiptAggregates = {
+  absorbed: ReadonlySet<string>;
+  receiptOf: ReadonlyMap<string, ReadonlyArray<{ messageId: string }>>;
+  turnKeyOf: ReadonlyMap<string, string>;
+  // Folded identical nudges ("continue" ×5) keep only the run head in the
+  // DOM. Map every id in the run, including the head, to that head.
+  nudgeHeadOf?: ReadonlyMap<string, string>;
+};
+
+// Where a message-jump lands. Height-0 rows are not in the DOM:
+// condensed receipts fold tools into an owner, compact hides a turn until
+// opened, and a run of identical nudges keeps only its first row. Resolve
+// the visible row, then expand whatever group still hides it.
+//
+// `fold` is the inbox's folded working turns: at any density a turn shows
+// only its last reply until opened. A jump into the rest of a folded turn
+// opens the turn first; once it is open the density's own rule applies, so a
+// caller that loops (expand, recompute) lands in two steps.
+export function jumpRowForMessage(
+  messageId: string,
+  density: FeedJumpDensity,
+  aggregates: JumpReceiptAggregates,
+  fold?: { expanded: ReadonlySet<string>; lastTextOf: ReadonlyMap<string, string> },
+): { scrollToId: string; expandKey: string | null } {
+  const row = densityJumpRow(messageId, density, aggregates);
+  if (!fold || density === "compact") return row;
+  const turnKey = aggregates.turnKeyOf.get(row.scrollToId);
+  if (!turnKey || fold.expanded.has(turnKey) || fold.lastTextOf.get(turnKey) === row.scrollToId) return row;
+  return { scrollToId: row.scrollToId, expandKey: turnKey };
+}
+
+function densityJumpRow(
+  messageId: string,
+  density: FeedJumpDensity,
+  aggregates: JumpReceiptAggregates,
+): { scrollToId: string; expandKey: string | null } {
+  const id = aggregates.nudgeHeadOf?.get(messageId) ?? messageId;
+  if (density === "full") return { scrollToId: id, expandKey: null };
+  if (density === "compact") {
+    return { scrollToId: id, expandKey: aggregates.turnKeyOf.get(id) ?? null };
+  }
+  if (aggregates.absorbed.has(id)) {
+    for (const [ownerId, entries] of aggregates.receiptOf) {
+      if (ownerId === id || entries.some((e) => e.messageId === id)) {
+        return { scrollToId: ownerId, expandKey: ownerId };
+      }
+    }
+  }
+  if (aggregates.receiptOf.has(id)) {
+    return { scrollToId: id, expandKey: id };
+  }
+  return { scrollToId: id, expandKey: null };
+}
+
+// Scroll a virtualized timeline item to a fixed offset from the container top,
+// settling across re-measures: items above the target report estimated heights
+// until they actually render, so a single scrollToIndex lands off-target. The
+// retry loop first waits for the item's element to mount, nudges scrollTop
+// each frame until the offset holds, then keeps watching for `watchMs` —
+// freshly mounted markdown/images above re-measure for a couple of seconds
+// after the first convergence and would otherwise drag the target away.
+// `onSettled` fires once at the first convergence. The watch aborts the moment
+// the user scrolls, or the moment anything else moves the view (a scrollTop
+// that is not the one it last wrote while the content's height stood still:
+// a host landing on a card inside the row, a scrollbar drag), and starting a
+// new settle cancels the previous one. A re-measure above the row moves
+// scrollTop AND scrollHeight together, and that the watch still corrects.
+let activeItemSettleCancel: (() => void) | null = null;
+/** Stop the settle in flight, if any (a conversation switch: its watcher would correct against the new rows). */
+export function cancelActiveItemSettle() {
+  activeItemSettleCancel?.();
+}
+/** The next frame, or a short timer when the document is hidden: a
+ *  background tab runs no animation frames, and a jump opened there (a link
+ *  in a new tab, an agent's tab) must still land by the time it is seen. */
+export function nextFrame(fn: () => void): void {
+  if (typeof document !== "undefined" && document.hidden) { setTimeout(fn, 16); return; }
+  requestAnimationFrame(fn);
+}
+
+export function settleTimelineItemAtOffset(
+  container: HTMLElement,
+  virtualizer: { scrollToIndex: (index: number, opts: { align: "start" }) => void },
+  itemIndex: number,
+  offsetPx: number,
+  opts?: {
+    initialDelayMs?: number;
+    watchMs?: number;
+    onSettled?: () => void;
+    // Identity of the target row (its data-vkey — the stable message key).
+    // The index is a snapshot of ONE timeline: a same-session jump starts on
+    // the tail timeline, then the target-mode window replaces it and every
+    // index shifts, so an index-only settle pins whatever row inherited the
+    // number (measured: every decision-card jump landed the same six rows
+    // late). The key survives the swap; resolveIndex re-derives the index on
+    // the CURRENT timeline for the scrollToIndex that brings the row into
+    // the render window.
+    itemKey?: string;
+    resolveIndex?: () => number;
+  },
+) {
+  activeItemSettleCancel?.();
+  let cancelled = false;
+  const cancel = () => {
+    cancelled = true;
+    container.removeEventListener("wheel", cancel);
+    container.removeEventListener("touchstart", cancel);
+    if (activeItemSettleCancel === cancel) activeItemSettleCancel = null;
+  };
+  activeItemSettleCancel = cancel;
+  container.addEventListener("wheel", cancel, { passive: true });
+  container.addEventListener("touchstart", cancel, { passive: true });
+
+  const currentIndex = () => {
+    const i = opts?.resolveIndex ? opts.resolveIndex() : itemIndex;
+    return i >= 0 ? i : itemIndex;
+  };
+  const findEl = (idx: number) => {
+    if (opts?.itemKey) {
+      // With an identity, the index lookup is only a fallback — an index hit
+      // that isn't the keyed row is exactly the wrong-row pin this guards
+      // against, so verify before trusting it.
+      const byKey = container.querySelector(`[data-vkey="${CSS.escape(opts.itemKey)}"]`);
+      if (byKey) return byKey;
+      const byIndex = container.querySelector(`[data-index="${idx}"]`);
+      return byIndex?.getAttribute("data-vkey") === opts.itemKey ? byIndex : null;
+    }
+    return container.querySelector(`[data-index="${idx}"]`);
+  };
+  virtualizer.scrollToIndex(currentIndex(), { align: "start" });
+  // What the view looked like after the watch's last frame; a scrollTop that
+  // differs under an unchanged scrollHeight is someone else's scroll.
+  let lastTop = -1;
+  let lastHeight = -1;
+  const remember = () => {
+    lastTop = container.scrollTop;
+    lastHeight = container.scrollHeight;
+  };
+  const takenOver = () => lastTop >= 0 && container.scrollTop !== lastTop && container.scrollHeight === lastHeight;
+  const scrollElToOffset = (el: Element) => {
+    const elRect = el.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+    // Rect deltas are screen px; scrollTop is layout px — divide by CSS zoom.
+    container.scrollTop += (elRect.top - containerRect.top) / cssZoomOf(container) - offsetPx;
+    remember();
+  };
+  const watchMs = opts?.watchMs ?? 2500;
+  const start = performance.now();
+  let findAttempts = 0;
+  let settledFired = false;
+  const attempt = () => {
+    if (cancelled) return;
+    findAttempts++;
+    const idx = currentIndex();
+    const el = findEl(idx);
+    if (el) {
+      scrollElToOffset(el);
+      // Pin the DOM node, not the index: rows are keyed by stable message key,
+      // so the node survives re-renders, while data-index shifts whenever the
+      // loaded window grows (target mode pages in above the anchor).
+      let settleCount = 0;
+      const settle = () => {
+        if (cancelled) return;
+        settleCount++;
+        if (!el.isConnected) {
+          // The row unmounted (a window swap re-rendered the list). The jump
+          // isn't done — re-find the row by identity while time remains.
+          if (performance.now() - start < watchMs && findAttempts < 20) setTimeout(attempt, 100);
+          else cancel();
+          return;
+        }
+        if (takenOver()) {
+          cancel();
+          return;
+        }
+        const rect = el.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const off = (rect.top - containerRect.top) / cssZoomOf(container) - offsetPx;
+        if (Math.abs(off) > 2) scrollElToOffset(el);
+        else remember();
+        // Remembered before onSettled runs: a host that scrolls from inside
+        // it is the next frame's takeover, never a drift to correct.
+        if (!settledFired && (Math.abs(off) <= 2 || settleCount >= 15)) {
+          settledFired = true;
+          opts?.onSettled?.();
+        }
+        if (performance.now() - start < watchMs) nextFrame(settle);
+        else cancel();
+      };
+      nextFrame(settle);
+    } else if (findAttempts < 20) {
+      virtualizer.scrollToIndex(idx, { align: "start" });
+      nextFrame(() => setTimeout(attempt, 100));
+    } else {
+      cancel();
+    }
+  };
+  setTimeout(attempt, opts?.initialDelayMs ?? 300);
+}

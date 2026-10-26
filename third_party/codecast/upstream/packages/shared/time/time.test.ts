@@ -1,0 +1,126 @@
+import { describe, expect, test } from "bun:test";
+import {
+  describeDates,
+  describeDatesFull,
+  formatDateSmart,
+  formatRelative,
+  formatDuration,
+  formatShortDate,
+  parseDuration,
+  relTimeShort,
+  wasEdited,
+} from "./index";
+
+// A fixed clock so every expectation is deterministic: 2026-09-05 12:00 local.
+const now = new Date(2026, 8, 5, 12, 0, 0).getTime();
+const MIN = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+describe("relTimeShort / formatRelative", () => {
+  test("share buckets and round down", () => {
+    expect(relTimeShort(now - 30_000, now)).toBe("now");
+    expect(relTimeShort(now - 90_000, now)).toBe("1m");
+    expect(relTimeShort(now - 5 * HOUR, now)).toBe("5h");
+    expect(relTimeShort(now - 3 * DAY, now)).toBe("3d");
+    expect(formatRelative(now - 30_000, now)).toBe("just now");
+    expect(formatRelative(now - 3 * DAY, now)).toBe("3d ago");
+  });
+});
+
+describe("formatDateSmart", () => {
+  test("relative inside a week, calendar past it", () => {
+    expect(formatDateSmart(now - 6 * DAY, now)).toBe("6d ago");
+    expect(formatDateSmart(now - 8 * DAY, now)).toBe("Aug 28");
+  });
+  test("adds the year only when it differs from the current one", () => {
+    const lastYear = new Date(2025, 7, 2).getTime();
+    expect(formatShortDate(lastYear, now)).toBe("Aug 2, 2025");
+    expect(formatShortDate(now - 8 * DAY, now)).toBe("Aug 28");
+  });
+});
+
+describe("wasEdited / describeDates", () => {
+  const created = now - 10 * DAY;
+  test("a write inside the creation minute is not an edit", () => {
+    expect(wasEdited({ created_at: created, updated_at: created })).toBe(false);
+    expect(wasEdited({ created_at: created, updated_at: created + 30_000 })).toBe(false);
+    expect(wasEdited({ created_at: created })).toBe(false);
+  });
+  test("a later write is", () => {
+    expect(wasEdited({ created_at: created, updated_at: created + 2 * MIN })).toBe(true);
+  });
+  test("label shows creation alone until an edit lands", () => {
+    expect(describeDates({ created_at: created, updated_at: created }, now)).toBe("Created Aug 26");
+    expect(describeDates({ created_at: created, updated_at: now - 2 * HOUR }, now)).toBe("Created Aug 26 · Updated 2h ago");
+  });
+  test("full form puts each date on its own line", () => {
+    const full = describeDatesFull({ created_at: created, updated_at: now - 2 * HOUR });
+    const lines = full.split("\n");
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/^Created \w+, August 26, 2026/);
+    expect(lines[1]).toMatch(/^Updated \w+, September 5, 2026/);
+    expect(describeDatesFull({ created_at: created })).not.toContain("\n");
+  });
+});
+
+describe("a target day is a calendar day everywhere", () => {
+  test("stores and reads back the same day, whatever the local timezone", async () => {
+    const { targetDayStamp, targetDayOf } = await import("./index");
+    const ts = targetDayStamp("2026-12-31")!;
+    expect(targetDayOf(ts)).toBe("2026-12-31");
+    expect(new Date(ts).toISOString()).toBe("2026-12-31T23:59:59.999Z");
+    expect(targetDayOf(undefined)).toBeUndefined();
+  });
+  test("a malformed or rolled day is refused", async () => {
+    const { targetDayStamp } = await import("./index");
+    expect(targetDayStamp("2026-02-30")).toBeNull();
+    expect(targetDayStamp("31/12/2026")).toBeNull();
+  });
+  test("prints the stored day and turns late by the viewer's own calendar, east and west of UTC", async () => {
+    const { targetDayStamp, formatTargetDay, targetDayPassed, formatShortDate } = await import("./index");
+    const ts = targetDayStamp("2026-10-30")!;
+    const was = process.env.TZ;
+    try {
+      for (const zone of ["Europe/Berlin", "Asia/Tokyo", "America/New_York", "Pacific/Honolulu"]) {
+        process.env.TZ = zone;
+        expect(formatTargetDay(ts, Date.UTC(2026, 9, 1))).toBe("Oct 30");
+        expect(formatTargetDay(ts, Date.UTC(2027, 5, 1))).toBe("Oct 30, 2026");
+        // Noon on the day itself, where the viewer is: not late. Noon the day after: late.
+        expect(targetDayPassed(ts, new Date(2026, 9, 30, 12).getTime())).toBe(false);
+        expect(targetDayPassed(ts, new Date(2026, 9, 30, 23, 30).getTime())).toBe(false);
+        expect(targetDayPassed(ts, new Date(2026, 9, 31, 0, 30).getTime())).toBe(true);
+      }
+      // The plain formatter names the local day of the stamp, which is why a day needs its own.
+      process.env.TZ = "Europe/Berlin";
+      expect(formatShortDate(ts, Date.UTC(2026, 9, 1))).toBe("Oct 31");
+    } finally {
+      if (was === undefined) delete process.env.TZ; else process.env.TZ = was;
+    }
+  });
+});
+
+describe("parseDuration", () => {
+  test("reads short, decimal and long unit spellings alike", () => {
+    expect(parseDuration("30m")).toBe(30 * 60_000);
+    expect(parseDuration("1.5h")).toBe(90 * 60_000);
+    expect(parseDuration("500ms")).toBe(500);
+    expect(parseDuration("30min")).toBe(30 * 60_000);
+    expect(parseDuration("2hours")).toBe(2 * 3_600_000);
+    expect(parseDuration("1 day")).toBe(86_400_000);
+    expect(parseDuration("90sec")).toBe(90_000);
+    expect(parseDuration("1w")).toBe(7 * 86_400_000);
+    expect(parseDuration("2 weeks")).toBe(14 * 86_400_000);
+  });
+
+  test("refuses what is not a duration, naming the input", () => {
+    expect(() => parseDuration("soon")).toThrow(/"soon"/);
+    expect(() => parseDuration("2026-10-01")).toThrow();
+    expect(() => parseDuration("0m")).toThrow(/positive/);
+  });
+
+  test("formatDuration prints the largest whole unit", () => {
+    expect(formatDuration(7_200_000)).toBe("2h");
+    expect(formatDuration(30_000)).toBe("30s");
+  });
+});

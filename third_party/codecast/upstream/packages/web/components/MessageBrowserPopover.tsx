@@ -1,0 +1,790 @@
+"use client";
+
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { useShallow } from "zustand/react/shallow";
+import { MessagePromptPreview } from "./MessagePromptPreview";
+import { AvatarImg } from "../lib/avatarCache";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { Id } from "@codecast/convex/convex/_generated/dataModel";
+import {
+  buildNavigatorRows,
+  filterNavigatorRows,
+  hiddenRowsNoun,
+  formatTimeAgo,
+  sampleTicks,
+  activeTickIndex,
+  navigatorHeaderLabels,
+  countCommentsByMessage,
+  navigatorRowBody,
+  mergeNavigatorSources,
+  MACHINE_KIND_LABEL,
+  type HiddenKind,
+  type NavigatorRow,
+} from "../lib/messageNavigator";
+import { resolveSessionTitle } from "../lib/sessionTitle";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { isConvexId, useInboxStore } from "../store/inboxStore";
+import { shareTokenArg } from "../lib/shareTokenScope";
+import { useQueryNoThrow } from "../hooks/useQueryNoThrow";
+import { useSurface } from "../lib/surfaces";
+
+const SHORT_ID_RE = /^[a-z0-9]{7}$/;
+
+// Source label for a machine-delivered row. A session source that the store
+// couldn't resolve (sender pruned/dismissed locally) still renders as a bare
+// short id here — resolve it server-side the same way EntityIdPill does.
+function MachineSourceLabel({ kind, source }: { kind: HiddenKind; source: string }) {
+  const needsLookup = kind === "session" && SHORT_ID_RE.test(source);
+  const resolved = useQueryNoThrow(api.conversations.webGet, needsLookup ? { short_id: source } : "skip").data;
+  return <>{(needsLookup && resolved?.title) || source}</>;
+}
+
+function MachineKindIcon({ kind }: { kind: HiddenKind }) {
+  const d =
+    kind === "schedule"
+      ? "M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+      : kind === "session"
+      ? "M13 7l5 5m0 0l-5 5m5-5H6"
+      : kind === "continue"
+      ? "M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+      : kind === "chat"
+      ? "M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"
+      : "M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z";
+  return (
+    <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={d} />
+    </svg>
+  );
+}
+
+type CommentEntry = {
+  _id: string;
+  message_id?: string;
+  content: string;
+  created_at: number;
+  user: { name?: string; github_username?: string; github_avatar_url?: string };
+};
+
+// Hover card for one navigator row. The row carries a server snippet (capped
+// at NAV_ROW_SNIPPET_CHARS); the card resolves the full body on demand — the
+// loaded message page first, then one `messages.webGet` — and truncates by
+// viewport height instead of by character count: collapsed it fills up to
+// 60% of the window with a fade, expanded it takes the whole window height
+// and scrolls. The card shifts up when its anchor would push it off screen.
+function HoverPreview({ message, conversationId, rect, onMouseEnter, onMouseLeave, onDropdownEnter, onDropdownLeave }: { message: NavigatorRow; conversationId: string; rect: DOMRect; onMouseEnter: () => void; onMouseLeave: () => void; onDropdownEnter: () => void; onDropdownLeave: () => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  const [top, setTop] = useState(() => Math.max(8, rect.top - 20));
+  const cardRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  const pageContent = useInboxStore((s) =>
+    message.clipped ? s.messages[conversationId]?.find((m) => m._id === message._id)?.content : undefined
+  );
+  const { data: fetched } = useQueryNoThrow(
+    api.messages.webGet,
+    message.clipped && pageContent === undefined && isConvexId(conversationId)
+      ? { id: message._id, ...shareTokenArg(conversationId) }
+      : "skip",
+  );
+  const fullContent = message.clipped ? pageContent ?? fetched?.message?.content : undefined;
+  const loadingBody = message.clipped && fullContent === undefined;
+  const body = useMemo(() => {
+    const text = navigatorRowBody(message, fullContent, resolveSessionTitle);
+    return loadingBody && text === message.display ? `${text}\u2026` : text;
+  }, [message, fullContent, loadingBody]);
+
+  const previewWidth = Math.min(expanded ? 760 : 420, window.innerWidth - 16);
+  const bridgePad = 20;
+  const left = Math.max(8, rect.left - previewWidth - bridgePad);
+  const maxHeight = expanded ? window.innerHeight - 16 : Math.round(window.innerHeight * 0.6);
+
+  useLayoutEffect(() => {
+    const card = cardRef.current;
+    const bodyEl = bodyRef.current;
+    if (!card || !bodyEl) return;
+    setOverflows(bodyEl.scrollHeight > bodyEl.clientHeight + 1);
+    const anchored = Math.max(8, rect.top - 20);
+    setTop(Math.max(8, Math.min(anchored, window.innerHeight - card.offsetHeight - 8)));
+  }, [body, message.images, expanded, previewWidth, rect.top]);
+
+  const showFooter = expanded || overflows || loadingBody;
+
+  return createPortal(
+    <div
+      className="fixed z-[10000]"
+      style={{ top, left, width: previewWidth + bridgePad, paddingRight: bridgePad }}
+      onMouseEnter={() => { onMouseEnter(); onDropdownEnter(); }}
+      onMouseLeave={() => { onMouseLeave(); onDropdownLeave(); }}
+    >
+      <div
+        ref={cardRef}
+        className="bg-sol-bg border border-sol-border/40 rounded-lg shadow-2xl flex flex-col"
+        style={{ width: previewWidth, maxHeight }}
+      >
+        <div className="flex items-center gap-2 p-3 pb-1 flex-shrink-0">
+          {message.kind === "user" ? (
+            <span className="text-[10px] text-sol-text-dim tabular-nums">#{message.originalIndex + 1}</span>
+          ) : (
+            <span className="text-[10px] text-sol-violet/80 flex items-center gap-1">
+              <MachineKindIcon kind={message.kind} />
+              {message.source && <MachineSourceLabel kind={message.kind} source={message.source} />}
+            </span>
+          )}
+          <span className="text-sol-text-dim/30">·</span>
+          <span className="text-sol-text-dim text-[10px]">{formatTimeAgo(message.timestamp)}</span>
+          {message.commentCount > 0 && (
+            <span className="text-[10px] text-sol-cyan flex items-center gap-0.5">
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+              </svg>
+              {message.commentCount}
+            </span>
+          )}
+        </div>
+        <div className="relative flex-1 min-h-0 flex flex-col">
+          <div ref={bodyRef} className={`px-3 pb-3 flex-1 min-h-0 ${expanded ? "overflow-y-auto" : "overflow-hidden"}`}>
+            <MessagePromptPreview content={body} images={message.images} messageId={message._id} variant="preview" textClassName="text-[13px] text-sol-text whitespace-pre-wrap leading-relaxed" />
+          </div>
+          {!expanded && overflows && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-sol-bg to-transparent" />
+          )}
+        </div>
+        {showFooter && (
+          <div className="flex-shrink-0 border-t border-sol-border/30 px-3 py-1.5 flex items-center justify-between gap-2">
+            <span className="text-[10px] text-sol-text-dim">{loadingBody ? "Loading full message" : `${body.length.toLocaleString()} chars`}</span>
+            {(expanded || overflows) && (
+              <button
+                type="button"
+                className="text-[11px] text-sol-cyan hover:text-sol-text transition-colors"
+                onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
+              >
+                {expanded ? "Show less" : "Show more"}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+function NavDropdown({
+  messages,
+  comments,
+  conversationId,
+  currentMessageId,
+  triggerRect,
+  onClose,
+  onMouseEnter,
+  onMouseLeave,
+  pinned,
+  onPin,
+  onScrollToMessage,
+  tab,
+  onTabChange,
+}: {
+  messages: NavigatorRow[];
+  comments: CommentEntry[];
+  conversationId: string;
+  currentMessageId: string | null;
+  triggerRect: DOMRect;
+  onClose: () => void;
+  onMouseEnter: () => void;
+  onMouseLeave: () => void;
+  pinned: boolean;
+  onPin: () => void;
+  onScrollToMessage?: (messageId: string) => void;
+  tab: "messages" | "comments";
+  onTabChange: (t: "messages" | "comments") => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [search, setSearch] = useState("");
+  // Automated rows (triggers, sessions, teammates) and bare "continue" nudges
+  // start hidden — the list is primarily a human-message navigator; the chip
+  // reveals them on demand.
+  const [showMachine, setShowMachine] = useState(false);
+  const [focusIndex, setFocusIndex] = useState(-1);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [hoveredRect, setHoveredRect] = useState<DOMRect | null>(null);
+  const hoverTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewLeaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [previewMsg, setPreviewMsg] = useState<NavigatorRow | null>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const currentItemRef = useRef<HTMLDivElement>(null);
+  useMountEffect(() => setMounted(true));
+
+  // Keep the highlighted row in view so the list lines up with the prompt
+  // at the top of the transcript. On first open with no current row yet,
+  // park at the newest message.
+  const alignedOnceRef = useRef(false);
+  useEffect(() => {
+    if (!mounted) {
+      alignedOnceRef.current = false;
+      return;
+    }
+    requestAnimationFrame(() => {
+      const current = currentItemRef.current;
+      const sc = scrollRef.current;
+      if (current && sc) {
+        const row = current.getBoundingClientRect();
+        const box = sc.getBoundingClientRect();
+        if (row.top < box.top || row.bottom > box.bottom) {
+          current.scrollIntoView({ block: alignedOnceRef.current ? "nearest" : "center" });
+        }
+        alignedOnceRef.current = true;
+        return;
+      }
+      if (sc && !alignedOnceRef.current) sc.scrollTop = sc.scrollHeight;
+    });
+  }, [mounted, currentMessageId]);
+
+  const { humanCount, hiddenCount: machineCount, chipLabel } = navigatorHeaderLabels(messages);
+  const filtered = filterNavigatorRows(messages, { search, showHidden: showMachine });
+
+  useEffect(() => { setFocusIndex(-1); }, [search]);
+
+  const navigateToMessage = useCallback((m: NavigatorRow) => {
+    onPin();
+    if (onScrollToMessage) {
+      onScrollToMessage(m._id);
+    } else {
+      useInboxStore.getState().requestNavigate(conversationId, { scrollToMessageId: m._id });
+    }
+  }, [conversationId, onPin, onScrollToMessage]);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (tab !== "messages") return;
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusIndex(prev => Math.min(prev + 1, filtered.length - 1));
+      } else if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusIndex(prev => {
+          const next = prev - 1;
+          if (next < 0) searchRef.current?.focus();
+          return Math.max(next, -1);
+        });
+      } else if (e.key === "Enter" && focusIndex >= 0 && focusIndex < filtered.length) {
+        e.preventDefault();
+        navigateToMessage(filtered[focusIndex]);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [focusIndex, filtered, tab, navigateToMessage]);
+
+  useEffect(() => {
+    if (focusIndex >= 0) {
+      const el = scrollRef.current?.querySelector(`[data-focus-index="${focusIndex}"]`);
+      el?.scrollIntoView({ block: "nearest" });
+    }
+  }, [focusIndex]);
+
+  const handleItemHover = useCallback((id: string, el: HTMLElement, msg: NavigatorRow) => {
+    setHoveredId(id);
+    if (previewLeaveTimerRef.current) clearTimeout(previewLeaveTimerRef.current);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    if (!msg.display && !msg.images?.length) return; // nothing to preview (machine row whose parsed body is empty)
+    hoverTimerRef.current = setTimeout(() => {
+      setHoveredRect(el.getBoundingClientRect());
+      setPreviewMsg(msg);
+    }, 250);
+  }, []);
+
+  const dismissPreview = useCallback(() => {
+    if (previewLeaveTimerRef.current) clearTimeout(previewLeaveTimerRef.current);
+    previewLeaveTimerRef.current = setTimeout(() => {
+      setPreviewMsg(null);
+      setHoveredRect(null);
+    }, 500);
+  }, []);
+
+  const cancelDismissPreview = useCallback(() => {
+    if (previewLeaveTimerRef.current) clearTimeout(previewLeaveTimerRef.current);
+  }, []);
+
+  const handleItemLeave = useCallback(() => {
+    setHoveredId(null);
+    if (hoverTimerRef.current) clearTimeout(hoverTimerRef.current);
+    dismissPreview();
+  }, [dismissPreview]);
+
+  if (!mounted || typeof document === "undefined") return null;
+
+  const dropdownWidth = Math.min(420, window.innerWidth - 16);
+  const margin = 8;
+  const left = Math.max(margin, triggerRect.left - dropdownWidth - 8);
+  // Top-align the panel to the trigger. The nav button itself sits below the
+  // header's sticky-message banner, so top-aligning here keeps the panel clear
+  // of that banner without pushing it unnecessarily far down.
+  const top = Math.max(margin, triggerRect.top);
+
+  const hasComments = comments.length > 0;
+
+  return createPortal(
+    <>
+      {pinned && <div className="fixed inset-0 z-[9998] pointer-events-auto" onClick={onClose} />}
+      <div
+        className="fixed z-[9999] bg-sol-bg-alt border border-sol-blue/30 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+        style={{ top, left, width: dropdownWidth, maxHeight: "min(600px, 75vh)" }}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
+        onClick={onPin}
+      >
+        {tab === "messages" && (
+          <div className="px-3 pt-3 pb-2 flex items-center gap-1.5">
+            <input
+              ref={searchRef}
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder={`Search ${humanCount} messages...`}
+              className="flex-1 min-w-0 bg-sol-bg-alt/60 border border-sol-border/20 rounded-lg px-3 py-1.5 text-[12px] text-sol-text placeholder:text-sol-text-dim/40 outline-none focus:border-sol-cyan/40 transition-colors"
+            />
+            {machineCount > 0 && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowMachine(v => !v); }}
+                aria-pressed={showMachine}
+                title={`${showMachine ? "Hide" : "Show"} ${machineCount} message${machineCount !== 1 ? "s" : ""} delivered by triggers, other sessions, or teammates, plus bare "continue" messages`}
+                className={`flex items-center gap-1 px-2 py-1.5 rounded-lg border text-[11px] tabular-nums transition-colors flex-shrink-0 ${
+                  showMachine
+                    ? "bg-sol-violet/15 border-sol-violet/40 text-sol-violet hover:bg-sol-violet/20"
+                    : "border-sol-border/30 text-sol-text-dim/60 hover:text-sol-text-muted hover:border-sol-border/50"
+                }`}
+              >
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span className={showMachine ? "" : "line-through decoration-[1.5px] opacity-80"}>
+                  {chipLabel}
+                </span>
+              </button>
+            )}
+          </div>
+        )}
+        {hasComments && (
+          <div className="flex border-b border-sol-border/20 px-3">
+            <button
+              onClick={() => onTabChange("messages")}
+              className={`text-[11px] py-1.5 px-2 transition-colors border-b-2 ${
+                tab === "messages"
+                  ? "text-sol-text border-sol-cyan font-medium"
+                  : "text-sol-text-dim hover:text-sol-text-muted border-transparent"
+              }`}
+            >
+              Messages ({humanCount})
+            </button>
+            <button
+              onClick={() => onTabChange("comments")}
+              className={`text-[11px] py-1.5 px-2 transition-colors border-b-2 flex items-center gap-1 ${
+                tab === "comments"
+                  ? "text-sol-text border-sol-cyan font-medium"
+                  : "text-sol-text-dim hover:text-sol-text-muted border-transparent"
+              }`}
+            >
+              Comments ({comments.length})
+            </button>
+          </div>
+        )}
+        <div ref={scrollRef} className="overflow-y-auto flex-1 py-1" style={{ overscrollBehavior: "contain" }}>
+          {tab === "messages" ? (
+            filtered.length === 0 ? (
+              <div className="px-3 py-6 text-center text-[12px] text-sol-text-dim/50">
+                {search ? "No matching messages" : "No messages"}
+              </div>
+            ) : (
+            filtered.map((m, filterIdx) => {
+              const isCurrent = m._id === currentMessageId;
+              const isFocused = filterIdx === focusIndex;
+              const isHovered = m._id === hoveredId;
+              const isActive = isFocused || isHovered;
+              if (m.kind !== "user") {
+                // Machine-delivered row: mirrors the user-row layout — a label
+                // line naming what delivered it (kind + source title), then the
+                // actual message body. Slightly subdued to keep human messages
+                // primary; the hover preview still shows the full body.
+                return (
+                  <div
+                    key={m._id}
+                    data-focus-index={filterIdx}
+                    onMouseEnter={(e) => handleItemHover(m._id, e.currentTarget, m)}
+                    onMouseLeave={handleItemLeave}
+                    onClick={() => navigateToMessage(m)}
+                    className={`px-3 py-2 cursor-pointer transition-colors ${
+                      isActive ? "bg-sol-blue/15" : "hover:bg-sol-bg-highlight"
+                    }`}
+                  >
+                    <div className={`flex items-start gap-2 transition-opacity ${isActive ? "opacity-100" : "opacity-70"}`}>
+                      <span className="w-4 flex-shrink-0 flex justify-end text-sol-violet pt-[2px]">
+                        <MachineKindIcon kind={m.kind} />
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[10px] text-sol-violet/80 flex-shrink-0">
+                            {MACHINE_KIND_LABEL[m.kind]}
+                          </span>
+                          <span className="text-[11px] text-sol-text-muted truncate min-w-0">
+                            {m.source && <MachineSourceLabel kind={m.kind} source={m.source} />}
+                          </span>
+                        </div>
+                        {m.display && (
+                          <div className={`text-[12px] leading-snug line-clamp-2 mt-0.5 ${
+                            isActive ? "text-sol-text" : "text-sol-text-secondary"
+                          }`}>
+                            {m.display}
+                          </div>
+                        )}
+                        <div className="flex items-center gap-1.5 mt-1">
+                          <span className="text-[10px] text-sol-text-dim/50 tabular-nums">
+                            {formatTimeAgo(m.timestamp)}
+                          </span>
+                          {m.commentCount > 0 && (
+                            <>
+                              <span className="text-sol-text-dim/20">·</span>
+                              <span className="text-[10px] text-sol-cyan flex items-center gap-0.5">
+                                <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                                </svg>
+                                {m.commentCount}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              }
+              return (
+                <div
+                  key={m._id}
+                  ref={isCurrent ? currentItemRef : undefined}
+                  data-focus-index={filterIdx}
+                  onMouseEnter={(e) => handleItemHover(m._id, e.currentTarget, m)}
+                  onMouseLeave={handleItemLeave}
+                  onClick={() => navigateToMessage(m)}
+                  className={`px-3 py-2 cursor-pointer transition-colors ${
+                    isActive
+                      ? "bg-sol-blue/20"
+                      : isCurrent
+                      ? "bg-sol-blue/10"
+                      : "hover:bg-sol-bg-highlight"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <span className={`text-[10px] tabular-nums w-4 text-right flex-shrink-0 pt-[2px] ${
+                      isActive || isCurrent ? "text-sol-cyan" : "text-sol-blue/40"
+                    }`}>
+                      {m.originalIndex + 1}
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <MessagePromptPreview content={m.display} images={m.images} messageId={m._id} textClassName={`text-[12px] leading-snug line-clamp-2 ${
+                        isActive || isCurrent ? "text-sol-text" : "text-sol-text-secondary"
+                      } ${m.isCmd ? "font-mono" : ""} ${isCurrent ? "font-medium" : ""}`} />
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="text-[10px] text-sol-text-dim/50 tabular-nums">
+                          {formatTimeAgo(m.timestamp)}
+                        </span>
+                        {m.commentCount > 0 && (
+                          <>
+                            <span className="text-sol-text-dim/20">·</span>
+                            <span className="text-[10px] text-sol-cyan flex items-center gap-0.5">
+                              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                              </svg>
+                              {m.commentCount}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            }))
+          ) : (
+            comments.map((c) => {
+              const displayName = c.user?.name || c.user?.github_username || "Unknown";
+              const isHovered = c._id === hoveredId;
+              return (
+                <div
+                  key={c._id}
+                  onMouseEnter={() => setHoveredId(c._id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  onClick={() => {
+                    onPin();
+                    if (c.message_id) {
+                      if (onScrollToMessage) {
+                        onScrollToMessage(c.message_id);
+                      } else {
+                        useInboxStore.getState().requestNavigate(conversationId, { scrollToMessageId: c.message_id });
+                      }
+                    }
+                  }}
+                  className={`px-3 py-2 cursor-pointer transition-colors ${
+                    isHovered ? "bg-sol-blue/20" : "hover:bg-sol-bg-highlight"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 mb-0.5">
+                    <AvatarImg
+                      src={c.user?.github_avatar_url}
+                      alt=""
+                      className="w-4 h-4 rounded-full"
+                      fallback={
+                        <div className="w-4 h-4 rounded-full bg-sol-blue/30 flex items-center justify-center text-[8px] text-sol-blue">
+                          {displayName[0]?.toUpperCase()}
+                        </div>
+                      }
+                    />
+                    <span className="text-[11px] text-sol-text-secondary font-medium">{displayName}</span>
+                    <span className="text-[10px] text-sol-text-dim/60 ml-auto">{formatTimeAgo(c.created_at)}</span>
+                  </div>
+                  <div className="text-[12px] text-sol-text-muted line-clamp-2 pl-[22px]">
+                    {c.content}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+      {previewMsg && hoveredRect && (
+        <HoverPreview key={previewMsg._id} message={previewMsg} conversationId={conversationId} rect={hoveredRect} onMouseEnter={cancelDismissPreview} onMouseLeave={dismissPreview} onDropdownEnter={onMouseEnter} onDropdownLeave={onMouseLeave} />
+      )}
+    </>,
+    document.body
+  );
+}
+
+/** The fewest asks hosted mode draws the message rail for. */
+const MIN_HOSTED_RAIL = 4;
+
+export function MessageNavButton({
+  conversationId,
+  currentMessageId,
+  scrollProgress = 1,
+  onScrollToMessage,
+  loadedMessages,
+}: {
+  conversationId: string;
+  currentMessageId: string | null;
+  scrollProgress?: number;
+  onScrollToMessage?: (messageId: string) => void;
+  loadedMessages?: Parameters<typeof mergeNavigatorSources>[1];
+}) {
+  const [open, setOpen] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const pinnedRef = useRef(false);
+  const [triggerRect, setTriggerRect] = useState<DOMRect | null>(null);
+  const [tab, setTab] = useState<"messages" | "comments">("messages");
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const canQuery = isConvexId(conversationId);
+  // The fewest asks a rail is drawn for: two anywhere, more in hosted mode.
+  const minRail = useSurface("conversation.shortRail") ? 2 : MIN_HOSTED_RAIL;
+
+  // Source from the complete, pagination-independent user-message cache that
+  // useConversationMessages keeps populated (same list the rewind navigator
+  // uses). The indicator must reflect the WHOLE conversation regardless of
+  // which message window is scrolled in — reading the paginated array instead
+  // meant it stayed empty (or hidden) until earlier pages were loaded.
+  const cachedUserMessages = useInboxStore((s) => s.userMessages[conversationId]);
+  // Fallback query only while the shared cache hasn't landed yet (Convex dedups
+  // it against useConversationMessages' identical subscription). Never falls
+  // back to the truncated paginated set.
+  const queryUserMessages = useQueryNoThrow(
+    api.conversations.getUserMessages,
+    canQuery && !cachedUserMessages
+      ? { conversation_id: conversationId as Id<"conversations">, ...shareTokenArg(conversationId) }
+      : "skip"
+  ).data;
+  const rawUserMessages = cachedUserMessages ?? queryUserMessages;
+  const messages = useMemo(
+    () => mergeNavigatorSources(rawUserMessages, loadedMessages),
+    [rawUserMessages, loadedMessages],
+  );
+  const loadedImages = useInboxStore(useShallow((s) => Object.fromEntries(
+    (s.messages[conversationId] ?? [])
+      .filter(message => message.images !== undefined)
+      .map(message => [message._id, message.images])
+  )));
+
+  // Used only to decide whether to render a loading skeleton while the cache
+  // is still empty. `message_count` includes assistant + system messages, so
+  // it's an over-estimate of how many *user* messages the indicator will end
+  // up showing — fine for "should we reserve space?"
+  const storeMsgCount = useInboxStore((s) => {
+    const meta = s.conversations[conversationId] ?? s.sessions[conversationId];
+    return (meta as { message_count?: number } | undefined)?.message_count ?? 0;
+  });
+
+  const commentSummary = useQueryNoThrow(
+    api.comments.getConversationCommentSummary,
+    isConvexId(conversationId)
+      ? { conversation_id: conversationId as Id<"conversations"> }
+      : "skip"
+  ).data;
+
+  const commentsByMessage = countCommentsByMessage(commentSummary);
+  const topLevelComments: CommentEntry[] = [];
+  if (commentSummary) {
+    for (const c of commentSummary) {
+      if (!c.parent_comment_id) {
+        topLevelComments.push({
+          _id: c._id,
+          message_id: c.message_id as string | undefined,
+          content: c.content,
+          created_at: c.created_at,
+          user: c.user,
+        });
+      }
+    }
+  }
+
+  const processed: NavigatorRow[] = messages
+    ? buildNavigatorRows(messages, commentsByMessage, resolveSessionTitle, loadedImages)
+    : [];
+
+  const total = processed.length;
+  const humanTotal = processed.filter((m) => m.kind === "user").length;
+  const machineTotal = total - humanTotal;
+  const effectiveId = currentMessageId === "__fallback__" ? null : currentMessageId;
+  const activeIndex = activeTickIndex(processed, effectiveId, scrollProgress);
+
+  const scheduleOpen = useCallback(() => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    openTimerRef.current = setTimeout(() => {
+      if (btnRef.current) setTriggerRect(btnRef.current.getBoundingClientRect());
+      setOpen(true);
+    }, 180);
+  }, []);
+
+  const scheduleClose = useCallback(() => {
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+    if (pinnedRef.current) return;
+    closeTimerRef.current = setTimeout(() => setOpen(false), 250);
+  }, []);
+
+  const cancelClose = useCallback(() => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+  }, []);
+
+  const handlePin = useCallback(() => {
+    pinnedRef.current = true;
+    setPinned(true);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    if (openTimerRef.current) clearTimeout(openTimerRef.current);
+  }, []);
+
+  const handleClose = useCallback(() => {
+    pinnedRef.current = false;
+    setPinned(false);
+    setOpen(false);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handleClose();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [open, handleClose]);
+
+  const isLoading = rawUserMessages === undefined && messages.length === 0 && isConvexId(conversationId);
+
+  // Skeleton: query in flight on a conversation with multiple messages.
+  // Reserves space + gives a subtle pulse so the indicator doesn't pop in
+  // late on big/cold conversations.
+  // (message_count holds replies too, so a hosted rail's asks are about half.)
+  if (isLoading && storeMsgCount >= (minRail > 2 ? minRail * 2 : 2)) {
+    const skeletonCount = Math.min(Math.max(storeMsgCount, 6), 16);
+    return (
+      <div
+        className="flex flex-col gap-[3px] items-end justify-center px-2 py-1.5 rounded text-sol-text-dim animate-pulse"
+        aria-hidden
+      >
+        {Array.from({ length: skeletonCount }).map((_, i) => (
+          <span key={i} className="block rounded-full bg-current w-3 h-px opacity-50" />
+        ))}
+      </div>
+    );
+  }
+
+  if (!messages || total < minRail) return null;
+
+  const MAX_BARS = 24;
+  const hasComments = topLevelComments.length > 0;
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        onClick={() => {
+          if (open && pinnedRef.current) { handleClose(); }
+          else {
+            if (!open && btnRef.current) setTriggerRect(btnRef.current.getBoundingClientRect());
+            setOpen(true);
+            handlePin();
+          }
+        }}
+        onMouseEnter={scheduleOpen}
+        onMouseLeave={scheduleClose}
+        className={`flex flex-col gap-[3px] items-end justify-center px-2 py-1.5 rounded transition-colors relative ${
+          open ? "text-sol-cyan" : "text-sol-text-dim hover:text-sol-text-secondary"
+        }`}
+        title={`${humanTotal} message${humanTotal !== 1 ? "s" : ""}${machineTotal > 0 ? ` / ${machineTotal} ${hiddenRowsNoun(processed.filter((m) => m.kind !== "user"))}` : ""}${hasComments ? ` / ${topLevelComments.length} comment${topLevelComments.length !== 1 ? "s" : ""}` : ""}`}
+      >
+        {(() => {
+          const ticks = sampleTicks(processed, MAX_BARS, activeIndex);
+          const here = ticks.findIndex((t) => t.active);
+          return ticks.map(({ row: msg, active: isActive }, i) => {
+            const hasComment = msg.commentCount > 0;
+            const isMachine = msg.kind !== "user";
+            const isNear = here >= 0 && Math.abs(i - here) === 1;
+            return (
+              <span
+                key={i}
+                className={`cc-rail-tick block rounded-full ${
+                  isActive
+                    ? "cc-rail-here"
+                    : isNear
+                    ? `${hasComment ? "bg-sol-cyan h-[2px]" : "bg-current h-px"} cc-rail-near`
+                    : hasComment
+                    ? "bg-sol-cyan w-3.5 h-[2px] opacity-70"
+                    : isMachine
+                    ? "bg-current w-2 h-px opacity-20"
+                    : "bg-current w-3 h-px opacity-35"
+                }`}
+              />
+            );
+          });
+        })()}
+      </button>
+      {open && triggerRect && (
+        <NavDropdown
+          messages={processed}
+          comments={topLevelComments}
+          conversationId={conversationId}
+          currentMessageId={effectiveId}
+          triggerRect={triggerRect}
+          onClose={handleClose}
+          onMouseEnter={cancelClose}
+          onMouseLeave={scheduleClose}
+          pinned={pinned}
+          onPin={handlePin}
+          onScrollToMessage={onScrollToMessage}
+          tab={tab}
+          onTabChange={setTab}
+        />
+      )}
+    </>
+  );
+}

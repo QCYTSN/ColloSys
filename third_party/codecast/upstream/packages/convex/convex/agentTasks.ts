@@ -1,0 +1,3102 @@
+import { v } from "convex/values";
+import { normalizeRepository } from "./lib/gitRefs";
+import { mutation, query, internalMutation, internalAction, internalQuery, type MutationCtx } from "./functions";
+import { internal } from "./_generated/api";
+import { verifyApiToken } from "./apiTokens";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { Doc, Id } from "./_generated/dataModel";
+import { extractTitleJson } from "./titleGeneration";
+import { callModel } from "./lib/anthropic";
+import { isRefusalProse } from "./idleSummary";
+import { findConversationByAnyRef } from "./conversationSessionLookup";
+import { enqueuePush } from "./pushRouter";
+import { isTeamMember } from "./privacy";
+import { nextShortId } from "./counters";
+import { eventFilterValidator, type EventFilter, type PendingEvent } from "./lib/eventFilterValidator";
+import { PENDING_EVENTS_CAP, sourceFilterAdmits } from "@codecast/shared/contracts/ingest";
+import { canAccessConversation, workspaceGrantsAccess } from "./lib/access";
+import { armedTriggerKindFor } from "./dormancy";
+import { restoreToInbox } from "./inboxFilters";
+import { configuredCloudWakeHosts, getCloudWakeHostForConversation } from "./cloudWake";
+import { enqueuePendingMessage, reachableRole } from "./pendingMessages";
+import { isHostedAgentType, triggerFiringSource, normalizeThreadState, runOwnerWakeOf, runParentOf, runResultThreadOf, triggerRunFrame, formatScheduledTask, type RoleCard, type RunOutcome, type WaitingSession } from "@codecast/shared/contracts";
+import type { AreaChange } from "@codecast/shared/contracts/orgAreas";
+import { isOrgReviewFocusKey, type OrgReviewFocusKey } from "@codecast/shared/contracts/orgReview";
+import { findRoleEventTrigger, ROLE_NEEDS_INPUT_SPEC, roleEventSpecsFor, roleMachineAway, type RoleEventSpec } from "./lib/orgRoutine";
+import { runnerDeviceOf } from "./lib/runnerDevice";
+import { roleServedInitiatives } from "./lib/roleInitiatives";
+import { metricLine } from "@codecast/shared/contracts/initiative";
+import { listOnlineDevices, parkedAccountResetAt, recoveryModeOf } from "./ccAccountsShared";
+import { performSetThreadState } from "./conversations";
+import { createDataContext } from "./data";
+import { triggerSourceName } from "./ingest";
+import { armedTriggers } from "./lib/triggerMatch";
+import { hostedHomeStamp, hostedOwnerRefusal, hostedRoutineRefusal, hostedWallCadence, type HostedRoutine } from "./assistant/routines";
+import { nextCadenceRun } from "@platform/assistant/cadence";
+import { startHostedConversationFor } from "./assistant/start";
+import { HOSTED_TITLE_MAX_CHARS } from "@codecast/shared/contracts/assistant";
+
+const DEFAULT_MAX_RETRIES = 3;
+const DEFAULT_MAX_RUNTIME_MS = 10 * 60 * 1000; // 10 min
+const LEASE_DURATION_MS = 5 * 60 * 1000; // 5 min
+
+// --- Shared core: CLI (api_token) and web (session auth) entry points resolve
+// to a userId, then go through these so the two surfaces can't drift. ---
+
+type TaskCtx = { db: any; scheduler?: { runAfter: (delayMs: number, fn: any, args: any) => Promise<unknown> } };
+
+// Recompute conversations.armed_trigger_kind for one home from EVERY trigger
+// that injects into it (several can), and write it only when it changed — the
+// field is semantic, so each write is a sync-log action. This is the single
+// writer; every lifecycle transition below routes its patch through patchTask
+// so the denormalized answer can never lag the agent_tasks rows the inbox no
+// longer reads (sync-convergence C1).
+export async function refreshArmedTriggerKind(
+  ctx: TaskCtx,
+  conversationId: Id<"conversations">,
+): Promise<void> {
+  const kind = armedTriggerKindFor(await tasksOriginatedBy(ctx, conversationId));
+  const conv = await ctx.db.get(conversationId);
+  if (!conv) return;
+  if ((conv.armed_trigger_kind ?? "none") === kind) return;
+  await ctx.db.patch(conversationId, { armed_trigger_kind: kind });
+}
+
+// Patch a trigger and keep its home's armed_trigger_kind in step.
+export async function patchTask(ctx: TaskCtx, task: Doc<"agent_tasks">, patch: Record<string, any>) {
+  if ("originating_conversation_id" in patch) {
+    patch = { ...patch, hosted_home: await hostedHomeStamp(ctx, patch.originating_conversation_id) };
+  }
+  await ctx.db.patch(task._id, patch);
+  if (task.originating_conversation_id) await refreshArmedTriggerKind(ctx, task.originating_conversation_id);
+}
+
+// A recurring trigger keeps a cadence: slots one interval apart. run_at is when
+// the daemon may next claim the row, and it leaves the cadence for a manual
+// run, a retry or a limit park. Those writes go through here, which keeps the
+// slot the trigger was armed for, so the arming after the run
+// (nextArmingAfterRun) returns to the cadence instead of restarting it from
+// wherever the detour ended.
+// The first cadence slot after `after`: on the wall clock when the routine
+// keeps one (hostedWallCadence), else one interval on.
+function nextRecurringRun(task: Pick<Doc<"agent_tasks">, "interval_ms"> & Partial<Pick<Doc<"agent_tasks">, "cadence">>, after: number): number {
+  return task.cadence ? nextCadenceRun(task.cadence, after) : after + (task.interval_ms ?? 0);
+}
+
+function offCadence(task: Doc<"agent_tasks">, runAt: number): { run_at: number; cadence_slot_at?: number } {
+  return task.schedule_type === "recurring"
+    ? { run_at: runAt, cadence_slot_at: task.cadence_slot_at ?? task.run_at }
+    : { run_at: runAt };
+}
+
+async function getOwnedTask(
+  ctx: TaskCtx,
+  taskId: Id<"agent_tasks">,
+  userId: Id<"users">
+): Promise<Doc<"agent_tasks"> | null> {
+  const task = await ctx.db.get(taskId);
+  if (!task || task.user_id !== userId) return null;
+  return task;
+}
+
+// Management verbs (pause/resume/run now/cancel/reactivate/edit) follow the
+// same rule as reads: anyone who can view the anchor conversation can manage
+// the trigger (founder decision 2026-08-30). Deleting the row stays owner-only
+// — cancel is the teammate's off switch; delete erases history.
+export async function getManageableTask(
+  ctx: TaskCtx,
+  taskId: Id<"agent_tasks">,
+  userId: Id<"users">
+): Promise<Doc<"agent_tasks"> | null> {
+  const task = await ctx.db.get(taskId);
+  if (!task || !(await canViewTask(ctx as { db: any }, userId, task))) return null;
+  return task;
+}
+
+// Every verb that writes or arms a routine anchored on a hosted conversation
+// is that conversation's owner's (getArmableTask, applyTaskUpdate, through
+// hostedOwnerRefusal); anyone who may manage it keeps pause and cancel, the
+// off switches.
+const taskAnchors = (task: Pick<Doc<"agent_tasks">, "originating_conversation_id" | "created_by_conversation_id" | "target_conversation_id">) =>
+  [task.originating_conversation_id, task.created_by_conversation_id, task.target_conversation_id];
+
+/** getManageableTask for a verb that arms a routine or feeds it input
+ *  (resume, activate, reactivate, run now): throws for anyone but the owner
+ *  of a hosted conversation the routine is anchored on. */
+export async function getArmableTask(
+  ctx: TaskCtx,
+  taskId: Id<"agent_tasks">,
+  userId: Id<"users">
+): Promise<Doc<"agent_tasks"> | null> {
+  const task = await getManageableTask(ctx, taskId, userId);
+  if (!task) return null;
+  const refusal = await hostedOwnerRefusal(ctx, userId, taskAnchors(task));
+  if (refusal) throw new Error(refusal);
+  return task;
+}
+
+// Every path that creates or arms a routine (create, an edit to its home or
+// schedule, resume, activate, run now on a paused one) refuses one a hosted
+// conversation does not allow: a routine its owner did not set, or one the
+// owner's plan does not cover (assistant/routines.ts). Arming paths pass the
+// status the routine is moving to.
+async function assertRoutineAllowed(ctx: TaskCtx, routine: HostedRoutine & HostedThreads) {
+  const refusal = await hostedRoutineRefusal(ctx, routine) ?? await hostedThreadRefusal(ctx, routine);
+  if (refusal) throw new Error(refusal);
+}
+
+type HostedThreads = {
+  target_conversation_id?: Id<"conversations"> | string | null;
+  created_by_conversation_id?: Id<"conversations"> | string | null;
+};
+
+// A hosted conversation's transcript is written by its turn engine alone
+// (messages.refuseHostedTranscriptWrite), so a trigger never names one as the
+// thread its results are posted to, and names one as its creator (whose run
+// outcomes it is woken with) only when the trigger's owner owns it.
+async function hostedThreadRefusal(ctx: TaskCtx, routine: HostedThreads & { user_id: Id<"users"> }): Promise<string | null> {
+  const target = routine.target_conversation_id ? await ctx.db.get(routine.target_conversation_id as Id<"conversations">) : null;
+  if (target && isHostedAgentType(target.agent_type)) {
+    return "A run's result cannot be posted into a hosted assistant conversation";
+  }
+  return hostedOwnerRefusal(ctx, routine.user_id, [routine.created_by_conversation_id]);
+}
+
+export async function applyPause(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  if (task.status !== "scheduled" && task.status !== "running") return false;
+  // A pause by hand clears any role's stamp; a role pause stamps after this.
+  await patchTask(ctx, task, { status: "paused", paused_by_role_id: undefined });
+  return true;
+}
+
+export async function applyResume(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  if (task.status !== "paused") return false;
+  await assertRoutineAllowed(ctx, { ...task, status: "scheduled" });
+  // An event trigger stays disarmed until its event: a run_at here would
+  // fire it once on resume with nothing behind it.
+  await patchTask(ctx, task, {
+    status: "scheduled",
+    run_at: task.schedule_type === "event" ? task.run_at : task.run_at || Date.now(),
+  });
+  return true;
+}
+
+/**
+ * Activate a paused routine (org-hire.md H8): the first run lands one interval
+ * out and the temporary gate a template install may have left clears, in one
+ * write. A custom precheck a person set stays. Human only at the mutation
+ * (orgTemplates.activateRoutine); the CLI's documented two step procedure
+ * (update --every, then resume) performs the same writes.
+ */
+export async function applyActivate(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  if (task.status !== "paused") return false;
+  await assertRoutineAllowed(ctx, { ...task, status: "scheduled" });
+  const interval = task.interval_ms;
+  await patchTask(ctx, task, {
+    status: "scheduled",
+    run_at: task.schedule_type === "recurring" && interval ? nextRecurringRun(task, Date.now()) : Date.now(),
+    cadence_slot_at: undefined,
+    ...(task.precheck === "exit 1" ? { precheck: undefined } : {}),
+  });
+  return true;
+}
+
+/** Run now. `focus` narrows this one run (ORG_REVIEW_FOCUSES): it rides the
+ *  row into the run's frame and clears when the run completes; a plain run
+ *  now clears a focus still waiting. */
+export async function applyRunNow(ctx: TaskCtx, task: Doc<"agent_tasks">, focus?: OrgReviewFocusKey) {
+  if (task.status === "paused") await assertRoutineAllowed(ctx, { ...task, status: "scheduled" });
+  await patchTask(ctx, task, { status: "scheduled", ...offCadence(task, Date.now()), requested_run_source: "manual", requested_run_focus: focus });
+  return true;
+}
+
+export function claimRunSourceFields(task: { schedule_type?: string; requested_run_source?: string }) {
+  return {
+    requested_run_source: undefined,
+    last_run_source: triggerFiringSource(task.schedule_type, task.requested_run_source),
+  };
+}
+
+export async function applyCancel(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  await patchTask(ctx, task, { status: "completed" });
+  return true;
+}
+
+// Re-arm a retired schedule. Exists for the hide-gesture affordance: killing a
+// session cancels its injecting schedules as a side effect (see
+// cancelTasksBoundToConversation), and both the "Keep schedule" toast action
+// and undo-of-hide need to reverse exactly that side effect. Also revives a
+// failed schedule. Recurring re-arms one interval out (not an immediate fire);
+// a once-task keeps its future run_at or re-arms a minute out.
+export async function applyReactivate(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  if (task.status !== "completed" && task.status !== "failed") return false;
+  await patchTask(ctx, task, {
+    status: "scheduled",
+    canceled_on_kill_at: undefined,
+    requested_run_source: undefined,
+    cadence_slot_at: undefined,
+    run_at:
+      task.schedule_type === "event"
+        ? undefined
+        : task.schedule_type === "recurring" && task.interval_ms
+          ? nextRecurringRun(task, Date.now())
+          : task.run_at && task.run_at > Date.now()
+            ? task.run_at
+            : Date.now() + 60_000,
+  });
+  return true;
+}
+
+// Resolve a spawned run's conversation (session_id IS the uuid the daemon
+// assigned via `claude --session-id`) and stamp agent_task_id on it, so the run
+// stays attributable to its schedule forever — not just while it's the latest.
+// A spawned run nests under the session that armed it (runParentOf) as a
+// subagent row, the same shape `cast spawn --subagent` makes, so it never
+// surfaces as a loose inbox card nobody owns. The daemon stamps both
+// at birth (createConversation agent_task_id + parent_conversation_id); this
+// is the backfill for rows born without them. Idempotent; returns the
+// conversation, or null if it hasn't synced yet.
+export async function stampRunConversation(
+  ctx: TaskCtx,
+  userId: Id<"users">,
+  task: Doc<"agent_tasks">,
+  runSessionUuid: string,
+  opts: { backfill?: boolean } = {},
+): Promise<Doc<"conversations"> | null> {
+  const conv = await ctx.db
+    .query("conversations")
+    .withIndex("by_session_id", (q: any) => q.eq("session_id", runSessionUuid))
+    .filter((q: any) => q.eq(q.field("user_id"), userId))
+    .first();
+  if (!conv) return null;
+  const patch: Record<string, any> = {};
+  const firstStamp = conv.agent_task_id !== task._id;
+  if (firstStamp) patch.agent_task_id = task._id;
+  // A run is never a loose inbox card. It nests under the session that armed
+  // it (runParentOf: every spawn schedule, repeating included) whatever that
+  // session's inbox state, a stashed parent or a subagent worker included: the
+  // outcomes a person must see wake the parent (runOwnerWakeOf), and a wake
+  // brings a stashed or killed parent back, so hiding the run loses nothing.
+  // A repeating run with no parent to nest under is born stashed instead, and
+  // surfaces only for those same outcomes (wakeRunOwner). A once run with no
+  // parent stays a card: its single result is the deliverable. Only the first
+  // stamp hides, so a run the user brought back stays back; the backfill
+  // (nestLooseTriggerRuns) applies the rule to runs stamped before it existed.
+  // A run blocked on the human is an open ask and is never hidden.
+  if (!conv.parent_conversation_id) {
+    const parent = runParentOf(task);
+    const parentConv = parent && parent.toString() !== conv._id.toString() ? await ctx.db.get(parent) : null;
+    if (parentConv && parentConv.user_id.toString() === userId.toString()) {
+      patch.parent_conversation_id = parent;
+      patch.is_subagent = true;
+    } else if (
+      (firstStamp || opts.backfill) &&
+      task.schedule_type !== "once" &&
+      !conv.inbox_stashed_at &&
+      !conv.inbox_pinned_at &&
+      conv.thread_state_status !== "blocked"
+    ) {
+      patch.inbox_stashed_at = Date.now();
+    }
+  }
+  if (Object.keys(patch).length > 0) {
+    await ctx.db.patch(conv._id, patch);
+    Object.assign(conv, patch);
+  }
+  return conv;
+}
+
+// One pass of the run rule over runs stamped before it: every spawned run
+// nests under the session that armed it, and a repeating run with no parent
+// is hidden (stampRunConversation). Pages through agent_tasks and schedules
+// itself; `dry` reports what one page would change and writes nothing.
+export const nestLooseTriggerRuns = internalMutation({
+  args: { cursor: v.optional(v.string()), dry: v.optional(v.boolean()), numItems: v.optional(v.number()), user_id: v.optional(v.id("users")) },
+  handler: async (ctx, args) => {
+    const page = await ctx.db.query("agent_tasks").paginate({ cursor: args.cursor ?? null, numItems: args.numItems ?? 50 });
+    let loose = 0;
+    let nested = 0;
+    let hidden = 0;
+    const sample: { run: Id<"conversations">; task: string; parent: Id<"conversations"> | null }[] = [];
+    for (const task of page.page) {
+      if (task.originating_conversation_id) continue;
+      if (args.user_id && task.user_id !== args.user_id) continue;
+      const runs = await ctx.db
+        .query("conversations")
+        .withIndex("by_agent_task", (q: any) => q.eq("agent_task_id", task._id))
+        .collect();
+      for (const run of runs) {
+        if (run.parent_conversation_id) continue;
+        loose++;
+        if (args.dry) {
+          if (sample.length < 20) sample.push({ run: run._id, task: task.short_id ?? task._id, parent: runParentOf(task) ?? null });
+          continue;
+        }
+        const wasStashed = !!run.inbox_stashed_at;
+        const after = await stampRunConversation(ctx, task.user_id, task, run.session_id, { backfill: true });
+        if (after?.parent_conversation_id) nested++;
+        else if (after?.inbox_stashed_at && !wasStashed) hidden++;
+      }
+    }
+    if (!args.dry && !page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.agentTasks.nestLooseTriggerRuns, { cursor: page.continueCursor, numItems: args.numItems, user_id: args.user_id });
+    }
+    return { loose, nested, hidden, sample, isDone: page.isDone, cursor: page.continueCursor };
+  },
+});
+
+// The newest conversation stamped as a run of this task (linkRunConversation
+// stamps agent_task_id within seconds of the spawn), for callers that hold
+// no run uuid: the reclaim sweep judging a lapsed lease.
+async function latestRunConversation(ctx: TaskCtx, task: Doc<"agent_tasks">): Promise<Doc<"conversations"> | null> {
+  if (task.originating_conversation_id) return null;
+  const runs: Doc<"conversations">[] = await ctx.db
+    .query("conversations")
+    .withIndex("by_agent_task", (q: any) => q.eq("agent_task_id", task._id))
+    .collect();
+  const latest = runs.sort((a, b) => b._creationTime - a._creationTime)[0];
+  // Through the stamp, so the run nests under its owner like every other path.
+  return latest ? stampRunConversation(ctx, task.user_id, task, latest.session_id) : null;
+}
+
+// The run's agent process is gone: the daemon stamps the managed session
+// "stopped" when the process it registered exits (its conversation row keeps
+// no such field). A run never registered is not known to be over.
+async function runAgentStopped(ctx: TaskCtx, runConv: Doc<"conversations">): Promise<boolean> {
+  const managed = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_session_id", (q: any) => q.eq("session_id", runConv.session_id))
+    .first();
+  return managed?.agent_status === "stopped";
+}
+
+// A run's agent parked at a usage limit: the CLI wrote its limit banner and
+// the process ended (a headless `claude -p` cannot wait at the dialog an
+// interactive session parks on). Stamped server-side from the banner, exactly
+// like an interactive session's park (pending_api_error_kind "limit").
+function runIsLimitParked(runConv: Doc<"conversations"> | null): boolean {
+  return runConv?.pending_api_error_kind === "limit";
+}
+
+// The conversation a run's notification opens: the schedule's home for an
+// inject run, else the spawned run itself. A notice without one has no click
+// target, so the banner and the bell open nothing.
+function runNoticeConversationId(
+  task: Doc<"agent_tasks">,
+  runConv: Doc<"conversations"> | null,
+): Id<"conversations"> | undefined {
+  return task.originating_conversation_id ?? runConv?._id;
+}
+
+// How long a limit-parked run waits when no account reports a reset time, and
+// the margin past a reported reset so the first request lands after the
+// window rolled rather than on its last second.
+const LIMIT_PARK_FALLBACK_MS = 60 * 60 * 1000;
+const LIMIT_PARK_GRACE_MS = 2 * 60 * 1000;
+
+// A usage limit is a machine-wide condition, not a fault of the run: retrying
+// a minute later spends a fresh session on the same wall, and three of those
+// retire the trigger without a single line of work done (tr-887, 2026-09-18:
+// three runs, three inbox cards, one report never written). So the run is
+// PARKED, the way an interactive session is: the trigger re-arms at the
+// earliest window reset the primary machine's accounts report (the same
+// number the auto-switch loop waits on), the retry budget is untouched, and
+// the run keeps its session so the resume continues where the agent stopped
+// (taskScheduler: last_run_failed + last_run_session_uuid → `--resume`).
+async function parkRunAtLimit(
+  ctx: TaskCtx,
+  task: Doc<"agent_tasks">,
+  runConv: Doc<"conversations">,
+  now: number,
+): Promise<void> {
+  const { online, primary } = await listOnlineDevices(ctx, task.user_id, now);
+  // The account the run used: the row's pin, else the fleet account of the
+  // device that ran it (the primary when the owner is not online). Its own
+  // pegged window names the wait, and a booked recovery check is a floor:
+  // the earliest reset across every account woke runs on a rolled 5h session
+  // inside a still-spent week.
+  const owner = (runConv.owner_device_id && online.find((d) => d.device_id === runConv.owner_device_id)) || primary;
+  const resetAt = parkedAccountResetAt(
+    owner && {
+      cc_accounts: owner.cc_accounts,
+      cc_auto_switch_state: recoveryModeOf(owner) === "off" ? undefined : owner.cc_auto_switch_state,
+    },
+    runConv,
+    now,
+  );
+  const runAt = (resetAt ?? now + LIMIT_PARK_FALLBACK_MS) + LIMIT_PARK_GRACE_MS;
+  const when = new Date(runAt).toISOString();
+  await patchTask(ctx, task, {
+    status: "scheduled",
+    ...offCadence(task, runAt),
+    lease_holder: undefined,
+    lease_expires_at: undefined,
+    last_run_summary: `Parked at a usage limit; resumes ${when}`,
+    last_run_failed: true,
+    last_run_session_uuid: runConv.session_id,
+    last_run_conversation_id: runConv._id,
+    parked_run_session_uuid: runConv.session_id,
+    requested_run_source: task.last_run_source === "manual" ? "manual" : undefined,
+  });
+}
+
+// Wake the run's owner with the outcome (runOwnerWakeOf decides whether this
+// outcome wakes at all). The owner takes a turn on it, as it would on any
+// scheduler injection: the same wrapper the web renders as a trigger block,
+// the same origin that keeps a hidden stash hidden and never chimes. A killed
+// owner is resurrected for delivery, as a scheduled follow-up into a closed
+// session is — a failure nobody reads is the exact card this replaces.
+async function wakeRunOwner(
+  ctx: TaskCtx,
+  task: Doc<"agent_tasks">,
+  runConv: Doc<"conversations"> | null,
+  outcome: RunOutcome,
+  detail: string | undefined,
+  now: number,
+): Promise<boolean> {
+  const ownerId = runOwnerWakeOf(task, outcome);
+  const owner = ownerId ? await ctx.db.get(ownerId) : null;
+  if (!owner || owner.user_id !== task.user_id) {
+    // Nobody to wake: a run born hidden for want of a parent (stampRunConversation)
+    // is the only place this outcome can be read, so it comes back.
+    if (outcome !== "reported" && runConv && !runConv.parent_conversation_id) await restoreToInbox(ctx, runConv);
+    return false;
+  }
+  const handle = task.short_id ?? task.title;
+  const runRef = runConv ? runConv.short_id ?? runConv._id.toString().slice(0, 7) : null;
+  const run = runRef ? `Run ${runRef} of ${handle}` : `A run of ${handle}`;
+  const read = runRef ? ` Read it with cast read ${runRef}.` : "";
+  const body =
+    outcome === "failed"
+      ? `${run} failed and the trigger is retired${detail ? `: ${detail}` : ""}.${read} This trigger is yours: re-arm it with a better brief, or file what the run found. Nobody else will act on it.`
+      : outcome === "unreported_exit"
+        ? `${run} ended without reporting.${read} If the work is done, use or file its result; if the run died, re-arm the trigger.`
+        : outcome === "attention"
+          ? `${run} finished and needs attention:\n\n${detail ?? ""}`
+          : `${run} finished:\n\n${detail ?? ""}`;
+  const label =
+    outcome === "failed" ? "failed" : outcome === "unreported_exit" ? "ended without reporting" : outcome === "attention" ? "needs attention" : "finished";
+  await enqueuePendingMessage(ctx, owner, task.user_id, {
+    content: formatScheduledTask({ title: `${handle} run ${label}`, task_id: String(task._id), body }),
+    origin: "scheduler",
+    client_id: `run-outcome:${task._id}:${task.run_count}:${outcome}:${now}`,
+  });
+  return true;
+}
+
+// Kill is the strongest triage gesture — "make this stop". Any armed schedule
+// that INJECTS into the killed conversation (originating_conversation_id, the
+// `--context current` kind) would resurrect it on its next fire — the
+// scheduler's injection un-kills the session for delivery — silently defeating
+// the kill. So killSession cancels those schedules in the same transaction.
+// Schedules that merely post summaries to the conversation
+// (target_conversation_id) never wake it, and spawn-type schedules whose RUN
+// was killed are untouched: each run is its own session, and killing one run
+// doesn't mean "stop the program" — the schedule strip on the run gives the
+// user that verb explicitly.
+export async function cancelTasksBoundToConversation(
+  ctx: TaskCtx,
+  userId: Id<"users">,
+  conversationId: Id<"conversations">
+): Promise<number> {
+  let cancelled = 0;
+  for (const task of await runnerTasksOriginatedBy(ctx, userId, conversationId)) {
+    if (task.status !== "scheduled" && task.status !== "running" && task.status !== "paused") continue;
+    // Stamp WHY it completed: a restore of the killed session re-arms exactly
+    // the schedules this kill took down (reactivateTasksCanceledOnKill),
+    // without touching schedules that ran to natural completion.
+    await patchTask(ctx, task, { status: "completed", canceled_on_kill_at: Date.now() });
+    cancelled++;
+  }
+  return cancelled;
+}
+
+// The tasks one conversation originated, read through the conversation's own
+// index. A kill and its undo run this once per session in the tree; scanning
+// the runner's tasks by status instead read their whole trigger history each
+// time (2.3 MB per session for a heavy user), so undoing the kill of a session
+// with a handful of subagents read 19 MB in one mutation and was refused.
+async function tasksOriginatedBy(ctx: TaskCtx, conversationId: Id<"conversations">): Promise<Doc<"agent_tasks">[]> {
+  return await ctx.db
+    .query("agent_tasks")
+    .withIndex("by_originating_conversation", (q: any) => q.eq("originating_conversation_id", conversationId))
+    .collect();
+}
+
+async function runnerTasksOriginatedBy(ctx: TaskCtx, userId: Id<"users">, conversationId: Id<"conversations">) {
+  return (await tasksOriginatedBy(ctx, conversationId)).filter((task) => task.user_id.toString() === userId.toString());
+}
+
+/** Cancel every open task a conversation originated (a retired standing role's
+ *  routines): cancelled, not completed, so nothing re-arms them. Returns the count. */
+// `only` narrows the cancel to the tasks a caller owns (a seat's own routine),
+// leaving whatever else the person armed on the thread alone.
+export async function cancelTasksOriginatingFrom(ctx: TaskCtx, conversationId: Id<"conversations">, now = Date.now(), only?: (task: any) => boolean): Promise<number> {
+  let cancelled = 0;
+  for (const task of await tasksOriginatedBy(ctx, conversationId)) {
+    if (task.status === "cancelled" || task.status === "completed" || task.status === "failed") continue;
+    if (only && !only(task)) continue;
+    await patchTask(ctx, task, { status: "cancelled", updated_at: now });
+    cancelled++;
+  }
+  return cancelled;
+}
+
+// The mirror of cancelTasksBoundToConversation: re-arm the schedules a kill
+// canceled, called on the un-kill transition (web restore / undo, cast
+// undismiss). Only tasks stamped canceled_on_kill_at qualify — a schedule that
+// completed naturally stays completed. Reuses applyReactivate, which also
+// clears the stamp so a second restore is a no-op.
+export async function reactivateTasksCanceledOnKill(
+  ctx: TaskCtx,
+  userId: Id<"users">,
+  conversationId: Id<"conversations">
+): Promise<number> {
+  let rearmed = 0;
+  for (const task of await runnerTasksOriginatedBy(ctx, userId, conversationId)) {
+    if (task.status !== "completed" || !task.canceled_on_kill_at) continue;
+    if (await applyReactivate(ctx, task)) rearmed++;
+  }
+  return rearmed;
+}
+
+interface NewTaskArgs {
+  title: string;
+  prompt: string;
+  context_summary?: string;
+  originating_conversation_id?: string;
+  target_conversation_id?: string;
+  created_by_conversation_id?: string;
+  created_by_session_uuid?: string;
+  project_path?: string;
+  agent_type?: string;
+  model?: string;
+  agent_definition?: string;
+  created_device_id?: string;
+  schedule_type: "once" | "recurring" | "event";
+  run_at?: number;
+  interval_ms?: number;
+  event_filter?: EventFilter;
+  mode?: string;
+  max_runtime_ms?: number;
+  max_retries?: number;
+  precheck?: string;
+  wake_creator?: boolean;
+  /** The org role whose routine this is. */
+  role_id?: Id<"org_roles">;
+  /** Created paused (org-hire.md H8): a routine a person activates later. Never for event triggers. */
+  status?: "scheduled" | "paused";
+  /** The weekdays (0 is Sunday) a hosted routine runs on, at run_at's time
+   *  of day (assistant/routines.ts hostedWallCadence). */
+  weekdays?: number[];
+  /** A description written for the person (a hosted routine's summary, as
+   *  its approval card showed it). Given, it is the row's display_summary
+   *  and no distillation runs. */
+  display_summary?: string;
+}
+
+export async function insertTask(ctx: TaskCtx, userId: Id<"users">, args: NewTaskArgs) {
+  if (args.schedule_type === "recurring" && !args.interval_ms) {
+    throw new Error("interval_ms required for recurring tasks");
+  }
+  if (args.schedule_type === "event" && !args.event_filter) {
+    throw new Error("event_filter required for event tasks");
+  }
+
+  if (args.status === "paused" && args.schedule_type === "event") {
+    throw new Error("An event trigger cannot be created paused");
+  }
+
+  const now = Date.now();
+  // A row created paused carries no run_at: activation (applyActivate) sets
+  // the first run one interval out, so nothing fires until a person acts.
+  const paused = args.status === "paused";
+  const hosted = !!(await hostedHomeStamp(ctx, args.originating_conversation_id));
+  // A routine said as a time of day keeps it; its first run is the first slot
+  // on or after the one asked for (a weekdays routine asked for on a Saturday
+  // starts Monday).
+  const wall = await hostedWallCadence(ctx, { user_id: userId, hosted, schedule_type: args.schedule_type, interval_ms: args.interval_ms, run_at: args.run_at || now, weekdays: args.weekdays });
+  const run_at = args.schedule_type === "event" || paused ? undefined : (wall?.run_at ?? (args.run_at || now));
+  await assertRoutineAllowed(ctx, {
+    user_id: userId,
+    originating_conversation_id: args.originating_conversation_id,
+    target_conversation_id: args.target_conversation_id,
+    created_by_conversation_id: args.created_by_conversation_id,
+    schedule_type: args.schedule_type,
+    interval_ms: args.interval_ms,
+    status: paused ? "paused" : "scheduled",
+  });
+
+  const event_filter = await storedEventFilter(ctx, userId, args.project_path, args.event_filter);
+  const short_id = await nextShortId(ctx.db, "tr");
+
+  const taskId = await ctx.db.insert("agent_tasks", {
+    user_id: userId,
+    short_id,
+    title: args.title,
+    prompt: args.prompt,
+    context_summary: args.context_summary,
+    originating_conversation_id: args.originating_conversation_id
+      ? args.originating_conversation_id as Id<"conversations">
+      : undefined,
+    hosted_home: hosted || undefined,
+    target_conversation_id: args.target_conversation_id
+      ? args.target_conversation_id as Id<"conversations">
+      : undefined,
+    created_by_conversation_id: args.created_by_conversation_id
+      ? args.created_by_conversation_id as Id<"conversations">
+      : undefined,
+    created_by_session_uuid: args.created_by_session_uuid,
+    project_path: args.project_path,
+    agent_type: args.agent_type || "claude",
+    model: args.model || undefined,
+    agent_definition: args.agent_definition || undefined,
+    created_device_id: args.created_device_id,
+    schedule_type: args.schedule_type,
+    run_at,
+    interval_ms: args.interval_ms,
+    cadence: wall?.cadence,
+    event_filter,
+    // Permissive by default: a schedule can act unless it explicitly opts into
+    // safe (read-only) mode. Only an explicit "propose" restricts. Existing
+    // tasks keep their stored mode, so nothing already armed changes.
+    mode: (args.mode === "propose" ? "propose" : "apply") as "propose" | "apply",
+    max_runtime_ms: args.max_runtime_ms || DEFAULT_MAX_RUNTIME_MS,
+    precheck: args.precheck?.trim() || undefined,
+    wake_creator: args.wake_creator || undefined,
+    role_id: args.role_id,
+    status: paused ? ("paused" as const) : ("scheduled" as const),
+    retry_count: 0,
+    max_retries: args.max_retries ?? DEFAULT_MAX_RETRIES,
+    run_count: 0,
+    created_at: now,
+    ...(args.display_summary ? { display_summary: args.display_summary, summary_for_person: true } : {}),
+  });
+  if (args.originating_conversation_id) {
+    await refreshArmedTriggerKind(ctx, args.originating_conversation_id as Id<"conversations">);
+  }
+  // Distill a readable display_title/display_summary from the prompt (the
+  // summarizer section below) — the stored title is usually prompt.slice(0,60).
+  // A description written for the person already reads; it is kept as is.
+  if (!args.display_summary) await ctx.scheduler?.runAfter(0, internal.agentTasks.generateDisplaySummary, { task_id: taskId });
+  return { id: taskId, short_id };
+}
+
+// Single-task action exposed under both auth schemes.
+// A verb that moves a trigger's status is written to its history.
+export async function logVerb(ctx: TaskCtx, task: Doc<"agent_tasks">, actor: { userId: Id<"users">; source: "cli" | "web" }, apply: (ctx: TaskCtx, task: Doc<"agent_tasks">) => Promise<boolean>): Promise<boolean> {
+  const ok = await apply(ctx, task);
+  const after = await ctx.db.get(task._id);
+  if (after && after.status !== task.status) await appendRevision(ctx, task, actor, ["status"]);
+  return ok;
+}
+
+// `get` is getArmableTask for a verb that arms, getManageableTask for an off
+// switch (pause, cancel).
+type TaskGetter = typeof getManageableTask;
+
+const cliTaskAction = (apply: (ctx: TaskCtx, task: Doc<"agent_tasks">) => Promise<boolean>, get: TaskGetter) =>
+  mutation({
+    args: { api_token: v.string(), task_id: v.id("agent_tasks") },
+    handler: async (ctx, args) => {
+      const auth = await verifyApiToken(ctx, args.api_token);
+      if (!auth) throw new Error("Unauthorized");
+      const task = await get(ctx, args.task_id, auth.userId);
+      if (!task) return false;
+      return logVerb(ctx, task, { userId: auth.userId, source: "cli" }, apply);
+    },
+  });
+
+const webTaskAction = (apply: (ctx: TaskCtx, task: Doc<"agent_tasks">) => Promise<boolean>, get: TaskGetter) =>
+  mutation({
+    args: { task_id: v.id("agent_tasks") },
+    handler: async (ctx, args) => {
+      const userId = await getAuthUserId(ctx);
+      if (!userId) throw new Error("Unauthorized");
+      const task = await get(ctx, args.task_id, userId);
+      if (!task) return false;
+      return logVerb(ctx, task, { userId, source: "web" }, apply);
+    },
+  });
+
+export const createTask = mutation({
+  args: {
+    api_token: v.string(),
+    title: v.string(),
+    prompt: v.string(),
+    context_summary: v.optional(v.string()),
+    originating_conversation_id: v.optional(v.string()),
+    target_conversation_id: v.optional(v.string()),
+    created_by_conversation_id: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    agent_type: v.optional(v.string()),
+    model: v.optional(v.string()),
+    agent_definition: v.optional(v.string()),
+    created_device_id: v.optional(v.string()),
+    schedule_type: v.union(v.literal("once"), v.literal("recurring"), v.literal("event")),
+    run_at: v.optional(v.number()),
+    interval_ms: v.optional(v.number()),
+    event_filter: v.optional(eventFilterValidator),
+    mode: v.optional(v.string()),
+    max_runtime_ms: v.optional(v.number()),
+    max_retries: v.optional(v.number()),
+    precheck: v.optional(v.string()),
+    // `--spawn --wake`: a clean report wakes the session that armed the
+    // trigger (runOwnerWakeOf). Meaningful for once spawn triggers only.
+    wake_creator: v.optional(v.boolean()),
+    status: v.optional(v.union(v.literal("scheduled"), v.literal("paused"))),
+    // Any session ref (short id, conversation _id, or Claude session uuid) the
+    // schedule should inject into — `cast trigger add --for <session>`.
+    // Resolved own-only: you can bind a schedule only to your own session.
+    originating_session_ref: v.optional(v.string()),
+    // Session ref of the conversation that is CREATING this trigger —
+    // attribution only (created_by_conversation_id), never routing. Sent even
+    // for --spawn triggers, so a spawn trigger still traces to its parent.
+    // Best-effort: an unresolvable ref never fails creation.
+    created_by_session_ref: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    const { api_token: _token, originating_session_ref, created_by_session_ref, ...rest } = args;
+    const taskArgs: NewTaskArgs = rest;
+    if (originating_session_ref) {
+      const conv = await findConversationByAnyRef(ctx, originating_session_ref, auth.userId);
+      if (!conv) throw new Error(`No session of yours matches "${originating_session_ref}"`);
+      taskArgs.originating_conversation_id = conv._id.toString();
+    }
+    if (created_by_session_ref) {
+      const conv = await findConversationByAnyRef(ctx, created_by_session_ref, auth.userId);
+      if (conv) taskArgs.created_by_conversation_id = conv._id.toString();
+      // Not synced yet: keep the raw uuid so the read path can resolve it
+      // once the conversation row exists. Dropping it here is how a spawn
+      // trigger lost its parent for good.
+      else taskArgs.created_by_session_uuid = created_by_session_ref;
+    }
+    return await insertTask(ctx, auth.userId, taskArgs);
+  },
+});
+
+// Admin repair: stamp created_by_conversation_id on a trigger that predates the
+// field (or whose creator link failed to resolve at creation). Attribution
+// only — routing (originating_conversation_id) is deliberately untouchable
+// here; recreating with --for stays the repair path for a broken binding.
+export const adminSetCreatedByConversation = internalMutation({
+  args: {
+    task_id: v.id("agent_tasks"),
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    const conv = await ctx.db.get(args.conversation_id);
+    if (!task || !conv) return false;
+    if (task.user_id !== conv.user_id) return false;
+    await ctx.db.patch(args.task_id, { created_by_conversation_id: args.conversation_id });
+    return true;
+  },
+});
+
+// Repair for the rows the clipped-comm bug left orphaned (no creator, no
+// inject binding): the creator's own transcript holds the proof. `cast trigger
+// add` prints "Trigger tr-NNN …" into the Bash tool result of the session that
+// ran it, and that message lands seconds after the row was inserted. A global
+// by_timestamp window around created_at finds it without scanning any user's
+// whole history. Match on the short id first (exact), then on a `trigger add`
+// tool call in the same window (the pre-short-id era printed the last-8 suffix).
+// Attribution only; originating_conversation_id stays untouched.
+export const adminBackfillCreatedBy = internalMutation({
+  args: {
+    user_id: v.optional(v.id("users")),
+    limit: v.optional(v.number()),
+    dry_run: v.optional(v.boolean()),
+    since_ms: v.optional(v.number()),
+    // Paging cursor: only rows created before this. Unmatched orphans stay
+    // orphans, so a newest-first scan without a cursor re-reads them forever.
+    before_ms: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const rows = args.user_id
+      ? await ctx.db
+          .query("agent_tasks")
+          .withIndex("by_user_status", (q) => q.eq("user_id", args.user_id!))
+          .collect()
+      : await ctx.db.query("agent_tasks").collect();
+    const since = args.since_ms ?? 0;
+    const orphans = rows.filter(
+      (t) =>
+        !t.created_by_conversation_id &&
+        !t.originating_conversation_id &&
+        !t.created_by_session_uuid &&
+        t.created_at >= since &&
+        t.created_at < (args.before_ms ?? Infinity)
+    );
+    const targets = orphans
+      .sort((a, b) => b.created_at - a.created_at)
+      .slice(0, args.limit ?? 10);
+
+    const out: Array<{ short_id?: string; title: string; creator?: string; creator_title?: string; via?: string }> = [];
+    for (const t of targets) {
+      const T = t.created_at;
+      const window = await ctx.db
+        .query("messages")
+        .withIndex("by_timestamp", (q) => q.gte("timestamp", T - 120_000).lte("timestamp", T + 300_000))
+        .collect();
+      const suffix = t._id.toString().slice(-8);
+      const needles = [t.short_id ? `Trigger ${t.short_id}` : null, `Trigger ${suffix}`].filter(Boolean) as string[];
+      const textOf = (m: Doc<"messages">) =>
+        [m.content ?? "", ...(m.tool_results ?? []).map((r) => r.content)].join("\n");
+      let hit = window.find((m) => !m.is_encrypted && needles.some((n) => textOf(m).includes(n)));
+      let via = hit ? "printed id" : undefined;
+      if (!hit) {
+        const calls = window.filter(
+          (m) =>
+            m.timestamp <= T + 30_000 &&
+            (m.tool_calls ?? []).some((c) => /cast\s+(trigger|schedule)\s+add/.test(c.input))
+        );
+        // Only an unambiguous single caller counts: two sessions arming
+        // triggers in the same window would otherwise cross-stamp.
+        const convs = new Set(calls.map((m) => m.conversation_id.toString()));
+        if (convs.size === 1) {
+          hit = calls[0];
+          via = "trigger add call";
+        }
+      }
+      const conv = hit ? await ctx.db.get(hit.conversation_id) : null;
+      const ok = conv && conv.user_id === t.user_id;
+      out.push({
+        short_id: t.short_id,
+        title: t.title,
+        creator: ok ? conv._id.toString() : undefined,
+        creator_title: ok ? conv.title : undefined,
+        via: ok ? via : undefined,
+      });
+      if (ok && !args.dry_run) {
+        await ctx.db.patch(t._id, { created_by_conversation_id: conv._id });
+      }
+    }
+    return {
+      scanned: targets.length,
+      remaining: orphans.length - targets.length,
+      next_before_ms: targets.length ? targets[targets.length - 1].created_at : null,
+      results: out,
+    };
+  },
+});
+
+export const listTasks = query({
+  args: {
+    api_token: v.string(),
+    status: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const tasks = args.status
+      ? await ctx.db
+          .query("agent_tasks")
+          .withIndex("by_user_status", (q) =>
+            q.eq("user_id", auth.userId).eq("status", args.status as any)
+          )
+          .collect()
+      : await ctx.db
+          .query("agent_tasks")
+          .withIndex("by_user_status", (q) => q.eq("user_id", auth.userId))
+          .collect();
+
+    return await withResolvedRunConversations(ctx, auth.userId, tasks);
+  },
+});
+
+export const getTask = query({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return null;
+    return task;
+  },
+});
+
+// Turn a short id ("tr-42") or Convex id into a trigger the caller may
+// manage — same conversation-access rule as the web verbs, so `cast trigger
+// pause tr-42` works on a bot-owned trigger the CLI's own-only list can't see.
+export const resolveTask = query({
+  args: { api_token: v.string(), ref: v.string() },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+    const ref = args.ref.trim();
+    let task: Doc<"agent_tasks"> | null = null;
+    if (/^tr-\w+$/i.test(ref)) {
+      task = await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_short_id", (q) => q.eq("short_id", ref.toLowerCase()))
+        .unique();
+    } else {
+      const id = ctx.db.normalizeId("agent_tasks", ref);
+      task = id ? await ctx.db.get(id) : null;
+    }
+    if (!task || !(await canViewTask(ctx, auth.userId, task))) return null;
+    return {
+      _id: task._id,
+      short_id: task.short_id,
+      title: task.title,
+      status: task.status,
+      is_own: task.user_id === auth.userId,
+    };
+  },
+});
+
+// The conversation a trigger fires into from the server rather than from a
+// daemon: a hosted conversation (agent_type "codecast", whose turn engine the
+// enqueue wakes), or one a configured cloud wake host serves. Null leaves the
+// trigger to the owner's daemon (getDueTasks / claimTask).
+async function cloudTriggerConversation(ctx: TaskCtx, task: Doc<"agent_tasks">) {
+  if (!task.originating_conversation_id) return null;
+  const conversation = await ctx.db.get(task.originating_conversation_id);
+  if (!conversation) return null;
+  // A hosted conversation never reaches a daemon, whoever armed the routine:
+  // the dispatcher pauses one its owner did not set (hostedRoutineRefusal).
+  if (isHostedAgentType(conversation.agent_type)) return conversation;
+  if (task.user_id !== conversation.user_id) return null;
+  if (configuredCloudWakeHosts().length === 0) return null;
+  return await getCloudWakeHostForConversation(ctx, conversation) ? conversation : null;
+}
+
+// The frame a trigger run arrives in, built in one place for every writer (the
+// cloud dispatch, a role's needs-input firing, and the daemon's local inject
+// through injectFrame): the trigger's prompt with its lifecycle, the role's
+// card when the trigger belongs to a role, the waiting session when one fired
+// it, and a note when the session is stashed out of the person's sight.
+
+export async function roleCardOf(ctx: TaskCtx, roleId: Id<"org_roles"> | undefined): Promise<RoleCard | null> {
+  const role: any = roleId ? await ctx.db.get(roleId) : null;
+  if (!role || role.status === "retired") return null;
+  const to = role.reports_to;
+  const parent: any = to?.kind === "role" ? await ctx.db.get(to.role_id) : to?.kind === "user" ? await ctx.db.get(to.user_id) : null;
+  const reports_to = to?.kind === "role" ? (parent ? `@${parent.handle}` : "") : (parent?.name ?? "");
+  const projects: any[] = (await Promise.all((role.scope?.project_ids ?? []).map((id: any) => ctx.db.get(id)))).filter(Boolean);
+  const plans: any[] = (await Promise.all((role.scope?.plan_ids ?? []).map((id: any) => ctx.db.get(id)))).filter(Boolean);
+  const served = await roleServedInitiatives(ctx, role);
+  const firstLine = (t: unknown, n: number) => {
+    const line = String(t ?? "").split("\n")[0].trim();
+    if (line.length <= n) return line;
+    const cut = line.slice(0, n);
+    return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), n / 2)).replace(/[\s,;:.]+$/, "")}…`;
+  };
+  return {
+    handle: role.handle,
+    name: role.name,
+    reports_to,
+    scope: [...projects, ...plans].map((r) => r.title).filter(Boolean),
+    ...(firstLine(role.charter, 240) ? { charter: firstLine(role.charter, 240) } : {}),
+    goals: projects.map((p) => firstLine(p.goal, 160)).filter(Boolean).slice(0, 3),
+    // What the area feeds, up to the top level goal, with each number read
+    // against its target: the link from a role's day to the company's goals.
+    ...(served.length ? { initiatives: served.map((i) => ({ short_id: i.short_id, title: i.title, metrics: i.metrics.map((m) => metricLine(m)), chain: i.chain.map((c) => c.title) })) } : {}),
+  };
+}
+
+export async function triggerFrameFor(ctx: TaskCtx, task: Doc<"agent_tasks">, conversation: Doc<"conversations"> | null, waiting?: WaitingSession, change?: AreaChange): Promise<string> {
+  const stashed = !!conversation && !conversation.inbox_killed_at && !!conversation.inbox_stashed_at;
+  return triggerRunFrame(task, { role: await roleCardOf(ctx, task.role_id), waiting, change, stashed });
+}
+
+// The route up (org-staffing.md S28): a session that reports to a role needs
+// input, and the role's own event trigger fires for it. The run is written
+// here rather than armed for the daemon to claim, because an event's run_at
+// carries no payload and two sessions that block together would share one
+// claim: each firing is its own frame, naming the session that waits. Null
+// when nothing fired: the role cannot be reached (reachableRole), or the
+// person paused or cancelled the trigger, which is their control over it.
+/** The role and the armed trigger that would hear a waiting session, or null
+ *  when nothing can: no standing session, the org off, the role's machine
+ *  away (roleMachineAway), or the person paused or cancelled the trigger. A
+ *  seat from before the trigger existed is armed here, on its first event. */
+async function roleHearing(ctx: TaskCtx, roleId: Id<"org_roles">, spec: RoleEventSpec = ROLE_NEEDS_INPUT_SPEC): Promise<{ standing: Doc<"conversations">; task: Doc<"agent_tasks"> } | null> {
+  const reached = await reachableRole(ctx, roleId);
+  if (!reached) return null;
+  if (roleMachineAway(await runnerDeviceOf(ctx, reached.standing), Date.now())) return null;
+  const task = await ctx.db.get((await ensureRoleEventTrigger(ctx, reached.role, reached.standing, spec)).id);
+  return task && task.status === "scheduled" ? { standing: reached.standing, task } : null;
+}
+
+/** The role that hears for a waiting session: its role for a session under
+ *  one, the parent role for a role's own standing session, null otherwise. */
+async function routeUpTarget(ctx: TaskCtx, conv: Doc<"conversations">): Promise<{ target: Id<"org_roles"> | null; standingRole: any }> {
+  const standingRole = conv.standing_role_id ? await ctx.db.get(conv.standing_role_id) : null;
+  const target = standingRole ? (standingRole.reports_to?.kind === "role" ? standingRole.reports_to.role_id : null) : conv.org_role_id ?? null;
+  return { target, standingRole };
+}
+
+/** Whether a waiting session's route up has a listener, without firing it. */
+export async function routeUpHears(ctx: TaskCtx, conv: Doc<"conversations">): Promise<"hears" | "nobody" | "unreachable"> {
+  const { target } = await routeUpTarget(ctx, conv);
+  if (!target) return "nobody";
+  return (await roleHearing(ctx, target)) ? "hears" : "unreachable";
+}
+
+export async function fireRoleNeedsInput(
+  ctx: TaskCtx,
+  roleId: Id<"org_roles">,
+  waiting: WaitingSession,
+  clientId: string,
+): Promise<Id<"pending_messages"> | null> {
+  return fireRoleEvent(ctx, roleId, ROLE_NEEDS_INPUT_SPEC, { waiting }, clientId);
+}
+
+/** One firing of a role's event trigger (S28, S29): the run is written into
+ *  the standing session as a frame naming what fired it (a waiting session,
+ *  an area change), and the trigger's run count moves as on any run. */
+export async function fireRoleEvent(
+  ctx: TaskCtx,
+  roleId: Id<"org_roles">,
+  spec: RoleEventSpec,
+  about: { waiting?: WaitingSession; change?: AreaChange },
+  clientId: string,
+): Promise<Id<"pending_messages"> | null> {
+  const hearing = await roleHearing(ctx, roleId, spec);
+  if (!hearing) return null;
+  const { standing, task } = hearing;
+  const now = Date.now();
+  const id = await enqueuePendingMessage(ctx as any, standing, task.user_id, {
+    content: await triggerFrameFor(ctx, task, standing, about.waiting, about.change),
+    origin: "scheduler",
+    client_id: clientId,
+  });
+  await patchTask(ctx, task, { ...completedTaskRunFields(task, now, { conversation_id: String(standing._id) }), ...claimRunSourceFields(task) });
+  return id;
+}
+
+// A session under a role waits: fire the trigger of the role that hears for
+// it, once per ask. A hand tells its role. A role's own standing session tells
+// the role it reports to and speaks as the role; one that reports to a person
+// is that person's own card and tells nobody ("nobody"). The ask is stamped on
+// the row as the message count it was told at and the first line of the
+// pinned state, because the needs-input check runs up to three times per
+// settle and the reason a session waits can change while it waits (it
+// declares blocked, then its process stops): nothing new was said at the same
+// count. A declared block is one ask per pinned line, so a session that works
+// on and declares the same block again has not asked anything new. A hard
+// stall (an open prompt, a stopped process) is one ask per settle, whatever
+// is pinned. "unreachable" means the role could not be told (fireRoleNeedsInput
+// returned null) and the wait is still the person's to hear about.
+export async function routeUpWaitingSession(
+  ctx: TaskCtx,
+  conv: Doc<"conversations">,
+  wait: { why: string; since: number; stuck?: boolean },
+): Promise<"told" | "already" | "nobody" | "unreachable"> {
+  const state = String(conv.thread_state ?? "").split("\n")[0].slice(0, 200);
+  const count = conv.message_count ?? 0;
+  const [toldAt, ...toldState] = String(conv.hand_wake_notified_key ?? "").split(":");
+  const sameLine = !wait.stuck && conv.thread_state_status === "blocked" && !!state && toldState.join(":") === state;
+  if ((toldAt !== "" && Number(toldAt) === count) || sameLine) return "already";
+  const { target, standingRole } = await routeUpTarget(ctx, conv);
+  if (!target) return "nobody";
+  const episode = `${count}:${state}`;
+  const id = await fireRoleNeedsInput(ctx, target, {
+    short_id: conv.short_id ?? String(conv._id).slice(0, 7),
+    title: (conv.title ?? "").slice(0, 80),
+    why: wait.why,
+    since: wait.since,
+    ...(standingRole ? { role: standingRole.handle } : {}),
+    state,
+  }, `session-waits:${conv._id}:${episode}`);
+  if (!id) return "unreachable";
+  await ctx.db.patch(conv._id, { hand_wake_notified_key: episode });
+  return "told";
+}
+
+/** Arm the role's needs-input trigger on its standing session, once. A
+ *  trigger of this role that exists in any status is left exactly as the
+ *  person has it: their prompt, their pause, their cancel. A dead one that an
+ *  earlier role left in the same session is not this role's (orgRoutine). */
+export async function ensureRoleNeedsInputTrigger(ctx: TaskCtx, role: { _id: Id<"org_roles"> }, standing: Doc<"conversations">): Promise<{ id: Id<"agent_tasks">; short_id?: string; created: boolean }> {
+  return ensureRoleEventTrigger(ctx, role, standing, ROLE_NEEDS_INPUT_SPEC);
+}
+
+/** Arm one of a role's event triggers, by the same rule. */
+export async function ensureRoleEventTrigger(ctx: TaskCtx, role: { _id: Id<"org_roles"> }, standing: Doc<"conversations">, spec: RoleEventSpec): Promise<{ id: Id<"agent_tasks">; short_id?: string; created: boolean }> {
+  const found = await findRoleEventTrigger(ctx, standing, spec.event, role);
+  if (found) return { id: found._id, short_id: found.short_id, created: false };
+  const created = await insertTask(ctx, standing.user_id, {
+    title: spec.title,
+    prompt: spec.prompt,
+    originating_conversation_id: String(standing._id),
+    project_path: standing.project_path ?? undefined,
+    schedule_type: "event",
+    event_filter: { event_type: spec.event },
+    mode: "apply",
+    role_id: role._id,
+  });
+  return { ...created, created: true };
+}
+
+/** Every event trigger the role should have (roleEventSpecsFor), armed. */
+export async function ensureRoleEventTriggers(ctx: TaskCtx, role: { _id: Id<"org_roles">; handle: string }, standing: Doc<"conversations">): Promise<void> {
+  for (const spec of roleEventSpecsFor(role)) await ensureRoleEventTrigger(ctx, role, standing, spec);
+}
+
+export const dispatchCloudTriggers = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ scanned: number; dispatched: number; done: boolean }> => {
+    // Hosted conversations take their routines through this path on every
+    // deployment. With no cloud wake host configured they are the only rows
+    // it can fire, so it reads just those (hosted_home); otherwise it reads
+    // every due row, the hosted ones included.
+    const now = Date.now();
+    const page = configuredCloudWakeHosts().length === 0
+      ? await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_hosted_status_run_at", (q) => q.eq("hosted_home", true).eq("status", "scheduled").gt("run_at", 0).lte("run_at", now))
+        .order("asc")
+        .paginate({ cursor: args.cursor ?? null, numItems: 50 })
+      : await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_status_run_at", (q) => q.eq("status", "scheduled").gt("run_at", 0).lte("run_at", now))
+        .order("asc")
+        .paginate({ cursor: args.cursor ?? null, numItems: 50 });
+    let dispatched = 0;
+    for (const task of page.page) {
+      const conversation = await cloudTriggerConversation(ctx, task);
+      if (!conversation) continue;
+      // Armed before the owner's plan shrank, before limits existed, or by
+      // someone other than the owner: the routine pauses instead of waking a
+      // turn. Only older routines count, so the newest pause first.
+      const refusal = await hostedRoutineRefusal(ctx, task, { olderOnly: true });
+      if (refusal) {
+        await applyPause(ctx, task);
+        console.warn("hosted_routine_paused", { task_id: task._id, reason: refusal });
+        continue;
+      }
+      const clientId = `cloud-trigger:${task._id}:${task.run_count}`;
+      const updates: Record<string, any> = { ...completedTaskRunFields(task, now, { conversation_id: conversation._id }), ...claimRunSourceFields(task) };
+      const pendingMessageId = await enqueuePendingMessage(ctx, conversation, task.user_id, {
+        content: await triggerFrameFor(ctx, task, conversation),
+        origin: "scheduler",
+        client_id: clientId,
+      });
+      await patchTask(ctx, task, updates);
+      dispatched++;
+      console.info("cloud_trigger_dispatched", {
+        task_id: task._id,
+        conversation_id: conversation._id,
+        pending_message_id: pendingMessageId,
+        client_id: clientId,
+        run_count: updates.run_count,
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.agentTasks.dispatchCloudTriggers, { cursor: page.continueCursor });
+    }
+    return { scanned: page.page.length, dispatched, done: page.isDone };
+  },
+});
+
+// The frame a local inject run delivers, built by the one writer every path
+// shares (triggerFrameFor), so a daemon never assembles its own.
+export const injectFrame = query({
+  args: { api_token: v.string(), task_id: v.id("agent_tasks") },
+  handler: async (ctx, args): Promise<string | null> => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return null;
+    const conversation = task.originating_conversation_id ? await ctx.db.get(task.originating_conversation_id) : null;
+    return await triggerFrameFor(ctx, task, conversation);
+  },
+});
+
+export const getDueTasks = query({
+  args: {
+    api_token: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token, false);
+    if (!auth) throw new Error("Unauthorized");
+
+    const now = Date.now();
+    const tasks = await ctx.db
+      .query("agent_tasks")
+      .withIndex("by_status_run_at", (q) => q.eq("status", "scheduled"))
+      .collect();
+
+    const dueTasks = [];
+    for (const task of tasks) {
+      if (task.user_id !== auth.userId || task.run_at === undefined || !(task.run_at <= now)) continue;
+      if (await cloudTriggerConversation(ctx, task)) continue;
+      dueTasks.push(task);
+    }
+    return dueTasks.slice(0, args.limit || 5);
+  },
+});
+
+export const claimTask = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    daemon_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return null;
+    if (task.status !== "scheduled") return null;
+    if (await cloudTriggerConversation(ctx, task)) return null;
+
+    const now = Date.now();
+    const sourceFields = claimRunSourceFields(task);
+    // Through patchTask (scheduled → running are both armed statuses, so the
+    // home's armed_trigger_kind is unchanged — but every lifecycle writer
+    // routes through the one restamping chokepoint; see the exhaustive test).
+    // The parked session uuid rides out on the claimed task (the daemon
+    // resumes it) and clears on the row: a run is resumed once.
+    await patchTask(ctx, task, {
+      status: "running",
+      lease_holder: args.daemon_id,
+      lease_expires_at: now + LEASE_DURATION_MS,
+      parked_run_session_uuid: undefined,
+      // This run sees every pending event, including ones a previous run
+      // missed, so none is still owed a run of its own.
+      ...(task.pending_events?.some((e) => e.after_claim)
+        ? { pending_events: task.pending_events!.map(({ after_claim: _late, ...e }) => e) }
+        : {}),
+      ...sourceFields,
+    });
+
+    return { ...task, status: "running" as const, ...sourceFields };
+  },
+});
+
+export const renewLease = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    daemon_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return false;
+    if (task.status !== "running" || task.lease_holder !== args.daemon_id) return false;
+
+    await ctx.db.patch(args.task_id, {
+      lease_expires_at: Date.now() + LEASE_DURATION_MS,
+    });
+    return true;
+  },
+});
+
+function completedTaskRunFields(
+  task: Doc<"agent_tasks">,
+  now: number,
+  args: {
+    summary?: string;
+    conversation_id?: string;
+    run_session_uuid?: string;
+    needs_attention?: boolean;
+  },
+  isLateSummary = false,
+): Record<string, any> {
+  const updates: Record<string, any> = {
+    last_run_at: now,
+    last_run_summary: args.summary,
+    last_run_failed: false,
+    retry_count: 0,
+    last_run_conversation_id: args.conversation_id
+      ? args.conversation_id as Id<"conversations">
+      : undefined,
+    last_run_session_uuid: args.run_session_uuid || undefined,
+    last_run_needs_attention: !!args.needs_attention,
+    lease_holder: undefined,
+    lease_expires_at: undefined,
+    // The focus was for this run; the next one is the routine's own.
+    requested_run_focus: undefined,
+  };
+  if (!isLateSummary) {
+    updates.run_count = task.run_count + 1;
+    Object.assign(updates, nextArmingAfterRun(task, now));
+  }
+  return updates;
+}
+
+// When a trigger fires next, once this firing is over. Shared by the completion
+// path and the precheck skip path so a skipped firing re-arms a recurring
+// trigger on its normal cadence instead of leaving it due and re-firing at once.
+//
+// A recurring trigger re-arms on its cadence: the first slot after now, counted
+// from the slot this firing was armed for, never from when the run finished.
+// Counting from the finish slid a daily check later by its own runtime every
+// day, until it landed just past the 24 hour window its evidence had to fall
+// in. A run that outlasts its interval skips the slots it missed, and a manual
+// run ahead of the next slot leaves that slot standing.
+export function nextArmingAfterRun(task: Pick<Doc<"agent_tasks">, "schedule_type" | "interval_ms" | "run_at" | "cadence_slot_at"> & Partial<Pick<Doc<"agent_tasks">, "pending_events" | "cadence">>, now: number): Record<string, any> {
+  if (task.schedule_type === "recurring" && task.cadence) {
+    const slot = task.cadence_slot_at ?? task.run_at ?? now;
+    return { status: "scheduled", run_at: slot > now ? slot : nextCadenceRun(task.cadence, now), cadence_slot_at: undefined };
+  }
+  if (task.schedule_type === "recurring" && task.interval_ms) {
+    const slot = task.cadence_slot_at ?? task.run_at ?? now;
+    const elapsed = slot > now ? 0 : Math.floor((now - slot) / task.interval_ms) + 1;
+    return { status: "scheduled", run_at: slot + elapsed * task.interval_ms, cadence_slot_at: undefined };
+  }
+  // Disarmed until the next webhook, which sets run_at again. The events this
+  // run was told about are spent here rather than at the claim: an inject run
+  // reads its frame from the row after claiming (injectFrame), so clearing at
+  // the claim would hand it an empty list (external-data.md X4). Events that
+  // fired while this run held the trigger were never shown to it: they stay,
+  // and the trigger is due again at once.
+  if (task.schedule_type === "event") {
+    const late = (task.pending_events ?? []).filter((e) => e.after_claim);
+    return late.length
+      ? { status: "scheduled", run_at: now, pending_events: late }
+      : { status: "scheduled", run_at: undefined, pending_events: undefined };
+  }
+  // A one-shot keeps its run_at: nothing reads it once the status is terminal,
+  // and it is the record of when this trigger actually fired.
+  return { status: "completed" };
+}
+
+// What a finished run does to the conversations around it.
+//
+// 1. The run's own conversation takes the completion as its DECLARATION. A
+//    spawned run that reported its own outcome (`cast trigger complete
+//    --summary`, no daemon_id: the daemon's tmux-exit completion means the
+//    agent died without reporting, and that run must keep reading as a death)
+//    has said who acts next: nobody, or with --needs-attention the human. That
+//    is the same claim `cast state --status done|blocked` makes, so it goes
+//    through the same writer. Without it the run's process exit reads as a dead
+//    session with output: every clean run filed under Needs Input, and the
+//    stall rule pulled a folded one back out seconds after the fold.
+// 2. The result is posted where it is read (runResultThreadOf) — or, when the
+//    outcome is the owner's to act on (runOwnerWakeOf: a death, an ask, or a
+//    report the trigger asked to be woken for), delivered to the owner as a
+//    turn instead of a line it may never open.
+// 3. The run folds out of the inbox once its result lives somewhere else: a
+//    repeating trigger's standing row, or the thread from step 2. A once run
+//    with nowhere to post stays in the inbox, filed under Done — its single
+//    result IS the deliverable. Pins, earlier triage and queued messages are
+//    the user's intent and are never overridden.
+export async function settleRunConversation(
+  ctx: TaskCtx,
+  task: Doc<"agent_tasks">,
+  runConv: Doc<"conversations"> | null,
+  args: { summary?: string; needs_attention?: boolean; daemon_id?: string },
+  now: number,
+): Promise<void> {
+  const summary = args.summary ? normalizeThreadState(args.summary) : "";
+  // The agent's own report (no daemon_id) — a codex run reports too, though
+  // its conversation is never resolved (no session uuid), so the outcome is
+  // judged on the report alone and the declaration only where a row exists.
+  const reported = !args.daemon_id && !!summary;
+  const selfReported = !!runConv && reported;
+  if (runConv && selfReported) {
+    await performSetThreadState(ctx as MutationCtx, runConv, summary, args.needs_attention ? "blocked" : "done");
+  }
+
+  const outcome: RunOutcome = reported ? (args.needs_attention ? "attention" : "reported") : "unreported_exit";
+  let posted = await wakeRunOwner(ctx, task, runConv, outcome, reported ? args.summary : undefined, now);
+  const threadId = posted ? undefined : runResultThreadOf(task);
+  const thread = threadId && args.summary ? await ctx.db.get(threadId) : null;
+  // Never into a hosted transcript, which only its turn engine writes: a run's
+  // summary may carry what the run read (mail, web pages), and the model would
+  // replay a line here as its own words. Creation refuses such a thread
+  // (hostedThreadRefusal); this holds for rows armed before that rule.
+  if (thread && !isHostedAgentType(thread.agent_type)) {
+    // A spawned run names its trigger and its own session, so the line in the
+    // thread is one click from the transcript behind it.
+    const runRef = runConv ? runConv.short_id ?? runConv._id.toString().slice(0, 7) : null;
+    const content = runRef
+      ? `${task.short_id ?? task.title} ran in ${runRef}${args.needs_attention ? " and needs attention" : ""}:\n\n${args.summary}`
+      : args.summary!;
+    await ctx.db.insert("messages", {
+      conversation_id: thread._id,
+      role: "assistant",
+      content,
+      subtype: "scheduled_task_result",
+      timestamp: now,
+    });
+    await ctx.db.patch(thread._id, { updated_at: now, message_count: thread.message_count + 1 });
+    posted = true;
+  }
+
+  const repeatingSpawn =
+    (task.schedule_type === "recurring" || task.schedule_type === "event") &&
+    !task.originating_conversation_id;
+  if (
+    runConv &&
+    selfReported &&
+    !args.needs_attention &&
+    (repeatingSpawn || posted) &&
+    !runConv.inbox_pinned_at &&
+    !runConv.inbox_dismissed_at &&
+    !runConv.inbox_stashed_at &&
+    !runConv.has_pending_messages
+  ) {
+    // Folded = out of the way, NOT retired: the run's history is living state,
+    // so the fold writes the stash stamp (Stashed bucket) rather than the
+    // legacy dismissed stamp that files rows under Killed.
+    await ctx.db.patch(runConv._id, { inbox_stashed_at: now });
+  }
+}
+
+export const completeTaskRun = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    daemon_id: v.optional(v.string()),
+    summary: v.optional(v.string()),
+    conversation_id: v.optional(v.string()),
+    // Claude session UUID of the spawned run (from `claude --session-id`). Stored
+    // raw and resolved to a conversation at read time in webList, since the run's
+    // conversation may not have synced yet at this instant.
+    run_session_uuid: v.optional(v.string()),
+    // Agent's explicit "the user should read this run" declaration
+    // (`cast trigger complete --needs-attention`). Skips the clean-run fold
+    // below and keeps the run card escalated in the inbox.
+    needs_attention: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return false;
+    if (args.daemon_id && task.lease_holder !== args.daemon_id) return false;
+
+    // Inject path: the daemon auto-completes the task on injection (without a
+    // summary) so the lease doesn't expire and re-fire. The agent in the
+    // originating conversation calls this later with --summary; allow it
+    // through so the summary still posts to target_conversation.
+    const isLateSummary =
+      task.status === "completed" &&
+      !task.last_run_summary &&
+      !!args.summary;
+
+    if (
+      task.status !== "running" &&
+      task.status !== "scheduled" &&
+      !isLateSummary
+    ) {
+      return false;
+    }
+
+    const now = Date.now();
+    const updates = completedTaskRunFields(task, now, args, isLateSummary);
+
+    // Keep the run conversation attributable to its schedule even after a
+    // later run overwrites last_run_*. This is the backfill for the daemon's
+    // post-spawn linkRunConversation — it rides whichever completion is
+    // accepted (the agent's own `cast trigger complete` lands first and wins;
+    // the daemon's tmux-exit completion is rejected by the status guard above).
+    // Spawn tasks only: for an inject task the agent self-completes from INSIDE
+    // the originating session, so its uuid resolves to the originating
+    // conversation — which is the schedule's home, not a run of it.
+    let runConv: Doc<"conversations"> | null = null;
+    if (args.run_session_uuid && !task.originating_conversation_id) {
+      runConv = await stampRunConversation(ctx, auth.userId, task, args.run_session_uuid);
+    }
+
+    // The daemon reporting the process gone while the run's transcript ends
+    // on a limit banner is a park, not a completion: nothing ran.
+    if (args.daemon_id && runConv && runIsLimitParked(runConv) && task.status === "running") {
+      await parkRunAtLimit(ctx, task, runConv, now);
+      return true;
+    }
+
+    await settleRunConversation(ctx, task, runConv, args, now);
+
+    // --needs-attention is the agent's claim on the user's eyes, and stash/kill
+    // must not swallow it: if the conversation the flag points at (the inject
+    // loop's home, or this spawn run) sits in Stashed or Killed, pull it back
+    // into the active inbox — the just-finished turn then triages as
+    // needs-input. One-shot at completion: re-stashing silences the loop again
+    // until the NEXT flagged run.
+    const attentionConvId =
+      runNoticeConversationId(task, runConv) ??
+      (args.conversation_id
+        ? (args.conversation_id as Id<"conversations">)
+        : undefined);
+    if (args.needs_attention) {
+      const conv =
+        runConv && runConv._id === attentionConvId
+          ? runConv
+          : attentionConvId
+            ? await ctx.db.get(attentionConvId)
+            : null;
+      if (conv && conv.user_id === auth.userId) await restoreToInbox(ctx, conv);
+    }
+
+    await patchTask(ctx, task, updates);
+
+    // Notify only a run the agent flagged --needs-attention. Every run's
+    // summary already lands in its thread or on the schedule row (see the fold
+    // above), so a clean completion, one-shot or repeating, is read there; a
+    // "Task completed" push for each was most of a person's bell (50 a week).
+    // Late summaries never re-notify (the initial completion already did).
+    const shouldNotify = !isLateSummary && !!args.needs_attention;
+    const user = await ctx.db.get(auth.userId);
+    if (shouldNotify && user?.push_token && user.notifications_enabled) {
+      const notifId = await ctx.db.insert("notifications", {
+        recipient_user_id: auth.userId,
+        type: "task_completed",
+        message: `Task "${task.title}" completed${args.summary ? `: ${args.summary.slice(0, 100)}` : ""}`,
+        conversation_id: attentionConvId,
+        read: false,
+        created_at: now,
+      });
+      await enqueuePush(ctx, {
+        user,
+        notification_id: notifId,
+        type: "task_completed",
+        title: "Task completed",
+        body: task.title,
+        data: { type: "task_completed", taskId: args.task_id, conversationId: attentionConvId },
+      });
+    }
+
+    return true;
+  },
+});
+
+export const failTaskRun = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    daemon_id: v.string(),
+    error: v.optional(v.string()),
+    // Session UUID of the failed run, so a failure is still one click from the
+    // transcript that shows what went wrong.
+    run_session_uuid: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return false;
+    if (task.lease_holder !== args.daemon_id) return false;
+
+    const maxRetries = task.max_retries ?? DEFAULT_MAX_RETRIES;
+    const newRetryCount = task.retry_count + 1;
+    const runUuid = args.run_session_uuid || undefined;
+
+    // A failed run's conversation is one click away from what went wrong —
+    // stamp it too (and last_run_failed gates the auto-fold: a failed run
+    // must stay visible in the inbox when the retry starts). Spawn tasks only,
+    // same reason as completeTaskRun.
+    let runConv: Doc<"conversations"> | null = null;
+    if (runUuid && !task.originating_conversation_id) {
+      runConv = await stampRunConversation(ctx, auth.userId, task, runUuid);
+    }
+
+    if (runConv && runIsLimitParked(runConv)) {
+      await parkRunAtLimit(ctx, task, runConv, Date.now());
+      return true;
+    }
+
+    if (newRetryCount < maxRetries) {
+      await patchTask(ctx, task, {
+        status: "scheduled",
+        retry_count: newRetryCount,
+        ...offCadence(task, Date.now() + 60_000 * newRetryCount), // backoff
+        requested_run_source: task.last_run_source === "manual" ? "manual" : undefined,
+        lease_holder: undefined,
+        lease_expires_at: undefined,
+        last_run_summary: args.error ? `Failed: ${args.error}` : "Failed",
+        last_run_failed: true,
+        last_run_session_uuid: runUuid,
+      });
+    } else {
+      await patchTask(ctx, task, {
+        status: "failed",
+        retry_count: newRetryCount,
+        lease_holder: undefined,
+        lease_expires_at: undefined,
+        last_run_summary: args.error ? `Failed: ${args.error}` : "Failed (max retries)",
+        last_run_failed: true,
+        last_run_session_uuid: runUuid,
+      });
+
+      // Retries exhausted = the loop is dead, and a hidden home must not stay
+      // hidden with a dead loop inside it — the stall rule ("stash hides work,
+      // not stalls"), same clear the --needs-attention claim uses. Transient
+      // failures above stay quiet: the retry is still progress.
+      if (task.originating_conversation_id) {
+        const home = await ctx.db.get(task.originating_conversation_id);
+        if (home) await restoreToInbox(ctx, home);
+      }
+      // A fresh run's death is its owner's to act on: the run is nested under
+      // it and out of the inbox, so the owner is told, not the human.
+      await wakeRunOwner(ctx, task, runConv, "failed", args.error, Date.now());
+
+      const user = await ctx.db.get(auth.userId);
+      if (user?.push_token && user.notifications_enabled) {
+        const failedConvId = runNoticeConversationId(task, runConv);
+        const notifId = await ctx.db.insert("notifications", {
+          recipient_user_id: auth.userId,
+          type: "task_failed",
+          message: `Task "${task.title}" failed: ${args.error || "max retries exceeded"}`,
+          conversation_id: failedConvId,
+          read: false,
+          created_at: Date.now(),
+        });
+        await enqueuePush(ctx, {
+          user,
+          notification_id: notifId,
+          type: "task_failed",
+          title: "Task failed",
+          body: `${task.title}: ${args.error || "max retries exceeded"}`,
+          data: { type: "task_failed", taskId: args.task_id, conversationId: failedConvId },
+        });
+      }
+    }
+
+    return true;
+  },
+});
+
+// The daemon's precheck gate refused this firing: `cast trigger add --precheck`
+// ran its shell command in the trigger's project directory and it did not exit
+// 0. No agent was spawned and nothing was injected, so there is no conversation
+// to project a run from — the skip row IS the run record, and webListRuns folds
+// it into the history beside the real runs.
+//
+// The trigger re-arms exactly as a finished run would (nextArmingAfterRun), so
+// a recurring trigger with a precheck simply waits for its next interval. A
+// skip is not a failure either: retry_count stays where it is, because nothing
+// went wrong — the trigger asked whether there was work and the answer was no.
+export const skipTaskRun = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    daemon_id: v.string(),
+    command: v.string(),
+    exit_code: v.optional(v.number()),
+    timed_out: v.boolean(),
+    duration_ms: v.number(),
+    output: v.optional(v.string()),
+    reason: v.string(),
+    source: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.user_id !== auth.userId) return false;
+    if (task.status !== "running" || task.lease_holder !== args.daemon_id) return false;
+
+    const now = Date.now();
+    await ctx.db.insert("agent_task_precheck_skips", {
+      task_id: args.task_id,
+      user_id: auth.userId,
+      command: args.command,
+      exit_code: args.exit_code,
+      timed_out: args.timed_out,
+      duration_ms: args.duration_ms,
+      output: args.output,
+      reason: args.reason,
+      source: task.last_run_source ?? args.source ?? triggerFiringSource(task.schedule_type),
+      created_at: now,
+    });
+
+    await patchTask(ctx, task, {
+      ...nextArmingAfterRun(task, now),
+      last_precheck_skip_at: now,
+      last_precheck_skip_reason: args.reason,
+      lease_holder: undefined,
+      lease_expires_at: undefined,
+    });
+    return true;
+  },
+});
+
+// Called by the daemon shortly after spawning a run (bounded retries — the
+// run's conversation appears when its JSONL first syncs). Two jobs, one
+// transaction:
+//
+// 1. Stamp agent_task_id on the new run's conversation, so the schedule strip
+//    and badges work DURING the run and on every historical run.
+// 2. Auto-fold the PREVIOUS run: for a repeating spawn schedule (recurring or
+//    event), each fire lands a whole new conversation in the inbox — an hourly
+//    job is 24 cards a day of pure noise. The moment a new run starts, the
+//    previous run has been superseded: if it completed cleanly, fold it out of
+//    the active inbox (dismiss). Attention stays earned, not granted: a run
+//    that FAILED (last_run_failed), asked for attention, is still active, was
+//    pinned, or has a pending user message is never folded. Folded runs remain reachable — the
+//    Dismissed group, /schedules, and the new run's strip all link the history.
+export const linkRunConversation = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    run_session_uuid: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    const task = await getOwnedTask(ctx, args.task_id, auth.userId);
+    if (!task) return { linked: false, retry: false };
+
+    const conv = await stampRunConversation(ctx, auth.userId, task, args.run_session_uuid);
+    if (!conv) return { linked: false, retry: true }; // not synced yet — daemon retries
+
+    const repeatingSpawn =
+      (task.schedule_type === "recurring" || task.schedule_type === "event") &&
+      !task.originating_conversation_id;
+    // A run that asked for attention declared itself blocked on the human
+    // (settleRunConversation); the next firing must not fold the ask away.
+    if (repeatingSpawn && !task.last_run_failed && !task.last_run_needs_attention) {
+      let prev: Doc<"conversations"> | null = task.last_run_conversation_id
+        ? await ctx.db.get(task.last_run_conversation_id)
+        : null;
+      if (!prev && task.last_run_session_uuid && task.last_run_session_uuid !== args.run_session_uuid) {
+        prev = await ctx.db
+          .query("conversations")
+          .withIndex("by_session_id", (q: any) => q.eq("session_id", task.last_run_session_uuid))
+          .filter((q: any) => q.eq(q.field("user_id"), auth.userId))
+          .first();
+      }
+      // No conv.status check: a spawned run's conversation lingers "active"
+      // long after its agent exits (the watchdog completes it lazily), but
+      // last_run_* only ever points at a run whose task-level completion
+      // (completeTaskRun) already happened — that is the authoritative
+      // "this run finished" signal, and the lease machinery guarantees runs
+      // of one task never overlap.
+      if (
+        prev &&
+        prev._id.toString() !== conv._id.toString() &&
+        prev.user_id.toString() === auth.userId.toString() &&
+        !prev.inbox_pinned_at &&
+        !prev.inbox_dismissed_at &&
+        !prev.inbox_stashed_at &&
+        !prev.has_pending_messages
+      ) {
+        // Same fold, same stamp as completeTaskRun above: superseded runs are
+        // set aside, not killed.
+        await ctx.db.patch(prev._id, { inbox_stashed_at: Date.now() });
+      }
+    }
+    return { linked: true, retry: false };
+  },
+});
+
+export const cancelTask = cliTaskAction(applyCancel, getManageableTask);
+export const pauseTask = cliTaskAction(applyPause, getManageableTask);
+export const resumeTask = cliTaskAction(applyResume, getArmableTask);
+// Run now from the CLI, optionally with a review focus: the same act as the
+// web's webRunNow, so `cast trigger run --focus goal_tree` and the Head of
+// People's "Plan the goal tree" button fire one trigger the same way.
+export const runTaskNow = mutation({
+  args: { api_token: v.string(), task_id: v.id("agent_tasks"), focus: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    if (args.focus !== undefined && !isOrgReviewFocusKey(args.focus)) throw new Error(`Unknown review focus: ${args.focus}`);
+    const task = await getArmableTask(ctx, args.task_id, auth.userId);
+    if (!task) return false;
+    const focus = args.focus as OrgReviewFocusKey | undefined;
+    return logVerb(ctx, task, { userId: auth.userId, source: "cli" }, (c, t) => applyRunNow(c, t, focus));
+  },
+});
+
+// --- Web (session-auth) surface, used by the /schedules page ---
+
+// Attach resolved last-run/originating conversation info to task rows.
+// completeTaskRun stores the run's session UUID raw (the run's conversation
+// may not have synced yet at that instant), so UUID → conversation resolution
+// happens here at read time. Shared by webList (the /schedules page) and
+// listTasks (the CLI's /cli/tasks/list) so both surfaces agree on
+// last_run_conversation_id — `cast trigger log` reads it from listTasks.
+async function withResolvedRunConversations(
+  ctx: TaskCtx,
+  userId: Id<"users">,
+  tasks: Doc<"agent_tasks">[]
+) {
+  // Enrich with conversation titles so rows can link to the last run and
+  // the originating session without N client queries.
+  const convIds = new Set<Id<"conversations">>();
+  for (const t of tasks) {
+    if (t.last_run_conversation_id) convIds.add(t.last_run_conversation_id);
+    if (t.originating_conversation_id) convIds.add(t.originating_conversation_id);
+    if (t.created_by_conversation_id) convIds.add(t.created_by_conversation_id);
+  }
+  const titles = new Map<string, string>();
+  await Promise.all(
+    [...convIds].map(async (id) => {
+      const conv = await ctx.db.get(id);
+      if (conv) titles.set(id, conv.title || "Untitled");
+    })
+  );
+
+  // Raw session uuids stored because the conversation had not synced at
+  // write time: the last run (the --context-current path) and the creator
+  // (a trigger armed before its own session's row existed).
+  const uuidToConv = new Map<string, { id: Id<"conversations">; title: string }>();
+  const pendingUuids = [
+    ...new Set(
+      tasks.flatMap((t) => [
+        ...(t.last_run_session_uuid && !t.last_run_conversation_id ? [t.last_run_session_uuid] : []),
+        ...(t.created_by_session_uuid && !t.created_by_conversation_id ? [t.created_by_session_uuid] : []),
+      ])
+    ),
+  ];
+  await Promise.all(
+    pendingUuids.map(async (uuid) => {
+      const conv = await ctx.db
+        .query("conversations")
+        .withIndex("by_session_id", (q: any) => q.eq("session_id", uuid))
+        .filter((q: any) => q.eq(q.field("user_id"), userId))
+        .first();
+      if (conv) uuidToConv.set(uuid, { id: conv._id, title: conv.title || "Untitled" });
+    })
+  );
+
+  return tasks.map((t) => {
+    const resolved =
+      !t.last_run_conversation_id && t.last_run_session_uuid
+        ? uuidToConv.get(t.last_run_session_uuid)
+        : undefined;
+    const lastRunConvId = t.last_run_conversation_id ?? resolved?.id;
+    const creator =
+      !t.created_by_conversation_id && t.created_by_session_uuid
+        ? uuidToConv.get(t.created_by_session_uuid)
+        : undefined;
+    return {
+      ...t,
+      last_run_conversation_id: lastRunConvId,
+      last_run_conversation_title: t.last_run_conversation_id
+        ? titles.get(t.last_run_conversation_id)
+        : resolved?.title,
+      originating_conversation_title: t.originating_conversation_id
+        ? titles.get(t.originating_conversation_id)
+        : undefined,
+      created_by_conversation_id: t.created_by_conversation_id ?? creator?.id,
+      created_by_conversation_title: t.created_by_conversation_id
+        ? titles.get(t.created_by_conversation_id)
+        : creator?.title,
+    };
+  });
+}
+
+export const webList = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+
+    const tasks = await ctx.db
+      .query("agent_tasks")
+      .withIndex("by_user_status", (q) => q.eq("user_id", userId))
+      .collect();
+
+    return await withResolvedRunConversations(ctx, userId, tasks);
+  },
+});
+
+// A trigger owned by someone else is still VIEWABLE when the viewer can view
+// the conversation it is anchored to (creator, home, or last run). Agents on a
+// remote daemon arm triggers under whatever account that daemon is logged into
+// — often a team bot — while the conversation belongs to a human; strict
+// per-user filtering made those triggers invisible on the very session that
+// created them. Read access piggybacks on conversation access (the workspace
+// rules), so this grants nothing a transcript view doesn't already show.
+// Management verbs follow the same rule (getManageableTask); only delete
+// stays owner-only.
+export async function canViewTask(
+  ctx: { db: any },
+  userId: Id<"users">,
+  task: Doc<"agent_tasks">
+): Promise<boolean> {
+  if (task.user_id.toString() === userId.toString()) return true;
+  const anchors = [
+    task.created_by_conversation_id,
+    task.originating_conversation_id,
+    task.target_conversation_id,
+    task.last_run_conversation_id,
+  ].filter(Boolean) as Id<"conversations">[];
+  for (const id of anchors) {
+    const conv = await ctx.db.get(id);
+    if (conv && (await canAccessConversation(ctx as any, userId, conv))) return true;
+  }
+  return false;
+}
+
+// Every trigger anchored to the given conversations — own AND team-visible
+// foreign rows. One access check per conversation (canAccessConversation), then
+// the two anchor indexes; `is_own` tells the client whether to offer the
+// management verbs. Shared by the single-conversation header query and the
+// batched roster query below, so both grade access by exactly the same rule.
+async function tasksAnchoredToConversations(
+  ctx: TaskCtx,
+  userId: Id<"users">,
+  conversationIds: Id<"conversations">[]
+) {
+  const seen = new Set<string>();
+  const tasks: Doc<"agent_tasks">[] = [];
+  for (const convId of conversationIds) {
+    const conv = await ctx.db.get(convId);
+    if (!conv || !(await canAccessConversation(ctx as any, userId, conv))) continue;
+    const [created, originating] = await Promise.all([
+      ctx.db
+        .query("agent_tasks")
+        .withIndex("by_created_by_conversation", (q: any) =>
+          q.eq("created_by_conversation_id", convId)
+        )
+        .collect(),
+      tasksOriginatedBy(ctx, convId),
+    ]);
+    for (const t of [...created, ...originating]) {
+      if (seen.has(t._id.toString())) continue;
+      seen.add(t._id.toString());
+      tasks.push(t);
+    }
+  }
+  const enriched = await withResolvedRunConversations(ctx, userId, tasks);
+  return await Promise.all(
+    enriched.map(async (t) => {
+      const is_own = t.user_id.toString() === userId.toString();
+      const owner = is_own ? null : await ctx.db.get(t.user_id);
+      return { ...t, is_own, owner_name: owner?.name ?? owner?.email };
+    })
+  );
+}
+
+// Every trigger anchored to one conversation — own AND team-visible foreign
+// rows — for the conversation header strip. The per-user webList can't carry a
+// bot-owned trigger, so the strip merges this on top. Gated on the viewer's
+// access to the conversation itself; `is_own` tells the client whether to
+// offer the management verbs.
+export const webListForConversation = query({
+  args: { conversation_id: v.id("conversations") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return await tasksAnchoredToConversations(ctx, userId, [args.conversation_id]);
+  },
+});
+
+// The batched form, for the trigger ROSTER (inbox section, /triggers, palette).
+// webList is indexed by user_id alone, so a trigger armed by a remote daemon's
+// bot login never reached the roster even when it drives a conversation the
+// viewer owns — it showed in that conversation's header strip and nowhere else.
+// The client picks the candidates off rows it already has (conversations
+// stamped armed_trigger_kind that its own roster does not explain), so this set
+// is a handful of ids, not the viewer's whole inbox. Capped so a client that
+// gets the candidate set wrong cannot turn one subscription into a table walk.
+export const MAX_ANCHOR_CONVERSATIONS = 64;
+
+export const webListForConversations = query({
+  args: { conversation_ids: v.array(v.id("conversations")) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    return await tasksAnchoredToConversations(
+      ctx,
+      userId,
+      args.conversation_ids.slice(0, MAX_ANCHOR_CONVERSATIONS)
+    );
+  },
+});
+
+/**
+ * One trigger by short id ("tr-42") or Convex id — the getter behind the
+ * inline trigger pill, matching tasks.webGet / plans.webGet / conversations.
+ * webGet so every entity pill resolves the same way. Returns null rather than
+ * throwing for a foreign or missing row: a pill degrades to plain text.
+ */
+export const webGet = query({
+  args: { short_id: v.optional(v.string()), id: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+
+    let task: Doc<"agent_tasks"> | null = null;
+    if (args.id) {
+      const normalized = ctx.db.normalizeId("agent_tasks", args.id);
+      task = normalized ? await ctx.db.get(normalized) : null;
+    } else if (args.short_id) {
+      task = await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_short_id", (q) => q.eq("short_id", args.short_id!.toLowerCase()))
+        .unique();
+    }
+    if (!task || !(await canViewTask(ctx, userId, task))) return null;
+
+    const [enriched] = await withResolvedRunConversations(ctx, userId, [task]);
+    const row = enriched ?? task;
+    const is_own = task.user_id.toString() === userId.toString();
+    const owner = is_own ? null : await ctx.db.get(task.user_id);
+    return { ...row, is_own, owner_name: owner?.name ?? owner?.email };
+  },
+});
+
+/**
+ * One-shot: give every pre-existing trigger a short id. Paged (the caller
+ * re-runs until `remaining` is 0) so a large account can't blow the mutation
+ * budget. Allocation goes through the same counter as new rows, so backfilled
+ * and fresh ids share one sequence and can never collide.
+ */
+export const backfillShortIds = internalMutation({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 200;
+    const missing = await ctx.db
+      .query("agent_tasks")
+      .withIndex("by_short_id", (q) => q.eq("short_id", undefined))
+      .take(limit + 1);
+    const batch = missing.slice(0, limit);
+    for (const task of batch) {
+      await ctx.db.patch(task._id, { short_id: await nextShortId(ctx.db, "tr") });
+    }
+    return { filled: batch.length, more: missing.length > limit };
+  },
+});
+
+// One-shot backfill for conversations.armed_trigger_kind: every home of a
+// currently armed inject trigger gets its kind stamped. Bounded by the number of
+// armed triggers, not conversations; homes with no armed trigger stay unset,
+// which reads as "none". Idempotent — re-running writes nothing new.
+export const backfillArmedTriggerKind = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const homes = new Set<string>();
+    for (const status of ["scheduled", "running", "paused"] as const) {
+      const tasks = await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_status_run_at", (q) => q.eq("status", status))
+        .collect();
+      for (const task of tasks) {
+        if (task.originating_conversation_id) homes.add(task.originating_conversation_id.toString());
+      }
+    }
+    let stamped = 0;
+    for (const id of homes) {
+      const before = await ctx.db.get(id as Id<"conversations">);
+      await refreshArmedTriggerKind(ctx, id as Id<"conversations">);
+      const after = await ctx.db.get(id as Id<"conversations">);
+      if (before && after && (before.armed_trigger_kind ?? "none") !== (after.armed_trigger_kind ?? "none")) stamped++;
+    }
+    return { homes: homes.size, stamped };
+  },
+});
+
+// Stamps hosted_home on routines armed before the stamp existed. With no cloud
+// wake host configured the dispatcher reads only stamped rows, so an unstamped
+// hosted routine would never fire there, and the plan limit counts stamps.
+// Pages the whole table and reschedules itself; idempotent, so re-running
+// writes nothing new.
+export const backfillHostedHome = internalMutation({
+  args: { cursor: v.optional(v.string()) },
+  handler: async (ctx, args): Promise<{ scanned: number; stamped: number; done: boolean }> => {
+    const page = await ctx.db.query("agent_tasks").paginate({ cursor: args.cursor ?? null, numItems: 200 });
+    let stamped = 0;
+    for (const task of page.page) {
+      if (!task.originating_conversation_id) continue;
+      const stamp = await hostedHomeStamp(ctx, task.originating_conversation_id);
+      if (task.hosted_home === stamp) continue;
+      await ctx.db.patch(task._id, { hosted_home: stamp });
+      stamped++;
+    }
+    if (!page.isDone) await ctx.scheduler.runAfter(0, internal.agentTasks.backfillHostedHome, { cursor: page.continueCursor });
+    if (stamped > 0) console.log("backfill_hosted_home", { scanned: page.page.length, stamped });
+    return { scanned: page.page.length, stamped, done: page.isDone };
+  },
+});
+
+// Every past run of one schedule, newest first — the browseable run history on
+// every schedule surface (strip, dock, /schedules). Each entry names the
+// conversation to open AND the message that triggered the run, so the UI can
+// land the user on the exact trigger:
+//   • Spawn schedules: one conversation per run (agent_task_id is stamped by
+//     linkRunConversation shortly after spawn and backfilled on completion, so
+//     this is the complete linkable set, unaffected by inbox windows or run
+//     auto-fold). The trigger is the run's first user message (the prompt).
+//   • Inject schedules (--context current): every run is a
+//     `<scheduled-task task-id="...">` user message inside the home
+//     conversation. Found by scanning the conversation's user turns newest
+//     first (the search index can't match 32-char Convex id tokens) with an
+//     exact substring check on the task id. The scan is bounded: sessions so
+//     long their old runs fall outside it lose only the oldest entries.
+//     Encrypted conversations degrade to no history.
+//   • Precheck skips: a firing the --precheck gate refused. No agent ran, so
+//     there is no conversation — the agent_task_precheck_skips row is the run.
+//     Folded in by created_at so the history reads as one timeline.
+// `_id` stays the conversation id for older clients; `run_key` is the unique
+// per-run key (inject runs share one conversation).
+
+/** A firing the precheck gate refused, in the run-history shape. `_id` is the
+ *  skip row, not a conversation — these entries have nothing to open. */
+async function precheckSkipRuns(ctx: { db: any }, taskId: Id<"agent_tasks">) {
+  const skips = await ctx.db
+    .query("agent_task_precheck_skips")
+    .withIndex("by_task", (q: any) => q.eq("task_id", taskId))
+    .order("desc")
+    .take(100);
+  return skips.map((skip: Doc<"agent_task_precheck_skips">) => ({
+    _id: skip._id as string,
+    run_key: skip._id as string,
+    kind: "skipped_precheck" as const,
+    short_id: undefined as string | undefined,
+    title: skip.reason,
+    created_at: skip.created_at,
+    status: undefined as string | undefined,
+    idle_summary: undefined as string | undefined,
+    trigger_message_id: undefined,
+    trigger_message_timestamp: undefined,
+    precheck_command: skip.command,
+    precheck_output: skip.output,
+    source: skip.source,
+  }));
+}
+
+const newestRunsFirst = (rows: any[]) =>
+  rows.sort((a, b) => b.created_at - a.created_at).slice(0, 100);
+
+export const webListRuns = query({
+  args: { task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return [];
+    const task = await ctx.db.get(args.task_id);
+    if (!task || !(await canViewTask(ctx, userId, task))) return [];
+
+    // Read unconditionally: a trigger whose gate was later removed still
+    // skipped the firings it skipped, and the history must not rewrite that.
+    const skipped = await precheckSkipRuns(ctx, args.task_id);
+
+    if (task.originating_conversation_id) {
+      const convId = task.originating_conversation_id;
+      const conv = await ctx.db.get(convId);
+      if (!conv) return skipped;
+      const marker = `task-id="${args.task_id}"`;
+      const userTurns = await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_role_timestamp", (q) =>
+          q.eq("conversation_id", convId).eq("role", "user")
+        )
+        .order("desc")
+        .take(1000);
+      const injected = userTurns
+        .filter((m) => m.content?.includes(marker))
+        .slice(0, 100)
+        .map((m) => ({
+          _id: convId as string,
+          run_key: m._id as string,
+          kind: "inject" as const,
+          short_id: conv.short_id,
+          title: conv.title || "Untitled",
+          created_at: m.timestamp,
+          status: conv.status,
+          idle_summary: undefined as string | undefined,
+          trigger_message_id: m._id,
+          trigger_message_timestamp: m.timestamp,
+        }));
+      return newestRunsFirst([...injected, ...skipped]);
+    }
+
+    const runs = await ctx.db
+      .query("conversations")
+      .withIndex("by_agent_task", (q) => q.eq("agent_task_id", args.task_id))
+      .collect();
+    const newest = runs.sort((a, b) => b._creationTime - a._creationTime).slice(0, 100);
+    const spawned = await Promise.all(
+      newest.map(async (c) => {
+        const trigger = await ctx.db
+          .query("messages")
+          .withIndex("by_conversation_role_timestamp", (q) =>
+            q.eq("conversation_id", c._id).eq("role", "user")
+          )
+          .order("asc")
+          .first();
+        return {
+          _id: c._id as string,
+          run_key: c._id as string,
+          kind: "spawn" as const,
+          short_id: c.short_id,
+          title: c.title || "Untitled",
+          created_at: c._creationTime,
+          status: c.status,
+          idle_summary: c.idle_summary,
+          trigger_message_id: trigger?._id,
+          trigger_message_timestamp: trigger?.timestamp,
+        };
+      })
+    );
+    return newestRunsFirst([...spawned, ...skipped]);
+  },
+});
+
+export const webCreate = mutation({
+  args: {
+    title: v.optional(v.string()),
+    prompt: v.string(),
+    schedule_type: v.union(v.literal("once"), v.literal("recurring"), v.literal("event")),
+    run_at: v.optional(v.number()),
+    interval_ms: v.optional(v.number()),
+    event_filter: v.optional(eventFilterValidator),
+    mode: v.optional(v.string()),
+    agent_type: v.optional(v.string()),
+    model: v.optional(v.string()),
+    agent_definition: v.optional(v.string()),
+    project_path: v.optional(v.string()),
+    max_runtime_ms: v.optional(v.number()),
+    precheck: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const title = args.title?.trim() || args.prompt.slice(0, 60);
+    // A routine for the hosted assistant fires into a hosted conversation
+    // (cloudTriggerConversation), never a daemon, so the routines page's form
+    // starts that conversation as the routine's home. One transaction: a
+    // routine the plan refuses leaves no empty conversation behind.
+    if (isHostedAgentType(args.agent_type)) {
+      const home = await startHostedConversationFor(ctx, userId, { title: title.slice(0, HOSTED_TITLE_MAX_CHARS) });
+      return await insertTask(ctx, userId, {
+        ...args,
+        title,
+        project_path: undefined,
+        originating_conversation_id: home.conversation_id,
+      });
+    }
+    return await insertTask(ctx, userId, { ...args, title });
+  },
+});
+
+export const webPause = webTaskAction(applyPause, getManageableTask);
+export const webResume = webTaskAction(applyResume, getArmableTask);
+export const webReactivate = webTaskAction(applyReactivate, getArmableTask);
+// Run now from the web, with an optional focus for this one run (the Head
+// of People's "Plan the goal tree"): the same verb, logged the same way.
+export const webRunNow = mutation({
+  args: { task_id: v.id("agent_tasks"), focus: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    if (args.focus !== undefined && !isOrgReviewFocusKey(args.focus)) throw new Error(`Unknown review focus: ${args.focus}`);
+    const task = await getArmableTask(ctx, args.task_id, userId);
+    if (!task) return false;
+    const focus = args.focus as OrgReviewFocusKey | undefined;
+    return logVerb(ctx, task, { userId, source: "web" }, (c, t) => applyRunNow(c, t, focus));
+  },
+});
+export const webCancel = webTaskAction(applyCancel, getManageableTask);
+
+// Delete a trigger row with its revision history, then restamp the old home:
+// deleting an armed trigger is a lifecycle transition like cancel, and the
+// home's denormalized armed_trigger_kind must not keep parking a session whose
+// wake no longer exists (sync-convergence C1). Exported so the restamp-on-
+// delete contract is unit-testable without the mutation wrapper.
+export async function deleteTaskCascade(ctx: TaskCtx, task: Doc<"agent_tasks">): Promise<void> {
+  // Delete erases history (see getManageableTask's note) — the edit log
+  // goes with the row rather than orphaning.
+  const revisions = await ctx.db
+    .query("agent_task_revisions")
+    .withIndex("by_task", (q: any) => q.eq("task_id", task._id))
+    .collect();
+  for (const r of revisions) await ctx.db.delete(r._id);
+  const skips = await ctx.db
+    .query("agent_task_precheck_skips")
+    .withIndex("by_task", (q: any) => q.eq("task_id", task._id))
+    .collect();
+  for (const skip of skips) await ctx.db.delete(skip._id);
+  await ctx.db.delete(task._id);
+  if (task.originating_conversation_id) await refreshArmedTriggerKind(ctx, task.originating_conversation_id);
+}
+
+export const webDelete = mutation({
+  args: { task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const task = await getOwnedTask(ctx, args.task_id, userId);
+    if (!task) return false;
+    await deleteTaskCascade(ctx, task);
+    return true;
+  },
+});
+
+// Re-run the Haiku distillation on demand — the escape hatch for a summary
+// that reads wrong or predates a prompt edit.
+export const webRegenerateSummary = mutation({
+  args: { task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const task = await getManageableTask(ctx, args.task_id, userId);
+    if (!task) return false;
+    await ctx.scheduler.runAfter(0, internal.agentTasks.generateDisplaySummary, { task_id: args.task_id });
+    return true;
+  },
+});
+
+// --- Editing: shared core with version history + audit log ---
+
+type TaskUpdateArgs = {
+  title?: string;
+  prompt?: string;
+  schedule_type?: "once" | "recurring" | "event";
+  run_at?: number;
+  interval_ms?: number;
+  event_filter?: EventFilter;
+  mode?: string;
+  agent_type?: string;
+  model?: string;
+  agent_definition?: string;
+  project_path?: string;
+  max_runtime_ms?: number;
+  precheck?: string;
+  // A role's own tuning of its check (org-staffing.md S38), written only by
+  // orgRoles.performTuneRoutine: "" clears the focus.
+  role_focus?: string;
+  tune_why?: string;
+  // Routing. Editable so a trigger bound the wrong way is repaired in place
+  // rather than cancelled and recreated, which loses its history and its id.
+  // null clears the field: originating_conversation_id null IS `--spawn`.
+  originating_conversation_id?: Id<"conversations"> | null;
+  target_conversation_id?: Id<"conversations"> | null;
+  wake_creator?: boolean;
+};
+
+// The editable surface — exactly the fields agent_task_revisions.before
+// snapshots. Everything else on the row is lifecycle/bookkeeping state that
+// edits never touch.
+const EDITABLE_FIELDS = [
+  "title",
+  "prompt",
+  "schedule_type",
+  "run_at",
+  "interval_ms",
+  "event_filter",
+  "mode",
+  "agent_type",
+  "model",
+  "agent_definition",
+  "project_path",
+  "max_runtime_ms",
+  "precheck",
+  "role_focus",
+  "tune_why",
+  "originating_conversation_id",
+  "target_conversation_id",
+  "wake_creator",
+] as const;
+
+function snapshotEditable(task: Doc<"agent_tasks">) {
+  return {
+    title: task.title,
+    prompt: task.prompt,
+    schedule_type: task.schedule_type,
+    run_at: task.run_at,
+    interval_ms: task.interval_ms,
+    event_filter: task.event_filter,
+    mode: task.mode,
+    agent_type: task.agent_type,
+    model: task.model,
+    agent_definition: task.agent_definition,
+    project_path: task.project_path,
+    status: task.status,
+    max_runtime_ms: task.max_runtime_ms,
+    precheck: task.precheck,
+    role_focus: task.role_focus,
+    tune_why: task.tune_why,
+    originating_conversation_id: task.originating_conversation_id,
+    target_conversation_id: task.target_conversation_id,
+    wake_creator: task.wake_creator,
+  };
+}
+
+// Edit a schedule in place — the ONLY writer for trigger edits, shared by
+// `cast trigger update` (CLI) and the web edit dialog so the two surfaces
+// can't drift. Mirrors insertTask's timing rules. Only scheduled/paused tasks
+// are editable; a running or finished task is rejected. Every effective edit
+// appends an agent_task_revisions row (pre-edit snapshot + who/where/what),
+// so `cast trigger history` can show both the audit trail and any prior
+// version. A no-op edit (nothing actually differs) writes neither.
+//
+// A role tunes its check from inside the run that check started (S38), when
+// the row is "running". The cadence, the gate, the focus and the reason touch
+// nothing the live run reads, so an edit of those alone is taken then too: the
+// arming after the run (nextArmingAfterRun) counts the next slot with the new
+// interval.
+// The edits assertRoutineAllowed rechecks: the ones that can take an armed
+// routine past its plan's limits, and a result thread that may be hosted.
+const ROUTINE_LIMIT_FIELDS: ReadonlySet<string> = new Set(["originating_conversation_id", "target_conversation_id", "schedule_type", "interval_ms"]);
+const RUNNING_SAFE_FIELDS: ReadonlySet<string> = new Set(["interval_ms", "precheck", "role_focus", "tune_why"]);
+
+export async function applyTaskUpdate(
+  ctx: TaskCtx,
+  task: Doc<"agent_tasks">,
+  args: TaskUpdateArgs,
+  actor: { userId: Id<"users">; source: "cli" | "web" },
+): Promise<{ ok: boolean; changed: string[] }> {
+  const whileRunning = task.status === "running" && Object.entries(args).every(([k, value]) => value === undefined || RUNNING_SAFE_FIELDS.has(k));
+  if (task.status !== "scheduled" && task.status !== "paused" && !whileRunning) return { ok: false, changed: [] };
+
+  const patch: Record<string, unknown> = {};
+  if (args.title !== undefined) patch.title = args.title.trim() || task.title;
+  const promptChanged =
+    args.prompt !== undefined && !!args.prompt.trim() && args.prompt.trim() !== task.prompt;
+  if (promptChanged) {
+    patch.prompt = args.prompt!.trim();
+    // Stale distillations must not describe the old prompt.
+    patch.display_title = undefined;
+    patch.display_summary = undefined;
+    patch.summary_for_person = undefined;
+  }
+  if (args.mode !== undefined) patch.mode = args.mode === "apply" ? "apply" : "propose";
+  if (args.agent_type !== undefined) patch.agent_type = args.agent_type || "claude";
+  // "" or "default" clears the pin — the run goes back to the agent's saved default.
+  if (args.model !== undefined) patch.model = args.model && args.model !== "default" ? args.model : undefined;
+  if (args.agent_definition !== undefined) patch.agent_definition = args.agent_definition || undefined;
+  if (args.project_path !== undefined) patch.project_path = args.project_path || undefined;
+  if (args.max_runtime_ms !== undefined) patch.max_runtime_ms = args.max_runtime_ms;
+  // "" removes the gate — `cast trigger update tr-42 --precheck ""`.
+  if (args.precheck !== undefined) patch.precheck = args.precheck.trim() || undefined;
+  if (args.role_focus !== undefined) patch.role_focus = args.role_focus.trim() || undefined;
+  if (args.tune_why !== undefined) patch.tune_why = args.tune_why.trim() || undefined;
+
+  // Routing. Clearing the binding (null) turns an inject trigger into a spawn
+  // trigger and back; --wake rides along. The old home's armed_trigger_kind is
+  // refreshed by patchTask below, the new home by hand after it, because
+  // patchTask reads the binding off the PRE-edit row and so cannot see a
+  // home this edit is moving the trigger TO.
+  if (args.originating_conversation_id !== undefined) {
+    patch.originating_conversation_id = args.originating_conversation_id ?? undefined;
+  }
+  if (args.target_conversation_id !== undefined) {
+    patch.target_conversation_id = args.target_conversation_id ?? undefined;
+  }
+  if (args.wake_creator !== undefined) patch.wake_creator = args.wake_creator || undefined;
+
+  if (args.schedule_type !== undefined) {
+    patch.schedule_type = args.schedule_type;
+    if (args.schedule_type === "recurring") {
+      if (!args.interval_ms) throw new Error("interval_ms required for recurring tasks");
+      patch.interval_ms = args.interval_ms;
+      patch.run_at = args.run_at ?? Date.now() + args.interval_ms;
+      patch.event_filter = undefined;
+    } else if (args.schedule_type === "event") {
+      if (!args.event_filter) throw new Error("event_filter required for event tasks");
+      const project_path = args.project_path !== undefined ? args.project_path || undefined : task.project_path;
+      patch.event_filter = await storedEventFilter(ctx, task.user_id, project_path, args.event_filter);
+      patch.run_at = undefined;
+      patch.interval_ms = undefined;
+    } else {
+      patch.run_at = args.run_at ?? Date.now();
+      patch.interval_ms = undefined;
+      patch.event_filter = undefined;
+    }
+  } else {
+    if (args.interval_ms !== undefined) patch.interval_ms = args.interval_ms;
+    if (args.run_at !== undefined) patch.run_at = args.run_at;
+  }
+  // A new schedule is a new cadence: a slot kept from a detour under the old
+  // one (offCadence) must not pull the next arming back onto it.
+  if ("run_at" in patch) patch.cadence_slot_at = undefined;
+  // A schedule edit re-reads the wall clock (hostedWallCadence): a hosted
+  // daily or weekly routine keeps its time of day, and a daily one keeps the
+  // weekdays it had while its interval is unchanged. An interval edit drops it.
+  if ("run_at" in patch || "interval_ms" in patch || "schedule_type" in patch) {
+    const next = { schedule_type: (patch.schedule_type as string | undefined) ?? task.schedule_type, interval_ms: "interval_ms" in patch ? (patch.interval_ms as number | undefined) : task.interval_ms, run_at: "run_at" in patch ? (patch.run_at as number | undefined) : task.run_at };
+    const wall = await hostedWallCadence(ctx, { user_id: task.user_id, hosted: !!task.hosted_home, ...next, kept: next.interval_ms === task.interval_ms ? task.cadence : undefined });
+    patch.cadence = wall?.cadence;
+    if (wall && "run_at" in patch) patch.run_at = wall.run_at;
+  }
+
+  // Which editable fields actually differ. The display_* resets ride along
+  // with a prompt change but aren't edits themselves, so they never appear in
+  // the audit line. event_filter is the one object field — compare by value.
+  const changed = (EDITABLE_FIELDS as readonly string[]).filter(
+    (k) =>
+      k in patch &&
+      JSON.stringify((patch as any)[k] ?? null) !== JSON.stringify((task as any)[k] ?? null)
+  );
+  if (changed.length === 0) return { ok: true, changed };
+  // Any edit, the prompt included, is the hosted owner's (hostedOwnerRefusal),
+  // on the anchors the routine has now and the ones this edit moves it to.
+  const anchorRefusal = await hostedOwnerRefusal(ctx, actor.userId, [
+    ...taskAnchors(task),
+    patch.originating_conversation_id as Id<"conversations"> | undefined,
+    patch.target_conversation_id as Id<"conversations"> | undefined,
+  ]);
+  if (anchorRefusal) throw new Error(anchorRefusal);
+  if (changed.some((k) => ROUTINE_LIMIT_FIELDS.has(k))) {
+    await assertRoutineAllowed(ctx, { ...task, ...patch } as HostedRoutine & HostedThreads);
+  }
+
+  await appendRevision(ctx, task, actor, changed);
+
+  await patchTask(ctx, task, patch);
+  const newHome = patch.originating_conversation_id as Id<"conversations"> | undefined;
+  if (newHome && newHome.toString() !== task.originating_conversation_id?.toString()) {
+    await refreshArmedTriggerKind(ctx, newHome);
+  }
+  if (promptChanged) {
+    await ctx.scheduler?.runAfter(0, internal.agentTasks.generateDisplaySummary, { task_id: task._id });
+  }
+  return { ok: true, changed };
+}
+
+const TASK_UPDATE_ARG_VALIDATORS = {
+  title: v.optional(v.string()),
+  prompt: v.optional(v.string()),
+  schedule_type: v.optional(v.union(v.literal("once"), v.literal("recurring"), v.literal("event"))),
+  run_at: v.optional(v.number()),
+  interval_ms: v.optional(v.number()),
+  event_filter: v.optional(eventFilterValidator),
+  mode: v.optional(v.string()),
+  agent_type: v.optional(v.string()),
+  model: v.optional(v.string()),
+  agent_definition: v.optional(v.string()),
+  project_path: v.optional(v.string()),
+  max_runtime_ms: v.optional(v.number()),
+  precheck: v.optional(v.string()),
+  // null clears; absent keeps. The CLI sends refs (--for/--thread) and the
+  // mutation resolves them to ids before calling applyTaskUpdate.
+  originating_conversation_id: v.optional(v.union(v.id("conversations"), v.null())),
+  target_conversation_id: v.optional(v.union(v.id("conversations"), v.null())),
+  wake_creator: v.optional(v.boolean()),
+};
+
+export const webUpdate = mutation({
+  args: { task_id: v.id("agent_tasks"), ...TASK_UPDATE_ARG_VALIDATORS },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new Error("Unauthorized");
+    const task = await getManageableTask(ctx, args.task_id, userId);
+    if (!task) return false;
+    const { task_id: _id, ...rest } = args;
+    const result = await applyTaskUpdate(ctx, task, rest, { userId, source: "web" });
+    return result.ok;
+  },
+});
+
+// `cast trigger update` — same core, api_token auth. Returns the changed
+// field names so the CLI can echo what the edit actually did.
+export const updateTask = mutation({
+  args: {
+    api_token: v.string(),
+    task_id: v.id("agent_tasks"),
+    ...TASK_UPDATE_ARG_VALIDATORS,
+    // The CLI names a session the way a person does (short id, conversation
+    // id, or Claude session uuid); resolution needs the database, so it
+    // happens here rather than in the CLI. Same resolver insertTask uses, so
+    // `--for` means the same thing on add and on update.
+    originating_session_ref: v.optional(v.string()),
+    target_session_ref: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    const task = await getManageableTask(ctx, args.task_id, auth.userId);
+    if (!task) return { ok: false, changed: [] };
+    const { api_token: _token, task_id: _id, originating_session_ref, target_session_ref, ...rest } = args;
+    const update: TaskUpdateArgs = { ...rest };
+    if (originating_session_ref) {
+      const conv = await findConversationByAnyRef(ctx, originating_session_ref, auth.userId);
+      if (!conv) throw new Error(`No session of yours matches "${originating_session_ref}"`);
+      update.originating_conversation_id = conv._id;
+    }
+    if (target_session_ref) {
+      const conv = await findConversationByAnyRef(ctx, target_session_ref, auth.userId);
+      if (!conv) throw new Error(`No session of yours matches "${target_session_ref}"`);
+      update.target_conversation_id = conv._id;
+    }
+    return await applyTaskUpdate(ctx, task, update, { userId: auth.userId, source: "cli" });
+  },
+});
+
+// Full edit history of one trigger, oldest first, with actor names resolved
+// and the task's current editable fields appended — revision N's "after" is
+// revision N+1's before, or `current` for the newest. Shared by the CLI
+// (`cast trigger history`, via /cli/tasks/history) and the web.
+async function listTaskRevisions(ctx: { db: any }, userId: Id<"users">, taskId: Id<"agent_tasks">) {
+  const task = await getManageableTask(ctx, taskId, userId);
+  if (!task) return null;
+  const revisions = await ctx.db
+    .query("agent_task_revisions")
+    .withIndex("by_task", (q: any) => q.eq("task_id", taskId))
+    .collect();
+  revisions.sort((a: any, b: any) => a.revision - b.revision);
+  const actorNames = new Map<string, string>();
+  await Promise.all(
+    [...new Set(revisions.map((r: any) => r.actor_user_id.toString()))].map(async (id) => {
+      const user = await ctx.db.get(id);
+      if (user) actorNames.set(id as string, user.name || user.email || "unknown");
+    })
+  );
+  // Routing fields are conversation ids, and a 32-char id in a history line is
+  // an unreadable blob. Resolve every id any revision touched to its session
+  // short id, once each, so the CLI can print "jx7bcgr" where the row stores a
+  // document id. Same shape as the actor-name map above.
+  const snapshots = [snapshotEditable(task), ...revisions.map((r: any) => r.before)];
+  const conversationShortIds: Record<string, string> = {};
+  await Promise.all(
+    [...new Set(
+      snapshots.flatMap((snap: any) =>
+        [snap?.originating_conversation_id, snap?.target_conversation_id].filter(Boolean).map(String)
+      )
+    )].map(async (id) => {
+      const conv = await ctx.db.get(id);
+      if (conv?.short_id) conversationShortIds[id] = conv.short_id;
+    })
+  );
+
+  return {
+    task_id: taskId,
+    short_id: task.short_id,
+    title: task.title,
+    status: task.status,
+    conversation_short_ids: conversationShortIds,
+    current: snapshotEditable(task),
+    revisions: revisions.map((r: any) => ({
+      revision: r.revision,
+      actor_user_id: r.actor_user_id,
+      actor_name: actorNames.get(r.actor_user_id.toString()) ?? "unknown",
+      source: r.source,
+      changed_fields: r.changed_fields,
+      before: r.before,
+      created_at: r.created_at,
+    })),
+  };
+}
+
+export const listRevisions = query({
+  args: { api_token: v.string(), task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const auth = await verifyApiToken(ctx, args.api_token);
+    if (!auth) throw new Error("Unauthorized");
+    return await listTaskRevisions(ctx, auth.userId, args.task_id);
+  },
+});
+
+export const webListRevisions = query({
+  args: { task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) return null;
+    return await listTaskRevisions(ctx, userId, args.task_id);
+  },
+});
+
+/**
+ * The access key a trigger's runs land in: the workspace its project path
+ * resolves to (createDataContext's directory rule), personal when it names
+ * none. An ingestion event carries its source's workspace and fires only the
+ * triggers whose runs land in that same workspace, so one team's product
+ * errors never reach a session the other team can read (external-data.md X4).
+ * A path mapped to a team the owner has left resolves to nothing.
+ */
+async function triggerWorkspaceKey(ctx: { db: any }, task: Pick<Doc<"agent_tasks">, "user_id" | "project_path">): Promise<string | null> {
+  try {
+    return (await createDataContext(ctx, { userId: task.user_id, project_path: task.project_path })).workspaceKey;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An event filter as it is stored: a `source` narrowing resolved to the
+ * canonical name of a source in the trigger's workspace (ingest.ts
+ * triggerSourceName), so `--source src-5` works and a typo is refused at save
+ * instead of arming a trigger that never fires. Create and edit both run it.
+ */
+export async function storedEventFilter(ctx: TaskCtx, userId: Id<"users">, project_path: string | undefined, filter: EventFilter | undefined): Promise<EventFilter | undefined> {
+  if (!filter || filter.source === undefined) return filter;
+  if (!filter.source.trim()) {
+    const { source: _blank, ...rest } = filter;
+    return rest;
+  }
+  const workspaceKey = await triggerWorkspaceKey(ctx, { user_id: userId, project_path });
+  if (!workspaceKey) throw new Error("Could not resolve the workspace this trigger fires in, so its --source cannot be checked");
+  return { ...filter, source: await triggerSourceName(ctx, userId, workspaceKey, filter.source) };
+}
+
+export const matchTaskTriggers = internalMutation({
+  args: {
+    event_type: v.string(),
+    action: v.optional(v.string()),
+    repository: v.optional(v.string()),
+    // Set by the derived PR events (pr_check_failed, pr_approved and the rest),
+    // which are always about one pull request. A trigger that names a pr_number
+    // fires only for that PR; one that does not still fires for every PR in the
+    // repository, which is what the raw GitHub event shorthands rely on.
+    pr_number: v.optional(v.number()),
+    // The team the event belongs to. An event filter is matched on strings a
+    // user chose, and "pr_approved" is a string every team writes, so without
+    // this one team's PR activity fires another team's triggers. When it is set
+    // only members of that team can be woken. It is omitted only when the
+    // webhook could not resolve a team, and then the old behaviour stands.
+    team_id: v.optional(v.id("teams")),
+    // The source name an ingestion event came from (external-data.md X4). A
+    // trigger that names a source fires only for it; one that does not fires
+    // for every source its owner can see, like a repository filter.
+    source: v.optional(v.string()),
+    // The access key of the event's rows. Ingestion events can belong to a
+    // personal workspace, which has no team to scope by, so when this is set
+    // only an owner the key admits can be woken.
+    workspace: v.optional(v.string()),
+    // What fired, appended to each matched trigger's pending_events so the
+    // run knows what woke it. Omitted by the git events, which carry their
+    // context in the session they wake.
+    event_ref: v.optional(v.object({
+      external_event_id: v.optional(v.id("external_events")),
+      group_short_id: v.optional(v.string()),
+      title: v.string(),
+      url: v.optional(v.string()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    // Only the triggers armed on this name: a firing used to read every
+    // scheduled trigger of every user. A running one is read too when the
+    // firing carries an event: its run never sees it, so it is held for the
+    // run after (nextArmingAfterRun) rather than lost.
+    const armed = (status: "scheduled" | "running"): Promise<Doc<"agent_tasks">[]> => armedTriggers(ctx, status, args.event_type).collect();
+    const tasks = [...(await armed("scheduled")), ...(args.event_ref ? await armed("running") : [])];
+
+    // One lookup per distinct owner, not per task: a user with several armed
+    // triggers is the normal case.
+    const ownerVerdicts = new Map<string, boolean>();
+    const ownerMayBeWoken = async (userId: Id<"users">): Promise<boolean> => {
+      if (!args.team_id && !args.workspace) return true;
+      const key = String(userId);
+      const known = ownerVerdicts.get(key);
+      if (known !== undefined) return known;
+      const verdict =
+        (!args.team_id || (await isTeamMember(ctx, userId, args.team_id))) &&
+        (!args.workspace || (await workspaceGrantsAccess(ctx, userId, args.workspace)));
+      ownerVerdicts.set(key, verdict);
+      return verdict;
+    };
+
+    const now = Date.now();
+    let matched = 0;
+    for (const task of tasks) {
+      if (!task.event_filter) continue;
+      if (task.event_filter.action && task.event_filter.action !== args.action) continue;
+      // Both sides canonical: the filter is what a person typed, the event is what GitHub sent.
+      if (task.event_filter.repository && normalizeRepository(task.event_filter.repository) !== normalizeRepository(args.repository)) continue;
+      if (task.event_filter.pr_number != null && task.event_filter.pr_number !== args.pr_number) continue;
+      if (!sourceFilterAdmits(task.event_filter.source, args.source)) continue;
+      // Last, because they are the only checks that read the database.
+      if (!(await ownerMayBeWoken(task.user_id))) continue;
+      if (args.workspace && (await triggerWorkspaceKey(ctx, task)) !== args.workspace) continue;
+
+      const running = task.status === "running";
+      const patch: Partial<Doc<"agent_tasks">> = running ? {} : { run_at: now };
+      if (args.event_ref) {
+        const event: PendingEvent = { ...args.event_ref, event_type: args.event_type, at: now, ...(running ? { after_claim: true } : {}) };
+        patch.pending_events = [...(task.pending_events ?? []), event].slice(-PENDING_EVENTS_CAP);
+      }
+      await ctx.db.patch(task._id, patch);
+      matched++;
+    }
+
+    return matched;
+  },
+});
+
+export const reclaimStaleTasks = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const runningTasks = await ctx.db
+      .query("agent_tasks")
+      .withIndex("by_status_run_at", (q) => q.eq("status", "running"))
+      .collect();
+
+    let reclaimed = 0;
+    for (const task of runningTasks) {
+      if (task.lease_expires_at && task.lease_expires_at < now) {
+        // A lease lapses when the daemon that held it stopped renewing, most
+        // often because it restarted mid-run and lost the run's monitor. The
+        // run itself may be over: its agent exited (stopped) or parked at a
+        // limit. Re-firing then spends a whole fresh session on finished
+        // work, so a finished run settles as an unreported exit (its owner is
+        // told, runOwnerWakeOf) and a parked one re-arms at the reset.
+        const runConv = await latestRunConversation(ctx, task);
+        if (runConv && runIsLimitParked(runConv)) {
+          await parkRunAtLimit(ctx, task, runConv, now);
+          reclaimed++;
+          continue;
+        }
+        if (runConv && (await runAgentStopped(ctx, runConv))) {
+          await settleRunConversation(ctx, task, runConv, { daemon_id: "reclaim" }, now);
+          await patchTask(ctx, task, completedTaskRunFields(task, now, {}, false));
+          reclaimed++;
+          continue;
+        }
+        const maxRetries = task.max_retries ?? DEFAULT_MAX_RETRIES;
+        if (task.retry_count < maxRetries) {
+          await patchTask(ctx, task, {
+            status: "scheduled",
+            ...offCadence(task, now),
+            retry_count: task.retry_count + 1,
+            requested_run_source: task.last_run_source === "manual" ? "manual" : undefined,
+            lease_holder: undefined,
+            lease_expires_at: undefined,
+          });
+          reclaimed++;
+        } else {
+          await patchTask(ctx, task, {
+            status: "failed",
+            lease_holder: undefined,
+            lease_expires_at: undefined,
+            last_run_summary: "Lease expired, max retries exceeded",
+          });
+
+          const user = await ctx.db.get(task.user_id);
+          if (user?.push_token && user.notifications_enabled) {
+            await ctx.db.insert("notifications", {
+              recipient_user_id: task.user_id,
+              type: "task_failed",
+              message: `Task "${task.title}" failed: lease expired after ${task.retry_count} retries`,
+              conversation_id: task.originating_conversation_id,
+              read: false,
+              created_at: now,
+            });
+          }
+        }
+      }
+    }
+
+    return reclaimed;
+  },
+});
+
+// --- Haiku-distilled presentation fields (display_title / display_summary) ---
+//
+// A schedule's stored title is usually just prompt.slice(0, 60), so every row
+// surface was showing a truncated wall of prompt text. These functions turn
+// the prompt into a short display_title (2-5 words) and a display_summary (one
+// plain sentence: what the agent does each run). Same idiom as
+// titleGeneration.ts: an internalAction calls the cheap model and an
+// internalMutation patches the result; extractTitleJson is reused for the
+// {"title","subtitle"} parse. Triggered from insertTask and from webUpdate on
+// prompt change; backfillDisplaySummaries sweeps pre-existing schedules.
+
+// A title that is just the leading slice of the prompt carries no signal — it's
+// the CLI/web default, not a human choice. Only such titles get replaced by the
+// generated display_title; an explicit human title always wins in the UI.
+export function isPromptDerivedTitle(title: string, prompt: string): boolean {
+  const t = title.trim();
+  return t.length === 0 || t === prompt.slice(0, 60).trim() || t === prompt.trim();
+}
+
+export function buildTaskSummaryPrompt(input: { prompt: string; scheduleLine: string }): string {
+  return `A user scheduled a recurring/automated agent task. Distill its instruction prompt so a dashboard row is readable at a glance.
+
+Title: 2-5 words naming what the task does. Short noun/verb phrase, like a git branch name but readable. No trailing period.
+Examples: "Growth blocker sweep", "CI health check", "PR comment triage"
+
+Subtitle: ONE plain-English sentence (max ~160 chars) saying what the agent does each run and what it escalates to a human, in ordinary words. Do NOT restate the timing/cadence (shown separately: ${input.scheduleLine}). Avoid jargon from the prompt that a reader outside the project can't parse — say the plain thing.
+
+Task instruction prompt:
+${input.prompt.slice(0, 4000)}
+
+Do not respond to the instruction itself. Output ONLY the JSON object, no markdown, no preamble:
+{"title": "...", "subtitle": "..."}`;
+}
+
+/** The summarizer's prompt for a hosted routine (hosted_home): what the
+ *  person gets, said to them, in the words schedule_routine's summary uses
+ *  (assistant/tools/codecast.ts), since Routines and the routine's page show
+ *  it as the routine's description. The schedule is shown beside it, so it
+ *  leaves the timing out. */
+export function buildRoutineSummaryPrompt(input: { prompt: string }): string {
+  return `A person asked their assistant to do something for them on a schedule. Below is the instruction the assistant follows each time it runs. Describe the routine to the person.
+
+Title: 2-4 everyday words naming the routine as the person would, like "Morning to-do review" or "Bin night reminder". No trailing period.
+
+Subtitle: ONE sentence (at most about 140 characters), said by the assistant to the person as a promise in their terms, like "I'll send you your open to-dos so you can plan the day." Speak to them as "you", never "the user". Leave out when it runs; that is shown separately. Never use the words task, escalate, prompt, agent, session or instruction.
+
+Instruction:
+${input.prompt.slice(0, 4000)}
+
+Do not respond to the instruction itself. Output ONLY the JSON object, no markdown, no preamble:
+{"title": "...", "subtitle": "..."}`;
+}
+
+export const setDisplaySummary = internalMutation({
+  args: {
+    task_id: v.id("agent_tasks"),
+    display_title: v.optional(v.string()),
+    display_summary: v.string(),
+    // The summary is written to the person (buildRoutineSummaryPrompt).
+    summary_for_person: v.optional(v.boolean()),
+    // The prompt the summary was generated FROM — skip the patch if the task
+    // was edited while the action was in flight (the edit reschedules its own
+    // generation, which must not be clobbered by this stale result).
+    source_prompt: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    if (!task || task.prompt !== args.source_prompt) return;
+    await ctx.db.patch(args.task_id, {
+      ...(args.display_title ? { display_title: args.display_title } : {}),
+      display_summary: args.display_summary,
+      summary_for_person: args.summary_for_person || undefined,
+    });
+  },
+});
+
+export const getTaskForSummary = internalQuery({
+  args: { task_id: v.id("agent_tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.task_id);
+    if (!task) return null;
+    return {
+      title: task.title,
+      prompt: task.prompt,
+      schedule_type: task.schedule_type,
+      interval_ms: task.interval_ms,
+      event_filter: task.event_filter,
+      hosted_home: task.hosted_home === true,
+    };
+  },
+});
+
+export const generateDisplaySummary = internalAction({
+  args: { task_id: v.id("agent_tasks") },
+  // Explicit return type: the handler references internal.agentTasks.* (its
+  // own module), and without it TS inference cycles and silently drops this
+  // export from the module type — breaking every internal.agentTasks.
+  // generateDisplaySummary reference at deploy-time typecheck.
+  handler: async (ctx, args): Promise<void> => {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error("ANTHROPIC_API_KEY not configured");
+      return;
+    }
+
+    const task = await ctx.runQuery(internal.agentTasks.getTaskForSummary, {
+      task_id: args.task_id,
+    });
+    if (!task || !task.prompt.trim()) return;
+
+    const scheduleLine =
+      task.schedule_type === "recurring"
+        ? `every ${Math.round((task.interval_ms ?? 0) / 60000)} minutes`
+        : task.schedule_type === "event"
+          ? `on ${task.event_filter?.event_type ?? "event"}`
+          : "once";
+
+    try {
+      // A hosted routine's summary is said to its person (Routines shows it
+      // as the description); any other schedule's is a developer's gist.
+      const reply = await callModel({
+        prompt: task.hosted_home ? buildRoutineSummaryPrompt({ prompt: task.prompt }) : buildTaskSummaryPrompt({ prompt: task.prompt, scheduleLine }),
+        max_tokens: 300,
+        label: "Task summary Haiku",
+      });
+      if (!reply) return;
+      const text = reply.text;
+
+      const parsed = extractTitleJson(text);
+      const title = parsed?.title?.trim();
+      const summary = parsed?.subtitle?.trim();
+      // isRefusalProse: valid JSON can still carry refusal/meta prose in the
+      // value ("I don't see a recent conversation…") — same guard as the
+      // conversation subtitle writer in titleGeneration.
+      if (!summary || summary.length > 400 || isRefusalProse(summary)) {
+        console.error("Task summary returned no usable JSON:", text.slice(0, 120));
+        return;
+      }
+
+      await ctx.runMutation(internal.agentTasks.setDisplaySummary, {
+        task_id: args.task_id,
+        display_title:
+          title && title.length < 80 && isPromptDerivedTitle(task.title, task.prompt)
+            ? title
+            : undefined,
+        display_summary: summary,
+        ...(task.hosted_home ? { summary_for_person: true } : {}),
+        source_prompt: task.prompt,
+      });
+    } catch (error) {
+      console.error("Failed to generate task summary:", error);
+    }
+  },
+});
+
+// One-shot sweep for schedules created before display summaries existed: every
+// task without one gets a generation scheduled — history included, so the
+// /schedules finished section reads as names too. Safe to re-run.
+export const backfillDisplaySummaries = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let scheduled = 0;
+    for (const status of ["scheduled", "running", "paused", "completed", "failed"] as const) {
+      const tasks = await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_status_run_at", (q) => q.eq("status", status))
+        .collect();
+      for (const task of tasks) {
+        if (task.display_summary) continue;
+        // Stagger to stay clear of API rate limits on large backfills.
+        await ctx.scheduler.runAfter(scheduled * 500, internal.agentTasks.generateDisplaySummary, {
+          task_id: task._id,
+        });
+        scheduled++;
+      }
+    }
+    return { scheduled };
+  },
+});
+
+// One-shot sweep for hosted routines whose description is not written to
+// their person: those armed before schedule_routine took a summary, whose
+// distilled gist reads as an internal note ("escalates if user wants...").
+// Each gets the person prompt (buildRoutineSummaryPrompt). Safe to re-run:
+// a routine already summarized for its person is skipped.
+export const backfillHostedRoutineSummaries = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let scheduled = 0;
+    for (const status of ["scheduled", "running", "paused", "completed", "failed"] as const) {
+      const tasks = await ctx.db
+        .query("agent_tasks")
+        .withIndex("by_hosted_status_run_at", (q) => q.eq("hosted_home", true).eq("status", status))
+        .collect();
+      for (const task of tasks) {
+        if (task.summary_for_person) continue;
+        await ctx.scheduler.runAfter(scheduled * 500, internal.agentTasks.generateDisplaySummary, { task_id: task._id });
+        scheduled++;
+      }
+    }
+    return { scheduled };
+  },
+});
+
+// One history row: who changed which fields of the trigger, from where, with
+// the editable surface as it stood before. Edits and the verbs (pause,
+// resume, run now, cancel) both write it, so a trigger never changes state
+// without the history saying who did it.
+async function appendRevision(ctx: TaskCtx, task: Doc<"agent_tasks">, actor: { userId: Id<"users">; source: "cli" | "web" }, changed: string[]) {
+  const prior = await ctx.db
+    .query("agent_task_revisions")
+    .withIndex("by_task", (q: any) => q.eq("task_id", task._id))
+    .collect();
+  const revision = prior.reduce((max: number, r: any) => Math.max(max, r.revision), 0) + 1;
+  await ctx.db.insert("agent_task_revisions", {
+    task_id: task._id,
+    revision,
+    actor_user_id: actor.userId,
+    source: actor.source,
+    changed_fields: changed,
+    before: snapshotEditable(task),
+    created_at: Date.now(),
+  });
+}

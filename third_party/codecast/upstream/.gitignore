@@ -1,0 +1,144 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+.claude/
+.expo/
+
+# Build outputs
+dist/
+.next/
+out/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+test-results/
+
+# Turbo
+.turbo/
+
+# Convex
+.convex/
+
+# Worktrees + workspace state (local), but track the shared workspace manifest
+.conductor/
+.codecast/*
+!.codecast/workspace.toml
+!.codecast/check.toml
+!.codecast/line.toml
+# The project's own line graph and station prompts (docs/architecture/line-map.md LX5)
+!.codecast/line/
+
+# Daemon files
+daemon.pid
+daemon.log
+
+# Built binaries
+packages/web/public/binaries/
+packages/web/binaries/
+
+# CLI build artifacts
+packages/cli/daemon.js
+packages/cli/src/daemon.js
+
+# Deploy secrets
+.env.deploy
+
+# Deploy markers
+.last-mobile-ota
+.last-cli-deploy
+.last-desktop-deploy
+.dmux/
+.wrangler/
+logs/
+packages/desktop/src-tauri/target/
+docs/workflow-execution-plan.md
+
+# Local dev configs
+nginx.dev.conf
+com.codecast.nginx.plist
+ONBOARDING.md
+app_spec.txt
+
+# Agent session artifacts
+.codex/
+.playwright-mcp/
+SESSION_SUMMARY_*.md
+VERIFICATION-*.md
+COMMENT-SYNC-VERIFICATION.md
+TESTING_PERMISSIONS.md
+.gstack/
+
+# Watchman transient cookies
+.watchman-cookie-*
+.env.local.deployhold*
+
+# Local demo/marketing video renders (large media, never committed)
+videos/
+
+# Scratch UI harnesses (throwaway, per-session). A session builds a standalone
+# page to verify one component in Chrome, then abandons it — nothing under this
+# prefix is tracked, so ignore the whole convention rather than each new name.
+packages/web/_*.tsx
+packages/web/_*.html
+packages/web/public/_*.html
+packages/web/_chiptest.*
+dist-ssr/
+
+# Private production bundles built for CPU profiling (hundreds of MB)
+packages/web/dist-perf/
+
+# Social posting tooling (private ops, keys and account workflow)
+scripts/publora.mjs
+docs/social-posting.md
+
+# Test debris: a snippet-installer test resolved its target through a colorized
+# `ls`, so it created a directory literally named with an ANSI escape sequence
+# plus an absolute scratchpad path. Never a real source path.
+packages/cli/*
+# Editor/atomic-write temp files (name.tsx.tmp.<pid>.<hash>)
+*.tmp.[0-9]*.[0-9a-f]*
+
+# Scratch convex probes (one-off prod queries, never shipped)
+packages/convex/_*.mjs
+_tok.json
+packages/web/public/_tok.json
+packages/web/tsconfig.*.tmp.json
+
+# tsc incremental state, regenerated on every typecheck
+packages/web/*.tsbuildinfo
+
+# Installs inside the vendored @platform mirror. CI installs the mirror as one
+# workspace at platform/ to run its tests (scripts/vendor-platform.sh --test);
+# the mirror itself is generated from ~/src/platform and only
+# scripts/vendor-platform.sh writes to it.
+platform/bun.lock
+platform/packages/*/bun.lock
+
+# Scratch that keeps riding in on a `git add -A` from a shared checkout: a
+# browser capture, a note named after a zip, and a review doc its author
+# deliberately left unpublished. Ignored so no sweep can commit them again.
+/--full-page
+/codecast-extension-0.1.1.zip.md
+/docs/proposals/agent-organization/v2/review/comparison.md

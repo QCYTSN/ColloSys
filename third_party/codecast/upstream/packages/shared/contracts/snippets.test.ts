@@ -1,0 +1,136 @@
+import { describe, expect, it } from "bun:test";
+import {
+  SNIPPET_CATALOG,
+  snippetBySlug,
+  allSnippetSlugs,
+  FORKS_SNIPPET,
+  guideText,
+  guideTopics,
+  renderGuidanceFile,
+  stubSectionBody,
+} from "./snippets";
+
+describe("snippet catalog", () => {
+  it("has unique slugs", () => {
+    const slugs = SNIPPET_CATALOG.map((s) => s.slug);
+    expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it("has unique config keys (enabledKey / versionKey)", () => {
+    const enabled = SNIPPET_CATALOG.map((s) => s.enabledKey);
+    const version = SNIPPET_CATALOG.map((s) => s.versionKey);
+    expect(new Set(enabled).size).toBe(enabled.length);
+    expect(new Set(version).size).toBe(version.length);
+  });
+
+  it("never collides a slug with another snippet's alias", () => {
+    const slugs = new Set(SNIPPET_CATALOG.map((s) => s.slug));
+    for (const s of SNIPPET_CATALOG) {
+      for (const a of s.aliases ?? []) {
+        // an alias may equal its own slug conceptually, but should not name a
+        // DIFFERENT snippet's slug (that would make resolution ambiguous).
+        if (slugs.has(a)) expect(a).toBe(s.slug);
+      }
+    }
+  });
+
+  it("resolves by slug, case-insensitively", () => {
+    expect(snippetBySlug("workflows")?.enabledKey).toBe("workflow_enabled");
+    expect(snippetBySlug("WORKFLOWS")?.enabledKey).toBe("workflow_enabled");
+    expect(snippetBySlug("  workflows  ")?.enabledKey).toBe("workflow_enabled");
+  });
+
+  it("resolves by alias", () => {
+    // The non-obvious historical mapping is exactly what the catalog protects.
+    expect(snippetBySlug("schedule")?.enabledKey).toBe("task_enabled");
+    expect(snippetBySlug("work")?.enabledKey).toBe("work_enabled");
+    expect(snippetBySlug("orch")?.slug).toBe("orchestration");
+  });
+
+  it("keeps the pre-rename trigger names resolving (old snippets in the wild)", () => {
+    // "scheduling" was the slug before the triggers rename; old web clients
+    // still send it on toggles and old CLAUDE.md files still say cast schedule.
+    for (const legacy of ["scheduling", "schedule", "async", "trigger"]) {
+      expect(snippetBySlug(legacy)?.slug).toBe("triggers");
+    }
+    expect(snippetBySlug("triggers")?.wireSlug).toBe("scheduling");
+  });
+
+  it("returns undefined for unknown names", () => {
+    expect(snippetBySlug("nope")).toBeUndefined();
+    expect(snippetBySlug("stable")).toBeUndefined(); // handled specially, not a snippet
+  });
+
+  it("allSnippetSlugs mirrors the catalog order", () => {
+    expect(allSnippetSlugs()).toEqual(SNIPPET_CATALOG.map((s) => s.slug));
+  });
+
+  // Specs and bodies moved into the catalog (ct-42804) so daemon, CLI and tests
+  // read one table. These pin the shape that move promised.
+  it("carries each snippet's spec and body together (orchestration and skills excepted)", () => {
+    for (const s of SNIPPET_CATALOG) {
+      if (s.slug === "orchestration" || s.slug === "skills") {
+        // Orchestration is files + hooks and skills are SKILL.md files, not a markdown section.
+        expect(s.section).toBeUndefined();
+        continue;
+      }
+      expect(s.section).toBeDefined();
+      expect(s.section!.body).toContain(s.section!.spec.headings[0]);
+      expect(s.section!.body).toContain(s.section!.spec.endMarker);
+    }
+  });
+
+  it("never shares a heading or end marker between two specs", () => {
+    const specs = SNIPPET_CATALOG.filter((s) => s.section).map((s) => s.section!.spec);
+    const heads = specs.map((sp) => sp.headings[0]);
+    const ends = specs.map((sp) => sp.endMarker);
+    expect(new Set(heads).size).toBe(heads.length);
+    expect(new Set(ends).size).toBe(ends.length);
+  });
+});
+
+describe("delegated worker guidance", () => {
+  it("teaches nested workers before independent inbox handoffs in full and stub forms", () => {
+    for (const body of [FORKS_SNIPPET, stubSectionBody(snippetBySlug("forks")!)]) {
+      expect(body.indexOf("cast spawn --subagent")).toBeLessThan(body.indexOf("Plain `cast spawn`"));
+      expect(body).toContain("implementers");
+      expect(body).toContain("reviewers");
+      expect(body).toContain("report back");
+      expect(body).toContain("human");
+      expect(body).toContain("steer separately");
+    }
+  });
+
+  it("keeps worker briefs and labeled launches out of the inbox", () => {
+    expect(FORKS_SNIPPET).toContain("cast spawn --subagent -- - - <<'EOF'");
+    const guide = guideText(snippetBySlug("forks")!);
+    expect(guide).toContain('cast spawn --subagent --label rollout "<task>" "<task>"');
+    expect(guide).toContain("A label or a task/plan binding does not nest it");
+    expect(FORKS_SNIPPET).not.toContain("Use it to hand off self-contained work — a parallel audit");
+  });
+});
+
+describe("guidance size", () => {
+  // Every installed byte is read by every session on the machine, in every
+  // repo. The body carries behavior and the reference (served by `cast guide`)
+  // carries flags and rare paths; these budgets keep detail from creeping
+  // back into the file. Raise one only with an eval showing the words pay
+  // (./evals check guidance).
+  it("keeps the whole installed guidance and each section under budget", () => {
+    expect(renderGuidanceFile("full", "0.0.0").length).toBeLessThan(36_000);
+    for (const topic of guideTopics()) {
+      expect(`${topic.slug} ${topic.section!.body.length < 4_000}`).toBe(`${topic.slug} true`);
+    }
+  });
+
+  it("serves the reference after the body, never inside the installed file", () => {
+    const file = renderGuidanceFile("full", "0.0.0");
+    for (const topic of guideTopics()) {
+      const ref = topic.section!.reference;
+      if (!ref) continue;
+      expect(guideText(topic).endsWith(ref.trim())).toBe(true);
+      expect(file.includes(ref.trim())).toBe(false);
+      expect(topic.section!.body).toContain(`cast guide ${topic.slug}`);
+    }
+  });
+});

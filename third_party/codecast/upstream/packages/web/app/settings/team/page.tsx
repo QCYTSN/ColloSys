@@ -1,0 +1,584 @@
+import { useSettingsData } from "../../../hooks/useSyncSettings";
+import { useState } from "react";
+import { useWatchEffect } from "../../../hooks/useWatchEffect";
+import { useRouter } from "next/navigation";
+import { useAction } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { toast } from "sonner";
+import { AvatarImg } from "../../../lib/avatarCache";
+import { Input } from "../../../components/ui/input";
+import { Button } from "../../../components/ui/button";
+import { InviteModal } from "../../../components/InviteModal";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../../../components/ui/dialog";
+import type { Id } from "@codecast/convex/convex/_generated/dataModel";
+import { useInboxStore } from "../../../store/inboxStore";
+import { useCurrentUser } from "../../../hooks/useCurrentUser";
+import { TEAM_ICONS, TEAM_COLORS, type TeamIconName, type TeamColorName } from "../../../components/TeamIcon";
+import { TeamIdentityPicker, type TeamIdentity } from "../../../components/team/TeamIdentityPicker";
+import { TeamTaskStatusEditor } from "../../../components/settings/TeamTaskStatusEditor";
+import { TeamFeaturesEditor } from "../../../components/settings/TeamFeaturesEditor";
+import { TeamTemplateLearning } from "../../../components/settings/TeamTemplateLearning";
+import { TeamModelBudget } from "../../../components/settings/TeamModelBudget";
+import { TeamDomainAccess } from "../../../components/settings/TeamDomainAccess";
+import { Github, TriangleAlert, Users } from "lucide-react";
+import { SelectBox } from "../../../components/ui/select-box";
+import {
+  SettingsField, SettingsPanel, SettingsSection, SettingsRow,
+} from "../../../components/settings/ui";
+import { TeamMachines } from "../../../components/settings/TeamMachines";
+
+export default function TeamPage() {
+  const router = useRouter();
+  // Store-backed read: a populated cache paints the panel synchronously
+  // instead of blanking it for the getCurrentUser round trip.
+  const { user } = useCurrentUser();
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id) as Id<"teams"> | undefined;
+  const effectiveTeamId = activeTeamId;
+  const team = useInboxStore((s) => s.teams.find((t) => t?._id === effectiveTeamId));
+  // Team settings and membership paint from the store at once and reach the
+  // server through its dispatch, like createTeam and deleteTeam.
+  const removeTeamMember = useInboxStore((s) => s.removeTeamMember);
+  const renameTeam = useInboxStore((s) => s.renameTeam);
+  const setTeamMemberRole = useInboxStore((s) => s.setTeamMemberRole);
+  const syncGithubOrg = useAction(api.teams.syncGithubOrg);
+  const updateTeamIcon = useInboxStore((s) => s.updateTeamIcon);
+  const { data: teamMembers, error: membersError } = useSettingsData("teamMembers");
+  // Nothing cached and the roster query failed: no count is known, so none
+  // is claimed.
+  const membersUnknown = teamMembers === undefined && !!membersError;
+
+  const [teamName, setTeamName] = useState("");
+  const [isEditingTeamName, setIsEditingTeamName] = useState(false);
+  const [isSavingTeamName, setIsSavingTeamName] = useState(false);
+  const [isSavingIcon, setIsSavingIcon] = useState(false);
+  const [memberToRemove, setMemberToRemove] = useState<Id<"users"> | null>(null);
+  const [isRemoving, setIsRemoving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTyped, setDeleteTyped] = useState("");
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [roleChangeInProgress, setRoleChangeInProgress] = useState<Id<"users"> | null>(null);
+  const [githubOrgName, setGithubOrgName] = useState("");
+  const [isSyncingGithub, setIsSyncingGithub] = useState(false);
+  const [syncResult, setSyncResult] = useState<{ imported: any[]; skipped: any[]; total: number } | null>(null);
+
+  // The dialog belongs to one team. If the active team changes underneath it
+  // (the delete landed from another window, or the workspace was switched),
+  // it must not stay open and re-aim at whichever team is now active.
+  const dialogTeamId = team?._id;
+  useWatchEffect(() => {
+    setDeleteOpen(false);
+    setDeleteTyped("");
+  }, [dialogTeamId]);
+
+  if (!user) {
+    return null;
+  }
+
+  const handleSaveTeamName = async () => {
+    if (!user._id || !effectiveTeamId || !teamName.trim()) return;
+    setIsSavingTeamName(true);
+    try {
+      await renameTeam(effectiveTeamId, teamName.trim());
+      setIsEditingTeamName(false);
+      setTeamName("");
+    } finally {
+      setIsSavingTeamName(false);
+    }
+  };
+
+  const identity: TeamIdentity = {
+    icon: (TEAM_ICONS as readonly string[]).includes(team?.icon ?? "") ? (team!.icon as TeamIconName) : TEAM_ICONS[0],
+    color: (TEAM_COLORS as readonly string[]).includes(team?.icon_color ?? "") ? (team!.icon_color as TeamColorName) : TEAM_COLORS[0],
+  };
+
+  const handleIdentityChange = async (next: TeamIdentity) => {
+    if (!effectiveTeamId || isSavingIcon) return;
+    const patch = {
+      ...(next.icon !== identity.icon ? { icon: next.icon } : {}),
+      ...(next.color !== identity.color ? { icon_color: next.color } : {}),
+    };
+    if (!Object.keys(patch).length) return;
+    setIsSavingIcon(true);
+    try {
+      await updateTeamIcon(effectiveTeamId, patch);
+    } finally {
+      setIsSavingIcon(false);
+    }
+  };
+
+  const handleRemoveMember = async () => {
+    if (!memberToRemove || !user._id || !effectiveTeamId) return;
+    setIsRemoving(true);
+    try {
+      await removeTeamMember(effectiveTeamId, memberToRemove);
+      setMemberToRemove(null);
+    } finally {
+      setIsRemoving(false);
+    }
+  };
+
+  // The typed name is the guard against deleting the wrong team: two teams
+  // can look alike in the switcher, but only one has this exact name. The
+  // server checks the same string, so the dialog is a courtesy, not the lock.
+  const deleteNameMatches = deleteTyped.trim() === (team?.name ?? "").trim();
+  const closeDelete = () => {
+    if (isDeleting) return;
+    setDeleteOpen(false);
+    setDeleteTyped("");
+  };
+  const handleDeleteTeam = async () => {
+    if (!effectiveTeamId || !team || !deleteNameMatches || isDeleting) return;
+    const name = team.name;
+    setIsDeleting(true);
+    try {
+      await useInboxStore.getState().deleteTeam(effectiveTeamId, deleteTyped);
+      setDeleteOpen(false);
+      setDeleteTyped("");
+      toast.success(`Deleted ${name}`);
+    } catch (error: any) {
+      toast.error(error?.message?.replace(/^.*Uncaught Error: /, "") || "Could not delete the team");
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleRoleChange = async (memberId: Id<"users">, newRole: "member" | "admin") => {
+    if (!user._id || !effectiveTeamId) return;
+    setRoleChangeInProgress(memberId);
+    try {
+      await setTeamMemberRole(effectiveTeamId, memberId, newRole);
+    } finally {
+      setRoleChangeInProgress(null);
+    }
+  };
+
+  const handleSyncGithubOrg = async () => {
+    if (!user._id || !githubOrgName.trim()) return;
+    setIsSyncingGithub(true);
+    setSyncResult(null);
+    try {
+      const result = await syncGithubOrg({
+        requesting_user_id: user._id,
+        org_name: githubOrgName.trim(),
+      });
+      setSyncResult(result);
+      setGithubOrgName("");
+    } catch (error: any) {
+      toast.error(`Failed to sync GitHub org: ${error.message}`);
+    } finally {
+      setIsSyncingGithub(false);
+    }
+  };
+
+  const getRelativeTime = (timestamp: number | undefined) => {
+    if (!timestamp) return "Never";
+    const now = Date.now();
+    const diff = now - timestamp;
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return "Just now";
+    if (minutes === 1) return "1 minute ago";
+    if (minutes < 60) return `${minutes} minutes ago`;
+    if (hours === 1) return "1 hour ago";
+    if (hours < 24) return `${hours} hours ago`;
+    if (days === 1) return "1 day ago";
+    return `${days} days ago`;
+  };
+
+  const getMemberDaemonStatus = (timestamp: number | undefined) => {
+    if (!timestamp) return { status: "offline", text: "Never connected" };
+    const diff = Date.now() - timestamp;
+    if (diff < 60000) return { status: "online", text: "Online" };
+    if (diff < 300000) return { status: "recent", text: getRelativeTime(timestamp) };
+    return { status: "offline", text: getRelativeTime(timestamp) };
+  };
+
+  const isAdmin = team?.role === "admin";
+  const goTo = (path: string) => {
+    useInboxStore.getState().closeSettingsModal();
+    router.push(path);
+  };
+
+  if (!effectiveTeamId || !team) {
+    return (
+      <SettingsPanel>
+        <SettingsSection title="Team" icon={Users} padded>
+          <div className="flex flex-col items-center gap-4 py-6 text-center">
+            <p className="max-w-prose text-sm text-sol-text-muted">
+              You are not part of a team yet. Create one to work with your teammates, or join one you were invited to.
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                onClick={() => goTo("/settings/team/create")}
+                variant="cyan"
+              >
+                Create a team
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => goTo("/settings/team/join")}>
+                Join a team
+              </Button>
+            </div>
+          </div>
+        </SettingsSection>
+      </SettingsPanel>
+    );
+  }
+
+  // Accounts only: the roster also carries synthetic identities (Slack shadow
+  // people, role bots) that chat mentions need but that have no login, so no
+  // seat to manage here. An agent account with its own login stays.
+  const people = (teamMembers ?? []).filter(
+    (m): m is NonNullable<typeof m> => !!m && !(m.is_bot && m.bot_kind),
+  );
+  const memberCount = people.length;
+
+  return (
+    <SettingsPanel>
+      <SettingsSection
+        title="Team"
+        icon={Users}
+        actions={
+          isAdmin ? (
+            <InviteModal
+              teamId={effectiveTeamId}
+              trigger={
+                <Button variant="outline" size="sm" className="border-sol-cyan text-sol-cyan">
+                  Invite
+                </Button>
+              }
+            />
+          ) : undefined
+        }
+      >
+        <SettingsRow label="Team name">
+          {isEditingTeamName ? (
+            <div className="flex items-center gap-2">
+              <Input
+                value={teamName}
+                onChange={(e) => setTeamName(e.target.value)}
+                placeholder={team.name}
+                className="h-8 w-48 bg-sol-bg border-sol-border text-sol-text"
+                autoFocus
+              />
+              <Button
+                size="sm"
+                onClick={handleSaveTeamName}
+                disabled={!teamName.trim() || isSavingTeamName}
+                variant="cyan" className="h-8"
+              >
+                {isSavingTeamName ? "..." : "Save"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setIsEditingTeamName(false);
+                  setTeamName("");
+                }}
+                className="h-8"
+              >
+                Cancel
+              </Button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-sol-text">{team.name}</span>
+              {isAdmin && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setIsEditingTeamName(true)}
+                  className="h-6 px-2 text-xs text-sol-text-muted hover:text-sol-text"
+                >
+                  Edit
+                </Button>
+              )}
+            </div>
+          )}
+        </SettingsRow>
+        {isAdmin && (
+          <SettingsField label="Team icon">
+            <TeamIdentityPicker
+              value={identity}
+              onChange={handleIdentityChange}
+              previewName={team.name}
+              disabled={isSavingIcon}
+            />
+          </SettingsField>
+        )}
+      </SettingsSection>
+
+      {isAdmin && user.github_username && (
+        <SettingsSection
+          title="GitHub org sync"
+          icon={Github}
+          description="Import members from a GitHub organization to your team."
+        >
+          <SettingsField
+            label="Organization"
+            htmlFor="github-org"
+            hint={
+              syncResult && (
+                <span>
+                  <span className="text-sol-text">
+                    Imported {syncResult.imported.length} of {syncResult.total} members
+                  </span>
+                  {syncResult.skipped.length > 0 && (
+                    <span> · Skipped {syncResult.skipped.length} (already members)</span>
+                  )}
+                </span>
+              )
+            }
+          >
+            <div className="flex items-center gap-2">
+              <Input
+                id="github-org"
+                value={githubOrgName}
+                onChange={(e) => setGithubOrgName(e.target.value)}
+                placeholder="org-name"
+                className="w-64 bg-sol-bg border-sol-border text-sol-text"
+                disabled={isSyncingGithub}
+              />
+              <Button
+                onClick={handleSyncGithubOrg}
+                disabled={!githubOrgName.trim() || isSyncingGithub}
+                size="sm"
+                variant="cyan"
+              >
+                {isSyncingGithub ? "Syncing..." : "Sync org"}
+              </Button>
+            </div>
+          </SettingsField>
+        </SettingsSection>
+      )}
+
+      <SettingsSection
+        title="Members"
+        icon={Users}
+        actions={
+          <span className="text-xs text-sol-text-muted">
+            {membersUnknown ? "Could not load members" : `${memberCount} member${memberCount !== 1 ? "s" : ""}`}
+          </span>
+        }
+      >
+        {membersUnknown && (
+          <div className="px-4 py-3 text-xs text-sol-text-muted sm:px-5">The member list could not be loaded.</div>
+        )}
+        {people.map((member) => {
+          const daemonStatus = getMemberDaemonStatus(member.daemon_last_seen);
+          return (
+            <div key={member._id} className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="relative shrink-0">
+                  <AvatarImg
+                    src={member.github_avatar_url}
+                    alt={member.name || "User avatar"}
+                    className="w-10 h-10 rounded-full"
+                    fallback={
+                      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-sol-bg-highlight text-sm font-semibold text-sol-text">
+                        {member.name?.[0]?.toUpperCase() || member.email?.[0]?.toUpperCase() || "?"}
+                      </div>
+                    }
+                  />
+                  <div className={`absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-sol-bg ${
+                    daemonStatus.status === "online" ? "bg-sol-green" :
+                    daemonStatus.status === "recent" ? "bg-sol-yellow" : "bg-sol-text-dim"
+                  }`} />
+                </div>
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-sol-text">
+                    {member.name || "Unnamed"}
+                    {member._id === user._id && (
+                      <span className="ml-2 text-xs text-sol-text-muted">(you)</span>
+                    )}
+                    {member.is_bot && (
+                      <span className="ml-2 text-xs text-sol-text-muted">(agent)</span>
+                    )}
+                  </div>
+                  <div className="truncate text-xs text-sol-text-muted">
+                    {member.email}
+                    {member.github_username && (
+                      <>
+                        {" • "}
+                        <a
+                          href={`https://github.com/${member.github_username}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-sol-cyan hover:underline"
+                        >
+                          @{member.github_username}
+                        </a>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <span className="text-xs text-sol-text-dim">{daemonStatus.text}</span>
+                {isAdmin && member._id !== user._id ? (
+                  <SelectBox
+                    value={member.role}
+                    onChange={(e) => handleRoleChange(member._id, e.target.value as "member" | "admin")}
+                    disabled={roleChangeInProgress === member._id}
+                    aria-label={`Role for ${member.name || member.email || "member"}`}
+                    className={`font-medium ${member.role === "admin" ? "text-sol-cyan" : "text-sol-text-muted"}`}
+                  >
+                    <option value="member">member</option>
+                    <option value="admin">admin</option>
+                  </SelectBox>
+                ) : (
+                  <span className={`rounded-md px-2 py-1 text-xs font-medium ${
+                    member.role === "admin"
+                      ? "bg-sol-cyan/10 text-sol-cyan"
+                      : "bg-sol-bg-highlight/20 text-sol-text-muted"
+                  }`}>
+                    {member.role}
+                  </span>
+                )}
+                {isAdmin && member._id !== user._id && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setMemberToRemove(member._id)}
+                    className="h-7 px-2 text-sol-red hover:bg-sol-red/10"
+                  >
+                    Remove
+                  </Button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </SettingsSection>
+
+      {isAdmin && effectiveTeamId && <TeamDomainAccess teamId={effectiveTeamId} />}
+
+      {effectiveTeamId && <TeamMachines teamId={String(effectiveTeamId)} />}
+
+      {effectiveTeamId && (
+        <TeamFeaturesEditor teamId={effectiveTeamId} isAdmin={isAdmin} />
+      )}
+
+      {effectiveTeamId && <TeamTemplateLearning teamId={String(effectiveTeamId)} />}
+
+      {effectiveTeamId && <TeamModelBudget teamId={effectiveTeamId} isAdmin={isAdmin} />}
+
+      {effectiveTeamId && (
+        <TeamTaskStatusEditor
+          teamId={effectiveTeamId}
+          configured={(team as any)?.task_statuses}
+          isAdmin={isAdmin}
+        />
+      )}
+
+      {isAdmin && (
+        <SettingsSection
+          title="Danger zone"
+          icon={TriangleAlert}
+          description="Deleting a team ends it for everyone. Nothing here can be undone from the app."
+          className="[&_h3]:text-sol-red [&_svg]:text-sol-red"
+        >
+          <SettingsRow
+            label="Delete this team"
+            description={membersUnknown
+              ? "Every member loses access the moment you confirm."
+              : memberCount === 1
+              ? "You are the only member. The team ends the moment you confirm."
+              : `${memberCount} members lose access the moment you confirm.`}
+          >
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setDeleteOpen(true)}
+              className="border-sol-red/60 text-sol-red hover:bg-sol-red/10 hover:text-sol-red"
+            >
+              Delete team
+            </Button>
+          </SettingsRow>
+        </SettingsSection>
+      )}
+
+      <Dialog open={deleteOpen} onOpenChange={(open) => { if (!open) closeDelete(); }}>
+        <DialogContent className="bg-sol-bg border-sol-border">
+          <DialogHeader>
+            <DialogTitle className="text-sol-text">Delete {team.name}?</DialogTitle>
+            <DialogDescription className="text-sol-text-muted">
+              This ends the team for every member, now.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="space-y-1.5 text-sm text-sol-text-muted">
+            <li className="flex gap-2"><span className="text-sol-red">•</span>Every member loses access, and their workspace moves to another team or to personal.</li>
+            <li className="flex gap-2"><span className="text-sol-red">•</span>Sessions, tasks, docs and plans shared in this team stop being reachable. Personal work is untouched.</li>
+            <li className="flex gap-2"><span className="text-sol-red">•</span>Team chat and calls close, the invite link stops working, and the team&apos;s agent is retired.</li>
+          </ul>
+          <div className="space-y-1.5">
+            <label htmlFor="delete-team-confirm" className="block text-xs text-sol-text-muted">
+              Type <span className="font-mono text-sol-red">{team.name}</span> to confirm
+            </label>
+            <Input
+              id="delete-team-confirm"
+              value={deleteTyped}
+              onChange={(e) => setDeleteTyped(e.target.value)}
+              placeholder="Team name"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={isDeleting}
+              onKeyDown={(e) => { if (e.key === "Enter" && deleteNameMatches) void handleDeleteTeam(); }}
+              className="bg-sol-bg border-sol-border text-sol-text"
+              autoFocus
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={closeDelete} disabled={isDeleting}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleDeleteTeam}
+              disabled={!deleteNameMatches || isDeleting}
+              className="bg-sol-red text-sol-base03"
+            >
+              {isDeleting ? "Deleting..." : "Delete team"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!memberToRemove} onOpenChange={() => setMemberToRemove(null)}>
+        <DialogContent className="bg-sol-bg border-sol-border">
+          <DialogHeader>
+            <DialogTitle className="text-sol-text">Remove team member</DialogTitle>
+            <DialogDescription className="text-sol-text-muted">
+              Are you sure you want to remove this member from the team? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setMemberToRemove(null)}
+              disabled={isRemoving}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleRemoveMember}
+              disabled={isRemoving}
+              className="bg-sol-red text-sol-base03"
+            >
+              {isRemoving ? "Removing..." : "Remove member"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </SettingsPanel>
+  );
+}

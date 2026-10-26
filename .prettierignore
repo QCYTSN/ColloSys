@@ -1,0 +1,10 @@
+node_modules
+.local
+.wrangler
+dist
+test-results
+docs/audit-evidence
+package-lock.json
+third_party
+packages/connector/src/vendor
+packages/web/src/components/ui

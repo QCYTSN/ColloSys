@@ -1,0 +1,4231 @@
+import { HIBERNATED_COPY } from "@codecast/shared/contracts";
+import React, { Fragment, useState, useCallback, useRef, memo, useMemo } from "react";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { useConvex, useMutation, useQuery } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { useQueryNoThrow } from "../hooks/useQueryNoThrow";
+import { Id } from "@codecast/convex/convex/_generated/dataModel";
+import { useRouter } from "next/navigation";
+import { ContextMenu, CursorPopover, useContextMenu, CtxItem, CtxHeader, CtxSeparator } from "./ui/context-menu";
+import { SessionMenuItems } from "./menus/ObjectContextMenus";
+import { BulkSessionMenuItems, InboxSelectionBar, MoveToDeviceSubmenu } from "./BulkMoveSessions";
+import { labelSessions } from "../lib/labelSessions";
+import { selectionGesture, selectionIdsFor, useInboxSelection } from "../lib/inboxSelection";
+import { useEventListener } from "../hooks/useEventListener";
+import { copyToClipboard, formatShortDate } from "../lib/utils";
+import { SessionErrorBanner, SessionResumeBanner } from "./SessionErrorBanner";
+import { CloudPlacementStrip } from "./CloudPlacementStrip";
+import { AppLoader } from "./AppLoader";
+import { LoginCodePaste } from "./LoginCodePaste";
+import type { ConversationData } from "./conversation/types";
+import { threadStateView } from "../lib/threadState";
+import type { ThreadStateStatus } from "@codecast/shared/contracts";
+import { ORG_STATE_META } from "./org/orgMeta";
+import { StatusDot } from "./StatusDot";
+import type { WorkState } from "@codecast/shared/contracts";
+import { useConversationMessages } from "../hooks/useConversationMessages";
+import { awaitingOkIds } from "../lib/decisionQueue";
+import { useInboxStore, useTrackedStore, InboxSession, InboxViewMode, flatViewComparator, flatViewSessions, chipMatchesSession, computeManualSortKey, getSessionRenderKey, isConvexId, placeInboxRows, placementDecisionsSig, getProjectName, sessionsWithPendingSend, pendingSendIdsOf, freshReviveRequestIds, hostedStatusSections, isSessionHidden, convBucketMap, sessionUnreadMap, sessionUnreadWakeSig, chipBucketFilters, chipFilterOpts, chipProjectFilters, hostedOnlyInbox, passesFilterTerms, groupSessionsForLabelView, groupSessionsByPlan, groupSessionsForOrgLens, isOrgLensMode, orgLensAvailable, orgLensSourcesOf, orgLensWakeSig, ORG_LENS_MODES, sessionWorkState, selectFavoriteSessions, isFavoriteInStore, sortLabels, computeChipCounts, BucketItem } from "../store/inboxStore";
+import { sessionsWakeSig, resolveShowOld, sectionHeaderCount, classifySession, inboxNestParentOf, NEW_SESSION_HOLD_MS, ensureHydrated, HOSTED_UNFOLDABLE_SECTIONS } from "../store/inboxStore";
+import { loadMoreKilledSessions } from "../hooks/killedShelf";
+import { makeCollectionSig } from "../store/wakeSig";
+import { useCoarseNow } from "../hooks/useCoarseNow";
+import { LivePulseDot } from "./SessionActivityLine";
+import { useTriggerKillNotice } from "../hooks/useTriggerKillNotice";
+import { AUTO_CONTINUE_WINDOW_MS, fleetAccount, actedBlockedConversations, skippedBlockedWorkers, blockedHeadlineCause, isBlockedConversation, isCurrentBlock, isSubagentConversation, usageStanding, standingLabel, isUsageExhausted, LOGIN_FLOW_STALE_MS, type CcUsage } from "@codecast/convex/convex/ccAccountsShared";
+import { contextShareOf, formatIdle, formatShare, formatTokens, restartPlan, restartReloadsContext } from "@codecast/convex/convex/wakeCost";
+import { withSafetyBlock } from "@codecast/shared/contracts";
+import { contextWindowTokens, restartShareOfRemaining, formatCountdown } from "@codecast/shared/contracts";
+import { fallbackProfiles, rankByHeadroom, USER_RESTS, describeDecision, pendingProposal, type UserRest } from "@codecast/shared/contracts";
+import { agentStatusAt, sessionLiveAt } from "../lib/liveness";
+import { TooltipProvider } from "./ui/tooltip";
+import { cleanTitle } from "../lib/conversationProcessor";
+import { getLabelColor } from "../lib/labelColors";
+import Link from "next/link";
+import { fmtClock, fmtDuration, describeTaskCadence, isTaskOverdue, taskStateLabel } from "./triggerCadence";
+import { isWatchHostDead, liveWatchRowsFor } from "./monitorRows";
+import { useOpenWatchMessage } from "../hooks/useOpenWatchMessage";
+import { partitionTriggerInbox, groupSessionsByTrigger, groupTriggerRowsByHome, taskDisplayTitle, latestLoadedTriggerMessage, type TriggerRow, type TriggerHomeGroup, type TaskRow } from "./triggerTasks";
+import { rowScrollDelta, scrollMarginTopOf } from "../lib/rowScroll";
+import { firstRunWords } from "./triggers/hostedSchedule";
+import { sameNameSuffixes } from "../lib/sameNameSuffix";
+import { sessionCardTitle } from "../lib/sessionCard";
+
+const NO_SUFFIXES: ReadonlyMap<string, string> = new Map();
+import { useTriggers, fetchTriggerRuns } from "../hooks/useSyncTriggers";
+import { TriggerRunList, useTriggerRuns, openRunInStore, type TriggerRun } from "./TriggerRunHistory";
+import { TriggerRowItem, TriggerHomeHeader, SchedChildArrow, SchedHealthDot, SchedFireBadge } from "./TriggerRow";
+import { WAKE_BADGE, RUNNING_BADGE_TONE } from "../lib/triggerBadges";
+import { schedAccent, type SchedAccent } from "../lib/triggerAccent";
+// Who is speaking on each row (docs/architecture/session-characters.md S3).
+import { RoleHoverCard } from "./identity";
+import { RoleFace } from "./org/RoleFace";
+import { OwnerAvatar } from "./OwnersBadge";
+import { CharacterPicker } from "./identity/CharacterPicker";
+import { standingRoleIdOf } from "../lib/sessionIdentity";
+import { isUnderRole } from "@codecast/shared/contracts";
+import { AuthErrorBadge } from "./AuthErrorBadge";
+import { ConversationSharePopover } from "./ConversationSharePopover";
+import { PlanContextPanel } from "./PlanContextPanel";
+import { WorkflowContextPanel } from "./WorkflowContextPanel";
+import { toast } from "sonner";
+import { animatedHideSessions, fileSessionsAsRest } from "../store/undoActions";
+
+import { soundKill } from "../lib/sounds";
+import { latestSessionCommand, requestAccountSwitchCommand, requestSessionRestart, switchPending } from "../lib/sessionCommands";
+import { ShortcutTooltip } from "./KeyboardShortcutsHelp";
+import { X, ChevronsRight, ChevronRight, ChevronDown, GitFork, History, Star, Workflow, Play, Pause, Settings2, Users, ArrowUpRight, Zap, ZapOff, Copy, ArrowUp, ArrowDown } from "lucide-react";
+import { InboxViewTabs } from "./InboxViewTabs";
+import { SessionCard, hostedRowTitle } from "./inbox/SessionCard";
+import { SectionHeader } from "./inbox/SectionHeader";
+import { AssistantScopeSwitch, MoreInEverything } from "./AssistantScopeSwitch";
+import { bySessionAgent, isAssistantRoutine, withinScope } from "../lib/assistantScope";
+import { hostedStopOf, hostedStopsSig, lastAskOf, lastNoticeKind, splitHostedStops } from "../lib/hostedNotice";
+import { actionFor } from "./conversation/HostedNotice";
+import { useThinkingAvailable } from "./simple/assistantPromise";
+import { LANE_COPY } from "./simple/lane";
+import { useUpgradesOpen } from "./simple/billing";
+import type { NoticeKind } from "@codecast/shared/contracts/assistant";
+import { LabelChipsRow } from "./LabelChipsRow";
+import { isParkedDispatchError } from "../store/mutativeMiddleware";
+import { useTitlebarHead } from "../hooks/useTitlebarHead";
+import { PaneControls } from "./stage/PaneControls";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { useAssistantScope, useHostedMode, useModeWords, useSurface } from "../lib/surfaces";
+import type { ModeWords } from "../lib/surfaceRules";
+const ConversationDiffLayout = React.lazy(() =>
+  import("./ConversationDiffLayout").then((module) => ({ default: module.ConversationDiffLayout })),
+);
+
+
+// -- InboxConversation (shared) --
+
+export const InboxConversation = memo(function InboxConversation({ sessionId, isIdle, onSendAndAdvance, onSendAndDismiss, lastUserMessage, sessionError, onBack, targetMessageId, backHref, onExpandToMain, onClose }: { sessionId: string; isIdle: boolean; onSendAndAdvance: () => void; onSendAndDismiss?: () => void; lastUserMessage?: string | null; sessionError?: string; onBack?: () => void; targetMessageId?: string; backHref?: string; onExpandToMain?: () => void; onClose?: () => void }) {
+  const {
+    conversation,
+    hasMoreAbove,
+    hasMoreBelow,
+    isLoadingOlder,
+    isLoadingNewer,
+    loadOlder,
+    loadNewer,
+    jumpToStart,
+    jumpToEnd,
+    jumpToTimestamp,
+    isJumpingToTarget,
+  } = useConversationMessages(sessionId, targetMessageId);
+
+  const convCommand = useInboxStore((s) => s.convCommand);
+  const [resumeState, setResumeState] = useState<"idle" | "resuming" | "sent" | "reconstituting" | "failed">("idle");
+  const forceRestartAttemptedRef = useRef(false);
+  const reconstitutionAttemptedRef = useRef(false);
+
+  useWatchEffect(() => {
+    if (!isIdle && (resumeState === "sent" || resumeState === "resuming" || resumeState === "reconstituting")) {
+      setResumeState("idle");
+      forceRestartAttemptedRef.current = false;
+      reconstitutionAttemptedRef.current = false;
+    }
+  }, [isIdle, resumeState]);
+
+  useWatchEffect(() => {
+    if (resumeState !== "sent") return;
+    const timeout = setTimeout(async () => {
+      if (!forceRestartAttemptedRef.current && isConvexId(sessionId)) {
+        forceRestartAttemptedRef.current = true;
+        try {
+          await requestSessionRestart(sessionId);
+          setResumeState("sent");
+        } catch (err) {
+          // A parked restart is still pending. Keep the recovery state and let
+          // the liveness/timeout ladder decide whether it ultimately worked.
+          if (isParkedDispatchError(err)) return;
+          setResumeState("failed");
+        }
+      } else if (!reconstitutionAttemptedRef.current && isConvexId(sessionId)) {
+        reconstitutionAttemptedRef.current = true;
+        setResumeState("reconstituting");
+        try {
+          await requestSessionRestart(sessionId, undefined, true);
+          setResumeState("reconstituting");
+        } catch (err) {
+          if (isParkedDispatchError(err)) return;
+          setResumeState("failed");
+        }
+      } else {
+        setResumeState("failed");
+      }
+    }, 90_000);
+    return () => clearTimeout(timeout);
+  }, [resumeState, sessionId, convCommand]);
+
+  useWatchEffect(() => {
+    if (resumeState !== "reconstituting") return;
+    const timeout = setTimeout(() => {
+      setResumeState("failed");
+    }, 60_000);
+    return () => clearTimeout(timeout);
+  }, [resumeState]);
+
+  // `leave_out` answers a cloud placement whose context was over the cap.
+  const handleManualResume = useCallback((extra?: { leave_out?: string[] }) => {
+    setResumeState("resuming");
+    convCommand(sessionId, "resumeSession", extra?.leave_out ? { leave_out: extra.leave_out } : undefined)
+      .then(() => setResumeState("sent"))
+      .catch((err) => {
+        if (isParkedDispatchError(err)) {
+          setResumeState("sent");
+          return;
+        }
+        setResumeState("failed");
+      });
+  }, [sessionId, convCommand]);
+
+  if (!conversation) {
+    return (
+      <AppLoader className="min-h-0 h-full bg-transparent" size={32} />
+    );
+  }
+
+  const convId = conversation._id as Id<"conversations">;
+  // Owner-only: a team viewer's payload carries share_token, and rendering the
+  // popover for them would hand out a working world-readable link one click
+  // from a session they don't own (mirrors QueuePageClient's gate).
+  const shareControls = <ConversationSharePopover conversation={conversation} canManage={(conversation as any).is_own !== false} />;
+
+  const activePlanId = (conversation as any)?.active_plan_id;
+  const workflowRunId = (conversation as any)?.workflow_run_id;
+
+  return (
+    <div className="relative h-full flex flex-col">
+      <SessionResumeBanner
+        resumeState={resumeState}
+        onResume={handleManualResume}
+      />
+      <CloudPlacementStrip sessionId={sessionId} />
+      {sessionError && resumeState === "idle" && (
+        <SessionErrorBanner
+          // Remount per session: the dismiss state is keyed by error TEXT, and
+          // two sessions can fail with the identical message.
+          key={conversation._id}
+          error={sessionError}
+          sessionId={sessionId}
+          projectPath={conversation.project_path || conversation.git_root}
+          ownerDeviceId={(conversation as any).owner_device_id}
+          onResume={handleManualResume}
+        />
+      )}
+      <div className="flex-1 min-h-0">
+        <React.Suspense fallback={<AppLoader className="min-h-0 h-full" />}>
+          <ConversationDiffLayout
+            conversation={conversation as ConversationData}
+            embedded
+            headerExtra={shareControls}
+            headerEnd={onClose || onExpandToMain ? (
+              // The standard pane cluster (expand, close) — same icons and
+              // order as every other pane's strip (components/stage/PaneControls).
+              <PaneControls onExpand={onExpandToMain} onClose={onClose} />
+            ) : undefined}
+            hasMoreAbove={hasMoreAbove}
+            hasMoreBelow={hasMoreBelow}
+            isLoadingOlder={isLoadingOlder}
+            isLoadingNewer={isLoadingNewer}
+            onLoadOlder={loadOlder}
+            onLoadNewer={loadNewer}
+            onJumpToStart={jumpToStart}
+            onJumpToEnd={jumpToEnd}
+            onJumpToTimestamp={jumpToTimestamp}
+            isOwner={true}
+            onSendAndAdvance={onSendAndAdvance}
+            onSendAndDismiss={onSendAndDismiss}
+            autoFocusInput
+            backHref={backHref}
+            onBack={onBack}
+            fallbackStickyContent={lastUserMessage}
+            targetMessageId={targetMessageId}
+            isJumpingToTarget={isJumpingToTarget}
+            subHeaderContent={<>
+              {activePlanId && <PlanContextPanel planId={activePlanId} />}
+              {workflowRunId && <WorkflowContextPanel workflowRunId={workflowRunId} />}
+            </>}
+          />
+        </React.Suspense>
+      </div>
+    </div>
+  );
+});
+
+// -- Fork tree color --
+
+// The corner color is keyed by the ROOT of the fork tree so every session in
+// the same tree — parent, forks, forks-of-forks — renders the same color.
+// Walk forked_from as far as the loaded cache allows; an unloaded ancestor's
+// id is still a key all of its visible descendants agree on.
+function forkTreeRootId(session: InboxSession, sessions: Record<string, InboxSession>): string {
+  let cur = session;
+  const seen = new Set([cur._id]);
+  while (cur.forked_from) {
+    const parent = sessions[cur.forked_from];
+    if (!parent || seen.has(parent._id)) return cur.forked_from;
+    cur = parent;
+    seen.add(cur._id);
+  }
+  return cur._id;
+}
+
+// The login flow's device-row state, as listAccountProfiles reports it.
+type LoginFlowState = {
+  status: "pending" | "confirmed" | "rejected";
+  email?: string;
+  reason?: string;
+  url?: string;
+  started_at: number;
+  finished_at?: number;
+  revived?: number;
+};
+
+// The big sign-in call to action for auth-blocked sessions. Clicking asks the
+// primary daemon to run `claude auth login` (requestLoginFlow), which pops the
+// OAuth page in the machine's browser pre-filled with the expired account's
+// email. The device row's cc_login_flow field is the whole state channel:
+// pending renders the waiting spinner, confirmed announces the revive the
+// server already kicked off, rejected says why and brings the button back.
+export function SignInCta({
+  device,
+  authSessionIds,
+  disabled,
+}: {
+  device: { device_id: string; label?: string; active_email?: string; login_flow?: LoginFlowState };
+  authSessionIds: string[];
+  disabled: boolean;
+}) {
+  const requestLogin = useMutation(api.accountSwitch.requestLoginFlow);
+  const [launching, setLaunching] = useState(false);
+  const now = useCoarseNow(5_000);
+  const flow = device.login_flow;
+
+  // The moment the daemon confirms, mirror the server's revive locally: stamp
+  // the auth-blocked sessions as revive-in-flight so the counts drop on the
+  // spot instead of on the kill/continue round trip.
+  const handledConfirmRef = useRef(0);
+  useWatchEffect(() => {
+    if (flow?.status !== "confirmed" || !flow.finished_at) return;
+    if (handledConfirmRef.current === flow.finished_at) return;
+    handledConfirmRef.current = flow.finished_at;
+    // Only a confirm from THIS incident revives — an old row from last week's
+    // flow must not clear a fresh outage's counts.
+    if (now - flow.finished_at < 3 * 60 * 1000) {
+      useInboxStore.getState().markBlockedReviveRequested(authSessionIds);
+    }
+  }, [flow?.status, flow?.finished_at, now, authSessionIds]);
+
+  const pending =
+    (flow?.status === "pending" && now - flow.started_at < LOGIN_FLOW_STALE_MS) || launching;
+  const confirmedRecent =
+    flow?.status === "confirmed" && !!flow.finished_at && now - flow.finished_at < 3 * 60 * 1000;
+  const rejectedRecent =
+    flow?.status === "rejected" && !!flow.finished_at && now - flow.finished_at < 10 * 60 * 1000;
+
+  // The button always launches a sign-in for the machine's CURRENT login
+  // (requestLoginFlow stamps active_email at click time), so it is labeled
+  // with the live active_email — an account switch under the banner, or a
+  // cc_login_flow row left over from an earlier incident, must not pin the
+  // old address. flow.email only labels the flow it belongs to: the pending
+  // spinner and the confirmed panel.
+  const email = device.active_email ?? flow?.email;
+  const who = email ?? "your Claude account";
+  const flowWho = flow?.email ?? who;
+
+  const handleClick = async (force = false) => {
+    setLaunching(true);
+    try {
+      await requestLogin({ device_id: device.device_id, ...(force ? { force: true } : {}) });
+      // The device row's pending stamp echoes back through listAccountProfiles;
+      // keep the local flag briefly so the button can't double-fire meanwhile.
+      setTimeout(() => setLaunching(false), 5_000);
+    } catch (err) {
+      setLaunching(false);
+      toast.error(err instanceof Error ? err.message : "Couldn't start the sign-in");
+    }
+  };
+
+  if (pending) {
+    return (
+      <div className="mt-2 flex items-center gap-2.5 rounded-md border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2.5">
+        <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-amber-500/30 border-t-amber-500" aria-hidden />
+        <div className="min-w-0 text-[11px] leading-snug">
+          <div className="font-semibold text-sol-text">Finish signing in as {flowWho} in your browser</div>
+          <div className="text-sol-text-dim">
+            The sign-in page opened on {device.label || "your machine"} — the blocked sessions restart on their own once it completes.
+          </div>
+          <button
+            onClick={() => handleClick(true)}
+            disabled={disabled}
+            title={`Kill the running sign-in on ${device.label || "your machine"} and open a fresh browser page`}
+            className="mt-1 font-medium text-amber-500 underline underline-offset-2 transition-colors hover:text-amber-400 disabled:opacity-60"
+          >
+            Page didn&apos;t open? Relaunch the sign-in
+          </button>
+          {flow?.status === "pending" && <LoginCodePaste deviceId={device.device_id} flow={flow} />}
+        </div>
+      </div>
+    );
+  }
+
+  if (confirmedRecent) {
+    const revived = flow?.revived ?? authSessionIds.length;
+    return (
+      <div className="mt-2 flex items-center gap-2.5 rounded-md border border-sol-green/30 bg-sol-green/[0.08] px-3 py-2.5">
+        <svg className="h-3.5 w-3.5 shrink-0 text-sol-green" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+          <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <div className="min-w-0 text-[11px] leading-snug">
+          <div className="font-semibold text-sol-text">Signed in{flow?.email ? ` as ${flow.email}` : ""}</div>
+          <div className="text-sol-text-dim">
+            {revived > 0
+              ? `Restarting ${revived} blocked session${revived === 1 ? "" : "s"} on the fresh login.`
+              : "The blocked sessions restart on their own."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/[0.08] px-3 py-2.5">
+      {rejectedRecent && (
+        <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-medium text-sol-red">
+          <X className="h-3 w-3 shrink-0" />
+          <span className="min-w-0 truncate">
+            Sign-in didn&apos;t complete{flow?.reason ? ` — ${flow.reason}` : ""}
+          </span>
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <button
+          onClick={() => handleClick()}
+          disabled={disabled}
+          title={`Run /login on ${device.label || "your machine"} — opens the browser sign-in${email ? ` for ${email}` : ""}`}
+          className="inline-flex items-center gap-1.5 rounded-md bg-amber-500 px-3.5 py-1.5 text-[12px] font-bold text-sol-bg shadow-sm transition-colors hover:bg-amber-400 disabled:opacity-60"
+        >
+          <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5} aria-hidden>
+            <circle cx="7.5" cy="15.5" r="3.5" />
+            <path d="M10 13L20 3M17 6l2 2M14 9l2 2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          {rejectedRecent ? `Try signing in as ${who} again` : `Sign in as ${who}`}
+        </button>
+        <span className="text-[11px] leading-snug text-sol-text-dim">
+          Opens your browser to re-authenticate, then restarts the signed-out session{authSessionIds.length === 1 ? "" : "s"} automatically.
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// When several sessions are parked on an API-error banner at once (the classic
+// "the whole fleet hit the Max usage limit together"), surface ONE fleet-level
+// action instead of N per-card errors: send "continue" to them all, on a
+// choice of account. One mutation (requestAccountSwitch; see
+// convex/accountSwitch.ts) decides per session whether a message reaches it
+// or it must be killed and resumed first (signed out, or pinned to another
+// account's setup-token). Account switching itself lives in
+// settings/auto-switch, not in this banner. Own component so its account
+// query stays out of the hot panel render.
+function BlockedSessionsBanner({
+  blocked,
+  onOpen,
+  forced,
+  onClearForced,
+  fresh,
+}: {
+  blocked: InboxSession[];
+  onOpen?: (session: InboxSession) => void;
+  // The header's blocked-pill is the PERMANENT trigger for this banner: it
+  // force-shows it past the snooze and the 2-session floor, so the actions are
+  // always reachable while any session is blocked (the banner alone is
+  // transient — it snoozes on X and after acting).
+  forced?: boolean;
+  onClearForced?: () => void;
+  // A live 0→N transition of the blocked set (not a page-load hydration):
+  // replay the entrance with the attention glow so the incident lands.
+  fresh?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [includeSubs, setIncludeSubs] = useState(false);
+  // Which account the continue runs on: "" = the account the machine is signed
+  // into now, null = not chosen yet — the default, which is the account the
+  // machine PROPOSED when it is asking, else the current one.
+  const [onAccount, setOnAccount] = useState<string | null>(null);
+  // The newest account switch in flight from any surface: a fleet revive and
+  // a machine switch would fight over the same credential, so it holds both.
+  const switchRow = useInboxStore((st) => latestSessionCommand(st.sessionCommands, (r) => r.kind === "switch"));
+  // Which sessions the continue restarts. null = the default pick: parks inside
+  // the auto-continue window, since an older park already sat through a reset
+  // nobody came back for. The first tick or untick makes it an explicit set.
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const acknowledgeMutation = useMutation(api.accountSwitch.acknowledgeBlocked);
+  // The X is a durable, cross-device snooze (24h) — a banner that resurrects
+  // on every reload isn't dismissible. Permanent removal is per-session:
+  // acknowledge clears the flag itself.
+  const clientStateInitialized = useInboxStore((st) => st.clientStateInitialized);
+  const snoozedTs = useInboxStore((st) => st.clientState.dismissed?.blocked_sessions_banner ?? 0);
+  const updateDismissed = useInboxStore((st) => st.updateClientDismissed);
+  // Read for any blocked session, not just fleets of two: a single parked
+  // session can be the one the machine is asking about.
+  const accountData = useQuery(api.accountSwitch.listAccountProfiles, blocked.length > 0 ? {} : "skip");
+  // How many tokens one percent of a usage window is worth, fitted across the
+  // fleet (convex/usageCalibration.ts). Enrichment, so it goes through
+  // useQueryNoThrow: without it the banner still names the tokens, it just
+  // cannot say what share of the account's remaining window they are.
+  const calibration = useQueryNoThrow(api.usageCalibration.get, {}).data ?? null;
+  // Ticking clock for the "Xm ago" times — a static Date.now() would freeze
+  // them at whatever the last unrelated re-render happened to read.
+  const now = useCoarseNow(30_000);
+  const busy = switchPending(switchRow, Date.now()) ? (switchRow?.profile ?? switchRow?.email ?? "revive") : null;
+
+  const snoozed = snoozedTs > 0 && Date.now() - snoozedTs < 24 * 60 * 60 * 1000;
+  // A switch the machine recommended and is waiting on. Asking is the whole
+  // point of that mode, so the ask shows the banner even for one parked
+  // session, and a proposal raised after the last snooze breaks through it.
+  // Live ranking, not the stored sentence: a proposal freezes the percent it
+  // saw, and that line was still naming a spent account after the meters moved.
+  const proposal = pendingProposal(accountData?.devices, now);
+  const askPending = !!proposal && proposal.at > snoozedTs;
+  if (!clientStateInitialized || blocked.length === 0) return null;
+  if (!forced && !askPending && (blocked.length < 2 || snoozed)) return null;
+
+  // Subagent workers default OUT of the acted set: their parent has usually
+  // moved on, so reviving them spends the fresh account on work nobody is
+  // waiting for. Same predicate the server selection uses, so the counts on
+  // the buttons are exactly what the mutations will touch. Leaving them out is
+  // a decision, not a deferral: the revive DISMISSES the skipped workers in
+  // the same gesture (server: dismissSkippedWorkers), so the button names both
+  // halves — "Continue 1 · dismiss 37 workers" — and the incident shrinks to
+  // what was acted on instead of carrying rows nobody will ever revive.
+  const subagents = skippedBlockedWorkers(blocked, false);
+  const skippedWorkers = skippedBlockedWorkers(blocked, includeSubs);
+  const safetyBlocked = blocked.filter((sess) => sess.pending_api_error_kind === "safety");
+  const safetyCount = safetyBlocked.length;
+  // Full context windows: a "continue" cannot reach them, only /compact or
+  // /clear can. They are still ticked and restarted by the same button as the
+  // rest; for these rows the restart is a /compact (the same send the card's
+  // own button makes), so the banner never asks for a second decision.
+  const isContextFull = (sess: InboxSession) => sess.pending_api_error_kind === "context";
+  const contextBlocked = blocked.filter((sess) => isContextFull(sess) && !isSubagentConversation(sess));
+  const contextCount = contextBlocked.length;
+  // Workers join the acted set only through the checkbox — never because they
+  // are all that is blocked. Continuing an in-process worker cannot reach it;
+  // it resumes a standalone copy that reruns its brief for nobody (the
+  // 2026-08-20 fleet: 53 copies running stale briefs in the shared checkout).
+  // Left unticked, the banner offers nothing to continue and says so.
+  const acted = actedBlockedConversations(blocked, includeSubs);
+  const authCount = acted.filter((sess) => sess.pending_api_error_kind === "auth").length;
+  const connCount = acted.filter((sess) => sess.pending_api_error_kind === "connection").length;
+  const fatalCount = acted.filter((sess) => sess.pending_api_error_kind === "fatal").length;
+  const throttleCount = acted.filter((sess) => sess.pending_api_error_kind === "throttle").length;
+  const limitCount = acted.length - authCount - connCount - fatalCount - throttleCount;
+  // Named over the WHOLE blocked set (what the headline counts), never the
+  // acted set — same definition the blocked notification's title uses.
+  const headlineOn = blockedHeadlineCause(blocked);
+  // When a session's block landed: the banner message's own timestamp, with
+  // updated_at standing in for rows flagged before the field existed. The
+  // headline shows the newest one — the moment the incident (last) grew.
+  const blockAt = (sess: InboxSession) => sess.pending_api_error_at ?? sess.updated_at ?? 0;
+  const latestBlockAt = blocked.reduce((max, sess) => Math.max(max, blockAt(sess)), 0);
+
+  // Newest-flagged first — the same order the revive acts on (and the order
+  // that answers "which sessions?" most usefully: fresh casualties on top).
+  const blockedSorted = [...blocked].sort((a, b) => blockAt(b) - blockAt(a));
+
+  const togglePick = (id: string) => {
+    const next = new Set(chosenIds);
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    setPicked(next);
+  };
+  const setAllPicked = (on: boolean) => setPicked(new Set(on ? pickable.map((sess) => sess._id) : []));
+
+  // The sign-in CTA's executor: the online primary (non-remote) machine — the
+  // one whose keychain holds the login and whose browser the OAuth flow opens
+  // in. Remotes run a pushed credential copy and can never sign in themselves.
+  const loginDevice = (accountData?.devices ?? []).find((d) => d.online && !d.is_remote);
+  const actedAuthIds = acted
+    .filter((sess) => sess.pending_api_error_kind === "auth")
+    .map((sess) => sess._id);
+
+  // The account picker's inventory. Accounts are DEVICE-SPECIFIC: a saved
+  // profile is a keychain snapshot on one machine, so the only accounts worth
+  // offering are the ones saved on the machines that will EXECUTE the revive —
+  // each blocked session's online owner, or the primary standing in for an
+  // offline or remote owner (the same routing insertSwitchCommands applies).
+  // Options are keyed by email (the identity); a profile name is that
+  // machine's alias and may differ or be absent elsewhere. The whole banner
+  // asks ONE question — which account does the fleet continue on? — so
+  // accounts render as a single select, ranked by live headroom.
+  const devices = accountData?.devices ?? [];
+  const deviceById = new Map(devices.map((d) => [d.device_id, d]));
+  const executorFor = (sess: InboxSession) => {
+    const owner = sess.owner_device_id ? deviceById.get(sess.owner_device_id) : undefined;
+    return owner && owner.online && !owner.is_remote ? owner : loginDevice;
+  };
+  const executors = [...new Map(acted.map((sess) => executorFor(sess)).filter((d) => !!d).map((d) => [d!.device_id, d!])).values()];
+  // The account each machine's sessions run on: the launch profile after a
+  // token switch, else the keychain login (fleetAccount).
+  const fleetEmailOf = (d: (typeof executors)[number]) => fleetAccount(d, now).email;
+  const activeEmails = [...new Set(executors.map(fleetEmailOf).filter((e): e is string => !!e))];
+  const activeEmail = activeEmails.length === 1 ? activeEmails[0] : undefined;
+  type AccountOption = { key: string; name: string; email?: string; usage?: CcUsage; missingOn: string[] };
+  const accountOptions: AccountOption[] = [];
+  for (const device of executors) {
+    // The account a machine runs now is "this account", not a switch. A dead
+    // login without a live token and a pegged window are not offers (the same
+    // fallbackProfiles rule auto-switch uses): suggesting one is how the
+    // banner named an account whose week was already full.
+    for (const p of fallbackProfiles(device.profiles, fleetEmailOf(device), now)) {
+      const key = p.email ? `email:${p.email}` : `name:${p.name}`;
+      const existing = accountOptions.find((t) => t.key === key);
+      if (!existing) accountOptions.push({ key, name: p.name, email: p.email, usage: p.usage, missingOn: [] });
+      else if (!existing.usage && p.usage) existing.usage = p.usage;
+    }
+  }
+  for (const opt of accountOptions) {
+    opt.missingOn = executors
+      .filter((d) => !d.profiles.some((p) => (opt.email ? p.email === opt.email : p.name === opt.name)))
+      .map((d) => d.label);
+  }
+  const rankedAccounts = rankByHeadroom(accountOptions, now);
+  // Usage of what the executing machines run now — the account that parked
+  // these sessions, not whatever the machine at the desk is signed into.
+  const activeUsage = executors
+    .flatMap((d) => d.profiles.filter((p) => p.email && p.email === fleetEmailOf(d)))
+    .map((p) => p.usage)
+    .find((u) => !!u);
+  // The proposed account is the default pick, so the primary button approves
+  // exactly what the machine asked for — the same account the sentence names.
+  const proposalKey = proposal?.target_email ? `email:${proposal.target_email}` : null;
+  const proposedOption = proposalKey ? rankedAccounts.find((t) => t.key === proposalKey) : undefined;
+  // Ask mode selects the account the fresh ranking named. Otherwise stay on
+  // the current login, unless that login is spent, in which case the button
+  // offers the account with the most room.
+  const activeExhausted = isUsageExhausted(activeUsage, now);
+  const accountKey = onAccount ?? proposedOption?.key ?? (activeExhausted ? rankedAccounts[0]?.key ?? "" : "");
+  const selectedAccount = rankedAccounts.find((t) => t.key === accountKey);
+  // The meters that matter are the ones the continue will run against: the
+  // picked account when the picker moved, else the account the machines are on.
+  const targetUsage = selectedAccount?.usage ?? activeUsage;
+  // "What is left" is only meaningful with its horizon: the room refills at the
+  // reset, so a share of a window that rolls in eight minutes reads differently
+  // from the same share with four hours to go.
+  const resetsAt = targetUsage?.session?.resets_at;
+  const resetsNote = resetsAt && resetsAt > now ? `, which resets in ${formatCountdown(resetsAt - now)}` : "";
+  // What the restart costs before any new work: each session that comes back
+  // on another account or a cold cache reads its whole context again, at
+  // twice the input price. A partial pick is a scoped revive: the server acts
+  // on exactly these and dismisses nothing, so the unticked rows stay blocked.
+  const reloads = (sess: InboxSession) =>
+    restartReloadsContext(sess, now, { switchingAccount: !!selectedAccount, activeSince: executorFor(sess)?.active_since });
+  // What the session's model can hold. Null for a model whose window the
+  // catalog does not claim to know, and the row then shows tokens alone.
+  const contextWindowOf = (sess: InboxSession) => contextWindowTokens(sess.model, sess.agent_type);
+  // The share of the target account's REMAINING 5h window a reload would spend —
+  // the number the restart decision actually turns on, since these sessions are
+  // parked on that window in the first place. Measured against the account the
+  // continue will run on, which the picker may have changed.
+  const shareOfRemaining = (contextTokens: number) =>
+    restartShareOfRemaining(contextTokens, targetUsage, calibration, now);
+  // Everything the one button can restart: the continue set plus the full
+  // context windows it compacts.
+  const pickable = [...acted, ...contextBlocked];
+  const pickableIds = new Set(pickable.map((sess) => sess._id));
+  const { chosenIds, chosen, reloadTokens, reloadShare, leftUnticked: olderUnticked } = restartPlan(pickable, {
+    now,
+    windowMs: AUTO_CONTINUE_WINDOW_MS,
+    parkedAt: blockAt,
+    picked,
+    switchingAccount: !!selectedAccount,
+    rowFor: (sess) => sess,
+    activeSinceFor: (sess) => executorFor(sess)?.active_since,
+  });
+  const chosenCompact = chosen.filter(isContextFull);
+  const chosenContinue = chosen.filter((sess) => !isContextFull(sess));
+  // A partial pick of the continue set is a scoped revive: the server acts on
+  // exactly those ids and dismisses nothing.
+  const scoped = chosenContinue.length !== acted.length;
+  const allPicked = chosen.length === pickable.length;
+  // The headline figure and the words after it. One place, because the fallback
+  // has to change both: "18% of what is left in the 5h window" when the rate is
+  // fitted, "2.1M tokens of context" when it is not.
+  const remainingShare = shareOfRemaining(reloadTokens);
+  const restartTotal =
+    remainingShare !== null
+      ? remainingShare === Infinity
+        ? "more than the window has left"
+        : formatShare(remainingShare)
+      : formatTokens(reloadTokens);
+  const restartTotalSuffix =
+    remainingShare !== null
+      ? remainingShare === Infinity
+        ? ` — nothing restarts until it resets${resetsNote}`
+        : ` of what is left in this account's 5h window${resetsNote}`
+      : ` tokens of context${formatShare(reloadShare) ? ` — ${formatShare(reloadShare)} of what those sessions hold` : ""}`;
+
+  // The tooltip has to say where the percentage came from, because nobody
+  // publishes it: Anthropic reports a window as a percent and never as a size,
+  // so the rate behind it is fitted from our own traffic and is an estimate.
+  const restartCostTip =
+    "A session that comes back on another account, or after its prompt cache expired (one hour), reads its whole context again before it does new work. Untick the ones nobody is waiting for." +
+    (remainingShare !== null
+      ? ` The share is an estimate: Anthropic reports a window as a percentage and never as a size, so codecast measures its own traffic against the meters (${calibration?.samples ?? 0} recent readings) to price a reload against what is left.`
+      : "");
+
+  const switchTarget = (opt: AccountOption) => (opt.email ? { email: opt.email } : { profile: opt.name });
+  // "82% used" / "at limit" / "stale" — the SAME standing the bars render, so
+  // the account this picker ranks first is the one a person would point to on
+  // the meters. A stale account never shows a confident green number here.
+  const usageNote = (usage?: CcUsage): string => {
+    const s = usageStanding(usage, now);
+    if (s.percent === null && !s.stale) return ""; // no data at all
+    return ` — ${standingLabel(usage, now)}`;
+  };
+
+  // Every way the banner closes goes through here: snooze 24h AND drop the
+  // forced-open flag, so the header pill (which never hides while sessions
+  // are blocked) is the one durable way back in.
+  const closeBanner = () => {
+    updateDismissed("blocked_sessions_banner", Date.now());
+    onClearForced?.();
+  };
+
+  // Revive on the account the machine is signed into NOW: no swap. The
+  // server sends each session the delivery it needs — a plain "continue"
+  // where a message reaches it, a kill + resume first where it cannot: a
+  // signed-out process holds the dead token in memory, and a process pinned
+  // to another account's setup-token would only re-fail on that account
+  // (its pin is corrected before the restart, so the resume lands on this
+  // account). The client cannot see pins, so it never picks the delivery.
+  // The daemon work (keychain swap, kill, restart, re-queue) is inherently
+  // remote, but the user's gesture renders instantly, in every acted session at
+  // once: the "continue" each one is about to receive is painted into its local
+  // message cache NOW, and the sessions are stamped as revive-in-flight
+  // (classification moves them to WORKING, the pill count and the blocked chips
+  // drop). Both land before anything is awaited; the await only powers the
+  // outcome toast.
+  //
+  // The daemon still OWNS delivery here — it has to kill the process holding
+  // the dead token before the continue lands, an ordering the web can't
+  // reproduce from a plain send. So we hand it the client ids we painted with
+  // (continue_client_ids -> the command's client_ids), and its enqueue carries
+  // them: the server echo replaces each painted bubble instead of doubling it.
+  // The nonce makes the ids unique to THIS gesture, so a revive seconds after a
+  // continue-all can't dedupe itself away against that earlier send's row.
+  //
+  // If the mutation itself fails, take the whole gesture back — bubbles, stamps
+  // and the snooze — so the banner resurfaces for a retry. If a daemon is merely
+  // unreachable, the stamps age out (BLOCKED_REVIVE_TTL_MS) and those sessions
+  // honestly return to blocked.
+  const runRevive = async (target: { email?: string; profile?: string } | undefined) => {
+    const ids = chosenContinue.map((sess) => sess._id);
+    const store = useInboxStore.getState();
+    const nonce = Math.random().toString(36).slice(2, 10);
+    const clientIds: Record<string, string> = {};
+    for (const id of ids) {
+      clientIds[id] = `acct-revive-${nonce}-${id}`;
+      store.addOptimisticMessage(id, "continue", undefined, clientIds[id]);
+    }
+    store.markBlockedReviveRequested(ids);
+    // The skipped workers leave the blocked set NOW, the same instant the
+    // acted sessions turn WORKING; the mutation persists the same clear. If it
+    // fails, the next server sync re-flags whatever didn't persist (the same
+    // reconciliation the dismiss button relies on).
+    const skippedIds = scoped ? [] : skippedWorkers.map((sess) => sess._id);
+    if (skippedIds.length > 0) store.markBlockedAcknowledged(skippedIds);
+    closeBanner();
+    const targetLabel = target?.email ?? target?.profile;
+    try {
+      const res = await requestAccountSwitchCommand({
+        ...target,
+        include_subagents: includeSubs,
+        continue_client_ids: clientIds,
+        ...(scoped ? { conversation_ids: ids } : {}),
+      });
+      // Sessions on a machine that lacks the account got no command: their
+      // painted "continue" and revive stamp must not stand.
+      const unswitchable = (res as { unswitchable?: number; unswitchable_devices?: string[] }).unswitchable ?? 0;
+      const unswitchableDevices = (res as { unswitchable_devices?: string[] }).unswitchable_devices ?? [];
+      if (unswitchable > 0) {
+        const stranded = chosenContinue
+          .filter((sess) => unswitchableDevices.includes(executorFor(sess)?.label ?? ""))
+          .map((sess) => sess._id);
+        for (const id of stranded) store.removeOptimisticMessage(id, clientIds[id]);
+        store.clearBlockedReviveRequested(stranded);
+      }
+      const restarted = (res as { restarted?: number }).restarted ?? 0;
+      const dismissed = (res as { dismissed_subagents?: number }).dismissed_subagents ?? 0;
+      toast.success(
+        (targetLabel
+          ? `Switching to ${targetLabel} — ${res.conversations} blocked session${res.conversations === 1 ? "" : "s"} will continue on it`
+          : `Queued "continue" to ${res.conversations} blocked session${res.conversations === 1 ? "" : "s"} on the current account` +
+            (restarted > 0 ? ` (${restarted} restarted first)` : "")) +
+          (res.unreachable > 0 ? ` (${res.unreachable} unreachable: daemon offline)` : "") +
+          (dismissed > 0 ? ` · ${dismissed} skipped worker${dismissed === 1 ? "" : "s"} dismissed` : "") +
+          (unswitchable > 0
+            ? ` (${unswitchable} skipped: ${unswitchableDevices.join(", ")} ${unswitchableDevices.length === 1 ? "does" : "do"} not have that account saved)`
+            : ""),
+      );
+    } catch (err) {
+      // Parked: the outbox still delivers it, so the paint stands. Refused:
+      // the dispatch-failure toast says why; take the gesture back.
+      if (isParkedDispatchError(err)) return;
+      for (const id of ids) store.removeOptimisticMessage(id, clientIds[id]);
+      store.clearBlockedReviveRequested(ids);
+      updateDismissed("blocked_sessions_banner", 0);
+    }
+  };
+
+  // ONE verb, one decision. Every blocked session needs the same thing — a
+  // "continue" — so the banner offers exactly that, on a choice of account.
+  // Which DELIVERY each session needs (a plain message, or a restart first
+  // because its process holds a dead token, or a credential swap) is the
+  // machinery's problem, resolved here per click, never a menu the user picks
+  // from. The button therefore always acts on the whole acted set and always
+  // says the full count.
+  const handleContinue = () => {
+    if (chosenCompact.length > 0) {
+      const store = useInboxStore.getState();
+      for (const sess of chosenCompact) store.sendMessage(sess._id, "/compact");
+      store.markBlockedReviveRequested(chosenCompact.map((sess) => sess._id));
+    }
+    if (chosenContinue.length > 0) void runRevive(selectedAccount ? switchTarget(selectedAccount) : undefined);
+    else closeBanner();
+  };
+  // "all" only when the button truly covers the headline count. When workers
+  // are skipped the button says what happens to BOTH halves — the skipped
+  // workers are dismissed by the same click, and a button that only said
+  // "Continue 1" would hide that the other 37 rows are about to go.
+  const dismissLabel = skippedWorkers.length > 0 && !scoped ? ` · dismiss ${skippedWorkers.length} worker${skippedWorkers.length === 1 ? "" : "s"}` : "";
+  const countLabel = !allPicked
+    ? `${chosen.length} of ${pickable.length}`
+    : skippedWorkers.length > 0 && !scoped
+    ? `${pickable.length}${dismissLabel}`
+    : pickable.length === 1 ? (blocked.length === 1 ? "it" : "1 eligible session") : pickable.length === blocked.length ? `all ${pickable.length}` : `${pickable.length}`;
+  const dismissTitle = skippedWorkers.length > 0 && !scoped
+    ? `; the ${skippedWorkers.length} skipped worker${skippedWorkers.length === 1 ? " is" : "s are"} dismissed from the blocked set, not continued (tick the box above to continue them instead)`
+    : "";
+  const compactTitle = chosenCompact.length > 0
+    ? `${chosenCompact.length === 1 ? "The full session gets" : `The ${chosenCompact.length} full sessions get`} /compact instead (it keeps a summary and continues). `
+    : "";
+  const continueTitle = compactTitle + (selectedAccount
+    ? `Switch ${executors.length === 1 ? executors[0].label : "the machines owning these sessions"} to ${selectedAccount.email ?? selectedAccount.name}, restart the blocked sessions, and continue them on it`
+    : `Send "continue" to each blocked session on the current account — ${authCount > 0 ? `${authCount === acted.length ? "they are" : `the ${authCount} signed out are`} restarted first (their processes hold an expired login); ` : ""}a session pinned to another account's token is restarted on this one${limitCount > 0 && authCount === 0 ? "; the rest resume once the limit resets" : ""}`) + dismissTitle;
+
+  // The permanent decision: clear the banner flag on these sessions so they
+  // leave the blocked set for good (only a NEW banner re-flags them). Local
+  // store first — the count drops instantly — then one persisting mutation.
+  const handleAcknowledge = async (ids: string[]) => {
+    useInboxStore.getState().markBlockedAcknowledged(ids);
+    try {
+      await acknowledgeMutation({ conversation_ids: ids as any });
+    } catch {
+      // The optimistic clear stands; the next server sync re-flags anything
+      // that genuinely didn't persist.
+    }
+  };
+
+  return (
+    <div className={`m-2 rounded-md border border-amber-500/30 bg-amber-500/[0.06] px-3 py-2.5 cc-blocked-banner-in ${fresh ? "cc-blocked-banner-glow" : ""}`}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <button
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-1 text-left text-xs font-semibold text-sol-text hover:text-amber-500 transition-colors"
+            title={expanded ? "Hide the affected sessions" : "Show which sessions are blocked"}
+          >
+            <ChevronRight className={`h-3 w-3 shrink-0 transition-transform ${expanded ? "rotate-90" : ""}`} />
+            {/* Headline names the LARGEST slice — a fleet that is mostly
+                signed out shouldn't read "blocked on usage limits" because a
+                couple of stragglers also hit a limit. */}
+            {blocked.length} session{blocked.length === 1 ? "" : "s"} blocked on {headlineOn}
+          </button>
+          {/* The breakdown items always sum to the headline count: when the
+              checkbox excludes subagents from the acted set, the excluded
+              slice appears here as its own item instead of silently vanishing
+              from the math. Every button below reuses these exact counts. */}
+          <div className="mt-0.5 text-[11px] leading-snug text-sol-text-muted">
+            {[
+              limitCount > 0 ? `${limitCount} hit a usage limit` : null,
+              throttleCount > 0 ? `${throttleCount} rate limited by a burst (retried a few at a time)` : null,
+              connCount > 0 ? `${connCount} dropped mid-response` : null,
+              fatalCount > 0 ? `${fatalCount} failed on an api error` : null,
+              authCount > 0 ? `${authCount} signed out` : null,
+              safetyCount > 0 ? `${safetyCount} need${safetyCount === 1 ? "s" : ""} safety review (excluded from automatic recovery)` : null,
+              contextCount > 0 ? `${contextCount} ran out of context (compacted on continue)` : null,
+              // The suffix names a consequence of the continue button, so it
+              // only appears while that button does (a fleet of nothing but
+              // workers offers no continue, only "Dismiss all").
+              skippedWorkers.length > 0
+                ? `${skippedWorkers.length} subagent worker${skippedWorkers.length === 1 ? "" : "s"} skipped${acted.length > 0 ? " (dismissed on continue)" : ""}`
+                : null,
+              acted.length > 30 ? "each pass acts on the 30 most recent" : null,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </div>
+          {pickable.length > 0 && (
+            <div
+              className="mt-0.5 text-[11px] leading-snug text-sol-text-muted"
+              title={restartCostTip}
+            >
+              {chosen.length === 0
+                ? "nothing ticked to restart"
+                : reloadTokens > 0
+                  ? (
+                      // The total is the number the decision turns on — untick a
+                      // session and this is what moves — so it carries the weight
+                      // of the line instead of sitting inside a grey sentence.
+                      // It is stated against the account's REMAINING window
+                      // wherever the rate has been fitted, because that is the
+                      // limit these sessions are parked on; the share of their
+                      // own context windows is the fallback when it has not.
+                      <>
+                        {`restarting ${chosen.length} spends about `}
+                        <span className="font-semibold text-amber-700 dark:text-amber-400 text-[13px]">
+                          {restartTotal}
+                        </span>
+                        {restartTotalSuffix}
+                      </>
+                    )
+                  : `restarting ${chosen.length}`}
+              {olderUnticked > 0 && ` · ${olderUnticked} parked over ${formatIdle(AUTO_CONTINUE_WINDOW_MS)} ago left unticked`}
+              {" "}
+              {!allPicked && (
+                <button onClick={() => setAllPicked(true)} className="ml-1.5 underline decoration-dotted hover:text-sol-text">
+                  tick all
+                </button>
+              )}
+              {!expanded && pickable.length > 1 && (
+                <button onClick={() => setExpanded(true)} className="ml-1.5 underline decoration-dotted hover:text-sol-text">
+                  choose
+                </button>
+              )}
+            </div>
+          )}
+          {subagents.length > 0 && (
+            <label
+              className="mt-1 flex w-fit cursor-pointer items-center gap-1.5 text-[11px] text-sol-text-dim hover:text-sol-text"
+              title="Subagent workers are skipped by default — their parent session has usually moved on, so reviving them spends the account on work nobody is waiting for. Left unticked, the continue button dismisses them from the blocked set instead."
+            >
+              <input
+                type="checkbox"
+                checked={includeSubs}
+                onChange={(e) => setIncludeSubs(e.target.checked)}
+                className="h-3 w-3 shrink-0 accent-amber-500"
+              />
+              include the {subagents.length} skipped worker{subagents.length === 1 ? "" : "s"}
+            </label>
+          )}
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {latestBlockAt > 0 && (
+            <span
+              className="text-[10px] tabular-nums text-sol-text-dim whitespace-nowrap"
+              title={`${blocked.length > 1 ? "Most recent block: " : "Blocked "}${new Date(latestBlockAt).toLocaleString()}`}
+            >
+              {blocked.length > 1 ? "latest " : ""}{fmtDuration(Math.max(0, now - latestBlockAt))} ago
+            </span>
+          )}
+          <button
+            onClick={closeBanner}
+            className="rounded p-0.5 text-sol-text-dim hover:bg-sol-bg-alt hover:text-sol-text"
+            title="Hide for 24h — the amber pill in the header brings it back anytime"
+            aria-label="Snooze this banner"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+      {/* The big sign-in CTA belongs only to a LOGIN incident — the same
+          condition that makes the headline read "blocked on login". In a
+          mixed fleet (limits + a few signed out) the remedy the banner leads
+          with is continue/switch; a loud sign-in button under a "usage
+          limits" headline reads as the wrong fix. */}
+      {/* The ask renders whenever one is open, even when the recommended
+          account is not saved on the machine that would run the switch: the
+          question is still the reason these sessions are parked, and silence
+          there is how an ask goes unanswered. */}
+      {proposal && (
+        <div className="mt-2 flex items-start gap-2 rounded border border-sol-yellow/40 bg-sol-yellow/10 px-2.5 py-2 text-[12px] leading-snug text-sol-text">
+          <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sol-yellow" />
+          <div className="min-w-0">
+            <span className="font-semibold">Switch accounts?</span> {describeDecision(proposal)}
+            {!proposedOption ? (
+              <span className="ml-1.5 text-[11px] text-sol-text-dim">
+                {proposal.target_name ?? proposal.target_email} is not saved on{" "}
+                {executors.length === 1 ? executors[0].label : "the machines owning these sessions"} — pick another
+                account below, or save it there once.
+              </span>
+            ) : accountKey === proposedOption.key ? (
+              <button
+                onClick={() => setOnAccount("")}
+                disabled={busy !== null}
+                className="ml-1.5 text-[11px] text-sol-text-dim underline decoration-dotted hover:text-sol-text disabled:opacity-60"
+                title="Continue the sessions on the account this machine is signed into now, without switching"
+              >
+                stay on {activeEmail ?? "this account"}
+              </button>
+            ) : (
+              <button
+                onClick={() => setOnAccount(proposedOption.key)}
+                disabled={busy !== null}
+                className="ml-1.5 text-[11px] text-sol-text-dim underline decoration-dotted hover:text-sol-text disabled:opacity-60"
+              >
+                use {proposedOption.email ?? proposedOption.name}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {authCount > 0 && limitCount === 0 && connCount === 0 && fatalCount === 0 && safetyCount === 0 && loginDevice && (
+        <SignInCta device={loginDevice} authSessionIds={actedAuthIds} disabled={busy !== null} />
+      )}
+      {expanded && (
+        <div className="mt-2 max-h-56 overflow-y-auto scrollbar-auto rounded border border-amber-500/15 bg-sol-bg/40 divide-y divide-sol-border/30">
+          {pickable.length > 1 && (
+            <label className="sticky top-0 z-10 flex cursor-pointer items-center gap-2 bg-sol-bg/95 px-2 py-1 text-[10px] text-sol-text-dim hover:text-sol-text">
+              <input
+                type="checkbox"
+                checked={allPicked}
+                ref={(el) => { if (el) el.indeterminate = chosen.length > 0 && !allPicked; }}
+                disabled={busy !== null}
+                onChange={() => setAllPicked(!allPicked)}
+                className="h-3 w-3 shrink-0 accent-amber-500"
+                aria-label="Tick every session"
+              />
+              {allPicked ? `all ${pickable.length} ticked` : `${chosen.length} of ${pickable.length} ticked`}
+            </label>
+          )}
+          {blockedSorted.map((sess) => (
+            <div
+              key={sess._id}
+              className="group flex w-full items-center gap-2 px-2 py-1.5 hover:bg-amber-500/10 transition-colors"
+            >
+              <input
+                type="checkbox"
+                checked={chosenIds.has(sess._id) && pickableIds.has(sess._id)}
+                disabled={!pickableIds.has(sess._id) || busy !== null}
+                onChange={() => togglePick(sess._id)}
+                className="h-3 w-3 shrink-0 accent-amber-500 disabled:opacity-40"
+                title={!pickableIds.has(sess._id) ? "Not restartable from here (a skipped worker or a safety stop)" : isContextFull(sess) ? "Compact this session with the continue below (its context is full)" : "Restart this session with the continue below"}
+                aria-label="Include this session in the restart"
+              />
+              <button
+                onClick={() => onOpen?.(sess)}
+                className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                title="Open this session"
+              >
+                <AuthErrorBadge kind={sess.pending_api_error_kind} agentType={sess.agent_type} />
+                <span className={`min-w-0 flex-1 truncate text-[11px] ${isSubagentConversation(sess) && !includeSubs ? "text-sol-text-dim" : "text-sol-text"}`}>
+                  {cleanTitle(sess.title || "") || "Untitled session"}
+                </span>
+                {isSubagentConversation(sess) && (
+                  <span className="shrink-0 rounded border border-sol-border/50 px-1 text-[9px] text-sol-text-dim" title={includeSubs ? "Subagent worker — included in the revive" : "Subagent worker — dismissed by the continue button unless included above"}>
+                    sub
+                  </span>
+                )}
+                <span className="shrink-0 text-[10px] text-sol-text-dim">{getProjectName(sess.git_root, sess.project_path)}</span>
+                                {sess.context_tokens ? (
+                  <span
+                    className={`shrink-0 text-[10px] tabular-nums ${reloads(sess) ? "text-amber-600 dark:text-amber-500" : "text-sol-text-dim"}`}
+                    title={`${formatTokens(sess.context_tokens)} tokens${
+                      contextWindowOf(sess) ? ` of the ${formatTokens(contextWindowOf(sess)!)} its model holds` : " of context"
+                    }${formatShare(contextShareOf(sess)) ? ` (${formatShare(contextShareOf(sess))} full)` : ""}${reloads(sess)
+                      ? ", reloaded in full on restart"
+                      : "; its cache is still warm, so a restart reads it cheaply"}`}
+                  >
+                    {/* Every figure in this banner answers the same question —
+                        what restarting spends against the limit these sessions
+                        are parked on. A row that will not reload spends nothing
+                        there, so it shows its size instead. */}
+                    {(reloads(sess) && formatShare(shareOfRemaining(sess.context_tokens))) ||
+                      formatTokens(sess.context_tokens)}
+                  </span>
+                ) : null}
+                <span
+                  className="shrink-0 text-[10px] tabular-nums text-sol-text-dim"
+                  title={`Blocked ${new Date(blockAt(sess)).toLocaleString()}`}
+                >
+                  {fmtDuration(Math.max(0, now - blockAt(sess)))} ago
+                </span>
+              </button>
+              <button
+                onClick={() => handleAcknowledge([sess._id])}
+                className="shrink-0 rounded p-0.5 text-sol-text-dim opacity-0 group-hover:opacity-100 hover:bg-sol-bg-alt hover:text-sol-text transition-opacity"
+                title="Never restart this session — remove it from the blocked set permanently"
+                aria-label="Dismiss this session from the banner permanently"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {/* The whole action surface: [Continue all N] on [account ▾] … dismiss.
+          One solid button, one quiet select, one quiet escape hatch — nothing
+          folded away, nothing competing. */}
+      <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5">
+        {safetyCount > 0 && (
+          <button onClick={() => safetyCount === 1 ? onOpen?.(safetyBlocked[0]) : setExpanded(true)} className="rounded border border-amber-500/40 px-3 py-1 text-[11px] font-semibold text-amber-700 dark:text-amber-500 hover:bg-amber-500/10">
+            Review {safetyCount === 1 ? "safety stop" : `${safetyCount} safety stops`}
+          </button>
+        )}
+        {pickable.length > 0 && <>
+        <button
+          onClick={handleContinue}
+          disabled={busy !== null || chosen.length === 0}
+          title={continueTitle}
+          className="rounded bg-amber-500 px-3 py-1 text-[11px] font-bold text-sol-bg shadow-sm transition-colors hover:bg-amber-400 disabled:opacity-60"
+        >
+          {busy !== null
+            ? selectedAccount
+              ? "Switching…"
+              : "Continuing…"
+            : selectedAccount
+              ? `Switch & continue ${countLabel}`
+              : `Continue ${countLabel}`}
+        </button>
+        {rankedAccounts.length > 0 && (
+          <label
+            className="flex min-w-0 items-center gap-1.5 text-[11px] text-sol-text-dim"
+            title={`Which Claude account the sessions continue on${activeEmail ? ` — currently ${activeEmail}` : activeEmails.length > 1 ? ` — currently ${activeEmails.join(" / ")}` : ""}; only accounts saved on ${executors.length === 1 ? executors[0].label : "the machines owning these sessions"} are offered`}
+          >
+            on
+            <select
+              value={accountKey}
+              onChange={(e) => setOnAccount(e.target.value)}
+              disabled={busy !== null}
+              className="max-w-[220px] rounded border border-amber-500/25 bg-sol-bg px-1.5 py-0.5 text-[11px] text-sol-text outline-none hover:border-amber-500/50 focus:border-amber-500 disabled:opacity-60"
+            >
+              <option value="">
+                {activeEmail ? `this account (${activeEmail})` : activeEmails.length > 1 ? `current accounts (${activeEmails.join(" / ")})` : "this account"}
+                {usageNote(activeUsage)}
+              </option>
+              {rankedAccounts.map((t) => (
+                <option key={t.key} value={t.key}>
+                  {t.email ?? t.name}{usageNote(t.usage)}{t.missingOn.length > 0 ? ` — not on ${t.missingOn.join(", ")}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+        </>}
+        <button
+          onClick={() => handleAcknowledge(blocked.map((sess) => sess._id))}
+          disabled={busy !== null}
+          title="Never restart these — clear all of them from the blocked set permanently"
+          className="ml-auto rounded px-2 py-1 text-[11px] text-sol-text-dim hover:text-sol-text transition-colors disabled:opacity-60"
+        >
+          {blocked.length === 1 ? "Dismiss it" : `Dismiss all ${blocked.length}`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// The folded form of the bars under a card — the resting state (card_bars
+// "strip", the default). ONE line for every bar family the card carries:
+// triggers, a workflow run in flight, live monitors / background commands. The
+// trigger part speaks for the most urgent row (running > flagged > next to
+// fire > paused); the other families append compact segments in their own
+// accent so the strip still says what kind of machinery the card runs.
+// Clicking opens the one trigger's row the way its full row would; with several
+// triggers it opens the session on its whole trigger set (the header strip
+// arrives expanded on all of them), and with none, the session itself. The pill's ⚡ toggle unfolds
+// every strip into full rows (or hides them); nothing here is a second way to
+// expand.
+type CardBarsMode = "strip" | "full" | "hidden";
+const SCHED_ACCENT_RANK: Record<SchedAccent, number> = { running: 0, attention: 1, normal: 2, paused: 3 };
+function primaryTriggerRow(rows: TriggerRow[]): TriggerRow {
+  return rows.reduce((best, r) => {
+    const d = SCHED_ACCENT_RANK[schedAccent(r.task)] - SCHED_ACCENT_RANK[schedAccent(best.task)];
+    if (d !== 0) return d < 0 ? r : best;
+    return (r.task.run_at ?? Infinity) < (best.task.run_at ?? Infinity) ? r : best;
+  });
+}
+// The live badge a workflow, background command or monitor child row wears.
+function RunningBadge({ label }: { label: string }) {
+  return (
+    <span data-sv-wake-badge="" className={`ml-auto ${WAKE_BADGE} ${RUNNING_BADGE_TONE}`}>
+      <LivePulseDot still />
+      {label}
+    </span>
+  );
+}
+
+const CardBarStrip = memo(function CardBarStrip({ session, words, rows, activeSessionId, onOpen, onOpenSession }: {
+  session: InboxSession;
+  /** The panel's mode words, passed down so a row holds no subscription for them. */
+  words: ModeWords;
+  rows: TriggerRow[];
+  activeSessionId?: string | null;
+  onOpen: (row: TriggerRow) => void;
+  onOpenSession: (session: InboxSession) => void;
+}) {
+  const now = useCoarseNow(30_000);
+  const watching = useLiveWatchRows(session, now);
+  const workflow = workflowBarVisible(session);
+  const openWorkflow = useOpenWorkflowRun(session);
+  if (rows.length === 0 && !workflow && watching.length === 0) return null;
+  const primary = rows.length > 0 ? primaryTriggerRow(rows) : null;
+  const isActive = session._id === activeSessionId;
+  // A card whose only bars are paused schedules rests dimmer; anything live
+  // (a workflow, a watch) keeps the strip at full presence.
+  const paused = !!primary && rows.every((r) => r.task.status === "paused") && !workflow && watching.length === 0;
+  const bgCount = watching.filter((r) => r.kind === "background").length;
+  const monCount = watching.length - bgCount;
+  const label = primary
+    ? rows.length === 1
+      ? `${words.trigger}: fires into ${words.thisConversation}`
+      : `${rows.length} ${words.triggersPlural} fire into ${words.thisConversation}`
+    : workflow
+      ? "Workflow — running inside this session"
+      : "Background work — running inside this session";
+  return (
+    <button
+      data-schedstrip={primary ? session._id : undefined}
+      onClick={() => {
+        if (rows.length > 1) {
+          onOpenSession(session);
+          useInboxStore.getState().setTriggerStripRequest({ convId: session._id, taskId: null, expand: true, nonce: Date.now() });
+        } else if (primary) onOpen(primary);
+        else if (workflow) openWorkflow.open();
+        else onOpenSession(session);
+      }}
+      className={`w-full flex items-center gap-1.5 text-left cursor-pointer pl-2 pr-3 py-[3px] transition-[background-color,opacity] hover:bg-sol-amber/[0.05] ${
+        isActive ? "bg-sol-cyan/[0.10]" : ""
+      } ${paused ? "opacity-55 hover:opacity-90" : ""}`}
+    >
+      <SchedChildArrow label={label} className={primary ? undefined : "text-sol-blue/70"} />
+      {primary && (
+        <>
+          <Zap className="w-2.5 h-2.5 shrink-0 text-sol-amber/70" fill="currentColor" strokeWidth={0} />
+          <SchedHealthDot accent={schedAccent(primary.task)} task={primary.task} />
+          <span className="text-[11px] text-gray-400 truncate min-w-0">
+            {rows.length === 1 ? taskDisplayTitle(primary.task) : `${rows.length} ${words.triggersPlural}`}
+          </span>
+          {rows.length > 1 && (
+            <span className="text-[10px] text-sol-text-dim truncate min-w-0">
+              {rows.map((r) => taskDisplayTitle(r.task)).join(" · ")}
+            </span>
+          )}
+        </>
+      )}
+      {workflow && (
+        <span className="text-[10px] text-sol-cyan/80 truncate min-w-0 shrink-[2]">
+          {primary ? "· " : ""}{session.workflow_run_name || "workflow"}
+        </span>
+      )}
+      {watching.length > 0 && (
+        <span className="text-[10px] text-sol-blue/80 whitespace-nowrap shrink-0">
+          {primary || workflow ? "· " : ""}
+          {bgCount > 0 ? `${bgCount} running` : ""}
+          {bgCount > 0 && monCount > 0 ? " · " : ""}
+          {monCount > 0 ? `${monCount} watching` : ""}
+        </span>
+      )}
+      {primary ? (
+        <SchedFireBadge task={primary.task} className="ml-auto" />
+      ) : (
+        <RunningBadge label="running" />
+      )}
+    </button>
+  );
+});
+
+// -- Monitor bars (live background watches) --
+// A live Monitor (the harness background-watch tool) or background command
+// stacks under its session card exactly like the schedule bars above: same ↳
+// child idiom and two-line header + subrow anatomy, in monitor blue so it
+// can't blur into schedule orange or subagent violet. Rows come from two
+// sources merged (liveWatchRowsFor): the conversation's loaded message window
+// (the watch's own lifecycle) and the daemon's verified open-task report on
+// the row (open_tasks — draws the row without messages, and retires a watch
+// the daemon found dead). "Watching" is only claimed while the session can
+// still host the watch (isWatchHostDead: not killed, not stopped, spoken for
+// by a daemon) — NOT the card's status-trust decay, which would hide a live
+// poll on a long build the moment the session went quiet for an hour.
+// A card with many live watchers (a deploy fanning out `until grep` shells
+// can stand eight at once) would stack that many bars — cap the stack and
+// fold the rest behind a count row.
+const MAX_MONITOR_BARS = 3;
+
+// Message-derived watch rows (own lifecycle + restart fence) merged with the
+// daemon's verified report — the report supplies rows the loaded window lacks
+// and retires rows the daemon found dead (liveWatchRowsFor). One hook so the
+// full bars, the folded strip and the dormant fallback all read the same rows.
+function useLiveWatchRows(session: InboxSession, now: number) {
+  const messages = useInboxStore((st) => st.messages[session._id]);
+  return useMemo(
+    () => (isWatchHostDead(session, now) ? [] : liveWatchRowsFor(session, messages, now)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the row fields the merge reads
+    [messages, now, session.open_tasks, session.open_tasks_at, session.agent_started_at, session.agent_status, session.last_heartbeat, session.inbox_killed_at, session.updated_at],
+  );
+}
+
+// A dynamic-workflow run in flight inside the card above — the session's turn
+// has ended but it is WAITING on the fleet, so the run gets the same ↳ child
+// bar the schedule and monitor families wear, in workflow cyan. Rendered from
+// the row's enriched scalars (conversations.workflow_run_id → workflow_runs),
+// so it shows even when the launch message isn't in the loaded window. Paused
+// runs stay the card's magenta Gate chip; this bar carries running/pending.
+// Whether the card wears the workflow bar — shared with the Dormant fallback
+// row so the two can't disagree about "this card already shows its wake".
+function workflowBarVisible(session: InboxSession): boolean {
+  if (!session.workflow_run_id || session.is_workflow_sub) return false;
+  return session.workflow_run_status === "running" || session.workflow_run_status === "pending";
+}
+
+// Opens the conversation at the run's launch, or the run page when the row
+// carries no start time to find it by. Shared by the full bar and the strip.
+function useOpenWorkflowRun(session: InboxSession) {
+  const router = useRouter();
+  const { openWorkflowMessage, openingKey } = useOpenWatchMessage(session._id);
+  const open = () => {
+    const runId = session.workflow_run_id;
+    if (!runId) return;
+    if (session.workflow_run_started_at) void openWorkflowMessage(runId, session.workflow_run_started_at);
+    else router.push(`/workflows/runs/${runId}`);
+  };
+  return { open, opening: openingKey !== null };
+}
+
+function WorkflowBar({ session, isActive }: { session: InboxSession; isActive: boolean }) {
+  const now = useCoarseNow(30_000);
+  const { open, opening } = useOpenWorkflowRun(session);
+  if (!workflowBarVisible(session)) return null;
+  const done = session.workflow_run_agents_done ?? 0;
+  const total = session.workflow_run_agents_total ?? 0;
+  const ariaLabel = "Workflow — running inside this session";
+  return (
+    <div className={`group/wfrow relative transition-colors ${isActive ? "bg-sol-cyan/[0.10]" : ""}`}>
+      <button
+        className="w-full text-left cursor-pointer pr-3 pl-2 py-1 hover:bg-sol-cyan/[0.05] transition-colors"
+        disabled={opening}
+        aria-busy={opening}
+        onClick={open}
+        title="Jump to where this workflow started in the conversation"
+      >
+        <div className="flex gap-1.5 min-w-0">
+          <span className="flex items-center mt-[2px] shrink-0 text-sol-cyan/70" role="img" aria-label={ariaLabel}>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <title>{ariaLabel}</title>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 4v12h12" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14 12l4 4-4 4" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-sol-cyan/70 shrink-0">Workflow</span>
+              <span className="text-xs truncate min-w-0 text-gray-400 font-normal">{session.workflow_run_name || "workflow run"}</span>
+              <RunningBadge label="running" />
+            </div>
+            <div className="flex items-baseline gap-1.5 mt-0.5 min-w-0">
+              {session.workflow_run_activity ? (
+                <span className="flex-1 min-w-0 truncate text-[11px] leading-snug font-medium text-sol-text-muted">
+                  <span className="mr-0.5 text-sol-cyan/50">&gt;</span>
+                  {session.workflow_run_activity}
+                </span>
+              ) : (
+                <span className="flex-1 min-w-0 truncate text-[11px] leading-snug font-mono text-sol-text-dim">
+                  multi-agent workflow
+                </span>
+              )}
+              <span className="shrink-0 text-[10px] tabular-nums text-sol-text-dim">
+                {total > 0 ? `${done}/${total} agents` : ""}
+                {session.workflow_run_started_at ? `${total > 0 ? " · " : ""}${fmtDuration(Math.max(0, now - session.workflow_run_started_at))}` : ""}
+              </span>
+            </div>
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+export function MonitorBars({ session, isActive }: {
+  session: InboxSession;
+  isActive: boolean;
+}) {
+  const now = useCoarseNow(30_000);
+  const [expanded, setExpanded] = useState(false);
+  const watching = useLiveWatchRows(session, now);
+  const { openWatchMessage, openingKey } = useOpenWatchMessage(session._id);
+  if (watching.length === 0) return null;
+  const shown = expanded ? watching : watching.slice(0, MAX_MONITOR_BARS);
+  const hiddenCount = watching.length - shown.length;
+  return (
+    <>
+      {shown.map((row) => {
+        const isBackground = row.kind === "background";
+        const family = isBackground ? "Background" : "Monitor";
+        const ariaLabel = isBackground
+          ? "Background command — running inside this session"
+          : "Monitor — watching inside this session";
+        return (
+        <div key={row.toolUseId} className={`group/monrow relative transition-colors ${isActive ? "bg-sol-cyan/[0.10]" : ""}`}>
+          <button
+            className="w-full text-left cursor-pointer pr-3 pl-2 py-1 hover:bg-sol-blue/[0.05] transition-colors"
+            disabled={openingKey !== null}
+            aria-busy={openingKey === row.toolUseId}
+            title="Jump to this task in the conversation"
+            onClick={() => { void openWatchMessage(row); }}
+          >
+            <div className="flex gap-1.5 min-w-0">
+              {/* Same corner arrow the schedule/subagent child rows carry, in
+                  monitor blue: this watch runs inside the card above. */}
+              <span className="flex items-center mt-[2px] shrink-0 text-sol-blue/70" role="img" aria-label={ariaLabel}>
+                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                  <title>{ariaLabel}</title>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 4v12h12" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M14 12l4 4-4 4" />
+                </svg>
+              </span>
+              <div className="min-w-0 flex-1">
+                {/* Header line: identity eyebrow, what's being watched, and the
+                    live badge with how long the watch has been standing. */}
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-[9px] font-semibold uppercase tracking-wider text-sol-blue/70 shrink-0">{family}</span>
+                  <span className="text-xs truncate min-w-0 text-gray-400 font-normal">{row.description}</span>
+                  {/* Header carries ONLY identity + badge — the bar is
+                      space-starved (esp. with the panel narrow), so event/time
+                      meta lives on the subrow and the persistent chip rides
+                      the badge tooltip; the conversation block keeps the chip. */}
+                  <ShortcutTooltip label={isBackground ? "Background command — runs until it exits or is stopped, then wakes the agent" : row.persistent ? "Persistent watch — runs until TaskStop or session end" : `One-shot watch${row.timeoutMs !== undefined ? ` — times out after ${fmtDuration(row.timeoutMs)}` : ""}`}>
+                    <RunningBadge label={isBackground ? "running" : "watching"} />
+                  </ShortcutTooltip>
+                </div>
+                {/* Subrow: the last thing the watch saw (machine voice), or the
+                    command it's running while nothing has fired yet — plus the
+                    watch's clock (event count / age) on the right. */}
+                <div className="flex items-baseline gap-1.5 mt-0.5 min-w-0">
+                  {row.lastEvent ? (
+                    <span className="flex-1 min-w-0 truncate text-[11px] leading-snug font-medium text-sol-text-muted">
+                      <span className="mr-0.5 text-sol-blue/50">&gt;</span>
+                      {row.lastEvent}
+                    </span>
+                  ) : (
+                    <span className="flex-1 min-w-0 truncate text-[11px] leading-snug font-mono text-sol-text-dim">
+                      {row.command.split("\n").find((l) => l.trim()) || "background watch"}
+                    </span>
+                  )}
+                  <span className="shrink-0 text-[10px] tabular-nums text-sol-text-dim">
+                    {row.eventCount > 0
+                      ? `${row.eventCount} event${row.eventCount === 1 ? "" : "s"}${row.lastEventAt !== undefined ? ` · ${fmtDuration(Math.max(0, now - row.lastEventAt))} ago` : ""}`
+                      : `for ${fmtDuration(Math.max(0, now - row.startedAt))}`}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </button>
+        </div>
+        );
+      })}
+      {(hiddenCount > 0 || watching.length > MAX_MONITOR_BARS) && (
+        <button
+          className="w-full text-left cursor-pointer pr-3 pl-7 py-0.5 text-[10px] text-sol-text-dim hover:text-sol-text-muted transition-colors"
+          onClick={() => setExpanded((v) => !v)}
+        >
+          {hiddenCount > 0 ? `+${hiddenCount} more running` : "show fewer"}
+        </button>
+      )}
+    </>
+  );
+}
+
+// -- Dormant reason row --
+// A card in DORMANT is parked on a machine wake, and the wake must be visible
+// as a ↳ child row: the trigger bar for an armed schedule, the workflow bar
+// for a run in flight, a Background/Monitor bar for an open watch. When none
+// of those has anything to draw — the messages that would show the watch are
+// not loaded and no daemon report exists, the agent declared dormancy on a
+// wake outside this session (another session's reply, an external job), or
+// the user parked the card — this row states the reason from what the row
+// itself carries, so a Dormant card never sits there unexplained.
+//
+// variant "claim" is the honest inverse, for a card filed under NEEDS INPUT
+// whose pinned state still declares dormant: the agent SAYS a machine wakes
+// it, but the system can verify no armed trigger, watch, loop or run — either
+// the wake already landed and the agent never re-declared, the wake lives
+// outside anything the daemon can see (a tmux job, another machine), or the
+// bare claim simply outlived its trust (DORMANT_CLAIM_TTL_MS of quiet with no
+// verifiable wake — the classifier promotes it here so a wake that never
+// comes cannot strand a session in Dormant). Without this row the card reads
+// as a contradiction: a "Dormant" chip sitting in Needs Input with nothing
+// under it. The row names the claim and marks it unverified, so the reader
+// knows why the card still asks for them.
+function DormantReasonRow({ session, isActive, hasOtherRows, variant, onOpen }: {
+  session: InboxSession;
+  isActive: boolean;
+  hasOtherRows: boolean;
+  variant: "parked" | "claim";
+  onOpen: (session: InboxSession) => void;
+}) {
+  const now = useCoarseNow(30_000);
+  const watchRows = useLiveWatchRows(session, now).length;
+  if (hasOtherRows || watchRows > 0) return null;
+  const ts = threadStateView(session, session.message_count ?? 0, now);
+  if (variant === "claim") {
+    // Only a state that still DECLARES dormant earns the row; a stale state
+    // reads as absent (threadStateView returns null), and any other declared
+    // status means no wake was claimed.
+    if (ts?.status !== "dormant") return null;
+    return (
+      <WakeReasonRowShell
+        isActive={isActive}
+        family="Wake"
+        title="state claims a machine wake"
+        detail={`no armed trigger, watch, or loop · ${ts.provenance}`}
+        badge="unverified"
+        badgeClass="bg-sol-yellow/10 text-sol-yellow border-sol-yellow/30"
+        onClick={() => onOpen(session)}
+      />
+    );
+  }
+  let family: string;
+  let title: string;
+  let detail: string;
+  const status = agentStatusAt(session, now);
+  if (status === "hibernated") {
+    family = "Hibernated";
+    title = HIBERNATED_COPY;
+    detail = "";
+  } else if (status === "waiting") {
+    family = "Background";
+    title = "waiting on background work";
+    detail = "the turn ended on an open task — the agent resumes when it finishes";
+  } else if (status === "dormant") {
+    family = "Dormant";
+    title = ts?.headline || "parked on a machine wake";
+    detail = ts?.provenance ? `declared by the agent · ${ts.provenance}` : "declared by the agent";
+  } else if (session.user_rest === "dormant") {
+    family = "Parked";
+    title = "parked by you";
+    detail = "the next activity un-parks it; drag it to another section to re-file it";
+  } else {
+    family = "Dormant";
+    title = ts?.headline || "waiting on a machine wake";
+    detail = ts?.provenance || "";
+  }
+  return (
+    <WakeReasonRowShell
+      isActive={isActive}
+      family={family}
+      title={title}
+      detail={detail}
+      onClick={() => onOpen(session)}
+    />
+  );
+}
+
+// The one row anatomy both wake-reason variants wear: ↳ child glyph, family
+// eyebrow, title, optional badge, optional detail line. Kept identical to the
+// trigger / monitor bars' two-line shape so a card's children always read as
+// one family. The badge slot means one thing on every child row: the state of
+// the WAKE (a trigger's countdown, a command "running", a claim "unverified").
+// The plain reason row has no wake to report, so it carries no badge — the
+// card's section already says the session is parked.
+function WakeReasonRowShell({ isActive, family, title, detail, badge, badgeClass, onClick }: {
+  isActive: boolean;
+  family: string;
+  title: string;
+  detail: string;
+  badge?: string;
+  badgeClass?: string;
+  onClick: () => void;
+}) {
+  const ariaLabel = `${family} — why this session is parked`;
+  return (
+    <div data-cc-tech className={`group/dormrow relative transition-colors ${isActive ? "bg-sol-cyan/[0.10]" : ""}`}>
+      <button
+        className="w-full text-left cursor-pointer pr-3 pl-2 py-1 hover:bg-sol-blue/[0.05] transition-colors"
+        onClick={onClick}
+        title="Open the session"
+      >
+        <div className="flex gap-1.5 min-w-0">
+          <span className="flex items-center mt-[2px] shrink-0 text-sol-blue/70" role="img" aria-label={ariaLabel}>
+            <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <title>{ariaLabel}</title>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 4v12h12" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M14 12l4 4-4 4" />
+            </svg>
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="text-[9px] font-semibold uppercase tracking-wider text-sol-blue/70 shrink-0">{family}</span>
+              <span className="text-xs truncate min-w-0 text-gray-400 font-normal">{title}</span>
+              {badge && (
+                <span data-sv-wake-badge="" className={`ml-auto ${WAKE_BADGE} ${badgeClass ?? ""}`}>
+                  {badge}
+                </span>
+              )}
+            </div>
+            {detail && (
+              <div className="flex items-baseline gap-1.5 mt-0.5 min-w-0">
+                <span className="flex-1 min-w-0 truncate text-[11px] leading-snug font-mono text-sol-text-dim">{detail}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </button>
+    </div>
+  );
+}
+
+// Every bar a card stacks beneath itself — triggers, a workflow run, live
+// monitors / background commands, the dormant fallback — rendered behind ONE
+// control (the footer ⚡ pill): "strip" folds them all to a single line,
+// "full" gives each its own row, "hidden" removes them the way the subagent
+// toggle hides subagent rows. The dormant invariant (a parked card explains
+// its wake) holds in strip and full; "hidden" is an explicit opt-out and wins.
+/** The inbox's section for hosted conversations that ended on a stop. */
+const STOPPED_SECTION = { label: "Couldn't finish" } as const;
+
+/** The stops a bulk retry may run: each row's own action (HostedNotice
+ *  actionFor), for the kinds whose action sends the turn on again. A budget
+ *  stop belongs under the allowance line, and a safety stop offers nothing. */
+const BULK_RETRY_KINDS: ReadonlySet<NoticeKind> = new Set(["error", "unavailable", "time"]);
+
+/** Couldn't finish's one action: every row's own action (Try again, or Keep
+ *  going for a paused errand), so an outage's failures are one decision.
+ *  Shown only when some row has one, "Back soon" while thinking is down, and
+ *  held once pressed until the rows leave the section. */
+function RetryStoppedButton({ rows }: { rows: InboxSession[] }) {
+  const [sentFor, setSentFor] = useState<string | null>(null);
+  const upgradesOpen = useUpgradesOpen();
+  const down = useThinkingAvailable() === false;
+  const ids = rows.map((r) => r._id).join(",");
+  // Which rows a bulk press would act on, as a signature, so the button
+  // follows the transcripts without re-rendering on every message.
+  const retryable = useInboxStore((st) => rows.filter((r) => {
+    const kind = hostedStopOf(st.sessions[r._id] ?? r, st.messages[r._id]);
+    return !!kind && BULK_RETRY_KINDS.has(kind);
+  }).map((r) => r._id).join(","));
+  const sent = sentFor === ids;
+  if (!retryable) return null;
+  const count = retryable.split(",").length;
+  return (
+    <button
+      type="button"
+      disabled={sent || down}
+      onClick={async () => {
+        setSentFor(ids);
+        for (const id of retryable.split(",")) {
+          await ensureHydrated(id);
+          const messages = useInboxStore.getState().messages[id];
+          const kind = lastNoticeKind(messages);
+          if (!kind || !BULK_RETRY_KINDS.has(kind)) continue;
+          actionFor(kind, id, lastAskOf(messages), upgradesOpen)?.run();
+        }
+      }}
+      className="text-[11.5px] font-medium text-sol-text-muted underline-offset-2 hover:text-sol-text hover:underline disabled:opacity-60 disabled:no-underline"
+    >
+      {down ? "Back soon" : sent ? "Trying again…" : count > 1 ? "Try these again" : "Try again"}
+    </button>
+  );
+}
+
+/** Hosted mode's panel title, as Whisk titles its inbox, and what it lists:
+ *  the assistant's conversations, or everything (AssistantScopeSwitch). */
+function HostedInboxHead({ outOfScope }: { outOfScope: number }) {
+  // Holds its width, so the head's tools never paint over the switch.
+  return (
+    <div className="flex flex-shrink-0 items-baseline gap-3">
+      <h2 data-cc-panel-title className="text-[15px] font-semibold text-sol-text">Inbox</h2>
+      <AssistantScopeSwitch label="What the inbox lists" hidden={outOfScope} />
+    </div>
+  );
+}
+
+function CardBars({ session, words, mode, scheduleRows, activeSessionId, wake, onOpen, onOpenSchedule }: {
+  session: InboxSession;
+  words: ModeWords;
+  mode: CardBarsMode;
+  scheduleRows: TriggerRow[];
+  activeSessionId?: string | null;
+  // "parked": the card sits in the Dormant bucket — its wake MUST show, so the
+  // reason row is the fallback when no trigger/workflow/watch bar draws.
+  // "claim": the card sits in Needs Input while its pinned state declares
+  // dormant — the row renders the claimed wake as unverified so the
+  // contradiction explains itself.
+  wake?: "parked" | "claim";
+  onOpen: (session: InboxSession) => void;
+  onOpenSchedule: (row: TriggerRow) => void;
+}) {
+  if (mode === "hidden") return null;
+  const isActive = session._id === activeSessionId;
+  const bound = scheduleRows.map((r) => ({ ...r, openId: session._id }));
+  const dormantRow = wake ? (
+    <DormantReasonRow
+      session={session}
+      isActive={isActive}
+      hasOtherRows={bound.length > 0 || workflowBarVisible(session)}
+      variant={wake}
+      onOpen={onOpen}
+    />
+  ) : null;
+  if (mode === "strip") {
+    return (
+      <>
+        <CardBarStrip session={session} words={words} rows={bound} activeSessionId={activeSessionId} onOpen={onOpenSchedule} onOpenSession={onOpen} />
+        {dormantRow}
+      </>
+    );
+  }
+  return (
+    <>
+      {bound.map((r) => (
+        <TriggerRowItem key={r.task._id} row={r} variant="attached" activeSessionId={activeSessionId} onOpen={onOpenSchedule} />
+      ))}
+      <WorkflowBar session={session} isActive={isActive} />
+      <MonitorBars session={session} isActive={isActive} />
+      {dormantRow}
+    </>
+  );
+}
+
+// The TRIGGERS section. Expanded: one TriggerRowItem per armed schedule.
+// Collapsed: the header itself is the briefing — count, soonest next fire, and
+// how many outcomes landed since the section was last toggled ("N new").
+// -- The schedule dock --
+// The schedules' home. The session list stays a list of ONE kind of thing
+// (conversations); every armed schedule lives in this single always-visible
+// line docked under the list. The line is the briefing: how many are armed,
+// when the next fires, how many outcomes landed since you last looked, and a
+// red accent when one failed or flagged itself. Expanding opens a roster
+// overlay of full schedule rows (same anatomy as /schedules); CLOSING it marks
+// the briefing read (schedules_seen_at) — while open, the per-row "new" pills
+// stay visible so the count on the bar points at something.
+function TriggerDock({ rows, unreadCount, nextRunAt, activeSessionId, onOpen, onOpenSession }: {
+  rows: TriggerRow[];
+  unreadCount: number;
+  nextRunAt?: number;
+  activeSessionId?: string | null;
+  onOpen: (row: TriggerRow) => void;
+  // A group header opens its home session plainly (no run to land on).
+  onOpenSession: (session: InboxSession) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const words = useModeWords();
+  // Hosted mode's foot is one quiet line naming the next routine; the
+  // counts, running, overdue and attention chips are the developer's.
+  const fullFoot = useSurface("triageFooter");
+  // Keyboard cursor into the roster: −1 = nothing selected (mouse mode).
+  const [cursor, setCursor] = useState(-1);
+  const now = useCoarseNow(30_000);
+  // The roster reads grouped by home session; `ordered` is that reading order
+  // flattened, which is what the keyboard cursor walks.
+  const groups = useMemo(() => groupTriggerRowsByHome(rows), [rows]);
+  const ordered = useMemo(() => groups.flatMap((g) => g.rows), [groups]);
+  // Home sessions for the headers. Subscribed only while the roster is open
+  // (the dock bar is always mounted), and on the structural signature, so
+  // heartbeats never re-render a closed dock.
+  const st = useTrackedStore([(s) => (open ? sessionsWakeSig(s.sessions) : "")]);
+  // Mark the briefing read on CLOSE, not open: the per-row "new" pills are
+  // derived from schedules_seen_at, so stamping on open erased them the moment
+  // the roster appeared — you'd see "4 new" on the bar and nothing marked
+  // inside. While open, the pills stay; every exit path funnels through here.
+  const close = useCallback(() => {
+    useInboxStore.getState().updateClientUI({ schedules_seen_at: Date.now() });
+    setOpen(false);
+  }, []);
+  // The roster is a popup, and popups owe the keyboard everything the mouse
+  // gets: Esc exits, arrows move a cursor, Enter opens the selected schedule.
+  // Arrow keys only bind once the roster is open, so global shortcuts and the
+  // session list's own nav never contend with it.
+  useWatchEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        close();
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setCursor((c) => {
+          const next = e.key === "ArrowDown" ? Math.min(c + 1, ordered.length - 1) : Math.max(c - 1, 0);
+          const id = ordered[next]?.task._id;
+          if (id) {
+            document.querySelector(`[data-schedrow="${id}"]`)?.scrollIntoView({ block: "nearest" });
+          }
+          return next;
+        });
+        return;
+      }
+      if (e.key === "Enter") {
+        const target = ordered[cursor];
+        if (target) {
+          e.preventDefault();
+          close();
+          onOpen(target);
+        }
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, ordered, cursor, onOpen, close]);
+  // A closed roster has no cursor — reopening starts fresh in mouse mode.
+  useWatchEffect(() => {
+    if (!open) setCursor(-1);
+  }, [open]);
+  if (rows.length === 0) return null;
+  // Real triggers keep the recurring/one-time split; loops get their own word
+  // — calling a self-pacing loop "recurring" would be a lie about what the
+  // user can edit.
+  const realRows = rows.filter((r) => !r.kind);
+  const loopCount = rows.filter((r) => r.kind === "loop").length;
+  const recurringCount = realRows.filter((r) => r.task.schedule_type !== "once").length;
+  const oneTimeCount = realRows.length - recurringCount;
+  const overdueCount = rows.filter((r) => !r.kind && isTaskOverdue(r.task, now)).length;
+  const runningCount = rows.filter((r) => r.task.status === "running").length;
+  // Project chips (on the group headers) only when the roster actually mixes
+  // projects — a single-project roster doesn't need every header stamped
+  // with the same name.
+  const projects = new Set(rows.map((r) => r.task.project_path).filter(Boolean));
+  const showProject = projects.size > 1;
+  const nextIn = nextRunAt !== undefined ? Math.max(0, nextRunAt - now) : undefined;
+  // Name WHAT fires next, not just when — "next in 1h" says nothing. Running
+  // state lives in its own pill, so this slot is purely the next fire.
+  const nextTask = rows.find((r) => r.task.status === "scheduled" && r.task.run_at === nextRunAt)?.task;
+  const attention = rows.some((r) => r.task.last_run_failed || r.task.last_run_needs_attention);
+  const toggle = () => (open ? close() : setOpen(true));
+  if (!fullFoot) {
+    // Nothing scheduled: no line at all, rather than a bare link.
+    if (nextRunAt === undefined) return null;
+    return (
+      <div data-sv-triggers-foot className="shrink-0 border-t border-sol-border/40">
+        <Link href="/triggers" className="flex w-full items-center px-3 py-1.5 text-[11px] text-sol-text-dim no-underline transition-colors hover:text-sol-text-muted">
+          {/* One wording with the routine's row and page (hostedSchedule
+              firstRunWords) and the home's line: "Coming up: Morning review,
+              tomorrow at 8:00 AM". */}
+          <span className="truncate">
+            {`${LANE_COPY.home.comingUp}: ${nextTask ? `${taskDisplayTitle(nextTask)}, ` : ""}${firstRunWords(nextRunAt, now)}`}
+          </span>
+        </Link>
+      </div>
+    );
+  }
+  return (
+    <div data-sv-triggers-foot className="relative shrink-0 border-t border-sol-border/40">
+      {open && (
+        <>
+          {/* Click-away backdrop: anywhere outside the roster closes it. */}
+          <div className="fixed inset-0 z-10" onClick={close} aria-hidden />
+          <div className="animate-sched-roster-in absolute bottom-full left-0 right-0 max-h-[55vh] overflow-y-auto bg-sol-bg border-t border-sol-border/60 shadow-[0_-8px_24px_rgba(0,0,0,0.18)] z-20">
+            {/* Roster header: what this popup holds and the two exits — the
+                full page, and creating a new schedule without hunting for it.
+                Solid alt band (not the row background) so the popup's edge
+                reads against the session list it floats over. */}
+            <div className="sticky top-0 z-10 flex items-center gap-2 px-3 py-1.5 bg-sol-bg-alt/95 backdrop-blur-sm border-b border-sol-border/60 text-[10px]">
+              <span className="font-medium text-sol-text-muted">
+                {rows.length} armed
+                {recurringCount > 0 ? ` · ${recurringCount} recurring` : ""}
+                {oneTimeCount > 0 ? ` · ${oneTimeCount} one-time` : ""}
+                {loopCount > 0 ? ` · ${loopCount} loop${loopCount === 1 ? "" : "s"}` : ""}
+              </span>
+              <span className="ml-auto flex items-center gap-3">
+                <Link href="/triggers?new=1" onClick={close} className="text-sol-text-muted hover:text-sol-text no-underline">+ New</Link>
+                <Link href="/triggers" onClick={close} className="inline-flex items-center gap-0.5 font-medium text-sol-amber no-underline hover:underline underline-offset-2">
+                  All {words.triggersPlural} <ArrowUpRight className="w-3 h-3" />
+                </Link>
+              </span>
+            </div>
+            {(() => {
+              let i = 0;
+              return groups.map((g) => {
+                const home = g.homeId ? st.sessions[g.homeId] : undefined;
+                return (
+                  <div key={g.key}>
+                    <TriggerHomeHeader
+                      group={g}
+                      home={home}
+                      now={now}
+                      isActive={!!g.homeId && g.homeId === activeSessionId}
+                      showProject={showProject}
+                      onOpen={() => {
+                        close();
+                        if (home) onOpenSession(home);
+                        else onOpen(g.rows[0]);
+                      }}
+                    />
+                    {g.rows.map((r) => {
+                      const idx = i++;
+                      return (
+                        <TriggerRowItem
+                          key={r.task._id}
+                          row={r}
+                          activeSessionId={activeSessionId}
+                          onOpen={(r) => { close(); onOpen(r); }}
+                          onNavigated={close}
+                          highlighted={idx === cursor}
+                          variant="grouped"
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              });
+            })()}
+          </div>
+        </>
+      )}
+      <button
+        onClick={toggle}
+        aria-expanded={open}
+        aria-haspopup="true"
+        aria-label={`${words.triggers}: ${rows.length} armed`}
+        className="w-full flex items-center gap-1.5 px-3 py-1.5 bg-sol-bg hover:bg-sol-bg-alt/60 transition-colors"
+      >
+        <svg className={`w-3 h-3 shrink-0 ${attention ? "text-sol-red" : "text-sol-amber"}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 7.5V12l3 2" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="shrink-0 whitespace-nowrap text-[10px] font-semibold uppercase tracking-wider text-sol-amber">
+          {words.triggers} <span className="text-sol-amber/60 tabular-nums">{rows.length}</span>
+        </span>
+        {nextIn !== undefined && (
+          <span className="text-[10px] text-sol-text-dim truncate min-w-0">
+            · next{nextTask ? <> <span className="text-sol-text-muted">{taskDisplayTitle(nextTask)}</span></> : null}{" "}
+            <span className="tabular-nums">{nextIn > 0 ? `in ${fmtDuration(nextIn)}` : "due"}</span>
+          </span>
+        )}
+        {unreadCount > 0 && (
+          <ShortcutTooltip label={`${unreadCount} outcome${unreadCount === 1 ? "" : "s"} landed since you last opened this list`} hint="marked inside">
+            <span className="shrink-0 inline-flex items-center whitespace-nowrap px-1.5 py-0 rounded-full text-[9px] font-semibold bg-sol-cyan/15 text-sol-cyan border border-sol-cyan/30">
+              {unreadCount} new
+            </span>
+          </ShortcutTooltip>
+        )}
+        {runningCount > 0 && (
+          <span className="shrink-0 inline-flex items-center whitespace-nowrap gap-1 px-1.5 py-0 rounded-full text-[9px] font-semibold bg-sol-green/10 text-sol-green border border-sol-green/30">
+            <LivePulseDot />
+            {runningCount} running
+          </span>
+        )}
+        {overdueCount > 0 && (
+          <ShortcutTooltip label="Due but unclaimed for over 2 minutes — is the daemon for that machine running?">
+            <span className="shrink-0 inline-flex items-center whitespace-nowrap px-1.5 py-0 rounded-full text-[9px] font-semibold bg-sol-red/15 text-sol-red border border-sol-red/30">
+              {overdueCount} overdue
+            </span>
+          </ShortcutTooltip>
+        )}
+        {attention && (
+          <span className="shrink-0 inline-flex items-center whitespace-nowrap gap-1 px-1.5 py-0 rounded-full text-[9px] font-semibold bg-sol-cyan/15 text-sol-cyan border border-sol-cyan/30">
+            <span className="w-1 h-1 rounded-full bg-sol-cyan" />
+            needs attention
+          </span>
+        )}
+        <svg className={`ml-auto shrink-0 w-3 h-3 transition-transform duration-200 [transition-timing-function:cubic-bezier(0.23,1,0.32,1)] text-sol-text-dim ${open ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+        </svg>
+      </button>
+    </div>
+  );
+}
+
+export /**
+ * The rows a card-level gesture acts on: the ticked selection when the clicked
+ * card is part of it, else that card alone — the same targeting a ⌘K on the
+ * selection uses. Shared by the right-click menu and the character picker so
+ * the two cannot disagree about what "this card" means.
+ */
+function selectionTargets(session: InboxSession): InboxSession[] {
+  const rows = useInboxStore.getState().sessions;
+  return selectionIdsFor(session._id)
+    .map((id) => (id === session._id ? session : rows[id]))
+    .filter((row): row is InboxSession => !!row);
+}
+
+// -- SessionListPanel (shared) --
+
+// Structural signature for the decision rows the Questions section branches on.
+const decisionsSectionSig = makeCollectionSig((d: any) =>
+  d.status === "pending" && d.in_queue !== false ? `${d._id}|${d.conversation_id}|${d.updated_at ?? 0}` : "");
+
+// Inbox-clearing prompt: when more than this many active sessions haven't been
+// touched in over a month, offer to bulk-dismiss them out of the working set.
+// The accent of each section a just-started session can move to when its NEW
+// hold ends, matching the section captions below.
+const HOLD_DEST_COLORS: Partial<Record<string, string>> = {
+  working: "var(--sol-green)",
+  needs_input: "var(--sol-yellow)",
+  done: "var(--sol-cyan)",
+  dormant: "var(--sol-blue)",
+};
+
+const STALE_SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const STALE_PROMPT_THRESHOLD = 10;
+// "Not now" rests the prompt for this long — persisted in client UI prefs so it
+// survives reloads and follows the user across devices instead of resurfacing
+// every time the panel mounts.
+const STALE_PROMPT_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+// Stable empty list so the favorites memo keeps a constant ref when not in the
+// favorites view (a fresh [] each render would defeat downstream memoization).
+const EMPTY_FAVORITES: InboxSession[] = [];
+// The Dismissed bucket only renders sessions dismissed within this window — a bulk
+// sweep can dismiss thousands, and an unbounded list is noise.
+const DISMISSED_VISIBLE_MS = 45 * 24 * 60 * 60 * 1000;
+
+// Bring a session row into view: smooth, but never a long glide — when the
+// row is more than one panel-height away, jump most of the distance first so
+// the animation stays quick no matter how far the list has scrolled. Hand-rolled
+// rAF tween instead of native behavior:"smooth" because the panel re-renders
+// constantly (heartbeats, section resorts) and Chromium silently cancels native
+// smooth scrolls on any concurrent scroll/layout change. Re-measuring the
+// remaining distance every frame self-corrects through that churn.
+// The row's scroll-margin-top (the sticky section heading's height on rail
+// rows) stays clear at the top, so a followed row never lands under its own
+// heading (lib/rowScroll).
+function scrollRowIntoView(container: HTMLElement, el: Element) {
+  const marginTop = scrollMarginTopOf(el);
+  const remainingDelta = () => rowScrollDelta(container.getBoundingClientRect(), el.getBoundingClientRect(), marginTop);
+  const delta = remainingDelta();
+  if (delta === 0) return;
+  // Hidden/occluded tabs get no animation frames — settle instantly so the
+  // row can't be stranded mid-glide until the tab is next viewed.
+  if (document.visibilityState !== "visible") {
+    container.scrollTop += delta;
+    return;
+  }
+  const maxGlide = container.clientHeight;
+  if (Math.abs(delta) > maxGlide) {
+    container.scrollTop += delta - Math.sign(delta) * maxGlide;
+  }
+  let aborted = false;
+  const abort = () => { aborted = true; };
+  const cleanup = () => {
+    container.removeEventListener("wheel", abort);
+    container.removeEventListener("touchstart", abort);
+  };
+  container.addEventListener("wheel", abort, { passive: true, once: true });
+  container.addEventListener("touchstart", abort, { passive: true, once: true });
+  let frames = 0;
+  const step = () => {
+    // Row unmounted mid-glide (panel remount/resort) — a detached node
+    // measures as all-zeros, so stop rather than chase garbage.
+    if (aborted || !el.isConnected) return cleanup();
+    const remaining = remainingDelta();
+    if (Math.abs(remaining) < 1 || ++frames > 60) {
+      container.scrollTop += remaining;
+      return cleanup();
+    }
+    container.scrollTop += remaining * 0.25;
+    requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// Floating "jump to it" pill. Appears over the list edge when its target card
+// is scrolled out of view — top edge when the card is above the fold, bottom
+// edge when below — and one click glides back to it. The target is the open
+// session, or (tone "new") a session just started and still held in NEW.
+// Visibility comes from an IntersectionObserver rooted at the scroll container
+// (fires on scroll AND container resize with zero per-frame work); a
+// per-render node check re-attaches it when a resort replaces the card's DOM
+// node without any scroll event.
+function SessionBeacon({
+  containerRef,
+  targetId: activeSessionId,
+  title,
+  tone = "open",
+  style,
+}: {
+  containerRef: React.RefObject<HTMLDivElement | null>;
+  targetId?: string | null;
+  title?: string | null;
+  tone?: "open" | "new";
+  /** The held row's --hold-* vars, so the pill's hairline fills in step with its card's. */
+  style?: React.CSSProperties;
+}) {
+  const [dir, setDir] = useState<"up" | "down" | null>(null);
+  const observedRef = useRef<Element | null>(null);
+  const ioRef = useRef<IntersectionObserver | null>(null);
+  // Whether the target's row was in view, and whose row it was: when the row
+  // the person was looking at moves to another section (it started waiting on
+  // them, its result landed), the list follows it instead of leaving a pill
+  // where it was.
+  const inViewRef = useRef(false);
+  const observedIdRef = useRef<string | null | undefined>(null);
+
+  // No dep array on purpose: the parent re-renders exactly when the list
+  // restructures, which is when the active card's node can change identity.
+  // The body is a single querySelector + ref compare, so the steady-state
+  // cost per render is negligible.
+  useWatchEffect(() => {
+    const container = containerRef.current;
+    const el = container && activeSessionId
+      ? container.querySelector(`[data-session-id="${activeSessionId}"]`)
+      : null;
+    if (el === observedRef.current) return;
+    ioRef.current?.disconnect();
+    const follow = !!el && !!container && observedIdRef.current === activeSessionId && inViewRef.current;
+    observedRef.current = el;
+    observedIdRef.current = activeSessionId;
+    if (!el || !container) {
+      inViewRef.current = false;
+      setDir(null);
+      return;
+    }
+    if (follow) scrollRowIntoView(container, el);
+    const io = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry) return;
+        inViewRef.current = entry.isIntersecting;
+        if (entry.isIntersecting) {
+          setDir(null);
+          return;
+        }
+        const rootTop = entry.rootBounds?.top ?? container.getBoundingClientRect().top;
+        setDir(entry.boundingClientRect.top < rootTop ? "up" : "down");
+      },
+      { root: container, threshold: 0 },
+    );
+    io.observe(el);
+    ioRef.current = io;
+  });
+  // Unmount teardown also forgets the node: under StrictMode's mount/unmount/
+  // mount rehearsal the effect above re-runs against the same node and must
+  // re-observe rather than short-circuit on the ref compare.
+  useMountEffect(() => () => {
+    ioRef.current?.disconnect();
+    ioRef.current = null;
+    observedRef.current = null;
+    observedIdRef.current = null;
+    inViewRef.current = false;
+  });
+
+  const words = useModeWords();
+  const handleJump = useCallback(() => {
+    const container = containerRef.current;
+    const el = observedRef.current;
+    if (container && el && el.isConnected) scrollRowIntoView(container, el);
+  }, [containerRef]);
+
+  if (!dir) return null;
+  const noun = words.conversation.toLowerCase();
+  const label = tone === "new" ? `Scroll to the ${noun} you just started` : `Scroll to the open ${noun}`;
+  return (
+    <button
+      // Keyed by target, so a switch to another target replays the entrance.
+      key={activeSessionId ?? ""}
+      onClick={handleJump}
+      data-dir={dir}
+      data-tone={tone}
+      style={style}
+      className={`cc-session-beacon absolute left-1/2 z-30 flex items-center gap-1.5 rounded-full border bg-sol-bg/90 py-1 pl-2 pr-2.5 text-[10px] font-medium backdrop-blur-md ${dir === "up" ? "top-9" : "bottom-2"}`}
+      title={label}
+      aria-label={label}
+    >
+      {dir === "up" ? <ArrowUp className="cc-session-beacon__arrow h-3 w-3" /> : <ArrowDown className="cc-session-beacon__arrow h-3 w-3" />}
+      <span className="cc-session-beacon__dot" aria-hidden />
+      <span className="max-w-[150px] truncate">{title || (tone === "new" ? words.newConversation : `Open ${noun}`)}</span>
+    </button>
+  );
+}
+
+// Memoized (see the export at the bottom of the file): the layout re-renders
+// often with identical props, and every un-memoized pass here rebuilt ~100
+// cards' worth of elements.
+// The declared status a status section's header already says, so a card under
+// it does not repeat it as a chip.
+const SECTION_DECLARED_STATUS: Record<string, ThreadStateStatus | undefined> = {
+  needs_input: "blocked", done: "done", new_results: "done", dormant: "dormant",
+};
+
+function SessionListPanelImpl({
+  onSessionSelect,
+  activeSessionId,
+}: {
+  onSessionSelect?: (id: string) => void;
+  activeSessionId?: string | null;
+}) {
+  const s = useTrackedStore([
+    s => s.clientState.ui,
+    // Team-mode active set + viewer identity — gate the scope pre-filter below.
+    s => s.teamInboxIds,
+    s => s.currentUser?._id,
+    s => resolveShowOld(s.clientState.ui),
+    // Wake only on STRUCTURAL session change (bucket/order/identity), not on every
+    // ~1s liveness heartbeat. Subscribing to the raw s.sessions map re-rendered the
+    // whole panel (categorize O(N) + 100 cards) ~17x/sec with 17 live sessions —
+    // measured ~70% idle main-thread. The body still reads s.sessions for the data;
+    // this only gates the re-render. Time-driven reclassification is preserved by
+    // the coarseNow dep on the categorize memo below. See store/wakeSig.ts.
+    s => sessionsWakeSig(s.sessions),
+    s => s.sessionsWithQueuedMessages,
+    s => s.blockedReviveRequestedAt,
+    s => s.pendingMessages,
+    s => s.activeProjectFilter,
+    s => s.activeBucketFilter,
+    s => s.chipFilterExclude,
+    s => s.extraBucketFilters,
+    s => s.extraProjectFilters,
+    s => s.buckets,
+    s => s.bucketAssignments,
+    s => s.collapsedSections,
+    s => s.currentSessionId,
+    s => s.pendingSessionCreates,
+    s => s.newSessionHolds,
+    s => s.showFavorites,
+    s => s.favorites,
+    s => s.recentFreezeOrder,
+    // Explicit decisions (cast decide) split their sessions out of Needs Input
+    // into their own Questions section.
+    s => decisionsSectionSig(s.sessionDecisions),
+    // Local answered/dismissed marks — drop a question from the section in the
+    // same commit the user acted in (lib/decisionQueue). Ref changes on stamp.
+    s => s.questionResolutions,
+    // Which cards are lit. A signature, not the raw collections: sessions hands
+    // back a new ref every heartbeat, and unread must wake the list only when
+    // the SET changes (store/inboxStore.sessionUnreadWakeSig).
+    s => sessionUnreadWakeSig(s),
+    // The Killed shelf's reading position — which paged-in kills the bucket
+    // lists, and whether "Load more" is mid-flight (hooks/killedShelf.ts).
+    s => s.killedShelf,
+    // Which hosted conversations ended on a stop: they leave the person's
+    // turn for "Couldn't finish" (lib/hostedNotice splitHostedStops).
+    s => hostedStopsSig(s.sessions, s.messages),
+    // What the project, goal and reports lenses group by (a signature: the
+    // task collection churns far more than the few facts a lens reads).
+    s => orgLensWakeSig(s),
+  ]);
+  // Hosted mode lists the assistant's conversations unless widened
+  // (hostedOnlyInbox); chipFilterOpts carries it into every list below.
+  const hostedOnly = hostedOnlyInbox(s.clientState.ui);
+  const titlebarRef = useTitlebarHead<HTMLDivElement>();
+  const router = useRouter();
+  const handleKillDismissed = useCallback((id: string) => {
+    soundKill();
+    if (isConvexId(id)) {
+      const store = useInboxStore.getState();
+      // session_id rides along so the daemon can still tear the backend down
+      // when its local conversation mapping (or the server row) is gone.
+      const sessionId = (store.sessions[id] as any)?.session_id;
+      store.convCommand(id, "killSession", { mark_completed: true, session_id: sessionId })
+        .catch((err: unknown) => {
+          if (isParkedDispatchError(err)) return;
+          toast.error(`Kill failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
+    }
+    // Route the local removal through markKilling (an action that deletes the row
+    // inside a draft) rather than a raw setState. The middleware then plants a
+    // pending "exclude" for sessions:id, so the now-liberal delta cache won't
+    // re-add the killed session on the next sync (the server still returns it,
+    // marked completed, until it ages out of the window). Raw setState skipped
+    // the middleware → no exclude → the card came back.
+    useInboxStore.getState().markKilling(id);
+  }, []);
+
+  const handleSelect = useCallback((session: InboxSession, e?: React.MouseEvent) => {
+    // ⌘/ctrl-click ticks the card, shift-click ticks the run since the last
+    // tick (in screen order); neither opens it. A plain click opens and
+    // becomes the anchor a later shift-click ranges from.
+    const gesture = e ? selectionGesture(e) : null;
+    if (gesture) {
+      e!.preventDefault();
+      const sel = useInboxSelection.getState();
+      if (gesture === "toggle") sel.toggle(session._id);
+      else sel.range(session._id, useInboxStore.getState().visualOrder().map((row) => row._id));
+      return;
+    }
+    // A plain click opens the card and leaves selection mode, as in a file list.
+    const sel = useInboxSelection.getState();
+    if (sel.ids.length > 0) sel.set([], session._id);
+    else useInboxSelection.setState({ anchorId: session._id });
+    if (onSessionSelect) {
+      onSessionSelect(session._id);
+    }
+    // A card is the conversation as a whole: its trigger strip shows every
+    // trigger rather than whichever one a row click last focused.
+    useInboxStore.getState().setTriggerStripRequest({ convId: session._id, taskId: null, expand: false, nonce: Date.now() });
+  }, [onSessionSelect]);
+
+  // The multi-selection (lib/inboxSelection): ids that still have a row here.
+  const selectedIdsRaw = useInboxSelection((sel) => sel.ids);
+  const selectedSet = useMemo(() => new Set(selectedIdsRaw), [selectedIdsRaw]);
+  const selectedSessions = useMemo(
+    () => selectedIdsRaw.map((id) => s.sessions[id]).filter((row): row is InboxSession => !!row),
+    [selectedIdsRaw, s.sessions],
+  );
+  const clearSelection = useCallback(() => useInboxSelection.getState().clear(), []);
+  // Selection is a mode, so Esc leaves it first, even from the composer (which
+  // holds focus most of the time). An open menu or dialog keeps its own Esc.
+  useEventListener("keydown", (e) => {
+    if (e.key !== "Escape" || useInboxSelection.getState().ids.length === 0) return;
+    const overlays = document.querySelectorAll('[role="menu"], [role="dialog"], [role="listbox"]');
+    if ([...overlays].some((el) => el.getClientRects().length > 0)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    useInboxSelection.getState().clear();
+  }, undefined, { capture: true });
+
+  // One-shot queries (the schedule-row click's run-list lookup) — not a
+  // subscription, so a resting panel costs nothing.
+  const convex = useConvex();
+  const words = useModeWords();
+  const hostedMode = useHostedMode();
+  // The Assistant scope's fold is fixed (Your turn, Working on it, Done,
+  // Scheduled), so its head carries no view controls.
+  const { only: assistantOnly } = useAssistantScope();
+
+  const pendingSendIds = useMemo(() => sessionsWithPendingSend(s.pendingMessages), [s.pendingMessages]);
+  // The blank you're viewing (or one mid-create) stays visible in NEW; all
+  // other never-engaged pre-warm blanks are hidden by placeInboxRows.
+  const blankOpts = useMemo(
+    () => ({ currentSessionId: activeSessionId ?? s.currentSessionId, pendingCreateIds: new Set(Object.keys(s.pendingSessionCreates)), reviveRequestedAt: s.blockedReviveRequestedAt }),
+    [activeSessionId, s.currentSessionId, s.pendingSessionCreates, s.blockedReviveRequestedAt],
+  );
+  // "Show old sessions" — a sticky per-user view preference (clientState.ui.
+  // inbox_show_old, stamped LWW so the newest toggle on any device wins
+  // everywhere, OFF included). "Old" is the FOLD of the shared working-set
+  // selection (sync-convergence C4): show-old selects shown + folded INSIDE
+  // the shared computation, never a filter bypass. Read here only to render
+  // the toggle; the counting read happens inside computeInboxVisible.
+  const showAllSessions = resolveShowOld(s.clientState.ui);
+  const focusedId = activeSessionId ?? s.currentSessionId;
+  const inboxScope = s.clientState.ui?.inbox_scope ?? "mine";
+  const meId = s.currentUser?._id?.toString?.() ?? null;
+  // The wake signature ignores updated_at, so the panel no longer re-renders on
+  // every heartbeat. placeInboxRows still retires a stale "working" to
+  // needs-input by comparing updated_at to Date.now() (the trust-TTL sweep), which
+  // is time-driven, not field-driven — so feed it a coarse clock to keep that
+  // sweep alive without coupling it back to heartbeat churn. 15s is well under the
+  // minutes-scale TTL. See useCoarseNow / store/wakeSig.ts.
+  const coarseNow = useCoarseNow(15_000);
+  // THE PLACEMENT CHOKEPOINT (store placeInboxRows, sync-convergence C5):
+  // scope → shared working-set selection → fold → shared per-row placement →
+  // sections, in ONE call every counting surface shares. Team mode renders the
+  // server-gated team set (oldCount 0, membership is server truth there); mine
+  // mode renders exactly the shared selection every replica computes. The
+  // questions bucket replaces the old liftQuestions pass, and the
+  // armed-trigger/loop facts replace the trigger-absorption pass — placement
+  // now says DORMANT for a machine-owned home identically on every client.
+  const placed = useMemo(
+    () => placeInboxRows(s, { focusedId, now: Math.max(coarseNow, Date.now()) }),
+    // Structural change + the view keys + the question inputs + the epoch tick
+    // (coarseNow drives the deadline signature).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sessionsWakeSig(s.sessions), inboxScope, meId, s.teamInboxIds, showAllSessions, focusedId, s.sessionsWithQueuedMessages, pendingSendIds, blankOpts, placementDecisionsSig(s.sessionDecisions), s.questionResolutions, s.killedShelf.ids, s.newSessionHolds, coarseNow],
+  );
+  // The section a held row is headed for, as its accent: the fuse and the
+  // landing wash speak in the color of where the row is going.
+  const holdDestColor = (session: InboxSession | undefined): string | undefined => {
+    if (!session) return undefined;
+    const bucket = placed.placements.get(session._id)?.bucket ?? "working";
+    return HOLD_DEST_COLORS[bucket] ?? HOLD_DEST_COLORS.working;
+  };
+  // The --hold-* vars a held (or just landed) row and its beacon both read.
+  const holdStyleOf = (id: string): React.CSSProperties | undefined => {
+    const left = (s.newSessionHolds[id] ?? 0) - Date.now();
+    if (left <= 0 && !landedIds.has(id)) return undefined;
+    return {
+      "--hold-dest": holdDestColor(s.sessions[id]),
+      "--hold-ms": `${NEW_SESSION_HOLD_MS}ms`,
+      "--hold-delay": `${left - NEW_SESSION_HOLD_MS}ms`,
+    } as React.CSSProperties;
+  };
+  const { visibleSessions, oldCount, sorted: sortedSessions, pinned, newSessions, needsInput, done, dormant, working, snoozed: snoozedList, stashed: stashedList, dismissed: dismissedList, subsByParent: globalSubByParent, forksByParent: globalForksByParent, questions: placedQuestions, isQuestion, roleSessionsByLead } = placed;
+
+  // -- Schedules in the inbox (status view) --
+  // The same per-user webList the badges/strip/schedules page subscribe to
+  // (Convex dedupes), partitioned into: one row per armed schedule, the set of
+  // sessions absorbed behind those rows (resting loop homes + uneventful runs),
+  // and the armed-inject map the kill gesture consults. All membership rules
+  // live in partitionTriggerInbox.
+  // Store-fed (hooks/useSyncTriggers): the schedule rows paint from the
+  // cached roster at boot instead of waiting a round-trip.
+  const { tasks: scheduleTaskRows, ready: schedulesReady } = useTriggers();
+  // In the Assistant scope the routines are the assistant's too (lib/assistantScope),
+  // so the foot never names a developer's trigger.
+  const scopedScheduleRows = useMemo(() => withinScope(scheduleTaskRows as TaskRow[], hostedOnly, isAssistantRoutine) as TaskRow[], [scheduleTaskRows, hostedOnly]);
+  const scheduleTasks = (schedulesReady || scopedScheduleRows.length > 0 ? scopedScheduleRows : undefined) as TaskRow[] | undefined;
+  const schedulesSeenAt = s.clientState.ui?.schedules_seen_at ?? 0;
+  const schedulePartition = useMemo(
+    () => partitionTriggerInbox(scheduleTasks, visibleSessions, {
+      sessionsWithQueuedMessages: s.sessionsWithQueuedMessages,
+      seenAt: schedulesSeenAt,
+      focusedId,
+      // Coarse clock so loop/subagent row membership (wakeup freshness,
+      // liveness staleness) re-evaluates without data churn.
+      now: coarseNow,
+    }),
+    [scheduleTasks, visibleSessions, s.sessionsWithQueuedMessages, schedulesSeenAt, focusedId, coarseNow],
+  );
+  // Kill-gesture handlers read the partition through a ref so their identities
+  // stay stable (SessionCard is memoized on them).
+  const schedulePartitionRef = useRef(schedulePartition);
+  schedulePartitionRef.current = schedulePartition;
+  // Publish the absorbed set for keyboard nav (computeVisualOrder reads it from
+  // the store). Content-keyed so Set identity churn from recomputes doesn't
+  // spam store notifications.
+  // (The setScheduleNavSets publish lives below, after the trigger-view
+  // grouping it also carries is computed.)
+
+  // Corner shown when the session is in a fork tree (has forks, or is one);
+  // colored by the tree's root so the whole tree matches.
+  const forkColorKeyOf = useCallback(
+    (session: InboxSession) =>
+      session.forked_from || globalForksByParent.has(session._id)
+        ? forkTreeRootId(session, s.sessions)
+        : undefined,
+    [s.sessions, globalForksByParent],
+  );
+
+  const activeSessions = useMemo(() => [...pinned, ...newSessions, ...needsInput, ...done, ...dormant, ...working], [pinned, newSessions, needsInput, done, dormant, working]);
+  // What the Assistant scope leaves out, said once under the list.
+  const outOfScope = useMemo(() => (hostedOnly ? activeSessions.filter((r) => !bySessionAgent(r)).length : 0), [hostedOnly, activeSessions]);
+
+  const bucketByConv = useMemo(() => convBucketMap(s.bucketAssignments), [s.bucketAssignments]);
+  const visibleBuckets = useMemo(() => sortLabels(s.buckets), [s.buckets]);
+  // conversation_id → its visible (non-archived) bucket name. Derived ONCE from the
+  // same bucket map the chips use, then handed to each card as a scalar prop so the
+  // card no longer scans bucketAssignments on every heartbeat notification.
+  const labelByConv = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const convId in bucketByConv) {
+      const bucketId = bucketByConv[convId];
+      const bucket = bucketId ? s.buckets[bucketId] : null;
+      if (bucket && !bucket.archived_at) map[convId] = bucket.name;
+    }
+    return map;
+  }, [bucketByConv, s.buckets]);
+  // conversation_id → is it lit for this viewer. Derived ONCE here and handed
+  // to each card as a scalar prop, the same rule labelByConv follows.
+  const unreadByConv = useMemo(
+    () => sessionUnreadMap(s),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the signature IS the dep (see the tracked-store note above)
+    [sessionUnreadWakeSig(s)],
+  );
+  // The star reads the rule toggleFavorite flips, against the live store rather
+  // than the placed row: placement memoizes on sessionsWakeSig, which leaves
+  // is_favorite out, so a placed row still carries the flag from before the toggle.
+  // Resolved to a scalar so each card memoizes on it.
+  const cardIsFavorite = (sess: InboxSession) => isFavoriteInStore(s, sess._id);
+  const { bucketCounts, projectCounts, projectPathByName } = useMemo(
+    () => computeChipCounts(activeSessions, bucketByConv),
+    [activeSessions, bucketByConv],
+  );
+
+  // ONE filter pipeline for every list the panel renders. Project and bucket
+  // chips are mutually exclusive (the setters clear each other) but apply both
+  // defensively. Mid-create stubs pass the bucket filter so the session you
+  // just summoned inside a focused bucket doesn't vanish before assignment.
+  const filterByChip = useCallback(
+    (items: InboxSession[]) =>
+      items.filter((sess) =>
+        chipMatchesSession(sess, chipFilterOpts(s, bucketByConv)),
+      ),
+    [s.activeProjectFilter, s.activeBucketFilter, s.chipFilterExclude, s.extraBucketFilters, s.extraProjectFilters, bucketByConv, hostedOnly],
+  );
+
+  // The Stashed / Killed buckets' open state is ephemeral and CLOSED by
+  // default: closed on every load, and re-closed whenever the chip filter
+  // (label, layout, project) changes — filterByChip's identity is that filter.
+  // It used to live in the synced clientState (show_stashed / show_dismissed),
+  // so one auto-reveal left the bucket open on every device, forever.
+  const CLOSED_BUCKETS = { snoozed: false, stashed: false, dismissed: false };
+  const [openBuckets, setOpenBuckets] = useState(CLOSED_BUCKETS);
+  const [bucketsFilter, setBucketsFilter] = useState(() => filterByChip);
+  if (bucketsFilter !== filterByChip) {
+    // The state holds a FUNCTION: pass it through a thunk, or React runs it
+    // as an updater with the previous filter as its argument.
+    setBucketsFilter(() => filterByChip);
+    setOpenBuckets(CLOSED_BUCKETS);
+  }
+
+  const filteredPinned = useMemo(() => filterByChip(pinned), [filterByChip, pinned]);
+  const filteredNew = useMemo(() => filterByChip(newSessions), [filterByChip, newSessions]);
+  // A hosted conversation that ended on a stop owes the person nothing: it
+  // leaves their turn for its own quiet section below it, with one retry for
+  // all of them (the same rule keeps it out of the badge).
+  const stopsSig = hostedStopsSig(s.sessions, s.messages);
+  const { asks: filteredNeedsInput, stopped: filteredStopped } = useMemo(
+    () => splitHostedStops(filterByChip(needsInput), (id) => useInboxStore.getState().messages[id]),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filterByChip, needsInput, stopsSig],
+  );
+  const filteredDone = useMemo(() => filterByChip(done), [filterByChip, done]);
+  const filteredDormant = useMemo(() => filterByChip(dormant), [filterByChip, dormant]);
+  const filteredWorking = useMemo(() => filterByChip(working), [filterByChip, working]);
+  // QUESTIONS is its own PLACEMENT bucket (sync-convergence C3): a session
+  // that has ASKED something explicit (a `cast decide` row, an open
+  // AskUserQuestion or permission prompt, an asking child) files there
+  // whatever its pin or rest verdict — the ask outranks placement, and the
+  // section reads first. The chokepoint already lifted rows from outside the
+  // rail's scope; they still honor the active chip here.
+  const statusQuestions = useMemo(() => filterByChip(placedQuestions), [filterByChip, placedQuestions]);
+  // The placed sections ARE the status view: the buckets are mutually
+  // exclusive (questions rows never sit in another section), and trigger
+  // absorption is no longer a client pass — an armed inject trigger or a live
+  // loop parks its home in DORMANT as DATA (armed_trigger_kind / loop_state
+  // reach the shared classifier), identically on every client and the server.
+  // The header number is the chokepoint's section COUNT (flat cards plus
+  // members nested under a same-bucket lead — what the tally and the CLI
+  // report) while no chip narrows the list and the nested rows are on screen;
+  // shared sectionHeaderCount, so this panel and mobile can't drift.
+  const showSubagents = s.clientState.ui?.show_subagents ?? true;
+  const countOf = (shown: InboxSession[], full: InboxSession[], n: number) =>
+    sectionHeaderCount(shown, full, n, showSubagents);
+  const statusPinned = filteredPinned;
+  const statusNew = filteredNew;
+  const statusNeedsInput = filteredNeedsInput;
+  const statusDone = filteredDone;
+  const statusDormant = filteredDormant;
+  const statusWorking = filteredWorking;
+  // A New row the person opens stays in New while it is open, so the list
+  // does not reflow under the pointer the moment it is read; it settles into
+  // Earlier once they move on. Whether it was unread is read from the render
+  // before the open, since opening is what marks it read.
+  const prevUnreadRef = useRef(unreadByConv);
+  const heldNewRef = useRef<{ openId: string | null; held: string | null }>({ openId: null, held: null });
+  if (heldNewRef.current.openId !== (focusedId ?? null)) {
+    const id = focusedId ?? null;
+    heldNewRef.current = { openId: id, held: id && (unreadByConv[id] || prevUnreadRef.current[id]) ? id : null };
+  }
+  prevUnreadRef.current = unreadByConv;
+  const heldNewId = heldNewRef.current.held;
+  // The label / plan lenses dissolve the status sections back to one flat
+  // active set; questions rows rejoin it so an asking session still shows
+  // under its label.
+  const hostedSections = useMemo(
+    () => {
+      const awaiting = awaitingOkIds(s.sessionDecisions);
+      const sending = pendingSendIdsOf(s);
+      return hostedStatusSections({ pinned: statusPinned, questions: statusQuestions, needsInput: filteredNeedsInput, newSessions: statusNew, working: statusWorking, done: statusDone, dormant: statusDormant }, (id) => awaiting.has(id), (id) => sending.has(id), (id) => !!unreadByConv[id] || id === heldNewId);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [statusPinned, statusQuestions, filteredNeedsInput, statusNew, statusWorking, statusDone, statusDormant, s.sessionDecisions, s.pendingMessages, s.sessionsWithQueuedMessages, unreadByConv, heldNewId],
+  );
+  // Two hosted rows that read the same name get a muted day (or time) after
+  // the title, by the name the card draws (hostedRowTitle), so the suffix
+  // follows what the rows actually say.
+  const hostedTitleSuffixes = useMemo(() => {
+    if (!hostedOnly) return NO_SUFFIXES;
+    const st = useInboxStore.getState();
+    return sameNameSuffixes(hostedSections.flatMap(([items]) => items), (row) => hostedRowTitle(st, row._id) || sessionCardTitle(row));
+  }, [hostedOnly, hostedSections]);
+  const lensSettled = useMemo(
+    () => [...statusQuestions, ...filteredNeedsInput, ...filteredStopped, ...filteredDone, ...filteredDormant],
+    [statusQuestions, filteredNeedsInput, filteredStopped, filteredDone, filteredDormant],
+  );
+  // Schedule rows honor the project chips like session cards do.
+  const scheduleRowsView = useMemo(
+    () =>
+      s.activeProjectFilter
+        ? schedulePartition.rows.filter((r) => passesFilterTerms(chipProjectFilters(s), getProjectName(undefined, r.task.project_path)))
+        : schedulePartition.rows,
+    [schedulePartition.rows, s.activeProjectFilter, s.chipFilterExclude, s.extraProjectFilters],
+  );
+  // A schedule row opens the conversation behind it — the loop's home session
+  // or the newest run; the dismissed-peek path handles folded runs.
+  // Opening FROM a schedule surface (dock row, bar under a card) also asks the
+  // conversation's schedule strip to arrive expanded — the click means "show me
+  // this schedule", so the prompt should be visible without a second click.
+  // No conversation to land on (a spawn schedule that has never run, or one
+  // whose conversation isn't in the local cache) falls back to the trigger's
+  // own detail page, so a row click is never a silent no-op.
+  // A trigger that has FIRED before also lands on its most recent firing (the
+  // same target the newest run-history entry opens) instead of the tail. The
+  // trigger message resolves synchronously from the loaded window when it's
+  // there; otherwise the conversation opens immediately and the run-list query
+  // supplies the scroll target when it answers (local-first: the click never
+  // waits on the server). A late answer only scrolls if the user is still on
+  // the conversation this click opened — never a second jump elsewhere.
+  const openScheduleTarget = useCallback((row: TriggerRow) => {
+    const st = useInboxStore.getState();
+    const sess = row.openId ? st.sessions[row.openId] : undefined;
+    if (!sess) {
+      router.push(`/triggers/${row.task._id}`);
+      return;
+    }
+    // Set after any select below (a card select resets the strip to all
+    // triggers): this click means "show me THIS trigger".
+    const focusStrip = () =>
+      st.setTriggerStripRequest({ convId: sess._id, taskId: row.task._id, expand: true, nonce: Date.now() });
+    // Pseudo rows (loops/subagents) have no agent_tasks runs to land on — the
+    // fake task id must never reach webListRuns.
+    const hasRun = !row.kind && (row.task.run_count > 0 || row.task.last_run_at !== undefined);
+    const local = hasRun ? latestLoadedTriggerMessage(st.messages[sess._id], row.task._id) : undefined;
+    // Same rule as the monitor rows: the pending pointer is only consumed on
+    // the inbox surface — off it, fall through to handleSelect (the page's
+    // own open path) instead of stranding a pointer that yanks the view later.
+    if (local && window.location.pathname.startsWith("/inbox")) {
+      st.requestNavigate(sess._id, {
+        scrollToMessageId: local.messageId,
+        scrollToMessageTimestamp: local.timestamp,
+      });
+      focusStrip();
+      return;
+    }
+    // Captured BEFORE the select: the query below often answers before the
+    // router commits the navigation, so "user is still here" must accept a
+    // view that hasn't moved yet — only a view pointing somewhere genuinely
+    // NEW (neither the destination nor where we stood) means the user left.
+    const beforeIds = new Set([st.currentSessionId, st.viewingDismissedId].filter(Boolean));
+    handleSelect(sess);
+    focusStrip();
+    if (!hasRun) return;
+    fetchTriggerRuns(convex, row.task._id)
+      .then((runs: TriggerRun[]) => {
+        const run = runs?.[0];
+        if (!run?.trigger_message_id || run._id !== sess._id) return;
+        const now = useInboxStore.getState();
+        const visible = [now.currentSessionId, now.pendingNavigateId, now.viewingDismissedId].filter(Boolean) as string[];
+        const stillHere = visible.some((id) => id === sess._id) || visible.every((id) => beforeIds.has(id));
+        if (stillHere) openRunInStore(run);
+      })
+      .catch(() => {});
+  }, [handleSelect, router, convex]);
+  // Trigger view header click: the trigger IS the citizen there, so its row
+  // opens the trigger's own detail page — the sessions it drives are already
+  // sub rows right below. Pseudo rows (loops, live subagents) have no
+  // agent_tasks row for that page to show, so they keep the
+  // conversation-open path.
+  const openTriggerPage = useCallback((row: TriggerRow) => {
+    if (row.kind) {
+      openScheduleTarget(row);
+      return;
+    }
+    router.push(`/triggers/${row.task._id}`);
+  }, [router, openScheduleTarget]);
+  // Schedule bars under cards: the schedules bound to a VISIBLE session — the
+  // ones it originates (inject, any type), the spawn triggers it created
+  // (attribution, not routing), plus, for a run card, the schedule that
+  // spawned it. Keyed off partition.rows so bars share the unread state.
+  const scheduleBarRowsFor = useCallback((sess: InboxSession): TriggerRow[] => {
+    const rows = schedulePartitionRef.current.rows;
+    const out: TriggerRow[] = [];
+    for (const r of rows) {
+      // Loop rows attach like inject triggers — they name this card's
+      // standing intent.
+      if (
+        r.task.originating_conversation_id === sess._id ||
+        r.task.created_by_conversation_id === sess._id ||
+        (!!sess.agent_task_id && r.task._id === sess.agent_task_id)
+      ) {
+        out.push(r);
+      }
+    }
+    return out;
+  }, []);
+  const filteredDismissed = useMemo(() => {
+    // Only surface dismissed sessions ACTIVE within the window — keyed on last
+    // activity (updated_at), NOT when they were dismissed. A bulk cleanup dismisses
+    // thousands of stale sessions all at once (dismissed_at = today), so filtering
+    // by dismissal time would still show them all; filtering by recency hides that
+    // old noise while keeping things you recently worked on but set aside. Hidden
+    // ones stay searchable and reachable by direct link. A KILL is exempt: it is
+    // the user's own act, never bulk noise, and the shelf pages old kills in on
+    // purpose — an activity window would hide exactly what "Load more" fetched.
+    const cutoff = Date.now() - DISMISSED_VISIBLE_MS;
+    const filtered = filterByChip(dismissedList).filter(
+      (sess) => !!sess.inbox_killed_at || (sess.updated_at ?? 0) >= cutoff,
+    );
+    const retiredAt = (sess: InboxSession) => sess.inbox_dismissed_at || sess.inbox_killed_at || sess.dismissed_at || sess.updated_at || 0;
+    return filtered.sort((a, b) => retiredAt(b) - retiredAt(a));
+  }, [filterByChip, dismissedList]);
+  const filteredSnoozed = useMemo(() => filterByChip(snoozedList), [filterByChip, snoozedList]);
+  const filteredStashed = useMemo(() => {
+    // Same recency window as Dismissed for the same noise reason.
+    const cutoff = Date.now() - DISMISSED_VISIBLE_MS;
+    const filtered = filterByChip(stashedList).filter(
+      (sess) => (sess.updated_at ?? 0) >= cutoff,
+    );
+    return filtered.sort((a, b) => (b.inbox_stashed_at || b.updated_at || 0) - (a.inbox_stashed_at || a.updated_at || 0));
+  }, [filterByChip, stashedList]);
+
+  // The bars under a card, in whichever form the ⚡ pill toggle asks for:
+  // folded to one strip (default), one full row per bar, or hidden entirely.
+  // The legacy show_triggers boolean seeds the default so an existing
+  // "expanded" choice survives the upgrade to the three-way mode.
+  // Hosted mode draws a conversation as one row: the workflow, monitor and
+  // trigger bars under a card are a fleet's machinery (inbox.rowInternals).
+  const rowInternals = useSurface("inbox.rowInternals");
+  // The panel head's team board, old-sessions and favorites toggles.
+  const panelInternals = useSurface("inbox.internals");
+  const labelStrip = useSurface("inbox.labelStrip");
+  const cardBars: CardBarsMode = !rowInternals ? "hidden" :
+    s.clientState.ui?.card_bars ?? ((s.clientState.ui?.show_triggers ?? false) ? "full" : "strip");
+  // "By trigger" lens — the roster's rows promoted to first-class rows, each
+  // with the sessions it drives as sub rows beneath (home conversation /
+  // runs), the rest falling to project groups. Grouped over the UNabsorbed
+  // filtered lists PLUS the stashed/killed buckets: a standing trigger's home
+  // typically rests in the stash, and this lens exists precisely to show each
+  // trigger's work — claimed hidden sessions render as muted sub rows, while
+  // unclaimed hidden ones stay in their buckets. Computed in every mode (one
+  // cheap pass) so the nav bridge and the view switcher know whether triggers
+  // exist before the user ever enters the mode.
+  const triggerView = useMemo(() => {
+    // Pinned flows into the pool like everything else — this view has exactly
+    // two tiers, triggers then other sessions, with no status/pinned chrome.
+    const { triggerGroups, rest } = groupSessionsByTrigger(
+      scheduleRowsView,
+      [...filteredPinned, ...filteredNew, ...filteredNeedsInput, ...filteredStopped, ...filteredWorking],
+      { hidden: [...filteredStashed, ...filteredDismissed] },
+    );
+    return { triggerGroups, projectGroups: groupSessionsForLabelView(rest, {}, {}).projectGroups };
+  }, [scheduleRowsView, filteredPinned, filteredNew, filteredNeedsInput, filteredStopped, filteredWorking, filteredStashed, filteredDismissed]);
+  // Publish the schedule projections for keyboard nav (computeVisualOrder reads
+  // them from the store): the absorbed set (status view) and the trigger view's
+  // group order. Content-keyed so identity churn from recomputes doesn't spam
+  // store notifications.
+  const triggerOrder = useMemo(
+    () => triggerView.triggerGroups.map((g) => ({ key: g.key, ids: g.items.map((i) => i._id) })),
+    [triggerView.triggerGroups],
+  );
+  const navSetsKey = useMemo(
+    () =>
+      [...schedulePartition.absorbedIds].sort().join(",") +
+      "|" + triggerOrder.map((g) => `${g.key}:${g.ids.join("+")}`).join(","),
+    [schedulePartition.absorbedIds, triggerOrder],
+  );
+  useWatchEffect(() => {
+    useInboxStore.getState().setScheduleNavSets({ absorbed: schedulePartition.absorbedIds, triggerOrder });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [navSetsKey]);
+
+  // Stale working set: EVERY non-hidden session untouched for >30d, minus
+  // pinned (explicit keep) and the one you're viewing. Stashed sessions are an
+  // explicit keep too — the sweep must not retire what the user deliberately
+  // set aside. Computed from the full session map — NOT the active buckets —
+  // on purpose: subagents nested under a parent are held out of those buckets,
+  // but dismissing their parent promotes them to top-level, so they must be in
+  // the dismiss set too or they refill the inbox after a sweep.
+  // Sorted newest-first so the borderline ones (the sessions most worth a
+  // second look before a sweep) lead the review list.
+  const staleCutoff = coarseNow - STALE_SESSION_MS;
+  const staleSessions = useMemo(() => {
+    return (Object.values(s.sessions) as InboxSession[])
+      .filter(
+        (sess) =>
+          !isSessionHidden(sess) &&
+          !sess.is_pinned &&
+          !sess.inbox_snoozed_until &&
+          sess._id !== activeSessionId &&
+          // An unstamped row is unknown, not ancient: never offer it for dismissal.
+          !!sess.updated_at && sess.updated_at < staleCutoff,
+      )
+      .sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+  }, [s.sessions, activeSessionId, staleCutoff]);
+  // The snooze is a persisted pref, not component state: a "Not now" used to
+  // evaporate on every reload, so the prompt kept coming back.
+  const stalePromptSnoozedAt = s.clientState.ui?.inbox_stale_prompt_snoozed_at ?? 0;
+  const stalePromptSnoozed = coarseNow - stalePromptSnoozedAt < STALE_PROMPT_SNOOZE_MS;
+  const snoozeStalePrompt = useCallback(() => {
+    useInboxStore.getState().updateClientUI({ inbox_stale_prompt_snoozed_at: Date.now() });
+  }, []);
+  // "Show them" — expands the list of sessions the sweep would dismiss, as
+  // ordinary cards, so the count is never a mystery number.
+  const [staleListOpen, setStaleListOpen] = useState(false);
+  const [dismissingStale, setDismissingStale] = useState(false);
+  const dismissStaleMutation = useMutation(api.conversations.dismissStaleInboxSessions);
+  const showStalePrompt = staleSessions.length > STALE_PROMPT_THRESHOLD && !stalePromptSnoozed;
+
+  // Sessions parked on a limit/auth/connection banner — the fleet-level revive
+  // banner's input. isBlockedConversation is the SAME predicate the server
+  // selection uses (limit/auth/connection/fatal kinds — self-retrying 429/5xx
+  // never count — claude only, dismissed excluded), plus the same window
+  // (isCurrentBlock, judged on when the block landed), so the count shown
+  // always matches what a revive would act on.
+  const blockedSessions = useMemo(() => {
+    const now = Date.now();
+    // A session the user just told to continue/switch (fresh revive stamp) is
+    // out of the blocked set immediately — the pill count drops and the banner
+    // clears on the click, not on the daemon round trip. The server flag only
+    // resets once the agent resumes; if that never happens the stamp expires
+    // and the session re-enters here (coarseNow keeps the TTL live).
+    const reviving = freshReviveRequestIds(s.blockedReviveRequestedAt, now);
+    return (Object.values(s.sessions) as InboxSession[]).filter(
+      (sess) =>
+        !isSessionHidden(sess) &&
+        !reviving.has(sess._id) &&
+        isCurrentBlock(sess, now),
+    ).map(withSafetyBlock).filter(
+      (sess) => isBlockedConversation(sess.agent_type != null ? sess : { ...sess, agent_type: "claude_code" }),
+    );
+  }, [s.sessions, s.blockedReviveRequestedAt, coarseNow]);
+  // A fleet of nothing but blocked subagent workers doesn't earn the amber
+  // pill: their parents have moved on, so there's no one waiting on a revive.
+  // The banner itself still handles the all-subs case when it's forced open.
+  const blockedHasNonSub = useMemo(
+    () => blockedSessions.some((sess) => !isSubagentConversation(sess)),
+    [blockedSessions],
+  );
+  // A LIVE 0→N transition of the blocked set is a fresh incident: replay the
+  // banner entrance with the attention glow and pulse the header pill so the
+  // moment registers. Hydration also walks 0→N right after mount, so the
+  // first seconds don't count — a reload with existing casualties gets the
+  // plain entrance only.
+  const blockedMountedAtRef = useRef(Date.now());
+  const prevBlockedCountRef = useRef(0);
+  const [blockedIncidentTs, setBlockedIncidentTs] = useState(0);
+  useWatchEffect(() => {
+    const prev = prevBlockedCountRef.current;
+    prevBlockedCountRef.current = blockedSessions.length;
+    if (prev === 0 && blockedSessions.length > 0 && Date.now() - blockedMountedAtRef.current > 5000) {
+      setBlockedIncidentTs(Date.now());
+    }
+  }, [blockedSessions.length]);
+  // The banner is transient (snoozes on X and after acting); the header pill is
+  // the permanent trigger. Clicking it force-opens the banner — past the snooze
+  // and even for a single blocked session — and scrolls it into view.
+  const [blockedBannerForced, setBlockedBannerForced] = useState(false);
+  const openBlockedBanner = useCallback(() => {
+    setBlockedBannerForced(true);
+    useInboxStore.getState().setShowFavorites(false);
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
+  const handleDismissStale = useCallback(async () => {
+    const ids = staleSessions.map((sess) => sess._id);
+    const count = ids.length;
+    // Instant, optimistic local dismiss (sync — no per-row dispatch storm). This
+    // is the durable, user-visible clear; it persists to IDB on its own.
+    useInboxStore.getState().markSessionsDismissed(ids);
+    snoozeStalePrompt();
+    setStaleListOpen(false);
+    setDismissingStale(true);
+    try {
+      // Fire-once: schedules a background drainer that persists the dismissal
+      // server-side / cross-device. Cheap and unlikely to fail — and even if it
+      // does, the local clear above already stands, so we never alarm the user.
+      await dismissStaleMutation({ older_than_days: 30 });
+    } catch {
+      // ignore — local clear persists; the server drain is best-effort.
+    } finally {
+      setDismissingStale(false);
+      toast.success(`Dismissed ${count} old session${count === 1 ? "" : "s"}`, { description: "Still searchable anytime." });
+    }
+  }, [staleSessions, dismissStaleMutation, snoozeStalePrompt]);
+
+  const [expandedSubSessions, setExpandedSubSessions] = useState<Record<string, boolean>>({});
+  // Cap how many rows each section renders. A section like "Needs Input" can
+  // accumulate thousands of finished sessions (the store never prunes), and
+  // rendering them all materializes tens of thousands of DOM nodes in this
+  // always-mounted panel — every heartbeat then re-reconciles the whole tree,
+  // which is enough to peg the renderer (badly in dev builds). Render a bounded
+  // window with a "show more" expander; the active row is always force-mounted
+  // so auto-scroll and the currently-viewed session never fall off the cap.
+  const SECTION_RENDER_CAP = 50;
+  const HOSTED_DONE_CAP = 6;
+  const SECTION_RENDER_STEP = 100;
+  // Global ceiling on cards mounted across ALL sections combined. The per-section
+  // cap alone doesn't bound the total — with thousands of sessions spread across
+  // many label/project groups (plus nested subagents) it still reached ~800 cards
+  // / 23k DOM nodes. This budget is consumed in render order (top sections win),
+  // so the whole panel stays bounded no matter how many sessions accumulate. Every
+  // session stays in the store — this only limits how many are MOUNTED at once.
+  const GLOBAL_CARD_BUDGET = 100;
+  const [sectionLimits, setSectionLimits] = useState<Record<string, number>>({});
+  const [globalCardExtra, setGlobalCardExtra] = useState(0);
+  // Reset each render; renderSection (a closure over this) consumes it in call order.
+  let globalRenderedCards = 0;
+  // Three-way view mode; the legacy boolean is honored when the mode is unset.
+  const viewMode: InboxViewMode =
+    s.clientState.ui?.inbox_view_mode ?? ((s.clientState.ui?.inbox_flat_view ?? false) ? "time" : "grouped");
+  const flatView = viewMode === "time" || viewMode === "recent";
+  // Manual drag-order overlay, only consulted in "time" mode (see comparator).
+  const manualOrder = s.clientState.ui?.inbox_manual_order;
+  // The two flat views reuse the already-computed sortedSessions (every
+  // non-dismissed session) and only swap the comparator: "recent" ranks by last
+  // activity (updated_at, reshuffles as work happens), "time" by creation
+  // (started_at, a stable chronology, with any manual drag pins overlaid).
+  // Shared flatViewComparator so this render and the keyboard-nav order
+  // (computeVisualOrder) can't drift. It still honors the show_subagents toggle:
+  // when subagents are hidden, the same sessions the grouped view nests away
+  // (subsByParent / globalSubByParent) are excluded here — except the selected
+  // one, which always renders.
+  // Render and keyboard-nav share the same frozen order during recent-mode j/k
+  // (see recentFreezeOrder) so the list can't move out from under the cursor.
+  const recentFreezeOrder = s.recentFreezeOrder;
+  const flatList = useMemo(
+    () =>
+      flatViewSessions(sortedSessions, globalSubByParent, {
+        mode: viewMode === "recent" ? "recent" : "time",
+        showSubagents,
+        focusedId: activeSessionId,
+        manualOrder,
+        freezeOrder: viewMode === "recent" ? recentFreezeOrder : null,
+        chipMatches: (sess) =>
+          chipMatchesSession(sess, chipFilterOpts(s, bucketByConv)),
+      }),
+    [sortedSessions, showSubagents, globalSubByParent, activeSessionId, viewMode, manualOrder, recentFreezeOrder, s.activeProjectFilter, s.activeBucketFilter, s.chipFilterExclude, s.extraBucketFilters, s.extraProjectFilters, bucketByConv, hostedOnly],
+  );
+  const totalSubagentCount = useMemo(() => {
+    let count = 0;
+    for (const subs of globalSubByParent.values()) count += subs.length;
+    return count;
+  }, [globalSubByParent]);
+  // Whether ANY card could wear a bar — schedules aside, a workflow run in
+  // flight or a daemon-reported open task is enough. Gates the ⚡ pill so the
+  // control only appears when it has something to govern. open_tasks is the
+  // cheap daemon-report approximation of the full liveWatchRowsFor merge:
+  // good enough for "show the toggle", while each card still decides its own
+  // rows exactly.
+  const anyLiveBars = useMemo(
+    () => sortedSessions.some((x) => workflowBarVisible(x) || (x.open_tasks?.length ?? 0) > 0),
+    [sortedSessions],
+  );
+
+  // Every lens (label, plan, project, goal, reports) groups the same active
+  // set, pinned rows included: each leads its own group (byPinThenActivity)
+  // and wears its pin there. A Pinned section above the groups would look the
+  // same in every lens, so switching lenses would seem to do nothing. The
+  // store's visualOrder groups the same set, so Ctrl+J/K walks this layout.
+  // Absorbed-filtered lists: the lens views render the TRIGGERS section too,
+  // so sessions resting behind a schedule row must not double-render in groups.
+  const lensRows = useMemo(
+    () => [...filteredPinned, ...filteredNew, ...lensSettled, ...filteredWorking],
+    [filteredPinned, filteredNew, lensSettled, filteredWorking],
+  );
+
+  // "By label" view: sessions grouped by their manual label; unlabeled
+  // sessions group by PROJECT — projects are a specific kind of label,
+  // auto-derived from the directory.
+  const bucketView = useMemo(() => {
+    if (viewMode !== "bucket") return null;
+    return groupSessionsForLabelView(lensRows, s.buckets, bucketByConv);
+  }, [viewMode, lensRows, bucketByConv, s.buckets]);
+
+  // "By plan" lens — same active set as the bucket view (status buckets dissolved
+  // back to flat), regrouped by plan instead of label. Every plan shows, even a
+  // plan of one; sessions with no plan fall to project groups. This lens is the
+  // ONLY place the inbox groups by plan — the status view keeps every session in
+  // its status bucket.
+  const planView = useMemo(() => {
+    if (viewMode !== "plan") return null;
+    return groupSessionsByPlan(lensRows);
+  }, [viewMode, lensRows]);
+  // Offer the "By plan" option only when a plan is actually in play, mirroring how
+  // "By label" appears only with buckets.
+  const hasPlanSessions = useMemo(() => activeSessions.some((x) => !!x.active_plan), [activeSessions]);
+
+  // The org lenses ("By project", "By goal", "By reports"): the same active
+  // set, regrouped by what the work is filed under or which report runs it.
+  // Shared with the store's visualOrder so Ctrl+J/K walks this layout.
+  const lensSig = orgLensWakeSig(s);
+  const lensSources = useMemo(() => orgLensSourcesOf(s), [lensSig, s.sessions]);
+  const orgLensView = useMemo(() => {
+    if (!isOrgLensMode(viewMode)) return null;
+    return { mode: viewMode, ...groupSessionsForOrgLens(viewMode, lensRows, lensSources) };
+  }, [viewMode, lensRows, lensSources]);
+  const orgLenses = useMemo(
+    () => ORG_LENS_MODES.filter((m) => orgLensAvailable(m, activeSessions, lensSources)),
+    [activeSessions, lensSources],
+  );
+  // A group header's count and tallies: its rows and the rows nested under
+  // them, the way a status section counts.
+  const groupTally = (items: InboxSession[]) => {
+    const states: Partial<Record<ReturnType<typeof sessionWorkState>, number>> = {};
+    let count = 0;
+    for (const row of items) {
+      for (const x of [row, ...(globalSubByParent.get(row._id) ?? [])]) {
+        const ws = sessionWorkState(x);
+        states[ws] = (states[ws] ?? 0) + 1;
+        count++;
+      }
+    }
+    return { count, states };
+  };
+  const rolesById = useMemo(() => new Map((s.orgTree?.roles ?? []).map((r) => [String(r._id), r])), [lensSig]);
+
+  // Favorites view: the SAME session cache filtered to the kept set, grouped by
+  // project — the shelf's organization ("what is it about"), distinct from the
+  // active desk's status buckets ("what needs me now"). allFavorites (unscoped)
+  // feeds the project chips so every project a favorite lives in is offered;
+  // favoriteGroups is the rendered list, narrowed by the active project chip.
+  // No label tier — everything falls to project groups via the shared grouper.
+  const favoritesView = s.showFavorites;
+  const allFavorites = useMemo(
+    () => (favoritesView ? selectFavoriteSessions(s.sessions, undefined, s.favorites) : EMPTY_FAVORITES),
+    [favoritesView, s.sessions, s.favorites],
+  );
+  const favoriteGroups = useMemo(() => {
+    if (!favoritesView) return null;
+    const projectFilters = chipProjectFilters(s);
+    const scoped = projectFilters.length
+      ? allFavorites.filter((x) => passesFilterTerms(projectFilters, getProjectName(x.git_root, x.project_path)))
+      : allFavorites;
+    const pinned = scoped.filter((x) => x.is_pinned).sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+    const rest = scoped.filter((x) => !x.is_pinned);
+    const { projectGroups } = groupSessionsForLabelView(rest, {}, {});
+    return { pinned, projectGroups, count: scoped.length };
+  }, [favoritesView, allFavorites, s.activeProjectFilter, s.chipFilterExclude, s.extraProjectFilters]);
+  const favChipCounts = useMemo(
+    () => (favoritesView ? computeChipCounts(allFavorites, bucketByConv) : null),
+    [favoritesView, allFavorites, bucketByConv],
+  );
+
+  // Shared drop sink for every label target — chips AND the "by label" view's
+  // sections. bucketId null = remove the label (dropping onto a project group
+  // sends the session back to its own project tier).
+  // A drag of a ticked card carries the whole selection (selectionIdsFor).
+  const dropSessionOnLabel = useCallback((draggedId: string, bucketId: string | null) => {
+    labelSessions(selectionIdsFor(draggedId), bucketId);
+  }, []);
+
+  // Dropping a card on a status section files it there: the user's rest
+  // verdict, undoable like the menu gesture. One stable handler per verdict.
+  const dropSessionOnRest = useMemo(() => Object.fromEntries(
+    USER_RESTS.map((rest) => [rest, (ids: string[]) => { void fileSessionsAsRest(ids, rest); }]),
+  ) as Record<UserRest, (ids: string[]) => void>, []);
+
+  // Section drop targets: whole group is droppable.
+  const [dragOverSectionKey, setDragOverSectionKey] = useState<string | null>(null);
+  // While a card is in flight, an empty drop section still renders its header,
+  // so "drag onto Done" works when nothing is filed there yet.
+  const [sessionDragActive, setSessionDragActive] = useState(false);
+  useEventListener("dragstart", (e) => { if (e.dataTransfer?.types.includes("codecast/session-id")) setSessionDragActive(true); });
+  useEventListener("dragend", () => setSessionDragActive(false));
+  useEventListener("drop", () => setSessionDragActive(false));
+
+  // Drag-to-reorder in the "time" view. There's no separate grip handle — the
+  // whole card is already draggable (the card→label "file it" drag, tagged
+  // `codecast/session-id`), and we reuse that same drag here: drop it on a label
+  // chip to file it, or on another row to reorder. `reorderOver` drives the
+  // insertion line between rows; the drop computes one midpoint key and pins the
+  // moved row.
+  const [reorderOver, setReorderOver] = useState<{ id: string; pos: "before" | "after" } | null>(null);
+  const handleReorderDrop = useCallback((draggedId: string, targetId: string, pos: "before" | "after") => {
+    setReorderOver(null);
+    if (draggedId === targetId) return;
+    // flatList is the on-screen "time" order, but a hoisted subagent/teammate
+    // row is pinned under its parent — it owns no slot of its own, so neighbor
+    // keys come from the slot-owning rows only (a nested row's key would break
+    // the midpoint math's monotonic-keys assumption). Dragging a nested row is
+    // a no-op (the hoist would snap it right back), and a drop aimed at one
+    // resolves to "after its parent's group".
+    const inList = new Set(flatList.map((sess) => sess._id));
+    const nestParentOf = inboxNestParentOf(flatList);
+    const nestedUnder = (sess: InboxSession) => {
+      const p = nestParentOf(sess);
+      return p && p !== sess._id && inList.has(p) ? p : null;
+    };
+    const draggedRow = flatList.find((sess) => sess._id === draggedId);
+    if (draggedRow && nestedUnder(draggedRow)) return;
+    // A ticked card drags the whole selection: its slot owning rows move as
+    // one block, in their on-screen order.
+    const moving = new Set(selectionIdsFor(draggedId));
+    if (moving.has(targetId)) return;
+    const block = flatList.filter((sess) => moving.has(sess._id) && !nestedUnder(sess));
+    const targetRow = flatList.find((sess) => sess._id === targetId);
+    if (!targetRow) return;
+    const targetParent = nestedUnder(targetRow);
+    const rest = flatList.filter((sess) => !moving.has(sess._id) && !nestedUnder(sess));
+    const restKeys = rest.map((sess) => manualOrder?.[sess._id] ?? sess.started_at ?? sess.updated_at ?? 0);
+    const targetIdx = rest.findIndex((sess) => sess._id === (targetParent ?? targetId));
+    if (targetIdx < 0) return;
+    let insertIndex = (targetParent ? "after" : pos) === "before" ? targetIdx : targetIdx + 1;
+    // One write for the whole block, so the drag is one undo entry.
+    const keys: Record<string, number> = {};
+    for (const sess of block) {
+      const key = computeManualSortKey(restKeys, insertIndex);
+      keys[sess._id] = key;
+      restKeys.splice(insertIndex++, 0, key);
+    }
+    useInboxStore.getState().setSessionManualOrders(keys);
+  }, [flatList, manualOrder]);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const scrolledToRef = useRef<string | null>(null);
+
+  // -- A just-started session leaving NEW --
+  // Its hold expiring re-files it (placeInboxRows) in place, with no glide: a
+  // row sliding across the list pulls the eye. The rows it arrives among get a
+  // brief wash in its color (or the collapsed header does).
+  const [landedIds, setLandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  // While a session you started is held in NEW and you are elsewhere, the
+  // beacon points at it (the newest one), so it is findable even when Pinned
+  // or Questions push NEW below the fold. Back to the open session after.
+  const heldBeaconId = Object.entries(s.newSessionHolds)
+    .filter(([id, until]) => until > Date.now() && id !== focusedId && !!s.sessions[id])
+    .sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+  useMountEffect(() => useInboxStore.subscribe((st, prev) => {
+    if (st.newSessionHolds === prev.newSessionHolds) return;
+    const now = Date.now();
+    const released = Object.keys(prev.newSessionHolds).filter((id) => !(id in st.newSessionHolds) && prev.newSessionHolds[id] <= now);
+    if (released.length === 0) return;
+    setLandedIds(new Set(released));
+    setTimeout(() => setLandedIds((cur) => (released.every((id) => cur.has(id)) ? new Set() : cur)), 1600);
+  }));
+
+  // -- Hide & enter animations --
+  // Stash: set aside, agent keeps running (Stashed group). The secondary remove.
+  // Deliberately no schedule CHANGE: stash keeps schedules armed (a
+  // scheduler-origin injection preserves the stash), so nothing is canceled —
+  // but SAY so when one is armed, since that asymmetry (stash keeps the loop,
+  // dismiss/kill cancels it) is invisible unless the product states it.
+  // A selection stashes as one gesture: one undo, one notice.
+  const handleAnimatedStashMany = useCallback((ids: string[]) => {
+    void animatedHideSessions(ids, "stash");
+    const armed = ids.flatMap((id) => schedulePartitionRef.current.armedInjectByConv.get(id) ?? []);
+    if (armed.length) {
+      toast(
+        armed.length === 1
+          ? `Stashed — schedule "${armed[0].title}" stays armed`
+          : `Stashed — ${armed.length} schedules stay armed`,
+        { description: "It keeps firing here quietly — the session comes back to your queue only if a run flags needs-attention. Dismiss or kill would cancel it.", duration: 8000 },
+      );
+    }
+  }, []);
+  const handleAnimatedStash = useCallback((id: string) => handleAnimatedStashMany([id]), [handleAnimatedStashMany]);
+  // Killing a session cancels the schedules that inject into it (server side,
+  // on the hide transition) and restoring it re-arms them — the shared notice
+  // hook surfaces both side effects; the same hook backs the palette and the
+  // keyboard chords, so every kill surface says the same thing.
+  const { killWithNotice, killManyWithNotice, restoreWithNotice } = useTriggerKillNotice();
+  // Dismiss: "done with it" — clears the session from the inbox into the Dismissed
+  // group. The server tears the (usually idle) agent down on the inbox_dismissed_at
+  // transition, so this is codecast's kill gesture, surfaced as the PRIMARY remove
+  // action. Undoable via the toast.
+  const handleAnimatedDismiss = killWithNotice;
+  // On a stashed card the destructive slot kills (server tears the agent down
+  // on the transition) — the row moves down into Killed.
+  const handleKillStashed = killWithNotice;
+  // Right-click menu: ONE cursor-anchored instance serves every card in the
+  // panel; cards only report the click. Verbs reuse the exact handlers the
+  // hover toolbar uses, so animations and trigger notices stay identical.
+  const sessionCtxMenu = useContextMenu<{ session: InboxSession; isForeign: boolean; sessions: InboxSession[] }>();
+  // Depends on the stable `open`, not the menu object: every SessionCard takes
+  // this prop, so a new function here re-renders the whole list.
+  const openSessionCtxMenu = sessionCtxMenu.open;
+  const handleCardContextMenu = useCallback(
+    (e: React.MouseEvent, session: InboxSession, isForeign: boolean) => {
+      openSessionCtxMenu(e, { session, isForeign, sessions: selectionTargets(session) });
+    },
+    [openSessionCtxMenu],
+  );
+  // Clicking a face opens the character picker (session-characters.md S2).
+  // One instance for the whole list, like the menu: a popover per row would
+  // mount one per card. A ticked selection travels with the click, so the
+  // picker serves the whole squad.
+  const characterPicker = useContextMenu<InboxSession[]>();
+  const openCharacterPicker = characterPicker.open;
+  const closeCharacterPicker = characterPicker.close;
+  const handlePickCharacter = useCallback(
+    (session: InboxSession, e: React.MouseEvent) => {
+      // force: the face is a button, and the guard that stands down for links
+      // and inputs would otherwise swallow the open.
+      openCharacterPicker(e, selectionTargets(session), { force: true });
+    },
+    [openCharacterPicker],
+  );
+  // "Kill all" on the Stashed header — two-step confirm (arm, then fire within
+  // 3s) since it tears down every stashed agent at once. Kills the top-level
+  // rows (each stamps its own children) plus any stashed child whose parent
+  // isn't stashed, so nothing in the bucket survives.
+  const [killAllArmed, setKillAllArmed] = useState(false);
+  const killAllTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleKillAllStashed = useCallback(() => {
+    if (killAllTimerRef.current) clearTimeout(killAllTimerRef.current);
+    if (!killAllArmed) {
+      setKillAllArmed(true);
+      killAllTimerRef.current = setTimeout(() => setKillAllArmed(false), 3000);
+      return;
+    }
+    setKillAllArmed(false);
+    const stashedIds = new Set(filteredStashed.map((sess) => sess._id));
+    const ids = filteredStashed
+      .filter((sess) => !sess.parent_conversation_id || !stashedIds.has(sess.parent_conversation_id))
+      .map((sess) => sess._id);
+    // The kill's own entry toast announces it, with its Undo.
+    killManyWithNotice(ids);
+  }, [killAllArmed, filteredStashed, killManyWithNotice]);
+
+  // A new grouping is a new list: it opens at its first group, not at the
+  // scroll offset the old layout happened to have.
+  useWatchEffect(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0 });
+  }, [viewMode]);
+
+  // Auto-scroll to active session, retrying when sessions load and revealing hidden sections
+  useWatchEffect(() => {
+    if (!activeSessionId || !scrollContainerRef.current) {
+      scrolledToRef.current = null;
+      return;
+    }
+    if (scrolledToRef.current === activeSessionId) return;
+
+    const container = scrollContainerRef.current;
+    const el = container.querySelector(`[data-session-id="${activeSessionId}"]`);
+    if (el) {
+      scrollRowIntoView(container, el);
+      scrolledToRef.current = activeSessionId;
+      return;
+    }
+
+    // Card not rendered — try to reveal it by uncollapsing its section. A
+    // subagent (or nested teammate) renders under its parent's card, so the
+    // parent's membership decides which section hosts the row.
+    const activeRow = s.sessions[activeSessionId];
+    const parentId = activeRow ? inboxNestParentOf(sortedSessions)(activeRow) : null;
+    const inList = (items: InboxSession[]) => items.some(i => i._id === activeSessionId || (!!parentId && i._id === parentId));
+    const sections: [InboxSession[], string][] = flatView
+      ? [[flatList, "all"]]
+      : viewMode === "bucket" && bucketView
+        ? [
+            ...bucketView.labelGroups.map(({ bucket, items }) => [items, `bucket_${bucket._id}`] as [InboxSession[], string]),
+            ...bucketView.projectGroups.map(({ name, items }) => [items, `bucketproj_${name}`] as [InboxSession[], string]),
+          ]
+        : viewMode === "plan" && planView
+        ? [
+            ...planView.planGroups.map(({ key, items }) => [items, `plan_${key}`] as [InboxSession[], string]),
+            ...planView.projectGroups.map(({ name, items }) => [items, `planproj_${name}`] as [InboxSession[], string]),
+          ]
+        : orgLensView
+        ? [
+            ...orgLensView.groups.map(({ key, items }) => [items, `${orgLensView.mode}_${key}`] as [InboxSession[], string]),
+            ...orgLensView.projectGroups.map(({ name, items }) => [items, `${orgLensView.mode}proj_${name}`] as [InboxSession[], string]),
+          ]
+        : viewMode === "trigger"
+        ? [
+            // Trigger sub rows are always visible (their rows don't collapse),
+            // so only the project fallthrough tier can need a reveal here.
+            ...triggerView.projectGroups.map(({ name, items }) => [items, `trigproj_${name}`] as [InboxSession[], string]),
+          ]
+        : hostedOnly ? hostedSections
+        : [
+            [statusQuestions, "questions"],
+            [statusPinned, "pinned"], [statusNew, "new"], [statusNeedsInput, "needs_input"],
+            [statusDone, "done"], [statusWorking, "working"], [statusDormant, "dormant"],
+          ];
+    for (const [items, key] of sections) {
+      if (inList(items) && s.collapsedSections[key]) {
+        s.toggleCollapsedSection(key);
+        return;
+      }
+    }
+    if (inList(filteredSnoozed) && !openBuckets.snoozed) {
+      setOpenBuckets((o) => ({ ...o, snoozed: true }));
+      return;
+    }
+    if (inList(filteredStashed) && !openBuckets.stashed) {
+      setOpenBuckets((o) => ({ ...o, stashed: true }));
+      return;
+    }
+    if (inList(filteredDismissed) && !openBuckets.dismissed) {
+      setOpenBuckets((o) => ({ ...o, dismissed: true }));
+    }
+  }, [activeSessionId, sortedSessions, s.collapsedSections, openBuckets, viewMode]);
+
+  // Shared renderer for the two hidden buckets at the bottom of the list —
+  // Stashed (set aside, agent alive) above Killed (retired, agent torn down;
+  // the persisted flag keeps its historical name inbox_dismissed_at, and the
+  // server's kill transition additionally stamps inbox_killed_at).
+  // Identical chrome; they differ only in the destructive slot: a stashed card
+  // kills (moves down a bucket), a killed card's X removes the row outright.
+  // Both hide entirely when empty and render COLLAPSED by default — the
+  // auto-reveal effect above opens one only when the active session is inside.
+  const renderHiddenBucket = (opts: {
+    label: string;
+    items: InboxSession[];
+    expanded: boolean;
+    onToggle: () => void;
+    variant: "stashed" | "dismissed" | "snoozed";
+    onKill: (id: string) => void;
+    headerAction?: React.ReactNode;
+    /** Rendered under the rows once every locally-known row is shown (the
+     *  Killed bucket's "Load more"). A bucket with a footer stays mounted when
+     *  empty — the footer is how its rows arrive. */
+    footer?: React.ReactNode;
+  }) => {
+    const { label, items, expanded, onToggle, variant, onKill, headerAction, footer } = opts;
+    if (items.length === 0 && !footer) return null;
+    // A hidden bucket is not a dead bucket: a stashed agent keeps running, and
+    // an armed schedule can keep driving a killed/stashed conversation. Same
+    // predicate as the card's green dot (isLive) so header and rows can't
+    // disagree; coarseNow keeps the live derivation on the panel's ticker.
+    const isBucketLive = (sess: InboxSession) => sessionLiveAt(sess, coarseNow);
+    const liveCount = items.filter(isBucketLive).length;
+    const allIds = new Set(items.map((sess) => sess._id));
+    const subMap = new Map<string, InboxSession[]>();
+    const nestParentOf = inboxNestParentOf(items);
+    for (const sess of items) {
+      const nestParent = nestParentOf(sess);
+      if (nestParent && allIds.has(nestParent)) {
+        if (!subMap.has(nestParent)) subMap.set(nestParent, []);
+        subMap.get(nestParent)!.push(sess);
+      }
+    }
+    for (const subs of subMap.values()) {
+      subs.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    }
+    const subsWithParent = new Set(Array.from(subMap.values()).flat().map((sess) => sess._id));
+    const orphanedSub = (sess: InboxSession) =>
+      !subsWithParent.has(sess._id) && sess.parent_conversation_id && s.sessions[sess.parent_conversation_id];
+    const topLevel = items.filter((sess) => !subsWithParent.has(sess._id) && !orphanedSub(sess));
+    // Activity floats: running rows (or idle parents with a running subagent)
+    // sort to the top of the opened bucket, so background work is one glance
+    // away instead of buried under newest-stashed-first. Stable sort keeps the
+    // existing newest-first order within each half.
+    const rowLive = (sess: InboxSession) =>
+      isBucketLive(sess) || (subMap.get(sess._id) ?? []).some(isBucketLive);
+    if (variant !== "snoozed") topLevel.sort((a, b) => Number(rowLive(b)) - Number(rowLive(a)));
+    return (
+      <div className="border-t border-sol-border/30">
+        <div data-sv-hidden-head className="w-full bg-sol-bg border-b border-sol-border/30 flex items-center">
+          <button
+            onClick={onToggle}
+            className="flex-1 min-w-0 pl-3 py-1.5 flex items-center text-left"
+          >
+            <span data-sv-hidden-label className="text-[10px] font-semibold uppercase tracking-wider text-sol-text-dim">
+              {/* The count wears the section headers' markup, so hosted mode
+                  sets it bare in mono like Done's (SectionHeader). */}
+              {label}{items.length > 0 ? <> <span data-cc-sec-count><span data-cc-bracket>(</span>{items.length}<span data-cc-bracket>)</span></span></> : null}
+            </span>
+            {liveCount > 0 && (
+              <span className="ml-1.5 shrink-0 inline-flex items-center whitespace-nowrap gap-1 px-1.5 py-0 rounded-full text-[9px] font-semibold bg-sol-green/10 text-sol-green border border-sol-green/30 normal-case tracking-normal">
+                <LivePulseDot />
+                {liveCount} running
+              </span>
+            )}
+          </button>
+          {headerAction}
+          <button onClick={onToggle} className="shrink-0 pl-2 pr-3 py-1.5">
+            <svg className={`w-3 h-3 transition-transform text-sol-text-dim ${expanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+        {expanded && topLevel.length > 0 && (() => {
+          // Cap the hidden bucket too — KILLED/STASHED can hold hundreds of rows
+          // when expanded ("show killed/stashed" on). Same per-bucket cap + show-more
+          // as renderSection; keeps the active row mounted past the cap.
+          const hkey = `hidden_${variant}`;
+          const hlimit = sectionLimits[hkey] ?? SECTION_RENDER_CAP;
+          let visibleTop = topLevel.length > hlimit ? topLevel.slice(0, hlimit) : topLevel;
+          if (visibleTop.length < topLevel.length && activeSessionId) {
+            const active = topLevel.find((sess) => sess._id === activeSessionId);
+            if (active && !visibleTop.includes(active)) visibleTop = [...visibleTop, active];
+          }
+          const hHidden = topLevel.length - visibleTop.length;
+          globalRenderedCards += visibleTop.length;
+          return (
+          <div>
+            {visibleTop.map((session) => (
+              <div key={session._id} className="border-b border-sol-border/30">
+                <SessionCard
+                  session={session}
+                  isSelected={selectedSet.has(session._id)}
+                  isActive={session._id === activeSessionId}
+                  globalIndex={-1}
+                  onSelect={handleSelect}
+                  onCardContextMenu={handleCardContextMenu}
+                  onPickCharacter={handlePickCharacter}
+                  onRestore={variant === "snoozed" ? s.wakeSnoozedSession : restoreWithNotice}
+                  onKill={onKill}
+                  variant={variant}
+                  forkColorKey={forkColorKeyOf(session)}
+                  sessionLabel={labelByConv[session._id] ?? null}
+                  isUnread={!!unreadByConv[session._id]}
+                  isFavorite={cardIsFavorite(session)}
+                />
+                {/* Stashing is the standing-loop workflow — a loop's home rests
+                    here while its schedule keeps firing — so the stashed/killed
+                    buckets carry the same bars as the live sections; without
+                    them an expanded bucket hides that a card is a loop. */}
+                <CardBars
+                  session={session}
+                  words={words}
+                  mode={cardBars}
+                  scheduleRows={scheduleBarRowsFor(session)}
+                  activeSessionId={activeSessionId}
+                  onOpen={handleSelect}
+                  onOpenSchedule={openScheduleTarget}
+                />
+                {(subMap.get(session._id) ?? []).filter((sub) => showSubagents || sub._id === activeSessionId).map((sub) => (
+                  <SessionCard
+                    key={sub._id}
+                    session={sub}
+                    isSelected={selectedSet.has(sub._id)}
+                    isActive={sub._id === activeSessionId}
+                    isParentActive={session._id === activeSessionId}
+                    globalIndex={-1}
+                    onSelect={handleSelect}
+                  onCardContextMenu={handleCardContextMenu}
+                  onPickCharacter={handlePickCharacter}
+                    onRestore={variant === "snoozed" ? s.wakeSnoozedSession : restoreWithNotice}
+                    onKill={onKill}
+                    variant={variant}
+                    subRow={isUnderRole(sub) ? "role" : undefined}
+                    sessionLabel={labelByConv[sub._id] ?? null}
+                    isUnread={!!unreadByConv[sub._id]}
+                    isFavorite={cardIsFavorite(sub)}
+                  />
+                ))}
+              </div>
+            ))}
+            {hHidden > 0 && (
+              <button
+                onClick={() => setSectionLimits((prev) => ({ ...prev, [hkey]: (prev[hkey] ?? SECTION_RENDER_CAP) + SECTION_RENDER_STEP }))}
+                className="w-full px-3 py-1.5 text-[10px] font-medium text-sol-text-dim hover:text-sol-cyan transition-colors text-left border-b border-sol-border/30"
+              >
+                Show {Math.min(hHidden, SECTION_RENDER_STEP)} more · {hHidden} hidden
+              </button>
+            )}
+            {hHidden === 0 && footer}
+          </div>
+          );
+        })()}
+        {expanded && topLevel.length === 0 && footer}
+      </div>
+    );
+  };
+
+  const renderSection = (
+    label: string,
+    items: InboxSession[],
+    color: string,
+    sectionVariant?: "working",
+    flat?: boolean,
+    opts?: {
+      // Label/project sections pass an id-based key so a label named e.g.
+      // "Working" can't share collapse state with the status section.
+      key?: string;
+      // The header number when it differs from items.length: the chokepoint's
+      // section count (flat cards plus members nested under a same-bucket lead).
+      count?: number;
+      // Present = the whole section is a drop target for a dragged session
+      // card. The "by label" view files the session under the label (null
+      // removes it); the status sections stamp the user's rest verdict.
+      // Receives only the dragged rows not already in this section.
+      onDropSession?: (ids: string[]) => void;
+      // "time" view only: each row accepts a dragged session card as a reorder drop.
+      reorderable?: boolean;
+      // Render the heading as a monospace, normal-case, truncating label instead
+      // of the uppercased status caption. For long mixed-case identifiers like a
+      // plan heading ("pl-114 · Union Outreach — …") where uppercasing reads badly.
+      monoLabel?: boolean;
+      // Route a card's click somewhere other than the inbox pane (Questions
+      // opens the full-width answer view anchored on the clicked session).
+      // Sub-session rows keep the default select — they aren't the question.
+      onSelect?: (session: InboxSession) => void;
+      // One text action in the header (Couldn't finish's Try again).
+      headerAction?: React.ReactNode;
+      // Never folds, whatever an old click stored (hosted mode's New: the
+      // rows the Inbox count counts are the one group that exists to be seen).
+      fixed?: boolean;
+      // The org lenses: a role's face before the label, and the group's
+      // work-state tallies.
+      icon?: React.ReactNode;
+      states?: Partial<Record<ReturnType<typeof sessionWorkState>, number>>;
+    },
+  ) => {
+    const isDropTarget = !!opts?.onDropSession;
+    if (items.length === 0 && !(isDropTarget && sessionDragActive)) return null;
+    const key = opts?.key ?? label.toLowerCase().replace(/\s+/g, "_");
+    const collapsed = !opts?.fixed && !!s.collapsedSections[key];
+    const isDragOverSection = dragOverSectionKey === key;
+    const dropProps = isDropTarget
+      ? {
+          onDragOver: (e: React.DragEvent) => {
+            if (!e.dataTransfer.types.includes("codecast/session-id")) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
+            setDragOverSectionKey(key);
+          },
+          onDragLeave: (e: React.DragEvent) => {
+            // Child enter/leave churn fires dragleave constantly; only clear
+            // when the pointer truly left this section's subtree.
+            if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+            setDragOverSectionKey((cur) => (cur === key ? null : cur));
+          },
+          onDrop: (e: React.DragEvent) => {
+            setDragOverSectionKey(null);
+            const draggedId = e.dataTransfer.getData("codecast/session-id");
+            if (!draggedId) return;
+            e.preventDefault();
+            // Dropping a card back into the section it already sits in is a
+            // no-op: it would otherwise re-file a row the list already shows there.
+            const here = new Set(items.flatMap((i) => [i._id, ...(globalSubByParent.get(i._id) || []).map((sub) => sub._id)]));
+            const ids = selectionIdsFor(draggedId).filter((id) => !here.has(id));
+            if (ids.length) opts!.onDropSession!(ids);
+          },
+        }
+      : {};
+    return (
+      <div
+        {...dropProps}
+        className={isDragOverSection ? "ring-1 ring-inset ring-sol-cyan/70 bg-sol-cyan/[0.04] transition-colors" : isDropTarget ? "transition-colors" : undefined}
+      >
+        <SectionHeader
+          label={label}
+          count={opts?.count ?? items.length}
+          color={color}
+          sectionKey={key}
+          collapsed={collapsed}
+          monoLabel={opts?.monoLabel}
+          landedColor={collapsed ? holdDestColor(items.find((i) => landedIds.has(i._id))) : undefined}
+          onToggle={() => s.toggleCollapsedSection(key)}
+          action={opts?.headerAction}
+          fixed={opts?.fixed}
+          icon={opts?.icon}
+          states={opts?.states}
+        />
+        {!collapsed && (() => {
+          // The Assistant scope's Done shows its newest few and folds the rest
+          // behind the same "show more" as the cap, so finished work never
+          // outweighs what is live.
+          const sectionCap = sectionLimits[key] ?? (hostedOnly && key === "done" ? HOSTED_DONE_CAP : SECTION_RENDER_CAP);
+          // Take from the shared global budget (consumed in render order, so the
+          // top-priority sections fill first); the active row is force-kept below
+          // even when the budget is spent.
+          const globalRemaining = Math.max(0, GLOBAL_CARD_BUDGET + globalCardExtra - globalRenderedCards);
+          const limit = Math.min(sectionCap, globalRemaining);
+          let visibleItems = items.length > limit ? items.slice(0, limit) : items;
+          // Never let the active row (or the parent hosting the active subagent)
+          // fall past the cap — it must stay mounted for auto-scroll and so the
+          // session being viewed never vanishes from the list.
+          if (visibleItems.length < items.length && activeSessionId) {
+            const needed = items.find(
+              (i) => i._id === activeSessionId
+                || (globalSubByParent.get(i._id) || []).some((sub) => sub._id === activeSessionId),
+            );
+            if (needed && !visibleItems.includes(needed)) visibleItems = [...visibleItems, needed];
+          }
+          const hiddenCount = items.length - visibleItems.length;
+          globalRenderedCards += visibleItems.length;
+          // The flat views hoist a role's session under its role's card as a
+          // row of its own (hoistNestedUnderParent), so it takes the small row
+          // there too; with the role's card absent it stays a full card.
+          const flatNestParentOf = flat ? inboxNestParentOf(items) : null;
+          return (<>
+          {visibleItems.map((session) => {
+            // In flat view, subagents already appear as their own top-level
+            // rows (they're in sortedSessions), so suppress the nested rendering
+            // to avoid showing them twice.
+            const allSubs = flat ? [] : (globalSubByParent.get(session._id) || []);
+            // The selected subagent always renders — even when subagents are
+            // globally hidden or fall past the "+N more" cutoff. The row being
+            // viewed must never vanish from the list.
+            const subs = showSubagents ? allSubs : allSubs.filter((sub) => sub._id === activeSessionId);
+            const subsExpanded = !!expandedSubSessions[session._id];
+            let visibleSubs = subs.length <= 2 || subsExpanded ? subs : subs.slice(0, 2);
+            if (visibleSubs.length < subs.length && !visibleSubs.some((sub) => sub._id === activeSessionId)) {
+              const activeSub = subs.find((sub) => sub._id === activeSessionId);
+              if (activeSub) visibleSubs = [...visibleSubs, activeSub];
+            }
+            const hiddenCount = subs.length - visibleSubs.length;
+            const reorderable = !!opts?.reorderable;
+            const reorderHere = reorderable && reorderOver?.id === session._id;
+            const holdLeft = (s.newSessionHolds[session._id] ?? 0) - Date.now();
+            const justStarted = key === "new" && Date.now() - (session.started_at ?? 0) < 4000;
+            return (
+              <div
+                key={session._id}
+                style={holdStyleOf(session._id)}
+                className={`relative border-b border-sol-border/30${holdLeft > 0 ? " inbox-held" : ""}${justStarted ? " animate-inbox-row-in" : ""}${landedIds.has(session._id) ? " inbox-landed" : ""}`}
+                onDragOver={reorderable ? (e) => {
+                  if (!e.dataTransfer.types.includes("codecast/session-id")) return;
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = "move";
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pos = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                  setReorderOver((cur) => (cur?.id === session._id && cur.pos === pos ? cur : { id: session._id, pos }));
+                } : undefined}
+                onDragLeave={reorderable ? (e) => {
+                  if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+                  setReorderOver((cur) => (cur?.id === session._id ? null : cur));
+                } : undefined}
+                onDragEnd={reorderable ? () => setReorderOver(null) : undefined}
+                onDrop={reorderable ? (e) => {
+                  const draggedId = e.dataTransfer.getData("codecast/session-id");
+                  if (!draggedId) return;
+                  e.preventDefault();
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const pos = e.clientY < rect.top + rect.height / 2 ? "before" : "after";
+                  handleReorderDrop(draggedId, session._id, pos);
+                } : undefined}
+              >
+                {reorderHere && (
+                  <div className={`absolute left-0 right-0 h-0.5 bg-sol-cyan z-10 pointer-events-none ${reorderOver!.pos === "before" ? "top-0" : "bottom-0"}`} />
+                )}
+                <SessionCard
+                  session={session}
+                  isSelected={selectedSet.has(session._id)}
+                  isActive={session._id === activeSessionId}
+                  globalIndex={0}
+                  onSelect={opts?.onSelect ?? handleSelect}
+                  onCardContextMenu={handleCardContextMenu}
+                  onPickCharacter={handlePickCharacter}
+                  onDismiss={handleAnimatedDismiss}
+                  onStash={handleAnimatedStash}
+                  onDefer={s.deferSession}
+                  onPin={s.pinSession}
+                  variant={sectionVariant || "default"}
+                  sectionStatus={SECTION_DECLARED_STATUS[key]}
+                  forkColorKey={forkColorKeyOf(session)}
+                  roleSessions={roleSessionsByLead.get(session._id)}
+                  subRow={flatNestParentOf && isUnderRole(session) && flatNestParentOf(session) ? "role" : undefined}
+                  sessionLabel={labelByConv[session._id] ?? null}
+                  isUnread={!!unreadByConv[session._id]}
+                  isFavorite={cardIsFavorite(session)}
+                  titleSuffix={hostedTitleSuffixes.get(session._id)}
+                />
+                {/* The bars stack under their card the way subagent rows do —
+                    schedule rows keep the dock roster's full anatomy (name,
+                    gist, cadence, countdown, hover verbs); click selects the
+                    session with its schedule strip expanded (openScheduleTarget
+                    — the strip re-expands even if the session is already
+                    active). The trigger view skips the schedule rows: there
+                    every armed trigger is already a first-class group header,
+                    so a bar under a card would repeat the header just above
+                    it. The dormant fallback keeps its invariant inside
+                    CardBars: a parked card explains its wake unless the mode
+                    is an explicit "hidden". */}
+                <CardBars
+                  session={session}
+                  words={words}
+                  mode={cardBars}
+                  scheduleRows={viewMode !== "trigger" ? scheduleBarRowsFor(session) : []}
+                  activeSessionId={activeSessionId}
+                  wake={key === "dormant" ? "parked" : key === "needs_input" ? "claim" : undefined}
+                  onOpen={handleSelect}
+                  onOpenSchedule={openScheduleTarget}
+                />
+                {visibleSubs.map((sub) => (
+                  <SessionCard
+                    key={sub._id}
+                    session={sub}
+                    isSelected={selectedSet.has(sub._id)}
+                    isActive={sub._id === activeSessionId}
+                    isParentActive={session._id === activeSessionId}
+                    globalIndex={0}
+                    onSelect={handleSelect}
+                  onCardContextMenu={handleCardContextMenu}
+                  onPickCharacter={handlePickCharacter}
+                    onDismiss={handleAnimatedDismiss}
+                    onStash={handleAnimatedStash}
+                    variant={sectionVariant || "default"}
+                    subRow={isUnderRole(sub) ? "role" : undefined}
+                    sessionLabel={labelByConv[sub._id] ?? null}
+                    isUnread={!!unreadByConv[sub._id]}
+                    isFavorite={cardIsFavorite(sub)}
+                  />
+                ))}
+                {hiddenCount > 0 && (
+                  <button
+                    onClick={() => setExpandedSubSessions((prev) => ({ ...prev, [session._id]: true }))}
+                    className="w-full px-2 py-0.5 text-[10px] text-gray-500 hover:text-violet-400 transition-colors text-left pl-[26px]"
+                  >
+                    +{hiddenCount} more {standingRoleIdOf(session) ? "session" : "sub-session"}{hiddenCount > 1 ? "s" : ""}
+                  </button>
+                )}
+                {subsExpanded && subs.length > 2 && (
+                  <button
+                    onClick={() => setExpandedSubSessions((prev) => ({ ...prev, [session._id]: false }))}
+                    className="w-full px-2 py-0.5 text-[10px] text-gray-500 hover:text-violet-400 transition-colors text-left pl-[26px]"
+                  >
+                    collapse
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {hiddenCount > 0 && (
+            <button
+              onClick={() => { setSectionLimits((prev) => ({ ...prev, [key]: (prev[key] ?? sectionCap) + SECTION_RENDER_STEP })); setGlobalCardExtra((g) => g + SECTION_RENDER_STEP); }}
+              data-sv-show-more
+              className="w-full px-3 py-1.5 text-[10px] font-medium text-sol-text-dim hover:text-sol-cyan transition-colors text-left border-b border-sol-border/30"
+            >
+              {hostedOnly ? `Show ${hiddenCount} more` : <>Show {Math.min(hiddenCount, SECTION_RENDER_STEP)} more · {hiddenCount} hidden</>}
+            </button>
+          )}
+          </>);
+        })()}
+      </div>
+    );
+  };
+
+  return (
+    <div data-sv-rail data-selecting={selectedIdsRaw.length > 0 ? "true" : undefined} className="h-full w-full flex flex-col bg-sol-bg-alt overflow-hidden">
+      {selectedSessions.length > 0 && (
+        <InboxSelectionBar
+          sessions={selectedSessions}
+          onStash={handleAnimatedStashMany}
+          onKill={killManyWithNotice}
+          onClear={clearSelection}
+        />
+      )}
+      <div ref={titlebarRef} className="cc-panel__head min-w-0">
+        {hostedMode && !favoritesView && <HostedInboxHead outOfScope={outOfScope} />}
+        {favoritesView && (
+          <div className="flex items-center gap-1.5 flex-shrink-0 text-sol-yellow mr-0.5" title="Kept sessions — your long-term shelf">
+            <Star className="w-3.5 h-3.5 fill-current" />
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Favorites</span>
+            {favoriteGroups && favoriteGroups.count > 0 && (
+              <span className="text-[10px] text-sol-text-dim font-medium">{favoriteGroups.count}</span>
+            )}
+          </div>
+        )}
+        {labelStrip && <LabelChipsRow
+          bucketCounts={favoritesView ? favChipCounts!.bucketCounts : bucketCounts}
+          projectCounts={favoritesView ? favChipCounts!.projectCounts : projectCounts}
+          projectPathByName={favoritesView ? favChipCounts!.projectPathByName : projectPathByName}
+          dropSessionOnLabel={dropSessionOnLabel}
+        />}
+        {/* One pill: the independent show/hide toggles (team, subagents,
+            bars, old), then at the far end the favorites mode toggle. Even
+            spacing throughout, no rules between groups — the icons read as
+            one row of controls. The grouping has its own tab row under this
+            header (InboxViewTabs). In favorites view the toggles hide
+            (favorites is always project-grouped) and the pill collapses to
+            just the amber star, which stays put. */}
+        <div data-sv-head-tools className="flex items-center flex-shrink-0 ml-auto gap-1.5">
+          {/* Permanent trigger for the blocked-fleet actions: visible whenever
+              ANY session is parked on a limit/login banner, no matter how the
+              banner itself was snoozed. Panel chrome, so it never scrolls away. */}
+          {blockedSessions.length > 0 && blockedHasNonSub && (
+            <button
+              key={blockedIncidentTs}
+              data-cc-keep
+              onClick={openBlockedBanner}
+              title={`${blockedSessions.length} session${blockedSessions.length === 1 ? "" : "s"} blocked on usage, login, connection, API errors, a full context window, or safety review — view blockers`}
+              className={`flex items-center gap-1 px-1.5 py-[3px] rounded-[5px] text-[10px] font-semibold bg-amber-500/10 text-amber-500 border border-amber-500/30 hover:bg-amber-500/20 transition-colors ${blockedIncidentTs > 0 ? "cc-blocked-pill-pulse" : ""}`}
+            >
+              <svg className="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path d="M6 3h12M6 21h12M8 3v3.5c0 2 4 4 4 5.5s-4 3.5-4 5.5V21M16 3v3.5c0 2-4 4-4 5.5s4 3.5 4 5.5V21" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              {blockedSessions.length}
+            </button>
+          )}
+          {(!hostedMode || !assistantOnly || favoritesView) && <div data-sv-controls className="flex items-center flex-shrink-0 gap-0.5 rounded-md border border-sol-border/40 p-px">
+          {!favoritesView && <>
+          {/* Inbox scope: Mine ⇄ Team. Team turns the inbox into a shared board
+              of every team-visible session across the active team (a superset of
+              Mine). Blue when active so it reads as a mode, not a filter toggle. */}
+          {panelInternals && <ShortcutTooltip label={inboxScope === "team" ? "Team inbox — everyone's visible sessions" : "Show the whole team's inbox"} side="bottom">
+            <button
+              onClick={() => s.updateClientUI({ inbox_scope: inboxScope === "team" ? "mine" : "team" })}
+              className={`flex items-center gap-0.5 px-1 py-[3px] rounded-[5px] transition-colors ${
+                inboxScope === "team"
+                  ? "bg-sol-blue/15 text-sol-blue"
+                  : "text-sol-text-dim/70 hover:text-sol-text"
+              }`}
+            >
+              <Users className="w-3 h-3" />
+              {inboxScope === "team" && <span className="text-[10px] font-semibold leading-none">Team</span>}
+            </button>
+          </ShortcutTooltip>}
+          {rowInternals && totalSubagentCount > 0 && (
+            <button
+              onClick={() => s.updateClientUI({ show_subagents: !showSubagents })}
+              title={showSubagents ? `Hide ${totalSubagentCount} subagent sessions` : `Show ${totalSubagentCount} subagent sessions`}
+              className={`cc-panel__btn ${
+                showSubagents
+                  ? "bg-sol-violet/15 text-sol-violet"
+                  : "text-sol-text-dim/70 hover:text-sol-text"
+              }`}
+            >
+              <GitFork className="w-3 h-3" />
+            </button>
+          )}
+          {/* The bars under cards — triggers, workflow runs, monitors and
+              background commands — behind one three-way pill: strip (the
+              default, one folded line per card) → full (a row per bar) →
+              hidden (nothing at all, the same gesture the subagent toggle
+              offers). Same idiom as that toggle beside it, in schedule-amber
+              when expanded; ZapOff says "deliberately off", not just resting. */}
+          {rowInternals && (scheduleRowsView.length > 0 || anyLiveBars) && (
+            <button
+              onClick={() =>
+                s.updateClientUI({
+                  card_bars: cardBars === "strip" ? "full" : cardBars === "full" ? "hidden" : "strip",
+                })
+              }
+              title={
+                cardBars === "strip"
+                  ? "Triggers and tasks folded to strips — click for full rows under cards"
+                  : cardBars === "full"
+                    ? "Full trigger and task rows under cards — click to hide them"
+                    : "Triggers and tasks hidden — click to show them as strips"
+              }
+              className={`cc-panel__btn ${
+                cardBars === "full"
+                  ? "bg-sol-amber/15 text-sol-amber"
+                  : cardBars === "hidden"
+                    ? "text-sol-text-dim/40 hover:text-sol-text"
+                    : "text-sol-text-dim/70 hover:text-sol-text"
+              }`}
+            >
+              {cardBars === "hidden" ? <ZapOff className="w-3 h-3" /> : <Zap className="w-3 h-3" />}
+            </button>
+          )}
+          {panelInternals && oldCount > 0 && (
+            <button
+              onClick={() => s.setShowOldSessions(!showAllSessions)}
+              title={showAllSessions ? `Hide ${oldCount} old session${oldCount === 1 ? "" : "s"}` : `Show ${oldCount} old session${oldCount === 1 ? "" : "s"}`}
+              aria-label={showAllSessions ? `Hide ${oldCount} old session${oldCount === 1 ? "" : "s"}` : `Show ${oldCount} hidden old session${oldCount === 1 ? "" : "s"}`}
+              aria-pressed={showAllSessions}
+              className={`cc-panel__btn relative ${
+                showAllSessions
+                  ? "bg-sol-cyan/15 text-sol-cyan"
+                  : "text-sol-text-dim/70 hover:text-sol-text"
+              }`}
+            >
+              <History className="w-3 h-3" />
+              {!showAllSessions && (
+                <span aria-hidden="true" className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full bg-sol-cyan ring-1 ring-sol-bg" />
+              )}
+            </button>
+          )}
+          </>}
+          {/* Favorites is a MODE of this panel — toggled at the END of the
+              group, after the old-sessions toggle. Amber when active. */}
+          {(panelInternals || favoritesView) && <button
+            onClick={() => useInboxStore.getState().setShowFavorites(!favoritesView)}
+            title={favoritesView ? "Back to inbox" : "Show favorites"}
+            className={`cc-panel__btn ${
+              favoritesView
+                ? "bg-amber-400/15 text-amber-400"
+                : "text-sol-text-dim/70 hover:text-amber-400"
+            }`}
+          >
+            <Star className="w-3 h-3" fill={favoritesView ? "currentColor" : "none"} />
+          </button>}
+        </div>}
+        </div>
+      </div>
+      {(!hostedMode || !assistantOnly) && !favoritesView && (
+        <InboxViewTabs
+          value={viewMode}
+          onChange={s.setInboxViewMode}
+          hasLabels={visibleBuckets.length > 0}
+          hasPlans={hasPlanSessions}
+          orgLenses={orgLenses}
+          hasTriggers={scheduleRowsView.length > 0}
+        />
+      )}
+      {/* Relative wrapper so the out-of-view beacon can float over the list
+          edges without joining the scroll flow. */}
+      <div className="relative flex-1 min-h-0">
+      {/* Rows keep the sticky section heading's height clear when scrolled
+          to. Hosted mode's short rail also turns off scroll anchoring, so a
+          row moving into a section above never scrolls a list that sat at
+          the top. */}
+      <div ref={scrollContainerRef} className={`h-full overflow-y-auto scrollbar-auto [&_[data-session-id]]:scroll-mt-8${hostedMode ? " [overflow-anchor:none]" : ""}`}>
+        {favoritesView ? (
+          favoriteGroups && favoriteGroups.count > 0 ? (
+            <>
+              {renderSection("Pinned", favoriteGroups.pinned, "text-sol-magenta", undefined, undefined, { key: "favpinned" })}
+              {favoriteGroups.projectGroups.map(({ name, items }) => (
+                <div key={`fav-${name}`}>
+                  {renderSection(name, items, name === "other" ? "text-sol-text-dim" : getLabelColor(name).text, undefined, undefined, { key: `favproj_${name}` })}
+                </div>
+              ))}
+            </>
+          ) : (
+            <div className="px-4 py-12 flex flex-col items-center text-center gap-2">
+              <Star className="w-6 h-6 text-sol-yellow/40" />
+              <div className="text-sm font-medium text-sol-text-muted">
+                {s.activeProjectFilter
+                  ? s.chipFilterExclude ? "No favorites outside this project" : "No favorites in this project"
+                  : "No favorites yet"}
+              </div>
+              <div className="text-[11px] text-sol-text-dim max-w-[220px] leading-relaxed">
+                {s.activeProjectFilter
+                  ? s.chipFilterExclude
+                    ? "Every kept session lives in the excluded project. Clear the filter to see them."
+                    : "Clear the project filter to see every kept session."
+                  : "Star a conversation to keep it here for later — it stays no matter how old it gets, and it’s one keystroke to jump back in."}
+              </div>
+              {s.activeProjectFilter && (
+                <button onClick={() => s.setActiveProjectFilter(null)} className="mt-1 text-[11px] text-sol-cyan hover:underline">
+                  Show all favorites
+                </button>
+              )}
+            </div>
+          )
+        ) : (<>
+        <BlockedSessionsBanner
+          key={blockedIncidentTs}
+          blocked={blockedSessions}
+          onOpen={handleSelect}
+          forced={blockedBannerForced}
+          onClearForced={() => setBlockedBannerForced(false)}
+          fresh={blockedIncidentTs > 0}
+        />
+        {showStalePrompt && (
+          <div className="m-2 rounded-md border border-sol-yellow/30 bg-sol-yellow/[0.06]">
+            <div className="px-3 py-2.5">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-xs font-semibold text-sol-text">Clear out your working set?</div>
+                <div className="mt-0.5 text-[11px] leading-snug text-sol-text-muted">
+                  <span className="font-semibold text-sol-yellow">{staleSessions.length}</span> sessions have had
+                  no activity since {formatShortDate(staleCutoff)}. Dismissing them clears the inbox; they stay
+                  searchable and open by link. Pinned sessions are kept.
+                </div>
+              </div>
+              <button
+                onClick={snoozeStalePrompt}
+                className="shrink-0 rounded p-0.5 text-sol-text-dim hover:bg-sol-bg-alt hover:text-sol-text"
+                title="Not now"
+                aria-label="Dismiss this prompt"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <div className="mt-2 flex items-center gap-3">
+              <button
+                onClick={() => setStaleListOpen((v) => !v)}
+                className="flex items-center gap-1 text-[11px] font-semibold text-sol-yellow transition-colors hover:text-sol-yellow/80"
+                aria-expanded={staleListOpen}
+              >
+                <ChevronRight className={`h-3 w-3 transition-transform ${staleListOpen ? "rotate-90" : ""}`} />
+                {staleListOpen ? "Hide them" : "Show them"}
+              </button>
+              <button
+                onClick={handleDismissStale}
+                disabled={dismissingStale}
+                className="rounded bg-sol-yellow/15 px-2.5 py-1 text-[11px] font-semibold text-sol-yellow transition-colors hover:bg-sol-yellow/25 disabled:opacity-60"
+              >
+                {dismissingStale ? "Dismissing…" : `Dismiss all ${staleSessions.length}`}
+              </button>
+              <button
+                onClick={snoozeStalePrompt}
+                className="text-[11px] text-sol-text-dim transition-colors hover:text-sol-text"
+              >
+                Not now
+              </button>
+            </div>
+            </div>
+            {/* The review list: the exact dismiss set, rendered as the same cards
+                as the rest of the inbox (flat, so a nested subagent that would be
+                dismissed shows as its own row). Each card's idle age says how
+                long it has sat; pin a card to hold it out of the sweep. */}
+            {staleListOpen && (
+              <div className="border-t border-sol-yellow/20">
+                {renderSection("Would be dismissed", staleSessions, "text-sol-yellow", undefined, true, { key: "stale_review" })}
+              </div>
+            )}
+          </div>
+        )}
+        {flatView ? (
+          renderSection("All", flatList, "text-sol-cyan", undefined, true, { reorderable: viewMode === "time" })
+        ) : viewMode === "bucket" && bucketView ? (
+        <>
+        {bucketView.labelGroups.map(({ bucket, items }) => (
+          <div key={bucket._id}>
+            {renderSection(bucket.name, items, getLabelColor(bucket.name).text, undefined, undefined, { key: `bucket_${bucket._id}`, onDropSession: (ids) => labelSessions(ids, bucket._id) })}
+          </div>
+        ))}
+        {/* Unlabeled sessions group by project — the auto-derived label tier.
+            Dropping a card here strips its label (back to its own project). */}
+        {bucketView.projectGroups.map(({ name, items }) => (
+          <div key={`proj-${name}`}>
+            {renderSection(name, items, name === "other" ? "text-sol-text-dim" : getLabelColor(name).text, undefined, undefined, { key: `bucketproj_${name}`, onDropSession: (ids) => labelSessions(ids, null) })}
+          </div>
+        ))}
+        </>
+        ) : viewMode === "plan" && planView ? (
+        <>
+        {planView.planGroups.map(({ key, label, items }) => (
+          <div key={key}>
+            {renderSection(label, items, "text-teal-400", undefined, undefined, { key: `plan_${key}`, monoLabel: true })}
+          </div>
+        ))}
+        {/* Sessions with no plan group by project — same fallback tier the label
+            view uses for unlabeled sessions. */}
+        {planView.projectGroups.map(({ name, items }) => (
+          <div key={`planproj-${name}`}>
+            {renderSection(name, items, name === "other" ? "text-sol-text-dim" : getLabelColor(name).text, undefined, undefined, { key: `planproj_${name}` })}
+          </div>
+        ))}
+        </>
+        ) : orgLensView ? (
+        <>
+        {orgLensView.groups.map(({ key, label, items, roleId, userId, image }) => {
+          const role = roleId ? rolesById.get(roleId) : undefined;
+          return (
+            <div key={key}>
+              {renderSection(label, items, role || userId ? "text-sol-text" : orgLensView.mode === "goal" && key.startsWith("goal:") ? "text-sol-violet" : "text-teal-400", undefined, undefined, {
+                key: `${orgLensView.mode}_${key}`,
+                monoLabel: true,
+                icon: role ? <RoleFace role={role} size={14} className="shrink-0" /> : userId ? <OwnerAvatar name={label} image={image} size="w-3.5 h-3.5" /> : undefined,
+                ...groupTally(items),
+              })}
+            </div>
+          );
+        })}
+        {/* Sessions bound to nothing group by repo folder, the fallback tier
+            every lens shares. */}
+        {orgLensView.projectGroups.map(({ name, items }) => (
+          <div key={`${orgLensView.mode}proj-${name}`}>
+            {renderSection(name, items, name === "other" ? "text-sol-text-dim" : getLabelColor(name).text, undefined, undefined, { key: `${orgLensView.mode}proj_${name}` })}
+          </div>
+        ))}
+        </>
+        ) : viewMode === "trigger" ? (
+        <>
+        {/* Trigger-first: every roster row (armed trigger, loop, live subagent)
+            is a primary row — the SAME rich row the dock shows, verbs and all —
+            and the sessions it drives render as compact SUB ROWS beneath it
+            (the ↳ child idiom, schedule-amber). Clicking the trigger opens its
+            dedicated page; clicking a sub row opens that session. A trigger
+            with no visible sessions keeps its row: the trigger is the citizen,
+            its work may be folded away or not yet run. */}
+        {triggerView.triggerGroups.map(({ key, row, items }) => (
+          <div key={key}>
+            <TriggerRowItem row={row} activeSessionId={activeSessionId} onOpen={openTriggerPage} />
+            {items.map((session) => (
+              <div key={session._id} className="border-b border-sol-border/30">
+                <SessionCard
+                  session={session}
+                  isSelected={selectedSet.has(session._id)}
+                  isActive={session._id === activeSessionId}
+                  globalIndex={0}
+                  onSelect={handleSelect}
+                  onCardContextMenu={handleCardContextMenu}
+                  onPickCharacter={handlePickCharacter}
+                  onDismiss={handleAnimatedDismiss}
+                  onStash={handleAnimatedStash}
+                  onDefer={s.deferSession}
+                  onPin={s.pinSession}
+                  forkColorKey={forkColorKeyOf(session)}
+                  sessionLabel={labelByConv[session._id] ?? null}
+                  isUnread={!!unreadByConv[session._id]}
+                  isFavorite={cardIsFavorite(session)}
+                  subRow="trigger"
+                  // A claimed stashed/killed home renders muted — resting is
+                  // its normal state under a standing trigger.
+                  variant={isSessionHidden(session) ? "stashed" : "default"}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
+        {/* Sessions no trigger drives group by project — the same fallback tier
+            the label and plan views use. */}
+        {triggerView.projectGroups.map(({ name, items }) => (
+          <div key={`trigproj-${name}`}>
+            {renderSection(name, items, name === "other" ? "text-sol-text-dim" : getLabelColor(name).text, undefined, undefined, { key: `trigproj_${name}` })}
+          </div>
+        ))}
+        </>
+        ) : (
+        <>
+        {/* An exclude chip is a near-global view ("everything but X") — the
+            failed/blocked banner must not vanish behind it. */}
+        {/* Questions lead: a session that asked you something is your move
+            before anything else, pinned or not. One move: clicking a card
+            opens the full-width answer view anchored on that question, and
+            answering advances to the next — same flow for one or many. */}
+        {hostedOnly ? (
+          // The Assistant scope's three words (hostedStatusSections): Your
+          // turn holds an approval with a reply, Working on it holds a new
+          // conversation with a running one, and Done reads newest first.
+          // Drafts (nothing sent yet) wait in a quiet line under Done.
+          <>
+            {hostedSections.map(([items, key]) => key === "needs_input" ? (
+              <Fragment key={key}>
+                {renderSection(words.sectionNeedsInput, items, "text-sol-yellow", undefined, undefined, { key, onDropSession: dropSessionOnRest.needs_input })}
+                {renderSection(STOPPED_SECTION.label, filteredStopped, "text-sol-red", undefined, undefined, {
+                  key: "hosted_stopped",
+                  headerAction: <RetryStoppedButton rows={filteredStopped} />,
+                })}
+              </Fragment>
+            ) : (
+              <Fragment key={key}>
+                {key === "pinned" && renderSection("Pinned", items, "text-sol-magenta")}
+                {key === "working" && renderSection(words.sectionWorking, items, "text-sol-green", "working", undefined, { key })}
+                {/* Unread results lead, every row shown; what was read
+                    folds under Earlier (or Done, when nothing is new). */}
+                {key === "new_results" && renderSection("New", items, "text-sol-cyan", undefined, undefined, { key, fixed: HOSTED_UNFOLDABLE_SECTIONS.has(key) })}
+                {key === "done" && renderSection(hostedSections.some(([rows, k]) => k === "new_results" && rows.length > 0) ? "Earlier" : "Done", items, "text-sol-cyan", undefined, undefined, { key: "done", onDropSession: dropSessionOnRest.done })}
+                {key === "drafts" && renderSection("Drafts", items, "text-sol-text-dim", undefined, undefined, { key })}
+              </Fragment>
+            ))}
+          </>
+        ) : (<>
+        {renderSection(words.sectionQuestions, statusQuestions, "text-sol-violet", undefined, undefined, {
+          key: "questions",
+          count: countOf(statusQuestions, placedQuestions, placed.counts.questions),
+          onSelect: (session) => router.push(`/questions?s=${session._id}`),
+        })}
+        {renderSection("Pinned", statusPinned, "text-sol-magenta", undefined, undefined, { count: countOf(statusPinned, pinned, placed.counts.pinned) })}
+        {renderSection(words.sectionNew, statusNew, "text-sol-blue", undefined, undefined, { key: "new", count: countOf(statusNew, newSessions, placed.counts.newSessions) })}
+        {/* Needs Input, Done and Dormant take a dragged card: the drop is the
+            user's rest verdict (setSessionRest), the same stamp the context
+            menu and the dormant chord write. Working is not a target — nobody
+            can file a row as "the agent is producing". */}
+        {renderSection(words.sectionNeedsInput, statusNeedsInput, "text-sol-yellow", undefined, undefined, { key: "needs_input", count: countOf(statusNeedsInput, needsInput, placed.counts.needsInput), onDropSession: dropSessionOnRest.needs_input })}
+        {renderSection(STOPPED_SECTION.label, filteredStopped, "text-sol-red", undefined, undefined, {
+          key: "hosted_stopped",
+          headerAction: <RetryStoppedButton rows={filteredStopped} />,
+        })}
+        {/* Sections read top-down as "who acts next": you (Questions, Needs
+            Input, Done to review), the agent right now (Working), then a
+            machine event (Dormant). Nothing below Dormant is anyone's move. */}
+        {renderSection("Done", statusDone, "text-sol-cyan", undefined, undefined, { count: countOf(statusDone, done, placed.counts.done), onDropSession: dropSessionOnRest.done })}
+        {renderSection("Working", statusWorking, "text-sol-green", "working", undefined, { count: countOf(statusWorking, working, placed.counts.working) })}
+        {renderSection(words.sectionDormant, statusDormant, "text-sol-blue", undefined, undefined, { key: "dormant", count: countOf(statusDormant, dormant, placed.counts.dormant), onDropSession: dropSessionOnRest.dormant })}
+        </>)}
+        </>
+        )}
+        {sortedSessions.length === 0 && (
+          <div className="px-3 py-8 text-center text-sm text-sol-text-dim">
+            {words.noActive}
+            {/* An empty scoped list still says what Everything holds. */}
+            {hostedOnly && <MoreInEverything hidden={outOfScope} centered />}
+          </div>
+        )}
+        {/* A list with rows says nothing more about Everything: the rail's
+            header holds that tab one click away, and a second "more" line
+            under Earlier's own "Show N more" read as two different lists. */}
+        {/* The Assistant scope keeps what was put away in one quiet place:
+            snoozed, set aside and closed read alike to someone who only asks
+            the assistant for things. Everything keeps the three buckets. */}
+        {hostedOnly ? renderHiddenBucket({
+          label: words.putAway,
+          items: [...filteredSnoozed, ...filteredStashed, ...filteredDismissed].sort((x, y) => (y.updated_at || 0) - (x.updated_at || 0)),
+          expanded: openBuckets.stashed,
+          onToggle: () => setOpenBuckets((o) => ({ ...o, stashed: !o.stashed })),
+          variant: "stashed",
+          onKill: handleKillStashed,
+        }) : (<>
+        {renderHiddenBucket({
+          label: "Snoozed",
+          items: filteredSnoozed,
+          expanded: openBuckets.snoozed,
+          onToggle: () => setOpenBuckets((o) => ({ ...o, snoozed: !o.snoozed })),
+          variant: "snoozed",
+          onKill: handleKillStashed,
+        })}
+        {renderHiddenBucket({
+          label: words.stashed,
+          items: filteredStashed,
+          expanded: openBuckets.stashed,
+          onToggle: () => setOpenBuckets((o) => ({ ...o, stashed: !o.stashed })),
+          variant: "stashed",
+          onKill: handleKillStashed,
+          // Closing everything set aside at once is fleet triage; hosted mode
+          // closes a conversation by its own menu.
+          headerAction: hostedMode ? undefined : (
+            <button
+              onClick={handleKillAllStashed}
+              className={`px-1.5 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider transition-all shrink-0 ${
+                killAllArmed
+                  ? "text-sol-bg bg-sol-red hover:bg-sol-red/90"
+                  : "text-sol-text-dim opacity-40 hover:opacity-100 hover:text-sol-red hover:bg-sol-red/10"
+              }`}
+              title={words.killAllStashed}
+            >
+              {killAllArmed ? `${words.killConfirm} ${filteredStashed.length}?` : `${words.killConfirm} all`}
+            </button>
+          ),
+        })}
+        {renderHiddenBucket({
+          // "Killed" is honest for what dominates this bucket. It is keyed on
+          // inbox_dismissed_at, and both real kill surfaces write that stamp:
+          // the web's kill action optimistically (hideSessionInDraft mode
+          // "kill"), and `cast kill` durably (cliSetSessionVisibility, which
+          // patches inbox_dismissed_at and then stamps inbox_killed_at via
+          // applyHideTransition). The dismissed reconcile crawl
+          // (collectHiddenSessionsLite) has no shouldShowInInbox filter, so a
+          // `cast kill`ed row keeps arriving here. The non-kill dismissals that
+          // also land here (agentTasks' auto-tidy, dismissStaleInboxSessions)
+          // are the minority — and renaming this to "Dismissed" would mean
+          // pressing Kill, reading a "Killed" toast, and watching the row drop
+          // into "Dismissed". See inboxFilters.ts on why conflating the two
+          // loses the one difference that matters operationally.
+          label: words.killed,
+          items: filteredDismissed,
+          expanded: openBuckets.dismissed,
+          onToggle: () => setOpenBuckets((o) => ({ ...o, dismissed: !o.dismissed })),
+          variant: "dismissed",
+          onKill: handleKillDismissed,
+          // The rows above are this replica's cached kills (recent by kill time)
+          // plus what the shelf already paged in; older or never-cached kills
+          // are one click away. Chip filters apply to shelf rows like any other.
+          // In hosted mode the list waits for something to hold: an empty
+          // "Closed" under a newcomer's first conversation offers nothing.
+          footer: hostedMode && filteredDismissed.length === 0 && s.killedShelf.ids.length === 0 ? undefined : s.killedShelf.complete ? (
+            s.killedShelf.ids.length > 0 && (
+              <div className="w-full px-3 py-1.5 text-[10px] text-sol-text-dim/60 border-b border-sol-border/30">{words.noOlderKilled}</div>
+            )
+          ) : (
+            <button
+              onClick={() => { void loadMoreKilledSessions(convex); }}
+              disabled={s.killedShelf.loading}
+              className="w-full px-3 py-1.5 text-[10px] font-medium text-sol-text-dim hover:text-sol-cyan disabled:hover:text-sol-text-dim disabled:opacity-60 transition-colors text-left border-b border-sol-border/30"
+            >
+              {s.killedShelf.loading ? words.loadingOlderKilled : words.loadOlderKilled}
+            </button>
+          ),
+        })}
+        </>)}
+        </>)}
+      </div>
+      {heldBeaconId ? (
+        <SessionBeacon
+          containerRef={scrollContainerRef}
+          targetId={heldBeaconId}
+          title={s.sessions[heldBeaconId]?.title || null}
+          tone="new"
+          style={holdStyleOf(heldBeaconId)}
+        />
+      ) : (
+        <SessionBeacon
+          containerRef={scrollContainerRef}
+          targetId={focusedId}
+          title={(focusedId && s.sessions[focusedId]?.title) || null}
+        />
+      )}
+      </div>
+      {/* The schedule dock is panel chrome, not list content: it renders under
+          the scroll area in every view mode EXCEPT "by trigger" — there the
+          whole list already IS the roster, so the dock would double it. */}
+      {viewMode !== "trigger" && (
+        <TriggerDock
+          rows={scheduleRowsView}
+          unreadCount={schedulePartition.unreadCount}
+          nextRunAt={schedulePartition.nextRunAt}
+          activeSessionId={activeSessionId}
+          onOpen={openScheduleTarget}
+          onOpenSession={handleSelect}
+        />
+      )}
+      <CursorPopover state={characterPicker}>
+        {(rows) => <CharacterPicker rows={rows} onDone={closeCharacterPicker} />}
+      </CursorPopover>
+      <ContextMenu state={sessionCtxMenu}>
+        {({ session, isForeign, sessions }) => sessions.length > 1 ? (
+          <BulkSessionMenuItems
+            sessions={sessions}
+            onStash={handleAnimatedStashMany}
+            onKill={killManyWithNotice}
+            onClear={clearSelection}
+          />
+        ) : (
+          <SessionMenuItems
+            session={session}
+            isForeign={isForeign}
+            onOpen={() => handleSelect(session)}
+            onStash={() => handleAnimatedStash(session._id)}
+            onKill={() => handleAnimatedDismiss(session._id)}
+            onPickCharacter={() => {
+              // Hand off under the cursor: close the menu, open the picker where
+              // the menu stood, on the same targets the menu was acting on.
+              const at = sessionCtxMenu.menu;
+              sessionCtxMenu.close();
+              if (at) characterPicker.openAt(at.x, at.y, sessions);
+            }}
+            onRename={() => useInboxStore.getState().openSessionRename(session)}
+            extra={!isForeign ? <MoveToDeviceSubmenu sessions={[session]} /> : null}
+          />
+        )}
+      </ContextMenu>
+    </div>
+  );
+}
+
+
+export const SessionListPanel = memo(SessionListPanelImpl);
+SessionListPanel.displayName = "SessionListPanel";

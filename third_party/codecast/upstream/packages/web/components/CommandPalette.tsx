@@ -1,0 +1,3796 @@
+import { ShortId } from "./ShortId";
+import { AVATAR_KEYS } from "@codecast/shared/contracts/orgAvatars";
+import { characterNameFor } from "@codecast/shared/contracts/sessionCharacter";
+import { AVATAR_LABELS } from "../lib/orgAvatars";
+import { RoleAvatar } from "./org/avatars";
+import { SessionGlyph, SessionIdentityLine } from "./identity";
+import { identityRowOf } from "../lib/sessionIdentity";
+import { RepositoryPaletteItems } from "./repo/RepositoryPaletteItems";
+import { getPaletteSessionCommands } from "../lib/paletteSessionCommands";
+import { withInboxView } from "../lib/inboxViewHistory";
+import { useCreateKinds, type CreateEnv, type CreateKind } from "../hooks/useCreateKinds";
+import { useTeamFeature, useCallsAvailable, useWorkspaceFeature, workspaceHasFeatureNow } from "../lib/teamFeatures";
+import type { TeamFeatureKey } from "@codecast/shared/contracts";
+import { pagePath, palettePages } from "../lib/navPages";
+import { HOSTED_SECTION_KEYS } from "../lib/surfaceRules";
+import { useState, useCallback, useMemo, useRef, memo, lazy, Suspense } from "react";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { useShortcuts, isMac, type ShortcutAction } from "../shortcuts";
+import { useTheme } from "./ThemeProvider";
+import { KeyCap, MenuKeyCaps } from "./KeyboardShortcutsHelp";
+import { useRouter, usePathname } from "next/navigation";
+import { useQuery, useConvex } from "convex/react";
+import { api as _api } from "@codecast/convex/convex/_generated/api";
+import { Command as CommandPrimitive } from "cmdk";
+import { ModPaletteGroup } from "./mods/ModPaletteGroup";
+import { CommandPaletteList } from "./CommandPaletteList";
+import { cleanTitle } from "../lib/conversationProcessor";
+import { paletteRowTime, sentenceCase, sessionCardTitle } from "../lib/sessionCard";
+import { hostedRowTime } from "../lib/sameNameSuffix";
+import { AvatarImg } from "../lib/avatarCache";
+import { canControlModel, modelOptionKey } from "../lib/modelSwitch";
+import { commitModelChange } from "../lib/modelSwitchWeb";
+import { AGENT_LAUNCH_OPTIONS, AGENT_MODEL_CONFIG, modelAgentKey, dynamicModelOption, canSessionBecomeAgent, listedModels, type ConvexAgentType } from "@codecast/shared/contracts";
+import { useDynamicModels } from "../hooks/useDynamicModels";
+import { useOnlyHostedAgent, usePinnedAgentIds } from "../hooks/usePinnedAgents";
+import { deviceDisplayName, deviceWakesOnUse, rosterDeviceOf, type Device } from "./DeviceBadge";
+import { useBulkMoveSessions, useMoveTargets } from "../hooks/useBulkMoveSessions";
+import { useInboxSelection } from "../lib/inboxSelection";
+import { useVaultStore } from "../store/vaultStore";
+import { filesHref } from "../lib/vault/vaultHref";
+import { useInboxStore, isConvexId, InboxSession, TaskItem, DocItem, BucketItem, BucketAssignmentItem, placeInboxRows, filterInboxScopeFromState, convBucketMap, sortLabels, computeChipCounts, getProjectName, RecentVisit, selectSessionRailOpen, sessionRowFromSummary, isUnsentConversation } from "../store/inboxStore";
+import { resolveRecentVisits, visitTimeAgo, visitObjectLabel, type ResolvedVisit } from "../lib/recentVisits";
+import { inActiveWorkspace } from "../lib/workspaceScope";
+import { assistantSearchIndex, kindOfQuery, matchGoals, matchMentionGroups, matchProjects, matchRoles, matchRoutines, openTasksFirst, searchIndexOf, type MentionRecord } from "../lib/universalSearch";
+import { useRemoteSearch } from "../hooks/useRemoteSearch";
+import { useWorkspaceArgs, workspaceStamp } from "../hooks/useWorkspaceArgs";
+import { RecentVisitGlyph } from "./RecentVisitRow";
+import { useOpenRecentVisit } from "../hooks/useOpenRecentVisit";
+import { isNonTabRoute } from "../src/compat/tabRouting";
+import { score, matchScore } from "../hooks/useMentionQuery";
+import { collapseSameTitle } from "../lib/mentionRanking";
+import { sessionSearchHaystack, mergeSearchRows, rankSessions, sessionStanding, type SessionStanding } from "../lib/instantSessionSearch";
+import { agentAccent } from "../lib/agentColors";
+import { startHandoff, HANDOFF_EXPLAINER } from "../lib/handoffWeb";
+import { channelDisplayName, dmCounterpart, lineAuthorFor, memberName, type LineAuthorFields } from "../lib/chatViews";
+import { memberAvatarUrl, memberDisplayName } from "../lib/liveEntities";
+import { useOrgRoles } from "../hooks/useOrgRoles";
+import { useRolesAndPeopleOptions } from "../hooks/useRolesAndPeopleOptions";
+import { isPerson } from "@codecast/shared/team/memberKind";
+
+const NO_MEMBERS: any[] = [];
+import { compactDuration, teammateWhereabouts, type TeammateWhereabouts } from "./presence/memberPresence";
+import { MemberFace } from "./presence/MemberFace";
+import { useMissingSessionRow } from "../hooks/useMissingSessionRow";
+import { useQueryNoThrow } from "../hooks/useQueryNoThrow";
+import { useSessionQuerySuggestions } from "../hooks/useSessionQuerySuggestions";
+import { SessionQuerySuggestionRow } from "./SessionQuerySuggestList";
+import { applySessionQueryCompletion, parseSessionQuery, sessionQuerySearches } from "@codecast/shared/search";
+import { useCollectionRows } from "../hooks/useCollectionRows";
+import { triggerSig, useSyncTriggers } from "../hooks/useSyncTriggers";
+import { POP_OUT_PEOPLE_TITLE, isElectron, isPeopleWindow } from "../lib/desktop";
+import { stageIsSplit } from "../hooks/useStageShortcuts";
+import {
+  Columns2 as StageSplitGlyph,
+  SquareX as StageCloseGlyph,
+  Maximize2 as StageExpandGlyph,
+  ChevronsRight as StageNextGlyph,
+} from "lucide-react";
+import { popOutPeople } from "./people/popOutPeople";
+import { AskHeldLine, useHostedAskGate } from "./simple/useHostedAskGate";
+import { AgentTypeIcon } from "./AgentTypeIcon";
+import { HOSTED_AGENT_TYPE } from "@codecast/shared/contracts/assistant";
+import { startHostedConversation } from "../lib/startHostedConversation";
+import { openForwardToChat } from "../lib/forwardToChat";
+import { settleComposerAttachments } from "../lib/draftImages";
+import { chatFrecency, selectChatRail, type ChatAttachment } from "../store/chatSlice";
+import { ComposerAttachButton } from "./chat/ComposerAttachButton";
+import "./chat/chat.css";
+import "./CommandPalette.css";
+import { PalettePickHeader } from "./PalettePickPreview";
+import { groupClass, itemClass, paletteClass, paletteInputClass } from "./paletteStyles";
+import { NavIcon, PaletteSearchBar, PaletteSessionRow, PaletteSearchResultRow, PaletteTaskRow } from "./PaletteRows";
+import { formatDateSmart } from "@codecast/shared/time";
+
+// Loaded only on the confirm step so the search palette does not pull the
+// composer module (and the HMR cycle that comes with an eager import).
+const PaletteMessageInput = lazy(() =>
+  import("./MessageInput").then((m) => ({ default: m.MessageInput })),
+);
+import { forkSessionAsAgent, switchSessionAgent } from "../lib/sessionAgentActions";
+import { PALETTE_KIND, PALETTE_ORG, PALETTE_TAIL_MORE, paletteActions, paletteObjectPath, paletteDigitIndex, paletteActionForKey, paletteItemScore, palettePageValue, paletteValue, queryAsksToCreate, type PaletteTargetType, type PalettePerson } from "../lib/paletteActions";
+import { useOpenDm } from "../hooks/useOpenDm";
+import { useLiveRoomOfMember } from "../hooks/useLiveRooms";
+import { useMemberHuddle } from "./presence/useMemberHuddle";
+import { useWorkspaceCollection } from "../hooks/useWorkspaceCollection";
+import { captureException } from "@sentry/react";
+import { isInboxRoute } from "../lib/inboxRouting";
+import { sortedWorkbenches, switchToWorkbench } from "../lib/workbenchSwitch";
+import type { WorkbenchSnapshot } from "../store/workbench";
+import { useCurrentUser } from "../hooks/useCurrentUser";
+import { getLabelColor, DEFAULT_LABELS } from "../lib/labelColors";
+import { toast } from "sonner";
+import { animatedSetSessionRest, toggleSessionsLikeFirst, undoAsOne } from "../store/undoActions";
+import { gestureToast } from "../store/undoStack";
+import { counted } from "../store/undo/labels";
+
+/** How many recent places the quiet hosted palette lists before its pages. */
+const QUIET_RECENTS = 5;
+
+/** A session in the words of the viewer's mode ("conversation" in hosted mode), for toasts. */
+const sessionNoun = () => modeWordsNow().conversation.toLowerCase();
+import type { UserRest } from "@codecast/shared/contracts";
+import { useTriggerKillNotice } from "../hooks/useTriggerKillNotice";
+import { STATUS_OPTIONS, PRIORITY_OPTIONS, PLAN_STATUS_OPTIONS, DOC_TYPE_OPTIONS } from "./menus/entityOptions";
+import { statusByKey, statusEntityOptions, statusWriteFields, taskStatusKey, useTeamTaskStatusList } from "../lib/taskStatuses";
+import { copyToClipboard, shareOrigin } from "../lib/utils";
+import { UNDO_HISTORY_TIER } from "../lib/undoTimelineOpen";
+import type { Id } from "@codecast/convex/convex/_generated/dataModel";
+import {
+  Circle,
+  Compass,
+  CircleDot,
+  CircleDotDashed,
+  CheckCircle2,
+  XCircle,
+  PauseCircle,
+  AlertTriangle,
+  ArrowUp,
+  ArrowDown,
+  Minus,
+  FileText,
+  Pin,
+  PinOff,
+  Archive,
+  Copy,
+  Trash2,
+  Tag,
+  User,
+  Bot,
+  Check,
+  Search,
+  ListTodo,
+  Map as MapIcon,
+  Square,
+  Clock,
+  ExternalLink,
+  Pencil,
+  Cpu,
+  Filter,
+  MessageSquare,
+  Hash,
+  Lock,
+  Folder,
+  Star,
+  Shuffle,
+  CalendarDays,
+  Waypoints,
+  FilePlus2,
+  Terminal,
+  Moon,
+  Sun,
+  PanelLeft,
+  PanelRight,
+  Keyboard,
+  Rows3,
+  Focus,
+  Repeat,
+  Zap,
+  CornerDownRight,
+  Headphones,
+  ChevronRight,
+  PictureInPicture2,
+  Users,
+  Sparkles,
+  LayoutDashboard,
+  Plus,
+  RefreshCw,
+  EyeOff,
+  PanelBottom,
+  Cloud,
+  Laptop,
+  Globe,
+  Undo2,
+  Redo2,
+  History,
+  Flag,
+} from "lucide-react";
+import { HeadOfPeopleFace } from "./anchor/AnchorIdentity";
+import { objectHref } from "../lib/entityLinks";
+import { RoleFace } from "./org/RoleFace";
+import { BROWSER_ROUTE, displayHost } from "../lib/browserPane";
+import { typedAddress } from "../lib/browserPaneLinks";
+import { openBeside, openBrowserPane } from "../lib/stage";
+import { isTriageBarCompact } from "./triage/graduation";
+import { setTaskParent, closeTaskWithGuard, updateTasksAsOne } from "../lib/taskActions";
+import { applyRelationPick, relationItems, reportRelationPick, type RelationTask } from "../lib/taskRelations";
+import { taskVisual } from "./TaskStatusBadge";
+import { WAIT_STATE_STYLE } from "./tasks/TaskBlockedMark";
+import { RelationQueryHint, relationQueryError } from "./tasks/TaskRelations";
+import { pickWhoRows, type PalettePickKind, type PalettePickTarget } from "../lib/palettePick";
+import { isHostedUi } from "./simple/lanePaths";
+import { actionShownNow, isHostedMode, modeWordsNow, simpleModeAllowedNow, useAssistantScope, useHostedMode, useModeWords, useSurfaceMode } from "../lib/surfaces";
+import { bySessionAgent, isAssistantRoutine, moreInEverything, withinScope } from "../lib/assistantScope";
+
+const NO_CHAT_HITS: any[] = [];
+import { LANE_SWITCH } from "./simple/lanePref";
+import { Button } from "./ui/button";
+
+const api = _api as any;
+import { SESSION_SNOOZE_CHOICES, sessionSnoozeUntil, type SessionSnoozeKey } from "@codecast/shared/contracts";
+
+/** A relation pick's leading glyph, as every other palette mode has one: the
+ *  task's status, or the hourglass of a wait parsed from the query. */
+function withRelationIcon<T extends { task?: RelationTask }>(item: T): T & { icon: unknown; color: string } {
+  const v = item.task ? taskVisual(item.task.status) : { icon: WAIT_STATE_STYLE.waiting.icon, color: WAIT_STATE_STYLE.waiting.text };
+  return { ...item, icon: v.icon, color: v.color };
+}
+
+type ActionMode = "device" | "snooze" | "rename" | "character" | "project" | "project_status" | "deadline" | "trigger_cancel" | "trigger_delete" | "session_delete" | "status" | "priority" | "labels" | "assign" | "type" | "plan_status" | "agent_run" | "agent_switch" | "agent_fork" | "agent_handoff" | "bucket" | "model" | "view" | "parent" | "blocker" | "related" | "layout_save" | "layout_update" | "layout_rename" | "layout_delete";
+
+// Modes that act on the WORKSPACE rather than on selected rows: they open with
+// no target and show no entity header. Everything else needs something picked.
+const TARGETLESS_MODES = new Set<ActionMode>(["view", "layout_save", "layout_update", "layout_rename", "layout_delete"]);
+
+// The layout modes all pick from (or name) a saved workbench.
+const isLayoutMode = (m: ActionMode) => m.startsWith("layout_");
+
+const DEFAULT_AGENT_RUN_MESSAGE = "lets do this task";
+
+// Draft key for the palette confirm-step composer. One pick at a time, so a
+// single slot is enough — and going back to the list keeps the note.
+const PALETTE_PICK_DRAFT = "palette-pick";
+
+function isTask(item: any): item is TaskItem {
+  return item && "status" in item && "short_id" in item;
+}
+
+// Status key → {label,color}, derived from the option arrays above so the
+// palette's entity rows reuse the same labels/colors as the action submenus.
+const TASK_STATUS_META: Record<string, { label: string; color: string }> =
+  Object.fromEntries(STATUS_OPTIONS.map((o) => [o.key, { label: o.label, color: o.color ?? "" }]));
+const PLAN_STATUS_META: Record<string, { label: string; color: string }> =
+  Object.fromEntries(PLAN_STATUS_OPTIONS.map((o) => [o.key, { label: o.label, color: o.color ?? "" }]));
+
+const AGENT_OPTIONS = AGENT_LAUNCH_OPTIONS.map((agent) => ({
+  key: `agent:${agent.convexType}`,
+  id: agent.id,
+  agentType: agent.convexType,
+  label: agent.label,
+}));
+
+/** The agent rows a pick offers: the viewer's pinned agents plus the one the
+ *  target session already runs. Labels elsewhere still read AGENT_OPTIONS. */
+function pinnedAgentRows(pinned: readonly string[], currentAgentType: string | undefined) {
+  return AGENT_OPTIONS.filter((o) => pinned.includes(o.id) || o.agentType === currentAgentType);
+}
+
+// One accent per agent (lib/agentColors), keyed the way the rows are.
+const AGENT_COLORS: Record<string, string> = Object.fromEntries(
+  AGENT_OPTIONS.map((o) => [o.key, agentAccent(o.agentType).text]),
+);
+
+// Global command rows: each fires the SAME registered handler its keyboard
+// chord uses (via dispatchAction), so behavior can't fork between the palette
+// and the key — and the keycap hint derives from the registry.
+const GLOBAL_COMMANDS: ReadonlyArray<{
+  action: ShortcutAction;
+  /** A function when the label depends on current state (a toggle's direction). */
+  label: string | (() => string);
+  icon: React.ComponentType<{ className?: string }>;
+  keywords: string;
+  /** Rows that do not apply to every window say so; the people window has the
+   *  wall as its whole view and needs no command to open one. */
+  hidden?: () => boolean;
+  /** Found by search only: listed once the query is non-empty. */
+  searchOnly?: boolean;
+  /** Other names a query may begin with to name this row, so it leads the
+   *  list like a query that begins its label (namedCommands). */
+  names?: readonly string[];
+}> = [
+  { action: "anchor.toggle", label: "Talk to the workspace's agent", icon: HeadOfPeopleFace, keywords: "agent assistant bot standing member ask personal team head of people", hidden: () => !workspaceHasFeatureNow("org") },
+  { action: "people.wall", label: "The team: hold a face to talk", icon: Users, keywords: "people wall faces who is around hold to talk walkie everyone roster", hidden: isPeopleWindow },
+  { action: "terminal.toggle", label: "Toggle terminal", icon: Terminal, keywords: "shell console panel tmux" },
+  { action: "ui.zenToggle", label: "Toggle zen mode", icon: Focus, keywords: "focus minimal distraction free" },
+  { action: "sidebar.toggleLeft", label: "Toggle left sidebar", icon: PanelLeft, keywords: "nav collapse" },
+  { action: "sidebar.toggleRight", label: () => modeWordsNow().conversationsPanel, icon: PanelRight, keywords: "right rail collapse sessions conversations" },
+  { action: "pane.split", label: "Split: open this view beside itself", icon: StageSplitGlyph, keywords: "split pane side by side column duplicate stage" },
+  { action: "pane.close", label: "Close pane", icon: StageCloseGlyph, keywords: "split pane close stage", hidden: () => !stageIsSplit() },
+  { action: "pane.expand", label: "Pane takes the whole stage", icon: StageExpandGlyph, keywords: "split pane expand maximize full stage", hidden: () => !stageIsSplit() },
+  { action: "pane.next", label: "Focus next pane", icon: StageNextGlyph, keywords: "split pane focus cycle", hidden: () => !stageIsSplit() },
+  { action: "inbox.toggleFlatView", label: () => {
+    const ui = useInboxStore.getState().clientState.ui;
+    if (!isHostedUi(ui)) return "Cycle inbox view";
+    return ui?.hosted_inbox_everything ? "Inbox: show only assistant conversations" : "Inbox: show everything";
+  }, icon: Rows3, keywords: "grouped time label flat layout scope assistant everything all sessions developer" },
+  { action: "inbox.toggleTriageBar", label: () => (isTriageBarCompact(useInboxStore.getState().clientState.ui) ? "Show triage bar" : "Hide triage bar"), icon: PanelBottom, keywords: "triage bar defer stash kill verbs footer show hide" },
+  { action: "ui.undo", label: "Undo", icon: Undo2, keywords: "restore revert last action" },
+  { action: "ui.redo", label: "Redo", icon: Redo2, keywords: "repeat undone action" },
+  // While the timeline is a hidden tier, its row is a doorway found by search,
+  // not by browsing (undo-history S9).
+  { action: "ui.undoHistory", label: "Undo history", icon: History, keywords: "undo redo history timeline changes take back revert recent actions", searchOnly: UNDO_HISTORY_TIER === "hidden" },
+  { action: "tab.new", label: "New tab", icon: Plus, keywords: "tab create" },
+  { action: "tab.close", label: "Close tab", icon: Square, keywords: "tab dismiss" },
+  { action: "tab.next", label: "Next tab", icon: ArrowDown, keywords: "tab switch navigate" },
+  { action: "tab.prev", label: "Previous tab", icon: ArrowUp, keywords: "tab switch navigate" },
+  { action: "pane.prev", label: "Focus previous pane", icon: StageNextGlyph, keywords: "split pane focus cycle", hidden: () => !stageIsSplit() },
+  { action: "sidebar.toggleComments", label: "Toggle comments rail", icon: MessageSquare, keywords: "discussion thread comments" },
+  { action: "ui.toggleShortcutsHelp", label: "Keyboard shortcuts help", icon: Keyboard, keywords: "keys bindings hotkeys cheatsheet" },
+  { action: "ui.toggleLane", label: () => (isHostedMode(useInboxStore.getState()) ? LANE_SWITCH.off : LANE_SWITCH.on), icon: Sparkles, hidden: () => !simpleModeAllowedNow(), keywords: "switch everyday mode assistant mode developer mode hosted simple code terminals machines", names: ["mode", "everyday mode", "assistant mode", "developer mode"] },
+  { action: "ui.openTours", label: "Tours: learn a feature on the real page", icon: Compass, keywords: "tour guide walkthrough onboarding learn how does this work help org inbox" },
+];
+
+/** A row's label, read now when it depends on state. */
+function labelText(label: string | (() => string)): string {
+  return typeof label === "function" ? label() : label;
+}
+
+function getShortPath(p: string): string {
+  const parts = p.split("/").filter(Boolean);
+  return parts.length ? parts[parts.length - 1] : p;
+}
+
+// ─── Action submenu component (Linear-style) ───────────────────
+/** A teammate row as a palette target. `session` is the row their follow
+ *  opens: a fetched one when the caller has it, else the inbox row or a stub. */
+function palettePerson(row: TeammateWhereabouts, following: boolean, session?: { _id: string; title?: string } | null): PalettePerson {
+  const id = row.conversationId;
+  return {
+    _id: row.id,
+    name: row.name,
+    member: row.member,
+    online: row.online,
+    following,
+    session: id ? (session ?? useInboxStore.getState().sessions[id] ?? { _id: id, title: row.title }) : null,
+  };
+}
+
+// The undo label of a per-session palette verb run over a selection.
+const PALETTE_SESSION_VERB: Record<string, string> = {
+  session_restore: "Restored",
+  session_stash: "Stashed",
+  session_stash_hide: "Stashed and hid",
+  session_unsnooze: "Woke",
+  session_defer: "Deferred",
+};
+
+const PALETTE_REST_VERDICT: Partial<Record<string, UserRest>> = {
+  session_dormant: "dormant",
+  session_done: "done",
+  session_needs_input: "needs_input",
+};
+
+/**
+ * One palette row per teammate: their name, and where they are under it.
+ * Selecting it drills into the person (the palette's own drilled view), where
+ * following, messaging, a huddle and their profile live as actions. A session
+ * outside this inbox is fetched as an inbox row (useMissingSessionRow) so the
+ * line names it and the follow opens a row with its real title and author,
+ * not a blank stub.
+ */
+export function TeammateItem({
+  row,
+  className,
+  onOpen,
+  following = false,
+}: {
+  row: TeammateWhereabouts;
+  className: string;
+  onOpen: (person: PalettePerson) => void;
+  /** This window already follows them. */
+  following?: boolean;
+}) {
+  const id = row.conversationId;
+  const fetched = useMissingSessionRow(id && !row.inStore ? id : null);
+  const title = row.title ?? fetched?.title;
+  const where = !id
+    ? row.online ? "around, not in a session" : "offline"
+    : title ? cleanTitle(title) : fetched === null ? "a session that no longer opens" : "a session";
+  return (
+    <CommandPrimitive.Item
+      value={`__teammate__ ${row.name}|||${row.id}`}
+      data-palette-type="person" data-palette-id={row.id} data-palette-title={row.name}
+      onSelect={() => onOpen(palettePerson(row, following, fetched))}
+      className={className}
+    >
+      <MemberFace member={row.member} size={16} title="" showHuddle={false} />
+      <div className="flex-1 min-w-0">
+        <div className="truncate">{row.name}</div>
+        <div className="truncate text-[11px] text-sol-text-dim mt-0.5">{following ? `following · ${where}` : where}</div>
+      </div>
+      {row.since !== undefined && Date.now() - row.since >= 60_000 && (
+        <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">for {compactDuration(Date.now() - row.since)}</span>
+      )}
+      <ChevronRight className="w-3.5 h-3.5 flex-shrink-0 text-sol-text-dim" />
+    </CommandPrimitive.Item>
+  );
+}
+
+/** The huddle verb on a drilled teammate. Its word (Huddle, Join huddle,
+ *  Knock, Add to call) is live call state from the face card's own hook, so
+ *  it renders here, mounted only while the palette is on a person. */
+function PersonHuddleItem({ person, className, onDone }: { person: PalettePerson; className: string; onDone: () => void }) {
+  const callsOn = useCallsAvailable();
+  const viewerId = useInboxStore((s) => String(s.currentUser?._id ?? ""));
+  const member = useInboxStore((s) => s.teamMembers.find((m: any) => String(m?._id) === person._id) ?? person.member);
+  const room = useLiveRoomOfMember(person._id);
+  const huddle = useMemberHuddle(member, viewerId, room, person.name);
+  if (!callsOn || !person.online) return null;
+  return (
+    <CommandPrimitive.Item
+      data-palette-action="person_huddle"
+      value={`action ${huddle.label}|||person_huddle`}
+      disabled={huddle.waiting}
+      title={huddle.title}
+      onSelect={() => { huddle.go(); onDone(); }}
+      className={className}
+    >
+      <Headphones className="w-4 h-4 flex-shrink-0" />
+      <span className="truncate flex-1">{huddle.label}</span>
+    </CommandPrimitive.Item>
+  );
+}
+
+export function ActionSubmenu({
+  mode,
+  targets,
+  targetType,
+  onClose,
+  onBack,
+  enteredViaRoot,
+  teamMembers,
+  currentUser,
+  initialSearch = "",
+  projects: workspaceProjects = [],
+}: {
+  mode: ActionMode;
+  initialSearch?: string;
+  projects?: any[];
+  targets: any[];
+  targetType: PaletteTargetType;
+  onClose: () => void;
+  onBack: () => void;
+  // True when the user drilled in from the root palette (Cmd+K → action row).
+  // Deep links (e.g. Ctrl+Shift+M straight into label mode) have no higher
+  // level to climb back to, so back affordances hide and Esc closes outright.
+  enteredViaRoot?: boolean;
+  teamMembers?: any[];
+  currentUser?: any;
+}) {
+  // Rename seeds the field with the current name, shown the way lists show it.
+  const pinnedAgents = usePinnedAgentIds();
+  const seedSearch = () => mode !== "rename" ? initialSearch : targetType === "session" ? cleanTitle(targets[0]?.title || "") : targets[0]?.title || "";
+  const [search, setSearch] = useState(seedSearch);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // The workspace's roles, for the assign list: read from the store through a
+  // wake signature, so every caller of this menu offers them with no prop.
+  const { roles: orgRoles } = useOrgRoles();
+  // People and roles for the assign mode, from the one list every picker
+  // shares; who is a person is read off the roster row, so a cold deep link
+  // (no org tree yet) still lists no bot as a person.
+  const { people: assignPeople, roles: assignRoles } = useRolesAndPeopleOptions(teamMembers ?? NO_MEMBERS);
+
+  // Two-step state for the "Start agent run" mode: pick an agent, then compose
+  // the initial message before launching a run per selected task.
+  const [agentStep, setAgentStep] = useState<"pick" | "message">("pick");
+  // "Move to machine": the roster and the mover (batch rail for laptop↔cloud,
+  // re-home for laptop→laptop — see components/BulkMoveSessions).
+  const { all: moveTargets } = useMoveTargets();
+  const bulkMove = useBulkMoveSessions();
+  const [selectedAgentKey, setSelectedAgentKey] = useState<string | null>(null);
+  const [agentMessage, setAgentMessage] = useState(DEFAULT_AGENT_RUN_MESSAGE);
+  const messageRef = useRef<HTMLTextAreaElement>(null);
+
+  // Rename is the other two-step mode: once a layout is picked the SAME search
+  // input becomes the name field, so the row list collapses to one create-shaped
+  // row. No second render block — the bucket mode's __create__ row does the work.
+  const [renameId, setRenameId] = useState<string | null>(null);
+
+  const updatePlan = useInboxStore((s) => s.updatePlan);
+  const assignToAgent = useInboxStore((s) => s.assignTaskToAgent);
+  // The hand-off action runs through the client directly (an action, not a mutation).
+  const convex = useConvex();
+  const updateTask = useInboxStore((s) => s.updateTask);
+  const updateDoc = useInboxStore((s) => s.updateDoc);
+  const buckets = useInboxStore((s) => s.buckets);
+  const bucketAssignments = useInboxStore((s) => s.bucketAssignments);
+  // Exclude-mode chips don't read as "the active view" here — the palette's
+  // view rows mark only include filters; picking any row sets include mode.
+  const activeBucketFilter = useInboxStore((s) => (s.chipFilterExclude ? null : s.activeBucketFilter));
+  const activeProjectFilter = useInboxStore((s) => (s.chipFilterExclude ? null : s.activeProjectFilter));
+  // Exclude-mode chips don't mark their own row active (masked above), but
+  // they DO hide sessions — "All sessions" must not claim the inbox is
+  // unfiltered while one is on.
+  const chipFilterExclude = useInboxStore((s) => s.chipFilterExclude);
+  const pinDoc = useInboxStore((s) => s.pinDoc);
+  const archiveDoc = useInboxStore((s) => s.archiveDoc);
+  const router = useRouter();
+  const pathname = usePathname();
+  // Saved layouts, in the same rail order the ⌥N chords index into.
+  const savedViews = useInboxStore((s) => s.savedViews);
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id);
+  const activeWorkbenchId = useInboxStore((s) => s.activeWorkbenchId);
+
+  const target = targets[0];
+  const currentLabels = target?.labels || [];
+  // The targets' team status vocabulary (per-team custom statuses). A palette
+  // selection is one workspace's rows, so the first target's team speaks for
+  // the set; non-task targets fall back to the defaults harmlessly.
+  const taskStatuses = useTeamTaskStatusList((target as any)?.team_id);
+  // Dynamic-client (opencode/pi) live model inventory for the model mode; the
+  // hook internally skips its query for static clients.
+  const dynamicModels = useDynamicModels(
+    mode === "model" ? (target as any)?.agent_type : undefined,
+    (target as any)?.owner_device_id,
+  );
+
+  useWatchEffect(() => {
+    setSearch(seedSearch());
+    setHighlightIndex(0);
+    setAgentStep("pick");
+    setSelectedAgentKey(null);
+    setAgentMessage(mode === "agent_handoff" ? "" : DEFAULT_AGENT_RUN_MESSAGE);
+    setRenameId(null);
+    const timer = setTimeout(() => { inputRef.current?.focus(); if (mode === "rename") inputRef.current?.select(); }, 0);
+    return () => clearTimeout(timer);
+  }, [mode, initialSearch]);
+
+  useWatchEffect(() => {
+    if ((mode === "agent_run" || mode === "agent_handoff") && agentStep === "message") {
+      setTimeout(() => messageRef.current?.focus(), 0);
+    }
+  }, [mode, agentStep]);
+
+  // View-switcher counts: snapshot at entry. The picker is transient (open,
+  // pick, gone), so live count churn while it's up isn't worth subscribing the
+  // submenu to all session sync; the label LIST itself stays live via the
+  // buckets subscription above.
+  const viewChipData = useMemo(() => {
+    if (mode !== "view") return null;
+    const st = useInboxStore.getState();
+    // Scope like the inbox panel, but count the WHOLE scoped cache — dismissed,
+    // stashed, and aged-out rows included (showOld keeps them in the active
+    // slices; picking a view surfaces its dismissed/stashed sessions too). The
+    // header chip row counts only the active set because it summarizes the list
+    // it sits above; this picker is a catalog of views, and a label whose
+    // sessions were all dismissed is still a real view — a 0 badge here would
+    // read as "empty label".
+    // The placement chokepoint (placeInboxRows, sync-convergence C5): the
+    // same scoped working-set selection every other counting surface uses, so
+    // the view badges here can never disagree with the panel's chip row.
+    const placed = placeInboxRows(st, { focusedId: st.currentSessionId ?? null });
+    const bucketByConv = convBucketMap(st.bucketAssignments as Record<string, BucketAssignmentItem>);
+    const counts = computeChipCounts([...placed.sorted, ...placed.snoozed, ...placed.stashed, ...placed.dismissed], bucketByConv);
+    // Label counts come from the assignments themselves, not from cached
+    // sessions: bucket_assignments sync completely (buckets.webList collects the
+    // whole per-user table), while the session cache is windowed and boot-pruned
+    // — so a label whose sessions all aged out of the cache would tally 0 even
+    // though the filing still exists. Assignments ARE the label's membership.
+    const bucketCounts: Record<string, number> = {};
+    for (const bid of Object.values(bucketByConv)) {
+      if (bid) bucketCounts[bid] = (bucketCounts[bid] || 0) + 1;
+    }
+    // The local session cache is windowed and boot-pruned, so a project whose
+    // sessions all fell out of it would vanish from this list even though the
+    // server still knows it. Union in the recent-projects cache (the same
+    // 30-day per-project counts the new-session picker syncs) so every project
+    // the user works in stays reachable as a view; max() because both sides
+    // undercount in different ways (cache is pruned, server list is capped).
+    const byName = new Map(counts.projectCounts);
+    for (const rp of st.recentProjects) {
+      const name = getProjectName(rp.path);
+      if (name === "unknown") continue;
+      byName.set(name, Math.max(byName.get(name) || 0, rp.count));
+      if (!counts.projectPathByName[name]) counts.projectPathByName[name] = rp.path;
+    }
+    return {
+      bucketCounts,
+      projectCounts: [...byName.entries()].sort((a, b) => b[1] - a[1]),
+      projectPathByName: counts.projectPathByName,
+    };
+  }, [mode]);
+
+  const layouts = useMemo(
+    () => sortedWorkbenches({ savedViews: savedViews ?? {}, clientState: { ui: { active_team_id: activeTeamId } } }),
+    [savedViews, activeTeamId],
+  );
+  // Update / rename / delete only ever act on your OWN layouts; a teammate's
+  // shared one is read-only here exactly as it is in the rail.
+  const myLayouts = useMemo(() => layouts.filter((v) => v.is_mine !== false), [layouts]);
+
+  const items = useMemo(() => {
+    const q = search.toLowerCase();
+    if (mode === "snooze") return SESSION_SNOOZE_CHOICES.filter((item) => item.label.includes(q)).map((item) => ({ ...item, icon: Clock }));
+    // A character is picked by typing the animal (or a name to give them), so
+    // the whole set is one keystroke away without a grid to arrow around.
+    if (mode === "character") {
+      const faces = AVATAR_KEYS
+        .filter((k) => AVATAR_LABELS[k].toLowerCase().includes(q))
+        .map((k) => ({ key: k, label: AVATAR_LABELS[k], face: k }));
+      const typed = q.trim();
+      const naming = typed && !faces.length ? [{ key: "__name__", label: `Name them "${search.trim()}"`, icon: Pencil }] : [];
+      return [...naming, ...faces];
+    }
+
+    if (isLayoutMode(mode)) {
+      const trimmed = search.trim();
+      // Save, and rename's second step, are pure naming: one create-shaped row
+      // carrying the typed name, and nothing at all until something is typed.
+      if (mode === "layout_save") {
+        return trimmed ? [{ key: "__name__", label: `Save as "${trimmed}"`, active: false, icon: Plus }] : [];
+      }
+      if (mode === "layout_rename" && renameId) {
+        return trimmed ? [{ key: "__name__", label: `Rename to "${trimmed}"`, active: false, icon: Pencil }] : [];
+      }
+      // Otherwise: pick a layout. Rail order is kept deliberately — it is the
+      // order the ⌥N chords index into, so re-sorting would desync the keycap
+      // the user just learned from the row it names. The active one is marked
+      // with the usual check instead of being floated to the top.
+      const icon = mode === "layout_update" ? RefreshCw : mode === "layout_delete" ? Trash2 : Pencil;
+      return myLayouts
+        .filter((v) => (v.name || "").toLowerCase().includes(q))
+        .map((v) => ({ key: v._id, label: v.name || "Untitled layout", active: v._id === activeWorkbenchId, icon }));
+    }
+
+    if (mode === "view") {
+      if (!viewChipData) return [];
+      const { bucketCounts, projectCounts, projectPathByName } = viewChipData;
+      // ONE list, because the underlying state is ONE filter slot — picking a
+      // project clears any label focus and vice versa (the store setters
+      // enforce it). Labels first in the user's chip order, then projects by
+      // count, same as the chip row's +N popover.
+      const rows: any[] = [];
+      for (const b of sortLabels(buckets as Record<string, BucketItem>)) {
+        rows.push({ key: `label:${b._id}`, id: b._id, kind: "label", label: b.name, count: bucketCounts[b._id] || 0, active: activeBucketFilter === b._id, dot: getLabelColor(b.name).dot });
+      }
+      for (const [name, count] of projectCounts) {
+        rows.push({ key: `project:${name}`, kind: "project", label: name, count, active: activeProjectFilter === name, path: projectPathByName[name] || null, dot: getLabelColor(name).dot });
+      }
+      const matched = rows.filter((r) => r.label.toLowerCase().includes(q));
+      // "All sessions" mirrors bucket-mode's remove row: empty-search only, on
+      // the 0 key so the views keep 1-9.
+      if (!q.trim()) {
+        matched.unshift({ key: "__all__", kind: "all", label: "All sessions", active: !activeBucketFilter && !activeProjectFilter && !chipFilterExclude, icon: Circle, quickKey: "0" });
+      }
+      return matched;
+    }
+
+    if (mode === "rename" || mode === "deadline") {
+      return search.trim() ? [{ key: search.trim(), label: mode === "rename" ? `Rename to “${search.trim()}”` : `Set target date to ${search.trim()}`, icon: Pencil }] : [];
+    }
+    if (mode === "trigger_cancel" || mode === "trigger_delete") return [{ key: "confirm", label: mode === "trigger_delete" ? "Confirm delete trigger" : "Confirm cancel trigger", icon: Trash2 }];
+    if (mode === "session_delete") return [{ key: "confirm", label: targets.length > 1 ? `Delete ${targets.length} sessions and their messages for good` : "Delete this session and its messages for good", icon: Trash2 }];
+    if (mode === "project_status") return ["active", "planning", "paused", "done"].filter(key => key.includes(q)).map(key => ({ key, label: key[0].toUpperCase() + key.slice(1), active: target?.status === key, icon: CircleDot }));
+    if (mode === "project") {
+      const rows = workspaceProjects;
+      return [{ key: "", label: "No project" }, ...rows.filter(row => !target?.workspace || row.workspace === target.workspace).map(row => ({ key: row._id, label: row.title || row.short_id || "Untitled", active: target?.project_id === row._id }))].filter(row => row.label.toLowerCase().includes(q));
+    }
+    if (mode === "status") {
+      return statusEntityOptions(taskStatuses)
+        .filter((o) => o.label.toLowerCase().includes(q))
+        .map((o) => ({
+          ...o,
+          active: isTask(target) && taskStatusKey(target as any, taskStatuses) === o.key,
+        }));
+    }
+    if (mode === "priority") {
+      return PRIORITY_OPTIONS
+        .filter((o) => o.label.toLowerCase().includes(q))
+        .map((o) => ({
+          ...o,
+          active: isTask(target) && target.priority === o.key,
+        }));
+    }
+    if (mode === "type") {
+      return DOC_TYPE_OPTIONS
+        .filter((o) => o.label.toLowerCase().includes(q))
+        .map((o) => ({
+          ...o,
+          active: !isTask(target) && (target as DocItem).doc_type === o.key,
+        }));
+    }
+    if (mode === "labels") {
+      const all = [...new Set([...DEFAULT_LABELS, ...currentLabels])];
+      const matched = all
+        .filter((l) => l.toLowerCase().includes(q))
+        .map((l) => ({
+          key: l,
+          label: l,
+          active: currentLabels.includes(l),
+          dot: getLabelColor(l).dot,
+        }));
+      if (q && !matched.some((l) => l.key.toLowerCase() === q)) {
+        matched.unshift({ key: q, label: `Create "${q}"`, active: false, dot: getLabelColor(q).dot });
+      }
+      return matched;
+    }
+    if (mode === "assign") {
+      // A role owns tasks the way a person does (org-roles-run-work.md R5).
+      // People stay first so the number keys people already know do not move.
+      const people = assignPeople.map((o) => ({
+        key: o.key,
+        label: currentUser && o.key === currentUser._id ? `${o.label} (you)` : o.label,
+        type: "user" as const,
+        image: o.info.image,
+        section: o.section,
+      }));
+      const roles = assignRoles.map((o) => ({ key: o.key, label: o.label, hint: o.hint, type: "user" as const, image: undefined, face: o.info.kind === "role" ? o.info.avatar : undefined, section: o.section }));
+      return [{ key: "", label: "Unassign", type: "user" as const, image: undefined }, ...people, ...roles]
+        .filter((o: { label: string; hint?: string }) => `${o.label} ${o.hint ?? ""}`.toLowerCase().includes(q));
+    }
+    if (mode === "agent_run" || mode === "agent_switch" || mode === "agent_fork" || mode === "agent_handoff") {
+      const currentAgentType = (target as InboxSession | undefined)?.agent_type;
+      const messageCount = (target as InboxSession | undefined)?.message_count;
+      return pinnedAgentRows(pinnedAgents, currentAgentType)
+        .filter((o) => mode !== "agent_switch" || o.agentType !== (currentAgentType || "claude_code"))
+        // A session with history can only become an agent that can rebuild it.
+        // A hand-off starts fresh, so every agent (the current one included)
+        // is a valid destination.
+        .filter((o) => mode === "agent_run" || mode === "agent_handoff" || canSessionBecomeAgent(o.agentType, messageCount))
+        .filter((o) => o.label.toLowerCase().includes(q))
+        .map((a) => ({ ...a, type: "agent" as const, image: undefined }));
+    }
+    // A task search, or (blocker) any blocker ref pasted whole (lib/taskRelations).
+    if (mode === "blocker" || mode === "related") {
+      return relationItems(mode, search, targets as TaskItem[], useInboxStore.getState().tasks as Record<string, TaskItem>).map(withRelationIcon);
+    }
+    if (mode === "parent") {
+      // Candidate parents: same-workspace, open, not the targets themselves.
+      const targetIds = new Set(targets.map((t: any) => String(t._id)));
+      const teamKey = isTask(target) ? (target.team_id ?? null) : null;
+      const all = Object.values(useInboxStore.getState().tasks) as TaskItem[];
+      return all
+        .filter((t: any) =>
+          !targetIds.has(String(t._id)) &&
+          inActiveWorkspace(t, teamKey) &&
+          t.status !== "done" && t.status !== "dropped" &&
+          !String(t._id).startsWith("temp_") &&
+          (q === "" || t.title?.toLowerCase().includes(q) || t.short_id?.toLowerCase().includes(q)))
+        .slice(0, 8)
+        .map((t: any) => withRelationIcon({ key: t.short_id, label: `${t.short_id}  ${t.title}`, task: { ref: t.short_id, title: t.title, status: t.status }, active: false }));
+    }
+    if (mode === "plan_status") {
+      return PLAN_STATUS_OPTIONS
+        .filter((o) => o.label.toLowerCase().includes(q))
+        .map((o) => ({
+          ...o,
+          active: target?.status === o.key,
+        }));
+    }
+    if (mode === "device") {
+      const everyOwner = targets.length && targets.every((t: any) => t.owner_device_id === targets[0]?.owner_device_id) ? targets[0]?.owner_device_id : null;
+      return moveTargets
+        .map((d: any) => {
+          const usable = d.online || (d.is_remote && deviceWakesOnUse(d));
+          const state = d.is_remote
+            ? (d.online ? "cloud host" : usable ? "cloud host · asleep, wakes on move" : "cloud host · offline")
+            : `${d.runner_name ? `${d.runner_name}'s machine` : "laptop"}${d.online ? "" : " · offline"}`;
+          return { key: d.device_id, label: `${deviceDisplayName(d)} — ${state}${d.device_id === everyOwner ? " · running here" : ""}`, active: d.device_id === everyOwner, icon: d.is_remote ? Cloud : Laptop, usable: usable && d.device_id !== everyOwner };
+        })
+        .filter((row) => row.label.toLowerCase().includes(q));
+    }
+    if (mode === "bucket") {
+      const convId = target?._id as string | undefined;
+      const currentBucketId = convId
+        ? ((Object.values(bucketAssignments) as BucketAssignmentItem[])
+            .find((a) => a.conversation_id === convId)?.bucket_id ?? null)
+        : null;
+      const all = (Object.values(buckets) as BucketItem[])
+        .filter((b) => !b.archived_at)
+        .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || a.name.localeCompare(b.name));
+      const matched: any[] = all
+        .filter((b) => b.name.toLowerCase().includes(q))
+        .map((b) => ({ key: b._id, label: b.name, active: b._id === currentBucketId, dot: getLabelColor(b.name).dot }));
+      // Create-from-query, same shape as the labels mode. This is also how the
+      // very FIRST bucket gets made — no dedicated create UI exists anywhere.
+      const trimmed = search.trim();
+      if (trimmed && !all.some((b) => b.name.toLowerCase() === trimmed.toLowerCase())) {
+        matched.unshift({ key: "__create__", label: `Create "${trimmed}"`, active: false, dot: getLabelColor(trimmed).dot });
+      }
+      if (currentBucketId && !trimmed) {
+        // First option, naming the label it clears — when a label is already
+        // assigned, changing/removing it is the likeliest intent. quickKey "0"
+        // extends the digit scheme (1-9 pick, 0 = none) without stealing a
+        // letter from the filter-or-create input — the remove row only exists
+        // while the search is empty, exactly when the next keystroke may be
+        // the first letter of a label name.
+        const currentName = (buckets as Record<string, BucketItem>)[currentBucketId]?.name;
+        matched.unshift({
+          key: "__remove__",
+          label: currentName ? `Remove "${currentName}"` : "Remove label",
+          active: false,
+          icon: XCircle,
+          quickKey: "0",
+        });
+      }
+      return matched;
+    }
+    if (mode === "model") {
+      // Model + effort options for the target session's agent, one flat
+      // numbered list. The blank rail adds the "default" effort stop.
+      const s0 = target as any;
+      const agentType = s0?.agent_type as string | undefined;
+      const cfg = AGENT_MODEL_CONFIG[modelAgentKey(agentType)];
+      if (!cfg) return [];
+      const blank = (s0?.message_count ?? 0) === 0;
+      const curModelKey = modelOptionKey(s0?.model, agentType);
+      const curEffort = s0?.effort as string | undefined;
+      const rows: any[] = [];
+      // Dynamic clients: Default + the live featured head; the query also
+      // searches the device's full inventory below.
+      const models = dynamicModels.dynamic
+        ? [cfg.models[0], ...dynamicModels.featured]
+        : listedModels(cfg);
+      for (const m of models) {
+        rows.push({ key: `model:${m.key}`, label: m.label, sub: m.hint, active: m.key === curModelKey, icon: Cpu });
+      }
+      for (const level of [...(blank ? ["default"] : []), ...cfg.efforts]) {
+        const active = level === "default" ? !curEffort : level === curEffort;
+        rows.push({ key: `effort:${level}`, label: `${level} effort`, active, icon: CircleDot });
+      }
+      const filtered = rows.filter((r) => r.label.toLowerCase().includes(q));
+      if (dynamicModels.dynamic && q) {
+        const seen = new Set(models.map((m) => m.key));
+        for (const id of dynamicModels.all) {
+          if (filtered.length >= 24) break;
+          if (seen.has(id) || !id.toLowerCase().includes(q)) continue;
+          const opt = dynamicModelOption(id);
+          filtered.push({ key: `model:${id}`, label: opt.label, sub: opt.hint, active: id === curModelKey, icon: Cpu });
+        }
+      }
+      return filtered;
+    }
+    return [];
+  }, [mode, search, target, targets, currentLabels, teamMembers, currentUser, buckets, bucketAssignments, viewChipData, activeBucketFilter, activeProjectFilter, chipFilterExclude, dynamicModels, taskStatuses, myLayouts, renameId, activeWorkbenchId, workspaceProjects, moveTargets, orgRoles, assignPeople, assignRoles, pinnedAgents]);
+
+  useWatchEffect(() => { setHighlightIndex(0); }, [search]);
+
+  const selectItem = useCallback((index: number) => {
+    const item = items[index] as any;
+    if (!item) return;
+    if (mode === "character") {
+      const store = useInboxStore.getState();
+      const ids = targets.map((t) => t._id);
+      if (item.key === "__name__") {
+        const name = search.trim();
+        store.setSessionCharacters(ids.map((id) => ({ id, name })));
+        toast.success(ids.length > 1 ? `Named ${ids.length} sessions` : `Named ${name}`);
+      } else {
+        // Picking a face also personifies the row, which is the opt in.
+        store.setSessionCharacters(ids.map((id) => ({ id, avatar: item.key, name: characterNameFor(id, item.key) })));
+        toast.success(ids.length > 1 ? `${ids.length} sessions are now ${item.label}s` : `Now a ${item.label}`);
+      }
+      onClose();
+      return;
+    }
+    if (mode === "snooze") {
+      const until = sessionSnoozeUntil(item.key as SessionSnoozeKey);
+      undoAsOne(`Snoozed ${counted(targets.length, sessionNoun())}`, () => {
+        for (const target of targets) useInboxStore.getState().snoozeSession(target._id, until);
+      });
+      toast.success(`Snoozed for ${item.label}`);
+      onClose();
+      return;
+    }
+
+    // Layout CRUD is global too — the workspace arrangement, not a row. Same
+    // gestures the rail's Layouts section offers, for when the rail is closed.
+    if (isLayoutMode(mode)) {
+      const store = useInboxStore.getState();
+      const trimmed = search.trim();
+      if (mode === "layout_save") {
+        if (!trimmed) return;
+        store.saveWorkbench(trimmed, pathname ?? undefined);
+        toast.success(`Saved the current layout as "${trimmed}"`);
+      } else if (mode === "layout_update") {
+        store.updateWorkbench(item.key, pathname ?? undefined);
+        toast.success(`"${item.label}" now matches the current layout`);
+      } else if (mode === "layout_rename") {
+        // First press picks the layout and hands the input over to the new name.
+        if (!renameId) {
+          setRenameId(item.key);
+          setSearch("");
+          return;
+        }
+        if (!trimmed) return;
+        store.updateSavedView(renameId, { name: trimmed });
+        toast.success(`Renamed to "${trimmed}"`);
+      } else {
+        // No confirm, matching the rail's ✕ — a saved layout is cheap to remake.
+        store.deleteSavedView(item.key);
+        toast.success(`Removed "${item.label}"`);
+      }
+      onClose();
+      return;
+    }
+
+    // View switching is global — no target entity involved. Picking the
+    // already-active view toggles back to All, mirroring the chips.
+    if (mode === "view") {
+      const store = useInboxStore.getState();
+      if (item.key === "__all__" || item.active) {
+        store.setActiveBucketFilter(null);
+        store.setActiveProjectFilter(null, null);
+      } else if (item.kind === "project") {
+        store.setActiveProjectFilter(item.label, item.path ?? null);
+      } else {
+        store.setActiveBucketFilter(item.id);
+      }
+      onClose();
+      return;
+    }
+
+    if (!target) return;
+    const count = targets.length;
+    const store = useInboxStore.getState();
+    if (mode === "session_delete") {
+      for (const row of targets) store.deleteSession(row._id);
+      toast.success(count > 1 ? `Deleted ${count} sessions` : "Session deleted");
+      if (count > 1) useInboxSelection.getState().clear();
+      onClose();
+      return;
+    }
+    if (mode === "rename" || mode === "deadline" || mode === "project" || mode === "project_status" || mode === "trigger_cancel" || mode === "trigger_delete") {
+      if (mode === "trigger_delete") store.deleteTrigger(target._id);
+      else if (mode === "trigger_cancel") store.triggerAction(target._id, "cancel");
+      else {
+        let fields: Record<string, any>;
+        if (mode === "deadline") {
+          const date = /^\d{4}-\d{2}-\d{2}$/.test(search.trim()) ? new Date(`${search.trim()}T12:00:00`) : null;
+          const localDate = date && !Number.isNaN(date.getTime()) ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}` : null;
+          if (!date || localDate !== search.trim()) { toast.error("Enter a date as YYYY-MM-DD"); return; }
+          fields = { target_date: date.getTime() };
+        } else fields = mode === "rename" ? { title: search.trim() } : mode === "project" ? { project_id: item.key } : { status: item.key };
+        undoAsOne(`Changed ${counted(targets.length, targetType === "doc" ? "document" : targetType === "session" ? sessionNoun() : targetType)}`, () => {
+          for (const row of targets) {
+            if (targetType === "session") store.renameSession(row._id, fields.title);
+            else if (targetType === "task") store.updateTask(row.short_id, fields);
+            else if (targetType === "doc") store.updateDoc(row._id, fields);
+            else if (targetType === "plan") store.updatePlan(row.short_id || row._id, fields);
+            else if (targetType === "project") store.updateProject(row._id, fields);
+          }
+        });
+      }
+      onClose();
+      return;
+    }
+
+    // Agent-run and hand-off pick an agent, then advance to the message step
+    // (not a fire).
+    if (mode === "agent_run" || mode === "agent_handoff") {
+      setSelectedAgentKey(item.key);
+      setAgentStep("message");
+      return;
+    }
+
+    if (mode === "agent_switch") {
+      void switchSessionAgent(target as InboxSession, item.agentType as ConvexAgentType)
+        .then(() => toast.success(`Switch to ${item.label} requested`))
+        .catch((error) => { captureException(error); toast.error(error instanceof Error ? error.message : "Failed to switch agent"); });
+      onClose();
+      return;
+    }
+
+    if (mode === "agent_fork") {
+      try {
+        const fork = forkSessionAsAgent(target as InboxSession, item.agentType as ConvexAgentType);
+        void fork.ready.catch((error) => {
+          captureException(error);
+          toast.error(error instanceof Error ? error.message : "Failed to fork session");
+        });
+        onClose();
+      } catch (error) {
+        captureException(error);
+        toast.error(error instanceof Error ? error.message : "Failed to fork session");
+      }
+      return;
+    }
+
+    if (mode === "model") {
+      const store = useInboxStore.getState();
+      const real = store.getConvexId(target._id) ?? target._id;
+      const s0 = target as any;
+      // Split on the FIRST colon only — dynamic model ids can contain ":"
+      // (openrouter variant suffixes like ":free").
+      const keyStr = String(item.key);
+      const sep = keyStr.indexOf(":");
+      const kind = keyStr.slice(0, sep);
+      const value = keyStr.slice(sep + 1);
+      // commitModelChange owns the not-ready decision: a blank session records
+      // the choice locally on the stub (the create carries it), only the live
+      // rail needs a real id. Passing `real` (possibly still a stub) lets it
+      // stamp + defer instead of erroring here.
+      void commitModelChange({
+        conversationId: real,
+        agentType: s0?.agent_type,
+        current: { model: s0?.model, effort: s0?.effort },
+        sel: kind === "model" ? { model: value } : { effort: value },
+        blank: (s0?.message_count ?? 0) === 0,
+      });
+      onClose();
+      return;
+    }
+
+    if (mode === "device") {
+      if (item.usable === false) { toast.error(item.label.includes("running here") ? "Already running there" : "That machine is offline"); return; }
+      const device = moveTargets.find((d: any) => d.device_id === item.key);
+      if (device) void bulkMove(targets, device);
+      onClose();
+      return;
+    }
+    if (mode === "bucket") {
+      const store = useInboxStore.getState();
+      const resolveConvId = (t: any): string | null => {
+        const real = store.getConvexId(t._id) ?? t._id;
+        return isConvexId(real) || store.sessions[real] || store.conversations[real] ? real : null;
+      };
+      const applyBucket = (bucketId: string | null, bucketLabel?: string) => {
+        const convIds = targets.map(resolveConvId).filter((id): id is string => !!id);
+        const applied = convIds.length;
+        if (!applied) {
+          toast.error("Session is no longer available");
+          return;
+        }
+        const sessions = counted(applied, sessionNoun());
+        gestureToast(bucketId ? `Labeled ${bucketLabel}` : "Label removed", () =>
+          undoAsOne(bucketId ? `Labeled ${sessions} ${bucketLabel ?? ""}`.trimEnd() : `Removed the label from ${sessions}`, () => {
+            for (const convId of convIds) store.assignSessionToBucket(convId, bucketId);
+          }));
+      };
+      if (item.key === "__remove__") {
+        applyBucket(null);
+      } else if (item.key === "__create__") {
+        const name = search.trim();
+        const conversationIds = targets
+          .map(resolveConvId)
+          .filter((id): id is string => !!id);
+        store.createBucket(
+          { name },
+          conversationIds.length > 0
+            ? { version: 1, kind: "assignBucket", conversationIds }
+            : undefined,
+        ).then((r: any) => {
+          if (!r?.bucketId) return;
+          toast.success(`Created label "${name}"`);
+        }).catch(() => toast.error("Couldn't create label"));
+      } else {
+        applyBucket(item.key, item.label);
+      }
+      onClose();
+      return;
+    }
+
+    if (targetType === "task") {
+      // One undo named for the change; terminal moves route through the
+      // single close gateway (a parent with open subtasks opens its dialog).
+      const applyTaskUpdate = (fields: Record<string, any>) =>
+        updateTasksAsOne((targets as TaskItem[]).map((t) => t.short_id), fields);
+      const label = count === 1 ? (targets[0] as TaskItem).short_id : `${count} tasks`;
+
+      if (mode === "status") {
+        // Keys are team status ids; the status carries its category, which is
+        // what the terminal check and the server's side effects key on.
+        const picked = statusByKey(taskStatuses, item.key);
+        if (!picked) return;
+        if (!applyTaskUpdate(statusWriteFields(picked)).needsConfirm) toast.success(`${label} \u2192 ${item.label}`);
+      } else if (mode === "priority") {
+        applyTaskUpdate({ priority: item.key });
+        toast.success(`${label} priority \u2192 ${item.label}`);
+      } else if (mode === "labels") {
+        undoAsOne(`${item.active ? "Removed" : "Added"} label ${item.key} on ${counted(targets.length, "task")}`, () => {
+          for (const task of targets as TaskItem[]) updateTask(task.short_id, { labels: item.active ? (task.labels || []).filter(l => l !== item.key) : [...new Set([...(task.labels || []), item.key])] });
+        });
+        toast.success(`${item.active ? "Removed" : "Added"} label: ${item.key}`);
+      } else if (mode === "assign") {
+        applyTaskUpdate({ assignee: item.key });
+        const member = (teamMembers || []).find((m: any) => m._id === item.key);
+        toast.success(item.key ? `Assigned to ${item.face ? item.label : memberDisplayName(member, "user")}` : "Unassigned");
+      } else if (mode === "blocker" || mode === "related") {
+        const res = applyRelationPick(mode, targets as TaskItem[], item.pick);
+        reportRelationPick(res);
+        if (!res.ok) return;
+      } else if (mode === "parent") {
+        let failed = 0;
+        undoAsOne(`Nested ${counted(targets.length, "task")} under ${item.key}`, () => {
+          for (const t of targets as TaskItem[]) {
+            const res = setTaskParent(t.short_id, item.key);
+            if (!res.ok) failed++;
+          }
+        });
+        if (failed === 0) toast.success(`Nested under ${item.key}`);
+        else toast.error(`${failed} could not be nested (cycle, depth, or workspace)`);
+      }
+    } else if (targetType === "plan") {
+      if (mode === "plan_status") {
+        const shortId = target.short_id || target._id;
+        updatePlan(shortId, { status: item.key });
+        toast.success(`Plan \u2192 ${item.label}`);
+      }
+    } else {
+      if (mode === "type") {
+        undoAsOne(`Changed the type of ${counted(targets.length, "document")}`, () => {
+          for (const row of targets) updateDoc(row._id, { doc_type: item.key });
+        });
+        toast.success(`Type \u2192 ${item.label}`);
+      } else if (mode === "labels") {
+        undoAsOne(`${item.active ? "Removed" : "Added"} label ${item.key} on ${counted(targets.length, "document")}`, () => {
+          for (const row of targets) updateDoc(row._id, { labels: item.active ? (row.labels || []).filter((l: string) => l !== item.key) : [...new Set([...(row.labels || []), item.key])] });
+        });
+        toast.success(`${item.active ? "Removed" : "Added"} label: ${item.key}`);
+      }
+    }
+    onClose();
+  }, [items, target, targets, targetType, mode, onClose, updateTask, updatePlan, updateDoc, teamMembers, search, taskStatuses, pathname, renameId, moveTargets, bulkMove]);
+
+  // Launch a session per selected task with the chosen agent + initial message.
+  const launchAgentRun = useCallback(() => {
+    if (!selectedAgentKey) return;
+    const agentType = selectedAgentKey.replace("agent:", "");
+    const agentLabel = AGENT_OPTIONS.find((a) => a.key === selectedAgentKey)?.label || "agent";
+    const msg = agentMessage.trim() || undefined;
+    const runnable = (targets as TaskItem[]).filter((t) => t && t.short_id);
+    if (!runnable.length) {
+      toast.error("No tasks to run");
+      return;
+    }
+    Promise.allSettled(
+      runnable.map((t) => assignToAgent(t.short_id, agentType, msg))
+    ).then((results) => {
+      const failures = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+      const ok = runnable.length - failures.length;
+      if (failures.length) console.error("[agent_run] failures", failures.map((f) => f.reason));
+      if (!ok) {
+        toast.error(`Couldn't start ${agentLabel}: ${failures[0]?.reason?.message || "failed"}`);
+      } else if (failures.length) {
+        toast.warning(`Started ${ok}/${runnable.length} ${agentLabel} runs — ${failures.length} failed`);
+      } else {
+        toast.success(ok === 1 ? `Starting ${agentLabel}` : `Starting ${ok} ${agentLabel} sessions`);
+      }
+    });
+    onClose();
+  }, [selectedAgentKey, agentMessage, targets, assignToAgent, onClose]);
+
+  // Hand the target session to a fresh session on the chosen agent (its
+  // default model) with the typed direction — the same action the header
+  // panel and `cast handoff --to` run.
+  const launchHandoff = useCallback(() => {
+    if (!selectedAgentKey || !target) return;
+    const agentType = selectedAgentKey.replace("agent:", "");
+    const agentLabel = AGENT_OPTIONS.find((a) => a.key === selectedAgentKey)?.label || "agent";
+    const store = useInboxStore.getState();
+    const real = store.getConvexId(target._id) ?? target._id;
+    void startHandoff(convex, { conversation_id: real, agent_type: agentType, direction: agentMessage })
+      .then((res) => {
+        toast.success(`Handed off to ${res.short_id} on ${agentLabel}`);
+        useInboxStore.getState().requestNavigate(res.conversation_id);
+      })
+      .catch((error) => { captureException(error); toast.error(error instanceof Error ? error.message : "Failed to hand off"); });
+    onClose();
+  }, [selectedAgentKey, agentMessage, target, convex, onClose]);
+
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if (e.nativeEvent.isComposing) return;
+    if (mode === "snooze" && search === "" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      const index = items.findIndex((item) => item.key === e.key.toLowerCase());
+      if (index >= 0) { e.preventDefault(); selectItem(index); return; }
+    }
+    // Esc from a deep view escapes to GLOBAL (closes the palette), never just
+    // one level — climbing back up is ↑ past the top / Backspace-on-empty,
+    // and only exists when the user came down from the root palette.
+    // Rename's second step climbs back to the layout picker before it leaves —
+    // the same one-step-back Esc the agent_run message step offers.
+    const backOutOfRename = () => { setRenameId(null); setSearch(""); };
+    if (e.key === "Escape") {
+      e.preventDefault();
+      if (renameId) backOutOfRename(); else onClose();
+      return;
+    }
+    if ((e.key === "Backspace" || e.key === "ArrowLeft") && search === "") {
+      e.preventDefault();
+      if (renameId) backOutOfRename();
+      else if (enteredViaRoot) onBack();
+      else onClose();
+      return;
+    }
+    if (e.key === "ArrowDown" || (e.key === "j" && e.ctrlKey)) {
+      e.preventDefault();
+      setHighlightIndex((i) => Math.min(i + 1, items.length - 1));
+      return;
+    }
+    if (e.key === "ArrowUp" || (e.key === "k" && e.ctrlKey)) {
+      e.preventDefault();
+      if (highlightIndex === 0 && enteredViaRoot) {
+        onBack();
+        return;
+      }
+      setHighlightIndex((i) => Math.max(i - 1, 0));
+      return;
+    }
+    if (e.key === "Enter") {
+      e.preventDefault();
+      selectItem(highlightIndex);
+      return;
+    }
+    const quickPick = paletteDigitIndex(e.nativeEvent, items.length);
+    if (quickPick >= 0) { e.preventDefault(); selectItem(quickPick); return; }
+
+  }, [items, highlightIndex, selectItem, onBack, onClose, enteredViaRoot, search, renameId, mode]);
+
+  useWatchEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const highlighted = el.children[highlightIndex] as HTMLElement;
+    if (highlighted) highlighted.scrollIntoView({ block: "nearest" });
+  }, [highlightIndex]);
+
+  const modeLabel =
+    mode === "character" ? "Pick an animal, or type a name…" :
+    mode === "snooze" ? "Snooze session for…" :
+    mode === "rename" ? "Enter a new name…" :
+    mode === "deadline" ? "Target date (YYYY-MM-DD)…" :
+    mode === "project" ? "Move to project…" :
+    mode === "project_status" ? "Change project status…" :
+    mode === "trigger_delete" ? "Delete trigger" :
+    mode === "session_delete" ? "Delete session: gone for you and your team, cannot be undone" :
+    mode === "trigger_cancel" ? "Cancel trigger" :
+    mode === "status" ? "Change status..." :
+    mode === "priority" ? "Set priority..." :
+    mode === "labels" ? "Toggle label..." :
+    mode === "assign" ? "Assign to a person or a role" :
+    mode === "type" ? "Change document type..." :
+    mode === "agent_run" ? "Start agent run — pick an agent..." :
+    mode === "agent_switch" ? "Switch agent..." :
+    mode === "agent_fork" ? "Fork session as…" :
+    mode === "agent_handoff" ? "Hand off to — pick an agent…" :
+    mode === "bucket" ? "Label session — type to filter or create..." :
+    mode === "device" ? "Move to machine — pick where these sessions run…" :
+    mode === "model" ? "Change model & effort..." :
+    mode === "view" ? "Switch view — filter by label or project..." :
+    mode === "parent" ? "Set parent — search tasks..." :
+    mode === "blocker" ? "Add blocker — search tasks..." :
+    mode === "related" ? "Link a related task — search tasks..." :
+    mode === "layout_save" ? "Save current layout — type a name..." :
+    mode === "layout_update" ? "Update layout to the current arrangement..." :
+    mode === "layout_rename" ? (renameId ? "Rename layout — type the new name..." : "Rename layout — pick one...") :
+    mode === "layout_delete" ? "Delete layout..." :
+    "Select...";
+
+  const itemClass = (i: number) =>
+    `w-full flex items-center gap-3 px-4 py-2.5 text-sm ${
+      i === highlightIndex
+        ? "bg-sol-bg-highlight text-sol-text"
+        : "text-sol-text-muted hover:bg-sol-bg-alt/50"
+    }`;
+
+  // Second step of "Start agent run" and "Hand off to": compose the initial
+  // message (a hand-off's direction), then launch.
+  if ((mode === "agent_run" || mode === "agent_handoff") && agentStep === "message") {
+    const handoff = mode === "agent_handoff";
+    const agentLabel = AGENT_OPTIONS.find((a) => a.key === selectedAgentKey)?.label || "Agent";
+    const count = targets.length;
+    const targetSummary = handoff
+      ? ((target as { short_id?: string } | undefined)?.short_id ?? "session")
+      : count === 1 ? (targets[0] as TaskItem).short_id : `${count} tasks`;
+    const launch = handoff ? launchHandoff : launchAgentRun;
+    return (
+      <>
+        <div className="flex items-center gap-2 px-4 py-2 border-b border-sol-border/30">
+          <button
+            onClick={() => setAgentStep("pick")}
+            className="text-xs px-1.5 py-0.5 rounded bg-sol-bg-alt border border-sol-border/50 text-sol-text-dim hover:text-sol-text transition-colors flex-shrink-0"
+          >
+            &larr;
+          </button>
+          <Bot className={`w-4 h-4 flex-shrink-0 ${AGENT_COLORS[selectedAgentKey || ""] || "text-sol-violet"}`} />
+          <span className="text-sm text-sol-text">{agentLabel}</span>
+          <span className="text-xs text-sol-text-dim font-mono">· {targetSummary}</span>
+        </div>
+        <div className="p-4">
+          <label className="block text-[10px] font-semibold uppercase tracking-widest text-sol-text-dim/70 mb-2">
+            {handoff ? "Direction" : "Initial message"}
+          </label>
+          <textarea
+            ref={messageRef}
+            value={agentMessage}
+            onChange={(e) => setAgentMessage(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                launch();
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setAgentStep("pick");
+              }
+            }}
+            rows={4}
+            placeholder={handoff ? "What should the next session do first?" : "Message the agent starts with..."}
+            className="w-full resize-none rounded-lg bg-sol-bg-alt/40 border border-sol-border/40 px-3 py-2 text-sm text-sol-text placeholder:text-sol-text-dim/60 outline-none focus:border-sol-cyan/50 transition-colors"
+          />
+          {handoff && (
+            <p className="mt-2 text-[10px] leading-snug text-sol-text-dim">{HANDOFF_EXPLAINER}</p>
+          )}
+          <button
+            onClick={launch}
+            className="mt-3 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-sol-cyan/15 hover:bg-sol-cyan/25 border border-sol-cyan/30 text-sol-cyan text-sm font-medium transition-colors"
+          >
+            <Bot className="w-4 h-4" />
+            {handoff ? `Hand off to ${agentLabel}` : count === 1 ? `Launch ${agentLabel}` : `Launch ${count} ${agentLabel} runs`}
+          </button>
+        </div>
+        <div className="flex items-center gap-3 px-4 py-2 border-t border-sol-border/30 text-[10px] text-sol-text-dim">
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">&#9166;</KeyCap>
+            launch
+          </span>
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">&#8679;</KeyCap>
+            <KeyCap size="xs">&#9166;</KeyCap>
+            newline
+          </span>
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">Esc</KeyCap>
+            back
+          </span>
+        </div>
+      </>
+    );
+  }
+
+  const numberedCount = items.filter((it: any) => !it.quickKey).length;
+
+  return (
+    <>
+      <div className="flex items-center gap-2 px-4 py-2 border-b border-sol-border/30">
+        {enteredViaRoot && (
+          <button
+            onClick={onBack}
+            title="Back to actions" aria-label="Back to actions"
+            className="text-xs px-1.5 py-0.5 rounded bg-sol-bg-alt border border-sol-border/50 text-sol-text-dim hover:text-sol-text transition-colors flex-shrink-0"
+          >
+            <KeyCap size="xs">←</KeyCap>
+          </button>
+        )}
+        <Search className="w-4 h-4 text-sol-text-dim flex-shrink-0" />
+        <input
+          ref={inputRef}
+          value={search}
+          aria-label={modeLabel}
+          type={mode === "deadline" ? "date" : "text"}
+          onChange={(e) => setSearch(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder={modeLabel}
+          className="flex-1 text-sm bg-transparent text-sol-text placeholder:text-sol-text-dim/60 outline-none"
+        />
+      </div>
+      {(mode === "blocker" || mode === "related") && (
+        <RelationQueryHint mode={mode} search={search} matched={items.length > 0} targets={targets as TaskItem[]} />
+      )}
+      <div ref={listRef} className="max-h-[320px] overflow-y-auto py-1">
+        {items.length === 0 && !((mode === "blocker" || mode === "related") && relationQueryError(search, mode, false)) && (
+          <div className="px-4 py-6 text-center text-sm text-sol-text-dim">No results</div>
+        )}
+        {items.map((item: any, i: number) => {
+          const Icon = item.icon;
+          // A heading rides inside its first item's own child, so the list
+          // keeps one child per item and the highlight scroll (children[i])
+          // still lands on the right row.
+          const heading = item.section && item.section !== items[i - 1]?.section ? item.section : null;
+          const row = (
+            <button
+              key={item.key}
+              onClick={() => selectItem(i)}
+              onMouseEnter={() => setHighlightIndex(i)}
+              className={itemClass(i)}
+            >
+              {item.type === "agent" ? (
+                <AgentTypeIcon agentType={item.agentType} className={`w-4 h-4 flex-shrink-0 ${AGENT_COLORS[item.key] || "text-sol-violet"}`} />
+              ) : mode === "assign" && !item.face ? (
+                <AvatarImg
+                  src={item.image}
+                  alt={item.label}
+                  className="w-4 h-4 rounded-full flex-shrink-0"
+                  fallback={
+                    <div className="w-4 h-4 rounded-full flex-shrink-0 bg-sol-bg-highlight border border-sol-border/50 flex items-center justify-center text-[8px] font-medium text-sol-text-muted">
+                      {item.label.replace(" (you)", "").split(" ").map((w: string) => w[0]).join("").slice(0, 2).toUpperCase()}
+                    </div>
+                  }
+                />
+              ) : mode === "labels" ? (
+                <span className={`w-3 h-3 rounded-full flex-shrink-0 ${item.dot || "bg-neutral-400"}`} />
+              ) : mode === "bucket" && item.dot ? (
+                // Square swatch: manual buckets read differently from the round
+                // auto-derived label/project dots.
+                <span className={`w-3 h-3 rounded-[3px] flex-shrink-0 ${item.dot}`} />
+              ) : mode === "view" && item.dot ? (
+                // Same shape convention as the chip row: square = manual label,
+                // round = auto-derived project.
+                <span className={`w-3 h-3 flex-shrink-0 ${item.kind === "project" ? "rounded-full" : "rounded-[3px]"} ${item.dot}`} />
+              ) : item.face ? (
+                <RoleAvatar avatar={item.face} size={18} className="flex-shrink-0" />
+              ) : Icon ? (
+                <Icon className={`w-4 h-4 flex-shrink-0 ${item.color || ""}`} />
+              ) : null}
+              {item.task ? (
+                // A task pick: one line, its id then its title cut to fit, and
+                // any hint in its own slot so a refusal is never lost.
+                <span className="flex-1 min-w-0 flex items-center gap-2 text-left">
+                  <span className="font-mono text-xs text-sol-text-dim flex-shrink-0">{item.task.ref}</span>
+                  <span className="truncate">{item.task.title}</span>
+                </span>
+              ) : (
+                <span className="flex-1 text-left">
+                  {item.label}
+                  {item.hint && <span className="ml-1.5 text-sol-text-dim">{item.hint}</span>}
+                </span>
+              )}
+              {item.task && item.hint && (
+                <span className={`text-xs flex-shrink-0 ${item.warn ? "text-sol-red" : "text-sol-text-dim"}`}>{item.hint}</span>
+              )}
+              {mode === "view" && item.kind === "project" && (
+                <span className="text-[10px] text-sol-text-dim/60 flex-shrink-0">project</span>
+              )}
+              {typeof item.count === "number" && (
+                <span className="text-[10px] tabular-nums text-sol-text-dim/70 flex-shrink-0">{item.count}</span>
+              )}
+              {item.active && <Check className="w-4 h-4 text-sol-cyan flex-shrink-0" />}
+              {mode === "snooze" ? <KeyCap size="xs">{item.key.toUpperCase()}</KeyCap> : i < 9 && <span className="flex gap-0.5"><KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap><KeyCap size="xs">{i + 1}</KeyCap></span>}
+              {item.type === "agent" && mode === "agent_run" && (
+                <span className="text-[10px] text-sol-text-dim font-mono">&rarr;</span>
+              )}
+            </button>
+          );
+          if (!heading) return row;
+          return (
+            <div key={item.key}>
+              <div className="px-4 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-widest text-sol-text-dim/70">{heading}</div>
+              {row}
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-3 px-4 py-2 border-t border-sol-border/30 text-[10px] text-sol-text-dim">
+        <span className="flex items-center gap-1">
+          <KeyCap size="xs">&uarr;</KeyCap>
+          <KeyCap size="xs">&darr;</KeyCap>
+          navigate
+        </span>
+        <span className="flex items-center gap-1">
+          <KeyCap size="xs">&#9166;</KeyCap>
+          select
+        </span>
+        <span className="flex items-center gap-1">
+          <KeyCap size="xs">Esc</KeyCap>
+          close
+        </span>
+        {enteredViaRoot && (
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">&uarr;</KeyCap>
+            back
+          </span>
+        )}
+        {numberedCount > 0 && (
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap><KeyCap size="xs">1-{Math.min(items.length, 9)}</KeyCap>
+            quick pick
+          </span>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ─── Unified Command Palette ────────────────────────────────────
+// We substring-match the local session cache OURSELVES and hand cmdk only the
+// matches — because cmdk mounts and re-scores every Item it's given on each
+// keystroke, so feeding it the whole cache (thousands of sessions) janks typing.
+// The scan covers the whole cache, so every cached session answers on the first
+// keystroke; RECENT_RENDER_CAP bounds how many matches we actually mount. The
+// server search ("Search Results") below covers sessions this device never cached.
+const RECENT_RENDER_CAP = 25;
+const RECENT_IDLE_CAP = 8;
+const EMPTY_ROSTER: Device[] = [];
+
+/** A typed query as a row quotes it: trimmed, and cut short with an ellipsis
+ *  so the closing quote survives the row's own truncation. */
+/** Cmd+Enter (Ctrl+Enter), drawn on the one row it runs. */
+function ModEnterCaps() {
+  return (
+    <span className="flex items-center gap-[2px]">
+      <KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap>
+      <KeyCap size="xs">&#9166;</KeyCap>
+    </span>
+  );
+}
+
+/** The recents pool with the person's favorites added (once each), for a
+ *  typed query that ranks them all together. */
+function withFavorites<T extends { _id: unknown }>(pool: T[], favorites: T[], exclude?: readonly string[]): T[] {
+  const seen = new Set(pool.map((c) => String(c._id)));
+  const skip = new Set(exclude ?? []);
+  const added = favorites.filter((f) => !seen.has(String(f._id)) && !skip.has(String(f._id)));
+  return added.length ? [...pool, ...added] : pool;
+}
+
+function previewQuery(query: string): string {
+  const q = query.trim();
+  return q.length > 40 ? `${q.slice(0, 40)}\u2026` : q;
+}
+
+// Stable empty index handed to the mention-index selector while the palette is
+// closed, so a closed palette doesn't re-render on task/doc/plan sync churn.
+const EMPTY_MENTION_INDEX = { tasks: {}, docs: {}, plans: {} } as const;
+const ENTITY_RENDER_CAP = 8;
+const EMPTY_RECENT_VISITS: RecentVisit[] = [];
+const RECENT_VISITS_RENDER_CAP = 4;
+// Closed-palette stable refs: a closed palette must not re-render on
+// bucket/assignment sync churn (it reads these only to label recent rows).
+const EMPTY_BUCKETS: Record<string, BucketItem> = {};
+const EMPTY_BUCKET_ASSIGNMENTS: Record<string, BucketAssignmentItem> = {};
+const EMPTY_VAULT_FILES: Record<string, { dir?: boolean; mtime: number }> = {};
+
+const MARKDOWN_RE = /\.(md|markdown)$/i;
+
+// Memoized: this overlay is ALWAYS mounted inside DashboardLayout, which
+// re-renders on every heartbeat. Its only prop (`standalone`) is stable, so memo
+// severs the parent-cascade — combined with snapshotting session data at open
+// (above), the palette now re-renders only on its OWN state, not on session churn.
+function CommandPaletteImpl({ standalone = false }: { standalone?: boolean }) {
+  const [query, setQuery] = useState("");
+  const [actionSearch, setActionSearch] = useState("");
+  const [actionMode, setActionMode] = useState<ActionMode | null>(null);
+  // Whether the submenu was reached by drilling down from the root palette
+  // (vs deep-linked open, e.g. Ctrl+Shift+M straight into label mode).
+  const [enteredViaRoot, setEnteredViaRoot] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const { open: paletteOpen, targets: initialTargets, targetType: initialTargetType, initialMode, initialQuery: paletteInitialQuery, pick } = useInboxStore((s) => s.palette);
+  const [drilled, setDrilled] = useState<{ type: PaletteTargetType; row: any; query: string } | null>(null);
+  // The empty hosted palette folds the rest of Create behind one row.
+  const [createOpen, setCreateOpen] = useState(false);
+  const followLeaderId = useInboxStore((s) => s.followLeaderId);
+  // A drilled teammate's follow state reads the store, not the row taken at
+  // drill time, so the verb flips the moment the follow does.
+  const targets = useMemo(
+    () => !drilled ? initialTargets : drilled.type === "person" ? [{ ...drilled.row, following: followLeaderId === drilled.row._id }] : [drilled.row],
+    [drilled, initialTargets, followLeaderId],
+  );
+  const targetType = drilled?.type ?? initialTargetType;
+  const paletteRef = useRef<HTMLDivElement>(null);
+  // Pick mode (lib/palettePick.ts): the palette is an entity chooser for a
+  // caller. Only the allowed entity groups render, selection reports back
+  // through pick.onPick instead of navigating, and the caller's extra rows
+  // (e.g. "new agent session") sit on top.
+  const picking = !!pick;
+  const pickAllows = useCallback((kind: PalettePickKind) => !pick || pick.kinds.includes(kind), [pick]);
+  // Two-step pick (pick.notePlaceholder set): the chosen target waits here
+  // while the confirm step collects the optional note. The query is captured
+  // at choose time — needsQuery extras read it from the search box. The note
+  // itself lives in MessageInput's draft under PALETTE_PICK_DRAFT.
+  const [pickChosen, setPickChosen] = useState<{ target: PalettePickTarget; query: string } | null>(null);
+  const pickConfirmRef = useRef<HTMLDivElement>(null);
+  const pickDropRef = useRef<((files: File[]) => void) | null>(null);
+  const closePalette = useInboxStore((s) => s.closePalette);
+  const openCreateModal = useInboxStore((s) => s.openCreateModal);
+  const docWorkspaceStamp = workspaceStamp(useWorkspaceArgs());
+
+  const updateTask = useInboxStore((s) => s.updateTask);
+  const pinDoc = useInboxStore((s) => s.pinDoc);
+  // Kill from the palette says what schedules died with the session, same as
+  // the sidebar kill button (the webList subscription inside is deduped).
+  const { killManyWithNotice } = useTriggerKillNotice();
+  const { user: currentUser } = useCurrentUser();
+  const teamMembers = useInboxStore((s) => s.teamMembers.length > 0 ? s.teamMembers : undefined);
+  const openDm = useOpenDm();
+
+  const open = standalone || paletteOpen;
+
+  const allFavorites = useInboxStore((s) => s.favorites);
+  const bookmarks = useInboxStore((s) => s.bookmarks);
+
+  // The palette is a TRANSIENT overlay, so it SNAPSHOTS session-derived data once
+  // per open rather than subscribing to it live. Every agent heartbeat bumps
+  // updated_at on its conversation, which both mints a fresh `s.sessions` ref AND
+  // pushes a new `listRecentSessions` result ~1-2×/sec — and the old live
+  // subscriptions re-ran a merge+sort over the WHOLE session cache (thousands of
+  // rows) on each one, janking the open palette. Recents going a few seconds stale
+  // while it's up is fine; the search groups below cover anything the snapshot misses.
+
+  // Server recents: gate on open AND "not yet frozen" so the query unsubscribes
+  // after its first result — heartbeat pushes then stop re-rendering the palette.
+  const recentFrozenRef = useRef(false);
+  const recentConversations = useQuery(
+    api.conversations.listRecentSessions,
+    open && !recentFrozenRef.current ? {} : "skip",
+  );
+
+  // Globally-synced lightweight index of tasks/docs/plans (title + short_id +
+  // status), populated by DashboardLayout's useSyncMention* hooks, with the
+  // store's own task, doc and plan collections over it (searchIndexOf): the
+  // index samples each team first, so the person's own to-dos and notes come
+  // from the store. Captured at open (already pre-synced) so a closed palette
+  // ignores entity-sync churn and an open one doesn't re-render on it.
+  const mentionIndex = useMemo(
+    () => (open ? searchIndexOf(useInboxStore.getState()) : EMPTY_MENTION_INDEX),
+    [open],
+  );
+  // Workspace scoping uses the active-team pointer alone: an unset pointer IS
+  // the personal workspace, so falling back to the user's default team here
+  // would make personal rows unreachable from the palette.
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id);
+  const savedViewRows = useInboxStore((s) => s.savedViews);
+  // Opt-in team features: an off feature has no palette entry, no channel
+  // rows and no "search chat" — the same "no UI at all" rule the sidebar uses.
+  const chatOn = useTeamFeature("chat");
+  const callsOn = useCallsAvailable();
+  const orgOn = useWorkspaceFeature("org");
+  const changesOn = useTeamFeature("changes");
+  const featuresOn: Partial<Record<TeamFeatureKey, boolean>> = { chat: chatOn, calls: callsOn, org: orgOn, changes: changesOn };
+  const featureOn = (f: TeamFeatureKey | undefined) => !f || featuresOn[f];
+
+  // Merge locally-loaded inbox sessions (own, instant) with the server list (own +
+  // team-visible). Shows local sessions immediately, re-merges once when the server
+  // result lands, then FREEZES — so heartbeat churn can't re-run this whole-cache
+  // sort while the palette is open, and the query above flips to "skip".
+  const [recentSessions, setRecentSessions] = useState<any[]>([]);
+  useWatchEffect(() => {
+    if (!open) { recentFrozenRef.current = false; setRecentSessions([]); return; }
+    if (recentFrozenRef.current) return;
+    const byId = new Map<string, any>();
+    for (const c of (recentConversations ?? [])) byId.set(c._id, c);
+    // Scope the local cache like the inbox panel (and the chip counts above):
+    // the store caches sessions across scopes, so an unfiltered merge would
+    // resurface rows from a previously viewed scope as recents.
+    // Workers stay in: the ranking sinks them below the sessions they serve
+    // rather than hiding a session someone may be reaching for by name.
+    for (const s of Object.values(filterInboxScopeFromState(useInboxStore.getState()))) {
+      byId.set(s._id, { ...byId.get(s._id), ...(s as any) });
+    }
+    setRecentSessions(Array.from(byId.values()).sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0)));
+    // Server query has landed (undefined = still loading) → freeze.
+    if (recentConversations !== undefined) recentFrozenRef.current = true;
+  }, [open, recentConversations]);
+
+  // "Recently Visited" — the unified recents rail (sessions, chip views,
+  // pages), same source as the header's RecentlyViewedMenu. Empty-query only:
+  // with a query the dedicated search groups below take over. The standalone
+  // Electron palette window has its own store, so chip-view items (which
+  // mutate THIS window's filters) are meaningless there and skipped.
+  const vaultReady = useVaultStore((st) => st.vaults.length > 0 || st.activeVaultId !== null);
+
+  // Vault notes are searchable from Cmd+K like any entity. Snapshot the file
+  // index at open (same pattern as mentionIndex): the vault store churns on
+  // watcher events, and a transient overlay shouldn't re-render on them.
+  const vaultFiles = useMemo(
+    () => (open && vaultReady ? useVaultStore.getState().files : EMPTY_VAULT_FILES),
+    [open, vaultReady],
+  );
+  const vaultNoteMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const ranked: Array<{ path: string; base: string; rank: number; mtime: number }> = [];
+    for (const [path, entry] of Object.entries(vaultFiles)) {
+      if (entry.dir || !MARKDOWN_RE.test(path)) continue;
+      const base = (path.split("/").pop() || path).replace(MARKDOWN_RE, "");
+      const rank = Math.min(score(base, q), score(path, q));
+      if (rank === Infinity) continue;
+      ranked.push({ path, base, rank, mtime: entry.mtime || 0 });
+    }
+    ranked.sort((a, b) => a.rank - b.rank || b.mtime - a.mtime);
+    return ranked.slice(0, ENTITY_RENDER_CAP);
+  }, [vaultFiles, query]);
+
+  // Triggers (schedules) search — same list the /triggers page subscribes to,
+  // gated on an actual query so an idle palette costs nothing. Convex dedupes
+  // the subscription when the page is already open.
+  // Store-fed (hooks/useSyncTriggers): the palette searches the cached
+  // roster; the feeder mounts only while a search is live.
+  useSyncTriggers(open && query.trim().length >= 2);
+  // Hosted mode's Assistant scope (lib/assistantScope) holds here as in the
+  // inbox: the palette offers the assistant's conversations and routines
+  // unless widened.
+  const { only: scopeOnly, setEverything: setAssistantEverything } = useAssistantScope();
+  const surfaceMode = useSurfaceMode();
+  // Favorites follow the scope like recents do: the empty palette's Favorites
+  // group and the typed ranking both read this list, never the raw one.
+  const favorites = useMemo(
+    () => withinScope<any>(allFavorites ?? [], scopeOnly && !picking, bySessionAgent) as any[],
+    [allFavorites, scopeOnly, picking],
+  );
+  const triggerList = useCollectionRows<any>("agentTasks", { sig: triggerSig });
+  // A query that is a kind's word ("routines") lists that kind; its rows
+  // rank as title hits (PALETTE_KIND), above a snippet-only conversation.
+  const listedKind = kindOfQuery(query);
+  const entityValuePrefix = (kind: "task" | "doc" | "routine") => (listedKind === kind ? PALETTE_KIND : "__entity__");
+  const triggerMatches = useMemo(
+    () => (Array.isArray(triggerList) ? matchRoutines<any>(withinScope<any>(triggerList, scopeOnly && !picking, isAssistantRoutine), query, 6) : []),
+    [triggerList, query, scopeOnly, picking],
+  );
+
+  // Global command rows fire the same handlers their keyboard chords use.
+  const { dispatchAction } = useShortcuts();
+  const { theme, toggleTheme, visualStyle, setVisualStyle } = useTheme();
+  const hostedMode = useHostedMode();
+  const modeWords = useModeWords();
+  const createKinds = useCreateKinds();
+  const recentVisits = useInboxStore((s) => (open ? s.recentVisits : EMPTY_RECENT_VISITS));
+  // The conversation already open is the palette's own context row, so it
+  // never repeats as a recent place.
+  const recentVisitRows = useMemo(() => {
+    if (!open) return [];
+    const st = useInboxStore.getState();
+    const here = st.currentSessionId;
+    return resolveRecentVisits(st, RECENT_VISITS_RENDER_CAP + 1, { skipViews: standalone })
+      .filter((row) => !here || row.sessionId !== here)
+      .slice(0, RECENT_VISITS_RENDER_CAP);
+  }, [recentVisits, open, standalone]);
+
+  // A conversation's label (manual bucket) is a derived join, not a stored
+  // field — resolve it live from the same assignment rows the session panel
+  // uses. Gated on `open` so a closed palette ignores filing churn.
+  const buckets = useInboxStore((s) => (open ? s.buckets : EMPTY_BUCKETS));
+  const bucketAssignments = useInboxStore((s) => (open ? s.bucketAssignments : EMPTY_BUCKET_ASSIGNMENTS));
+  const labelForConv = useMemo(() => {
+    const byConv = convBucketMap(bucketAssignments as Record<string, BucketAssignmentItem>);
+    const all = buckets as Record<string, BucketItem>;
+    return (convId: string): BucketItem | null => {
+      const id = byConv[convId];
+      const b = id ? all[id] : undefined;
+      return b && !b.archived_at ? b : null;
+    };
+  }, [buckets, bucketAssignments]);
+
+  // Pre-filter the local cache ourselves so cmdk only ever mounts the matches
+  // (RECENT_RENDER_CAP), never the whole cache. With no query we show the most
+  // recent few; with a query we scan the whole cache and collect matches.
+  // A pick's exclusions (a session already in the call) leave the recents
+  // too, and so does a role's standing agent while the role has its own row.
+  const { roles: orgRoles } = useOrgRoles();
+  const { people: pickPeople, roles: pickRoles } = useRolesAndPeopleOptions(teamMembers ?? NO_MEMBERS);
+  const recentPool = useMemo(() => {
+    const skip = new Set(pick?.exclude ?? []);
+    if (picking && pickAllows("role")) for (const r of orgRoles) if (r.standing?.conversation_id) skip.add(r.standing.conversation_id);
+    const scoped = withinScope(recentSessions as any[], scopeOnly && !picking, bySessionAgent) as typeof recentSessions;
+    return skip.size ? scoped.filter((c: any) => !skip.has(String(c._id))) : scoped;
+  }, [recentSessions, pick, picking, pickAllows, orgRoles, scopeOnly]);
+  // Where each recent stands (who acts next, set aside, a worker, whose),
+  // read once per frozen pool: the inbox's own placement when it holds the
+  // row, else the row's per-row placement, else its triage stamps.
+  const standingOf = useMemo(() => {
+    const state = useInboxStore.getState() as any;
+    const meId = state.currentUser?._id ? String(state.currentUser._id) : null;
+    const placements = recentPool.length ? placeInboxRows(state).placements : null;
+    const byId = new Map<string, SessionStanding>();
+    for (const c of recentPool) {
+      const id = String(c._id);
+      byId.set(id, sessionStanding(c, meId, placements?.get(id) ?? state.sessions[id] ?? null));
+    }
+    return (c: any) => byId.get(String(c._id)) ?? sessionStanding(c, meId, null);
+  }, [recentPool]);
+  const recentMatches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    // A typed query ranks favorites with everything else, by how well the
+    // words name them: a favorite is not a reason to outrank a title that
+    // starts with what was typed. The Favorites group is the empty palette's.
+    const pool = q && favorites?.length ? withFavorites(recentPool, favorites, pick?.exclude) : recentPool;
+    // One ranking for every session search (lib/instantSessionSearch): how
+    // directly the words name it, then where it stands and how recent it is.
+    return rankSessions(pool, q, standingOf, q ? RECENT_RENDER_CAP : RECENT_IDLE_CAP);
+  }, [recentPool, query, standingOf, favorites, pick]);
+  // Hosted mode reads recents as a list of errands, not a fleet: workers under
+  // another conversation and unsent drafts stay out, and so does anything the
+  // empty palette's "Recently visited" already lists. Two conversations that
+  // share a name stay two rows, told apart by their dates.
+  const recentShown = useMemo(() => {
+    if (!hostedMode) return recentMatches;
+    const visited = query.trim() ? null : new Set(recentVisitRows.slice(0, QUIET_RECENTS).map((r) => r.sessionId).filter(Boolean));
+    return (recentMatches as any[]).filter((conv) =>
+      !standingOf(conv)?.sub && !isUnsentConversation(conv) && !visited?.has(String(conv._id)));
+  }, [recentMatches, hostedMode, standingOf, query, recentVisitRows]);
+  // The machine most recents run on goes unsaid; a row names its machine only
+  // when it runs somewhere else (a cloud host, the other laptop).
+  const machineRoster = useInboxStore((s) => (open ? s.machineRoster : EMPTY_ROSTER)) as Device[];
+  const hostedFirst = useOnlyHostedAgent();
+  const deviceOfRecent = useMemo(() => {
+    if (machineRoster.length < 2) return () => undefined;
+    const counts = new Map<string, number>();
+    for (const c of recentPool) if (c.owner_device_id) counts.set(c.owner_device_id, (counts.get(c.owner_device_id) ?? 0) + 1);
+    let usual: string | null = null;
+    for (const [id, n] of counts) if (!usual || n > counts.get(usual)!) usual = id;
+    return (c: any): Device | undefined =>
+      c.owner_device_id && c.owner_device_id !== usual ? rosterDeviceOf(machineRoster, c.owner_device_id) : undefined;
+  }, [machineRoster, recentPool]);
+
+  // Search tasks / docs / plans over the mention index. Only when there's a
+  // query — the empty palette stays session-focused. Plan-type docs are excluded
+  // from Documents so they don't double up with the Plans group.
+  // In hosted mode's Assistant scope the to-dos and notes are the ones the
+  // To-dos and Notes pages list (assistantSearchIndex), with what the scope
+  // leaves out counted on the "more in Everything" row; plans are a
+  // developer's object and never show there.
+  const plansShown = surfaceMode.shows("pages.company");
+  const objectScope = scopeOnly && !picking;
+  const { tasks: taskMatches, docs: docMatches, plans: planMatches, hiddenByScope: objectsHiddenByScope } = useMemo(() => {
+    const browse = { task: picking && pickAllows("task"), doc: picking && pickAllows("doc"), plan: picking && pickAllows("plan") && plansShown };
+    const all = matchMentionGroups(mentionIndex as any, query, activeTeamId, ENTITY_RENDER_CAP, browse);
+    const plans = plansShown ? all.plans : [];
+    if (!objectScope) return { ...all, plans, hiddenByScope: 0 };
+    const scoped = matchMentionGroups(assistantSearchIndex(useInboxStore.getState()), query, activeTeamId, ENTITY_RENDER_CAP, browse);
+    const shown = new Set([...scoped.tasks, ...scoped.docs].map((r) => r._id));
+    const hiddenByScope = [...all.tasks, ...all.docs].filter((r) => !shown.has(r._id)).length;
+    return { tasks: openTasksFirst(scoped.tasks), docs: scoped.docs, plans, hiddenByScope };
+  }, [mentionIndex, query, activeTeamId, picking, pickAllows, plansShown, objectScope]);
+
+  // The server tier (hooks/useRemoteSearch): session content and titles, and
+  // chat hits when chat is on.
+  // cmdk keeps the first row it selected. Full-search / new-session / new-note
+  // always match, so if they mount before conversation search answers, Enter
+  // never opens a hit: they wait on searchAwaiting.
+  const { debouncedQuery, sessionSearchOn, searchRows: allSearchRows, searchError, contentLoaded: searchData, titlesLoaded: titleData, searchAwaiting, chatHits: allChatHits } =
+    useRemoteSearch(query, { enabled: open, chatTeamId: chatOn ? activeTeamId : null });
+  // The server tier keeps the same Assistant scope as the recents, and never
+  // repeats a conversation the recents above already show; what the scope
+  // leaves out is counted at the group's foot. Chat is team talk, so it waits
+  // in Everything too.
+  const scopedSearch = useMemo(
+    () => withinScope(allSearchRows, scopeOnly && !picking, (r: any) => bySessionAgent({ agent_type: r.agentType })),
+    [allSearchRows, scopeOnly, picking],
+  );
+  const searchHiddenByScope = allSearchRows.length - scopedSearch.length;
+  const recentIdSig = recentShown.map((conv: any) => String(conv._id)).join(",");
+  const searchRows = useMemo(() => {
+    const shown = new Set(recentIdSig.split(","));
+    return scopedSearch.filter((r: any) => !shown.has(String(r.conversationId)));
+  }, [scopedSearch, recentIdSig]);
+  const chatHits = scopeOnly && !picking ? NO_CHAT_HITS : allChatHits;
+  // Where only the assistant can answer, the Ask row leads a query nothing
+  // here matched yet. Results that land later go above it (askLeads), and
+  // the highlight moves with them to the best one, so Enter opens what was
+  // found and the ask waits on Cmd+Enter. cmdk keeps a selection across
+  // items mounting, so the move is its own Home key.
+  useWatchEffect(() => {
+    if (!hostedFirst || searchRows.length === 0) return;
+    const root = paletteRef.current;
+    if (!root?.querySelector('[cmdk-item][aria-selected="true"][data-palette-ask]')) return;
+    root.querySelector("input")?.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
+  }, [searchRows.length, hostedFirst]);
+
+  // Chat rooms by name — a SNAPSHOT read (getState), not a subscription: the
+  // channel map churns with every unread tick and the palette must not
+  // re-render on team chatter while open (see the snapshot-memo rule above).
+  // Scope and naming are the shared rules (selectChatRail, channelDisplayName),
+  // never restated here: the store caches rooms across workspaces, and an
+  // inlined predicate is how another team's rooms leak into this one's palette.
+  const chatChannelRows = useMemo(() => {
+    // Channel pick mode (e.g. "send this link to…") browses with an empty
+    // query and also offers teammates with no DM room yet — the caller opens
+    // the DM on pick.
+    const pickingChannels = picking && pickAllows("channel");
+    if (!open || !chatOn || (!pickingChannels && query.trim().length < 1))
+      return [] as Array<{ id: string; label: string; kind?: string; isPrivate?: boolean; image?: string }>;
+    const state = useInboxStore.getState() as any;
+    const viewerId = state.currentUser?._id ? String(state.currentUser._id) : "";
+    const members = (state.teamMembers ?? []) as any[];
+    const teamScope = activeTeamId ? String(activeTeamId) : undefined;
+    const q = query.trim().toLowerCase();
+    const rows: Array<{ id: string; label: string; kind?: string; isPrivate?: boolean; image?: string; s: number; t: number }> = [];
+    const dmPartners = new Set<string>();
+    // The rail's rooms in the rail's scope, ranked by who you actually talk
+    // to: recent and frequent rooms first, never by row churn (updated_at).
+    const rail = selectChatRail(state, viewerId, teamScope);
+    const frecency = chatFrecency(rail, state.chatMessages ?? {});
+    for (const c of rail) {
+      const others = c.kind === "dm" ? c.dmMemberIds ?? [] : [];
+      if (c.kind === "dm" && !others.length) continue;
+      if (c.kind === "dm" && others.length === 1) dmPartners.add(others[0]);
+      const label = channelDisplayName(c, members);
+      if (!label) continue;
+      const counterpart = dmCounterpart(c, members);
+      const s = matchScore(label, q);
+      if (s === Infinity) continue;
+      rows.push({ id: c.id, label, kind: c.kind, isPrivate: c.isPrivate, image: memberAvatarUrl(counterpart), s, t: frecency.get(c.id) ?? 0 });
+    }
+    if (pickingChannels) {
+      for (const m of members) {
+        const mid = m?._id ? String(m._id) : "";
+        if (!mid || mid === viewerId || dmPartners.has(mid) || !isPerson(m)) continue;
+        const label = memberName(m);
+        if (!label) continue;
+        const s = matchScore(label, q);
+        if (s === Infinity) continue;
+        rows.push({ id: mid, label, kind: "person", image: memberAvatarUrl(m), s, t: 0 });
+      }
+    }
+    return rows.sort((a, b) => a.s - b.s || b.t - a.t).slice(0, pickingChannels ? 12 : 5);
+  }, [open, query, activeTeamId, chatOn, picking, pick]);
+
+  // Person and role pick (e.g. "add to the call"): the one people and roles
+  // list every assignee picker shares, less the caller's exclusions. A role
+  // is offered only when it has a standing agent, and its row's id is that
+  // agent's session.
+  const whoRows = useMemo(() => {
+    const allow = (k: PalettePickKind) => picking && pickAllows(k);
+    if (!open || (!allow("person") && !allow("role"))) return [];
+    const viewerId = String((useInboxStore.getState() as any).currentUser?._id ?? "");
+    return pickWhoRows({
+      people: allow("person") ? pickPeople : null,
+      roles: allow("role") ? pickRoles : null,
+      standing: new Map(orgRoles.map((r) => [String(r._id), r.standing?.conversation_id])),
+      skip: new Set([viewerId, ...(pick?.exclude ?? [])]),
+      query,
+    });
+  }, [open, query, picking, pick, pickAllows, pickPeople, pickRoles, orgRoles]);
+
+  // Where each teammate is, from the roster SNAPSHOT (getState): the roster
+  // re-pushes on every teammate heartbeat and the palette must not re-render
+  // on it while open (the snapshot-memo rule above). The rule itself lives
+  // with the other presence logic (teammateWhereabouts): the server already
+  // withheld any session this viewer cannot open, so every row here is one
+  // the viewer can follow. Not offered in pick mode, which chooses an entity.
+  const teammateRows = useMemo(() => {
+    if (!open || picking) return [] as TeammateWhereabouts[];
+    const state = useInboxStore.getState() as any;
+    const viewerId = state.currentUser?._id ? String(state.currentUser._id) : null;
+    return teammateWhereabouts(state.teamMembers ?? [], viewerId, query, state.sessions, state.followLeaderId ?? null).slice(0, 6);
+  }, [open, query, picking]);
+
+  const chatAuthorName = useCallback((hit: LineAuthorFields) => {
+    const members = ((useInboxStore.getState() as any).teamMembers ?? []) as any[];
+    return lineAuthorFor(hit, { members: new Map(members.map((m) => [String(m._id), m])) }).name;
+  }, []);
+
+  const projectRows = useWorkspaceCollection<any>("projects");
+  const projectMatches = query.trim() ? matchProjects(projectRows, query, 8) : projectRows.slice(0, 8);
+  // The company's goals and roles, found by title or handle the way a project
+  // is, and opened on the Org screen (objectHref). A role answers to its
+  // `@handle` as written. Only where the Org screen shows (hosted mode hides it).
+  const orgShown = surfaceMode.showsPage("/org");
+  const goalRows = useWorkspaceCollection<any>("initiatives");
+  const goalMatches = !orgShown || picking ? [] : matchGoals(goalRows, query, 6);
+  const roleMatches = !orgShown || picking ? [] : matchRoles(orgRoles, query, 6);
+  const projects = useMemo(() => {
+    const dirMap = new Map<string, number>();
+    for (const c of recentSessions) {
+      const dir = c.git_root || c.project_path;
+      if (dir) {
+        const existing = dirMap.get(dir) || 0;
+        if (c.updated_at > existing) dirMap.set(dir, c.updated_at);
+      }
+    }
+    return Array.from(dirMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 6)
+      .map(([path]) => path);
+  }, [recentSessions]);
+
+  // Reset state when palette opens
+  useWatchEffect(() => {
+    if (open) {
+      setActionSearch("");
+      // A row's actions key (list.actions) opens on that row's actions. In
+      // hosted mode the root palette folds them behind one row, so it opens
+      // already drilled in; developer mode's root lists them first anyway.
+      const drillIn = initialMode === "actions" && hostedMode && initialTargets.length === 1 && initialTargetType;
+      setDrilled(drillIn ? { type: initialTargetType, row: initialTargets[0], query: "" } : null);
+      setCreateOpen(false);
+      setQuery(paletteInitialQuery || "");
+      setActionMode(initialMode !== "root" && initialMode !== "actions" ? initialMode as ActionMode : null);
+      setEnteredViaRoot(false);
+      setPickChosen(null);
+      useInboxStore.getState().clearDraft(PALETTE_PICK_DRAFT);
+    }
+  }, [open, initialMode, paletteInitialQuery]);
+
+  // Escape handling — Esc anywhere in the palette escapes to GLOBAL (closes
+  // it), including inside action submenus. Climbing back to the root list is
+  // ↑/Backspace in the submenu, not Esc.
+  useWatchEffect(() => {
+    if (standalone) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && open) {
+        e.preventDefault();
+        closePalette();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [open, standalone, closePalette]);
+
+  // Standalone palette events (Electron) — same global-escape rule: Esc hides
+  // the palette window even from inside a submenu.
+  useWatchEffect(() => {
+    if (!standalone) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setActionMode(null);
+        if (isElectron()) {
+          window.__CODECAST_ELECTRON__?.paletteHide?.();
+        }
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => document.removeEventListener("keydown", handleKeyDown, true);
+  }, [standalone]);
+
+  useWatchEffect(() => {
+    if (!standalone || !isElectron()) return;
+    const unsub = window.__CODECAST_ELECTRON__?.onPaletteShow?.(() => {
+      setQuery("");
+      setActionMode(null);
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>("[cmdk-input]");
+        input?.focus();
+      }, 50);
+    });
+    return unsub;
+  }, [standalone]);
+
+  const navigate = useCallback(
+    (path: string) => {
+      if (standalone && isElectron()) {
+        window.__CODECAST_ELECTRON__?.paletteNavigate?.(path);
+        return;
+      }
+      router.push(path);
+      closePalette();
+    },
+    [router, standalone, closePalette]
+  );
+
+  // A typed decision or stack short id (`sd-12`, `ds-3`) resolves to its page
+  // (docs/architecture/decisions-as-documents.md D4 / D5). These prefixes are
+  // not in the shared entity registry — a decision has no pill yet — so the
+  // palette answers them here.
+  // A typed address makes the browser-pane row concrete ("Open localhost:3000
+  // in a pane"); anything else leaves it as the blank-pane row.
+  const browserPaneUrl = useMemo(() => typedAddress(query), [query]);
+
+  // A staffing proposal (`op-7`, org-staffing.md S4) opens the org page with
+  // its pane, the same way: it has no pill of its own either.
+  const decisionRef = useMemo(() => {
+    const m = /^(sd|ds|op)-(\d+)$/i.exec(query.trim());
+    if (!m) return null;
+    const id = `${m[1].toLowerCase()}-${m[2]}`;
+    return m[1].toLowerCase() === "ds"
+      ? { kind: "stack" as const, id, href: `/decisions/stacks/${id}` }
+      : m[1].toLowerCase() === "op"
+        ? { kind: "proposal" as const, id, href: `/org?proposal=${id}` }
+        : { kind: "decision" as const, id, href: `/decisions/${id}` };
+  }, [query]);
+
+  // Hand the current query off to the full /search page — the palette shows a
+  // capped preview; the page has filters, pagination, and message context.
+  const openFullSearch = useCallback(() => {
+    const q = query.trim();
+    navigate(q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+  }, [query, navigate]);
+
+  // Session filter autocomplete (file:, pr:, label: ...), the same rows the
+  // /search box offers. A value list outranks every match (a dangling
+  // operator searches nothing yet); operator names sit below real matches,
+  // since the word may just be text (paletteItemScore reads the kind).
+  const { completion: filterCompletion, suggestions: filterSuggestions } = useSessionQuerySuggestions(
+    !picking && !drilled ? query : "",
+  );
+
+  const openVaultNote = useCallback((path: string) => {
+    useVaultStore.getState().noteOpened(path);
+    navigate(filesHref({ path }));
+  }, [navigate]);
+
+  // One compose entry for both hosts: the standalone Electron palette window
+  // flips itself into the compose popup; in-app opens the compose overlay.
+  // `dock` asks for the small docked composer; the standalone window has no
+  // dock to open it in, so it keeps its one popup.
+  const startCompose = useCallback((text: string, dock = false) => {
+    if (standalone) {
+      window.dispatchEvent(new CustomEvent("codecast-compose", { detail: text }));
+    } else {
+      closePalette();
+      useInboxStore.getState().openCompose(text || undefined, undefined, { dock });
+    }
+  }, [standalone, closePalette]);
+
+  const navigateToSession = useCallback(
+    (
+      conv: { _id: string; session_id?: string; title?: string; updated_at?: number; project_path?: string; git_root?: string; agent_type?: string; message_count?: number; is_idle?: boolean; user_id?: string; authorName?: string | null; authorAvatar?: string | null; inbox_killed_at?: number | null; inbox_dismissed_at?: number | null; inbox_stashed_at?: number | null; inbox_pinned_at?: number | null },
+      opts?: { messageId?: string; highlight?: string }
+    ) => {
+      const hash = opts?.messageId ? `#msg-${opts.messageId}` : "";
+      const conversationPath = `/conversation/${conv._id}${hash}`;
+      if (standalone && isElectron()) {
+        window.__CODECAST_ELECTRON__?.paletteNavigate?.(conversationPath);
+        return;
+      }
+      const store = useInboxStore.getState();
+      const pending: Record<string, any> = {};
+      if (opts?.messageId) pending.pendingScrollToMessageId = opts.messageId;
+      if (opts?.highlight) pending.pendingHighlightQuery = opts.highlight;
+      if (Object.keys(pending).length > 0) useInboxStore.setState(pending);
+      if (!store.sessions[conv._id]) {
+        // sessionRowFromSummary carries the triage stamps (killed/stash/
+        // dismiss/pin) through — an injected killed row used to render alive,
+        // and a stashed one flashed into the inbox as an active card at boot
+        // (ct-42666). Both palette sources supply them: favorites pass whole
+        // store rows, performListRecentSessions projects them off the doc.
+        store.injectSession(sessionRowFromSummary({
+          ...conv,
+          // Search/recent results null out author for own sessions, so a present
+          // authorName means "not mine" — carry it so the card labels whose it is.
+          author_name: conv.authorName ?? null,
+          author_avatar: conv.authorAvatar ?? null,
+        }));
+      } else {
+        store.navigateToSession(conv._id);
+      }
+      if (isInboxRoute(pathname) || pathname?.startsWith("/conversation/")) {
+        window.history.pushState(withInboxView({ inboxId: conv._id }), "", conversationPath);
+      } else {
+        router.push(conversationPath);
+      }
+      closePalette();
+    },
+    [router, pathname, standalone, closePalette]
+  );
+
+  // Pick mode: report the choice to the caller and close. Session rows go
+  // through chooseSession so every session group (favorites, bookmarks,
+  // recents, search) picks the same way it navigates.
+  const finishPick = useCallback(
+    (target: PalettePickTarget) => {
+      if (!pick) return;
+      if (pick.notePlaceholder) {
+        // Two-step: stage the target; the confirm step completes the pick.
+        setPickChosen({ target, query: query.trim() });
+        return;
+      }
+      pick.onPick(target, { query: query.trim() });
+      closePalette();
+    },
+    [pick, query, closePalette],
+  );
+  const sendPick = useCallback((note?: string, attachments?: ChatAttachment[]) => {
+    if (!pick || !pickChosen) return;
+    const trimmed = (note ?? "").trim();
+    pick.onPick(pickChosen.target, {
+      note: trimmed || undefined,
+      query: pickChosen.query,
+      attachments: attachments?.length ? attachments : undefined,
+    });
+    closePalette();
+  }, [pick, pickChosen, closePalette]);
+  const submitPickConfirm = useCallback(() => {
+    const form = pickConfirmRef.current?.querySelector("form");
+    const submit = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    if (form && submit && !submit.disabled) form.requestSubmit();
+    else sendPick("");
+  }, [sendPick]);
+  const chooseSession = useCallback(
+    (conv: Parameters<typeof navigateToSession>[0], opts?: Parameters<typeof navigateToSession>[1]) => {
+      if (pick) return finishPick({ kind: "session", id: conv._id, label: sessionCardTitle(conv) });
+      navigateToSession(conv, opts);
+    },
+    [pick, finishPick, navigateToSession],
+  );
+  const chooseEntity = useCallback(
+    (kind: Exclude<PalettePickKind, "session">, rec: { _id: string; title?: string }, path: string) => {
+      if (pick) return finishPick({ kind, id: rec._id, label: rec.title || "Untitled" });
+      navigate(path);
+    },
+    [pick, finishPick, navigate],
+  );
+
+  // Sessions go through navigateToSession (it injects rows the store lacks);
+  // the palette's own navigate closes the overlay with the move, and a chip
+  // view that stays on the page closes it here.
+  const openRecentSession = useCallback(
+    (id: string) => {
+      const conv = recentSessions.find((c) => c._id === id);
+      const row = recentVisitRows.find((r) => r.sessionId === id);
+      navigateToSession(conv ?? { _id: id, title: row?.title });
+    },
+    [recentSessions, recentVisitRows, navigateToSession],
+  );
+  const openRecentVisit = useOpenRecentVisit(openRecentSession, navigate);
+  const handleRecentVisitSelect = useCallback(
+    (row: ResolvedVisit) => {
+      openRecentVisit(row);
+      if (row.bucketId || row.projectName) closePalette();
+    },
+    [openRecentVisit, closePalette],
+  );
+
+  // A teammate's verbs, from the drilled person or a root "name › verb" row.
+  // The huddle is not here: its word is live call state (PersonHuddleItem).
+  const runPersonAction = useCallback((person: PalettePerson, actionKey: string) => {
+    const state = useInboxStore.getState();
+    const path = paletteObjectPath("person", person);
+    if (actionKey === "person_follow") {
+      if (state.followLeaderId === person._id) { state.setFollowLeader(null); closePalette(); return; }
+      state.setFollowLeader(person._id);
+      if (person.session) navigateToSession(state.sessions[person.session._id] ?? person.session);
+      else closePalette();
+      return;
+    }
+    if (actionKey === "person_message") { closePalette(); openDm([person._id]); return; }
+    if (actionKey === "open") { navigate(path); return; }
+    if (actionKey === "newtab") { window.open(path, "_blank"); closePalette(); return; }
+    if (actionKey === "copylink") { void copyToClipboard(`${shareOrigin()}${path}`).then(() => toast.success("Link copied")); closePalette(); }
+  }, [closePalette, navigate, navigateToSession, openDm]);
+
+  // Root action handlers
+  const handleRootAction = useCallback((actionKey: string) => {
+    if (!targets.length) return;
+    const target = targets[0] as any;
+
+    if (["device", "snooze", "status", "priority", "labels", "assign", "type", "plan_status", "agent_run", "agent_switch", "agent_fork", "agent_handoff", "rename", "project", "project_status", "deadline", "trigger_cancel", "trigger_delete", "session_delete", "bucket", "model", "parent", "blocker", "related", "character"].includes(actionKey)) {
+      setActionSearch("");
+      setEnteredViaRoot(true);
+      setActionMode(actionKey as ActionMode);
+      return;
+    }
+
+    const state = useInboxStore.getState();
+    if (!targetType) return;
+    if (targetType === "person") { runPersonAction(target as PalettePerson, actionKey); return; }
+    const path = paletteObjectPath(targetType, target);
+    const viewCommand = targetType === "session" && targets.length === 1 ? getPaletteSessionCommands(target._id).find(command => command.key === actionKey) : undefined;
+    if (viewCommand) { closePalette(); viewCommand.run(); return; }
+    if (actionKey === "open") {
+      if (targetType === "session") navigateToSession(target);
+      else navigate(path);
+      return;
+    }
+    if (actionKey === "newtab") { window.open(path, "_blank"); closePalette(); return; }
+    if (actionKey === "copylink") { void copyToClipboard(`${shareOrigin()}${path}`).then(() => toast.success("Link copied")); closePalette(); return; }
+    if (actionKey === "forward") { openForwardToChat({ url: `${shareOrigin()}${path}`, label: targetType, previewTitle: target.display_title || target.title || target.name }); return; }
+    if (actionKey.startsWith("create_")) { closePalette(); openCreateModal(actionKey.slice(7) as "task" | "plan" | "doc", targetType === "project" ? { project_id: target._id } : { plan_id: target._id, project_id: target.project_id }); return; }
+    if (actionKey === "clear_deadline") { state.updateProject(target._id, { target_date: null }); closePalette(); return; }
+    if (actionKey === "project_board") { navigate(`/projects/${target.short_id || target._id}`); return; }
+    if (actionKey === "trigger_duplicate") { navigate(`/triggers?task=${target._id}&duplicate=1`); return; }
+    if (actionKey === "trigger_prompt") { void copyToClipboard(target.prompt || "").then(() => toast.success("Prompt copied")); closePalette(); return; }
+    if (actionKey === "trigger_edit") { navigate(`/triggers?task=${target._id}&edit=1`); return; }
+    if (actionKey.startsWith("trigger_")) { state.triggerAction(target._id, actionKey.slice(8) as "pause" | "resume" | "runNow" | "reactivate"); closePalette(); return; }
+
+    if (actionKey === "remove_parent" && targetType === "task") {
+      const nested = (targets as TaskItem[]).filter((t) => (t as any).parent_id);
+      undoAsOne(`Removed the parent of ${counted(nested.length, "task")}`, () => {
+        for (const t of nested) setTaskParent(t.short_id, "");
+      });
+      toast.success("Parent removed");
+      closePalette();
+      return;
+    }
+
+    if (actionKey === "copy") {
+      if (targetType === "task" && isTask(target)) {
+        copyToClipboard(target.short_id);
+        toast.success(`Copied ${target.short_id}`);
+      } else if (targetType === "plan") {
+        copyToClipboard(target.short_id || target._id);
+        toast.success(`Copied ${target.short_id || target._id}`);
+      } else {
+        copyToClipboard(target.short_id || target._id);
+        toast.success("Copied ID");
+      }
+      closePalette();
+      return;
+    }
+
+    if (actionKey === "drop" && targetType === "task") {
+      let deferred = false;
+      undoAsOne(`Dropped ${counted(targets.length, "task")}`, () => {
+        for (const t of targets as TaskItem[]) {
+          if (closeTaskWithGuard(t.short_id, "dropped").needsConfirm) deferred = true;
+        }
+      });
+      if (!deferred) toast.success("Task dropped");
+      closePalette();
+      return;
+    }
+
+    if (actionKey === "pin" && targetType === "doc") {
+      const doc = target as DocItem;
+      pinDoc(doc._id, !doc.pinned);
+      toast.success(doc.pinned ? "Unstarred" : "Starred");
+      closePalette();
+      return;
+    }
+
+    if (actionKey === "archive" && targetType === "doc") {
+      undoAsOne(`Archived ${counted(targets.length, "document")}`, () => {
+        for (const doc of targets) state.archiveDoc(doc._id);
+      });
+      router.push("/docs");
+      closePalette();
+      return;
+    }
+
+    // Session actions. The single row verbs read targets[0]; every other verb
+    // runs once per target, so a ticked selection acts as one gesture.
+    if (targetType === "session") {
+      const session = target as InboxSession;
+      // The palette's row can predate a toggle; the store says what the star shows now.
+      if (actionKey === "session_parent") { navigate(`/conversation/${session.parent_conversation_id}`); return; }
+      if (actionKey === "session_branch") { void copyToClipboard(session.git_branch || "").then(() => toast.success("Branch copied")); closePalette(); return; }
+      if (actionKey === "session_files") { navigate(filesHref({ localPath: session.project_path || session.git_root })); return; }
+      const each: Record<string, (id: string) => void> = {
+        session_restore: (id) => state.restoreSession(id),
+        // The teardown rides the hide transition server side (dispatch.applyPatches);
+        // the notice hook names any schedules the kill cancels.
+        session_stash: (id) => state.stashSession(id),
+        session_stash_hide: (id) => state.stashSession(id, { hidden: true }),
+        session_unsnooze: (id) => state.wakeSnoozedSession(id),
+        session_defer: (id) => state.deferSession(id),
+      };
+      // The rest verdicts animate every row out, then file them as one undo.
+      const rest = PALETTE_REST_VERDICT[actionKey];
+      const ids = targets.map((t) => t._id);
+      if (rest) void animatedSetSessionRest(ids, rest);
+      // A kill waits on the cards' collapse and records its own entry then
+      // (one undo, one sound, one notice), so it is never wrapped in a group
+      // that closes before it lands.
+      else if (actionKey === "session_kill") killManyWithNotice(ids);
+      else if (actionKey === "session_pin") toggleSessionsLikeFirst(ids, "pin");
+      else if (actionKey === "session_favorite") toggleSessionsLikeFirst(ids, "favorite");
+      else {
+        const run = each[actionKey];
+        if (!run) return;
+        const verb = PALETTE_SESSION_VERB[actionKey] ?? "Changed";
+        undoAsOne(`${verb} ${counted(ids.length, sessionNoun())}`, () => {
+          for (const id of ids) run(id);
+        });
+      }
+      if (targets.length > 1) useInboxSelection.getState().clear();
+      closePalette();
+      return;
+    }
+  }, [targets, targetType, closePalette, pinDoc, router, navigate, navigateToSession, killManyWithNotice, openCreateModal, runPersonAction]);
+
+  const hasTargets = targets.length > 0 && targetType;
+  const target = targets[0] as any;
+
+  const contextLabel = useMemo(() => {
+    if (!hasTargets) return "";
+    if (targets.length === 1) {
+      if (targetType === "person") return (target as PalettePerson).name;
+      if (targetType === "session") {
+        return sessionCardTitle(target as InboxSession);
+      }
+      // Hosted mode names a to-do by its title alone: a short id is a
+      // developer's handle.
+      if (isTask(target)) return hostedMode ? sentenceCase(target.title) : `${target.short_id} \u00B7 ${target.title}`;
+      return target.display_title || target.title || "Untitled";
+    }
+    return `${targets.length} ${targetType}s selected`;
+  }, [targets, target, targetType, hasTargets, hostedMode]);
+
+  const actions = [...paletteActions(targetType, targets, currentUser?._id, chatOn, surfaceMode), ...(targetType === "session" && target && targets.length === 1 ? getPaletteSessionCommands(target._id) : [])];
+
+  const rootTaskStatuses = useTeamTaskStatusList(target?.team_id);
+  const pinnedAgents = usePinnedAgentIds();
+  const nestedMatches = query.trim().length < 2 ? [] : actions.flatMap(action => {
+    const options = action.key === "agent_switch" || action.key === "agent_fork" || action.key === "agent_run" || action.key === "agent_handoff" ? pinnedAgentRows(pinnedAgents, target?.agent_type)
+      : action.key === "status" ? statusEntityOptions(rootTaskStatuses)
+      : action.key === "priority" ? PRIORITY_OPTIONS
+      : action.key === "type" ? DOC_TYPE_OPTIONS
+      : action.key === "plan_status" ? PLAN_STATUS_OPTIONS
+      : action.key === "model" ? listedModels(AGENT_MODEL_CONFIG[modelAgentKey(target?.agent_type)] ?? { models: [] })
+      : [];
+    return options.filter(option => action.key !== "agent_switch" || option.key !== `agent:${target?.agent_type || "claude_code"}`).filter((option: any) => (action.key !== "agent_switch" && action.key !== "agent_fork") || canSessionBecomeAgent(option.agentType, target?.message_count)).filter(option => `${action.label} ${option.label}`.toLowerCase().includes(query.toLowerCase()) || query.toLowerCase().split(/\s+/).every(word => `${action.label} ${option.label}`.toLowerCase().includes(word))).map(option => ({ action, option }));
+  }).slice(0, 8);
+
+  // "samvit mes" → Samvit Ramadurgam › Message: a query naming a teammate and
+  // one of their verbs offers the verb at the root, the same one-step reach
+  // the rows above give a picked target's options. Each word finds people by
+  // the roster's own rule; a row needs a word the name does not answer, so
+  // the name alone still lists just the person.
+  const personVerbMatches = useMemo(() => {
+    const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    if (!open || picking || hasTargets || words.length < 2) return [];
+    const state = useInboxStore.getState() as any;
+    const viewerId = state.currentUser?._id ? String(state.currentUser._id) : null;
+    const people = new Map<string, TeammateWhereabouts>();
+    for (const w of words) {
+      for (const r of teammateWhereabouts(state.teamMembers ?? [], viewerId, w, state.sessions, state.followLeaderId ?? null)) {
+        if (matchScore(r.name, w) !== Infinity) people.set(r.id, r);
+      }
+    }
+    return [...people.values()].flatMap((row) => {
+      if (words.every((w) => matchScore(row.name, w) !== Infinity)) return [];
+      const person = palettePerson(row, state.followLeaderId === row.id);
+      return paletteActions("person", [person], viewerId ?? undefined, chatOn)
+        .filter((a) => a.key !== "person_huddle" && matchScore(`${row.name} ${a.label}`, query) !== Infinity)
+        .map((action) => ({ person, action }));
+    }).slice(0, 6);
+  }, [open, picking, hasTargets, query, chatOn]);
+
+  const showFavorites = favorites && favorites.length > 0;
+  const fleetCommands = surfaceMode.shows("actions.fleet");
+  const showBookmarks = bookmarks && bookmarks.length > 0;
+  // Repo folders are developer machinery (the rail's Projects row).
+  const showWorkspaces = projects.length > 0 && surfaceMode.shows("nav.projects");
+  // Rail order (yours first, then teammates'), the same order ⌥1-⌥9 index into.
+  const layouts = useMemo(
+    () => sortedWorkbenches({ savedViews: savedViewRows ?? {}, clientState: { ui: { active_team_id: activeTeamId } } }),
+    [savedViewRows, activeTeamId],
+  );
+  const myLayouts = useMemo(() => layouts.filter((v) => v.is_mine !== false), [layouts]);
+  // The layout you switched to last, if it is yours: one row updates it in
+  // place without picking — the rail's inline "update" for a closed rail.
+  const activeWorkbenchId = useInboxStore((s) => s.activeWorkbenchId);
+  const currentLayout = useMemo(
+    () => myLayouts.find((v) => v._id === activeWorkbenchId) ?? null,
+    [myLayouts, activeWorkbenchId],
+  );
+
+  const filterGroup = filterCompletion && filterSuggestions.length > 0 && (
+    <CommandPrimitive.Group heading="Filter sessions" className={groupClass}>
+      {filterSuggestions.map((s) => (
+        <CommandPrimitive.Item
+          key={s.text}
+          value={`__filter__${filterCompletion.kind === "value" ? "v" : "o"} ${s.text}`}
+          data-palette-action="complete"
+          onSelect={() => setQuery(applySessionQueryCompletion(query, filterCompletion, s.text).value)}
+          className={itemClass}
+        >
+          <Search className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+          <SessionQuerySuggestionRow s={s} />
+        </CommandPrimitive.Item>
+      ))}
+    </CommandPrimitive.Group>
+  );
+
+  // Read before the action and pick views return early, so the hook order
+  // holds whichever view renders.
+  const askHold = useHostedAskGate(!standalone);
+
+  // Action submenu mode. The workspace modes ("view", layout CRUD) are global,
+  // so they need no target entity — and show no entity header. The `open` check
+  // matters for those: actionMode survives closePalette (it only resets on the
+  // next open), so without it the overlay would stick.
+  if (open && actionMode && (hasTargets || TARGETLESS_MODES.has(actionMode))) {
+    const paletteContent = (
+      <div ref={paletteRef}
+      className={paletteClass}>
+        {contextLabel && !TARGETLESS_MODES.has(actionMode) && (
+          <div className="px-4 pt-3 pb-0">
+            <div className="text-xs font-mono text-sol-text-dim truncate">{contextLabel}</div>
+          </div>
+        )}
+        <ActionSubmenu
+          mode={actionMode}
+          initialSearch={actionSearch}
+          projects={projectRows}
+          targets={targets}
+          targetType={targetType ?? "session"}
+          onClose={closePalette}
+          onBack={() => setActionMode(null)}
+          enteredViaRoot={enteredViaRoot}
+          teamMembers={teamMembers}
+          currentUser={currentUser}
+        />
+      </div>
+    );
+
+    if (standalone) return paletteContent;
+
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Command menu" className="fixed inset-0 z-[9999]">
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={closePalette} />
+        <div className="absolute inset-0 flex items-start justify-center pt-[min(20vh,160px)]">
+          {paletteContent}
+        </div>
+      </div>
+    );
+  }
+
+  // Pick confirm step: the target is chosen; collect the optional note and
+  // confirm. A plain view, not a CommandPrimitive — there is no list to
+  // filter. Esc still closes the whole palette (the house rule); Backspace in
+  // the empty note field or the target row itself goes back to the list.
+  if (pick && pickChosen) {
+    const target = pickChosen.target;
+    const extra = target.kind === "extra" ? (pick.extras ?? []).find((x) => x.key === target.key) : null;
+    const label = target.kind === "extra" ? (extra?.label ?? "Selection") : target.label;
+    // Chat rows collapse DMs and channels into kind "channel" — recover the
+    // row for its real icon (avatar / lock / hash) and tag.
+    const chatRow = target.kind === "channel" || target.kind === "person"
+      ? chatChannelRows.find((r) => r.id === target.id)
+      : null;
+    const tag =
+      chatRow ? (chatRow.kind === "dm" ? "direct message" : chatRow.kind === "person" ? "new direct message" : "channel")
+      : target.kind === "extra" ? null
+      : target.kind === "person" ? "new direct message"
+      : target.kind;
+    const icon =
+      chatRow?.kind === "dm" || chatRow?.kind === "person" || target.kind === "person" ? (
+        <AvatarImg
+          src={chatRow?.image}
+          alt=""
+          className="w-4 h-4 rounded-full flex-shrink-0"
+          fallback={<User className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />}
+        />
+      ) : chatRow?.isPrivate ? (
+        <Lock className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : target.kind === "channel" ? (
+        <Hash className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : target.kind === "doc" || extra?.icon === "doc" ? (
+        <FileText className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : target.kind === "task" ? (
+        <ListTodo className="w-4 h-4 flex-shrink-0 text-sol-cyan" />
+      ) : target.kind === "plan" ? (
+        <MapIcon className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : target.kind === "session" ? (
+        <MessageSquare className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : extra?.icon === "slack" ? (
+        <Hash className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+      ) : (
+        <Sparkles className="w-4 h-4 flex-shrink-0 text-sol-violet" />
+      );
+    const chatTarget = target.kind === "channel" || target.kind === "person";
+    const confirmContent = (
+      <div
+        ref={pickConfirmRef}
+        className="w-[min(580px,calc(100vw-24px))] rounded-xl border border-sol-border bg-sol-bg shadow-2xl shadow-black/40 flex flex-col"
+      >
+        <div className="px-4 pt-3">
+          <PalettePickHeader pick={pick} />
+        </div>
+        <button
+          type="button"
+          onClick={() => setPickChosen(null)}
+          className="mx-3 mt-3 flex min-w-0 items-center gap-2 rounded-lg border border-sol-border/60 bg-sol-bg-alt/50 px-3 py-2 text-left hover:bg-sol-bg-highlight focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sol-cyan/40"
+        >
+          <span className="text-[11px] text-sol-text-dim">To</span>
+          {icon}
+          <span className="truncate flex-1 text-sm text-sol-text">{label}</span>
+          {tag && <span className="hidden text-[10px] text-sol-text-dim flex-shrink-0 sm:inline">{tag}</span>}
+          <span className="text-[11px] text-sol-text-muted flex-shrink-0">change</span>
+        </button>
+        <div className="px-3 pt-3">
+          <div
+            className="ch-composer ch-composer-flush palette-pick-composer [&_form_button[type=submit]]:hidden"
+            onKeyDownCapture={(e) => {
+              if (e.key !== "Backspace") return;
+              const t = e.target as HTMLTextAreaElement;
+              if (!(t instanceof HTMLTextAreaElement) || t.value !== "" || t.selectionStart !== 0) return;
+              const images = useInboxStore.getState().drafts[PALETTE_PICK_DRAFT]?.draft_image_storage_ids as unknown[] | undefined;
+              if (images && images.length > 0) return;
+              e.preventDefault();
+              e.stopPropagation();
+              setPickChosen(null);
+            }}
+          >
+            <Suspense fallback={<div className="h-[76px]" />}>
+              <PaletteMessageInput
+                key={PALETTE_PICK_DRAFT}
+                conversationId={PALETTE_PICK_DRAFT}
+                bareComposer
+                chatMentionMode={chatTarget}
+                mentionTeamId={activeTeamId ? String(activeTeamId) : undefined}
+                composerPlaceholder={pick.notePlaceholder}
+                autoFocusInput
+                onDropFiles={pickDropRef}
+                onGateSend={async (text, images) => {
+                  const attachments = await settleComposerAttachments(images);
+                  sendPick(text, attachments);
+                }}
+                composerFoot={<ComposerAttachButton dropRef={pickDropRef} />}
+              />
+            </Suspense>
+          </div>
+        </div>
+        <div className="px-3 py-3 flex items-center justify-between">
+          <span className="flex items-center gap-1 text-[10px] text-sol-text-dim">
+            <KeyCap size="xs">&#9003;</KeyCap>
+            back
+          </span>
+          <Button type="button" variant="secondary" size="sm" onClick={submitPickConfirm}>
+            {pick.confirmLabel ?? "Send"}
+            <KeyCap size="xs">&#9166;</KeyCap>
+          </Button>
+        </div>
+      </div>
+    );
+    if (standalone) return confirmContent;
+    if (!open) return null;
+    return (
+      <div role="dialog" aria-modal="true" aria-label="Command menu" className="fixed inset-0 z-[9999]">
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-[2px]" onClick={closePalette} />
+        <div className="absolute inset-0 flex items-start justify-center pt-[min(20vh,160px)]">
+          {confirmContent}
+        </div>
+      </div>
+    );
+  }
+
+  // The palette's commands, split: the ones whose label starts with the
+  // query lead the list (see the leading group), the rest sit with Commands.
+  const commandQuery = query.trim().toLowerCase();
+  const commandLabel = (cmd: (typeof GLOBAL_COMMANDS)[number]) => labelText(cmd.label);
+  const shownCommands = GLOBAL_COMMANDS.filter((cmd) => !cmd.hidden?.() && actionShownNow(cmd.action) && !(cmd.searchOnly && !commandQuery));
+  const namedCommands = commandQuery ? shownCommands.filter((cmd) => [commandLabel(cmd), ...(cmd.names ?? [])].some((name) => name.toLowerCase().startsWith(commandQuery))) : [];
+  const otherCommands = namedCommands.length ? shownCommands.filter((cmd) => !namedCommands.includes(cmd)) : shownCommands;
+  const createLeads = hostedMode && !picking && queryAsksToCreate(commandQuery);
+  // Where only the assistant can answer, a query either names something here
+  // (a command, a conversation, a task, a page) or is a request. A real match
+  // leads, so Enter opens it and the ask waits last on its own key
+  // (Cmd+Enter); with nothing here to open, the ask leads and Enter sends it.
+  // A held month or a thinking outage keeps the Ask row's words and says why,
+  // rather than starting a conversation that can only stop (askHold, above).
+  const askable = hostedFirst && !standalone && !picking && !!commandQuery && !askHold;
+  const localHit = askable && (
+    createLeads || namedCommands.length > 0 || recentMatches.length > 0 || searchRows.length > 0 || taskMatches.length > 0 || docMatches.length > 0 ||
+    planMatches.length > 0 || triggerMatches.length > 0 ||
+    palettePages(surfaceMode, featureOn, true).some((row) => paletteItemScore(palettePageValue(row), query) > 0)
+  );
+  const askLeads = askable && !localHit;
+  // A query that names a page ("notes", "rout") leads with that page, as a
+  // named command does, so Enter goes there before any object named alike.
+  const pageLeads = hostedMode && !picking && !!commandQuery &&
+    palettePages(surfaceMode, featureOn, true).some(({ label }) => label.toLowerCase().startsWith(commandQuery));
+  const renderCommand = (cmd: (typeof GLOBAL_COMMANDS)[number]) => {
+    const Icon = cmd.icon;
+    const label = commandLabel(cmd);
+    return (
+      <CommandPrimitive.Item
+        key={`cmd-${cmd.action}`}
+        value={paletteValue(label, cmd.keywords)}
+        onSelect={() => { closePalette(); dispatchAction(cmd.action); }}
+        className={itemClass}
+      >
+        <Icon className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+        <span className="truncate flex-1">{label}</span>
+        <MenuKeyCaps action={cmd.action} />
+      </CommandPrimitive.Item>
+    );
+  };
+
+  // The hosted assistant, asked straight from the palette: the query is the
+  // first message (lib/startHostedConversation). The standalone palette window
+  // has no stage to open it on. Where only the assistant can answer, New
+  // session, which would start the same assistant, is not offered, and the
+  // row leads only when nothing here matches (askLeads).
+  const askHostedRow = !standalone && (
+    <CommandPrimitive.Item
+      data-palette-ask=""
+      value="__compose__ ask the codecast assistant hosted"
+      disabled={!!askHold}
+      onSelect={() => { if (!askHold) navigateToSession({ _id: startHostedConversation(query.trim()) }); }}
+      className={itemClass}
+    >
+      <AgentTypeIcon agentType={HOSTED_AGENT_TYPE} className="w-4 h-4" />
+      <span className="truncate flex-1">Ask the assistant: &ldquo;{previewQuery(query)}&rdquo;</span>
+      {askHold ? <AskHeldLine hold={askHold} className="ml-auto shrink text-xs" /> : askable && <ModEnterCaps />}
+    </CommandPrimitive.Item>
+  );
+
+  // The palette's ways to make something new. "new" or "create" in hosted
+  // mode puts them first (createLeads), so the word reaches New conversation
+  // before a tab command.
+  const createEnv: CreateEnv = {
+    compose: (dock) => startCompose("", dock),
+    openModal: (kind) => { closePalette(); openCreateModal(kind); },
+    navigate,
+  };
+  const createItem = (k: CreateKind) => (
+    <CommandPrimitive.Item
+      key={`create-${k.id}`}
+      value={paletteValue(k.label, k.keywords)}
+      onSelect={() => k.run(createEnv)}
+      className={itemClass}
+    >
+      <k.icon className={`w-4 h-4 flex-shrink-0 ${k.tone}`} />
+      <span className="truncate flex-1">{k.label}</span>
+      {k.shortcut && <MenuKeyCaps action={k.shortcut} />}
+    </CommandPrimitive.Item>
+  );
+  const createGroup = (
+        <CommandPrimitive.Group heading="Create" className={groupClass}>
+          {/* The docked composer has no dock to open in the standalone window. */}
+          {createKinds.filter((k) => !(standalone && k.variant)).map(createItem)}
+        </CommandPrimitive.Group>
+  );
+
+  // The app's pages, to go to. The quiet hosted root (quietRoot) lists them
+  // right after the recents, as its "go to" list.
+  const pagesGroup = (
+        <CommandPrimitive.Group heading="Pages" className={groupClass}>
+          {palettePages(surfaceMode, featureOn, !!query.trim()).map(({ page, label }) => {
+            return (
+            <CommandPrimitive.Item
+              key={typeof page.path === "string" ? page.path + label : label}
+              value={palettePageValue({ page, label })}
+              onSelect={() => navigate(typeof page.path === "function" ? page.path() : page.path)}
+              className={itemClass}
+            >
+              <span className="text-sol-text-dim flex-shrink-0">
+                <NavIcon type={page.icon} />
+              </span>
+              <span className="truncate flex-1">{label}</span>
+              {/* Hosted mode's pages answer Cmd+1 to Cmd+5, as the rail's rows say. */}
+              {(() => {
+                const key = (hostedMode ? HOSTED_SECTION_KEYS.find((k) => k.path === pagePath(page))?.action : undefined) ?? page.action;
+                return key ? <MenuKeyCaps action={key} /> : null;
+              })()}
+            </CommandPrimitive.Item>
+            );
+          })}
+        </CommandPrimitive.Group>
+  );
+
+  // The server tier's conversation hits. Hosted mode paints them after the
+  // to-dos and notes found here, so the instant hits never move when the
+  // server answers a second or two later, and its loading line sits last.
+  // cmdk never reorders groups (see the leading group below), so the slot
+  // decides the order.
+  const scopeSearchPending = sessionSearchOn && pickAllows("session") && !searchData && !titleData && !searchError;
+  const scopeHiddenCount = (sessionSearchOn && pickAllows("session") && (searchData || titleData) ? searchHiddenByScope : 0) + objectsHiddenByScope;
+  const serverSearchGroups = (
+      <>
+        {/* Async conversation search results */}
+        {sessionSearchOn && pickAllows("session") && (
+          <CommandPrimitive.Group
+            heading={searchData || titleData ? `Search results (${searchRows.length})` : searchError ? "Search results" : undefined}
+            className={groupClass}
+          >
+            {!searchData && !searchError && searchRows.length === 0 && (
+              <CommandPrimitive.Item
+                value="__search__ loading"
+                disabled
+                className="px-4 py-3 text-center text-xs text-sol-text-dim animate-pulse cursor-default"
+              >
+                Searching more…
+              </CommandPrimitive.Item>
+            )}
+            {searchError && (
+              <CommandPrimitive.Item
+                value="__search__ error"
+                disabled
+                className="px-4 py-3 text-center text-xs text-sol-text-dim cursor-default"
+              >
+                {searchRows.length > 0
+                  ? "Content search timed out — showing title matches only."
+                  : "Search timed out — broad terms scan your whole history. Try a more specific word or a quoted phrase."}
+              </CommandPrimitive.Item>
+            )}
+            {searchRows.map((result: any) => (
+              <PaletteSearchResultRow
+                key={`search-${result.conversationId}`}
+                result={result}
+                label={labelForConv(result.conversationId)?.name}
+                query={debouncedQuery}
+                onSelect={() => chooseSession(
+                  {
+                    _id: result.conversationId,
+                    title: result.title,
+                    updated_at: result.updatedAt,
+                    message_count: result.messageCount,
+                  },
+                  { messageId: result.matches?.[0]?.messageId }
+                )}
+              />
+            ))}
+            {!searchData && !searchError && searchRows.length > 0 && (
+              <CommandPrimitive.Item
+                value="__search__ content-loading"
+                disabled
+                className="px-4 py-2 text-center text-[11px] text-sol-text-dim animate-pulse cursor-default"
+              >
+                Searching message content...
+              </CommandPrimitive.Item>
+            )}
+            {/* "No conversations matched" only when nothing did: a recent
+                conversation above that matched is a match. */}
+            {searchData && searchRows.length === 0 && searchHiddenByScope === 0 && recentShown.length === 0 && (
+              <CommandPrimitive.Item
+                value="__search__ empty"
+                disabled
+                className="px-4 py-3 text-center text-xs text-sol-text-dim cursor-default"
+              >
+                No conversations matched
+              </CommandPrimitive.Item>
+            )}
+          </CommandPrimitive.Group>
+        )}
+
+        {/* Its own group, scored to sit after every hit (PALETTE_MORE), in
+            the rail's quiet left-aligned line. It waits for the search to
+            settle, so it never sits under "Searching more…" with a count
+            that is still moving. */}
+        {moreInEverything(scopeHiddenCount) && !scopeSearchPending && (
+          <CommandPrimitive.Group className={groupClass}>
+            <CommandPrimitive.Item
+              value={`${PALETTE_TAIL_MORE} more-in-everything`}
+              onSelect={() => setAssistantEverything(true)}
+              className="px-4 py-1.5 text-left text-[11px] text-sol-text-dim cursor-pointer data-[selected=true]:text-sol-text"
+            >
+              {moreInEverything(scopeHiddenCount)}
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        )}
+      </>
+  );
+
+  // Hosted mode's empty palette leads with the fastest moves: what it can
+  // make (the Create group), this conversation's actions in one row, the
+  // last few places visited, then the pages. The fleet's views and layouts wait for a query.
+  const quietRoot = hostedMode && !standalone && !picking && !drilled && !query.trim();
+  // The open object's kind in the viewer's words ("to-do", "note").
+  const targetKind = targetType === "trigger" ? modeWords.trigger.toLowerCase() : targetType === "initiative" ? "goal" : targetType === "role" ? "role" : targetType && targetType !== "person" ? visitObjectLabel(targetType, modeWords).toLowerCase() : "";
+  const drillTarget = () => setDrilled({ type: targetType as PaletteTargetType, row: targets[0], query: "" });
+
+  // Root mode: navigation + context actions
+  const paletteContent = (
+    <CommandPrimitive
+      ref={paletteRef}
+      onKeyDown={(e) => {
+        if (picking) return;
+        const action = paletteActionForKey(e.nativeEvent, actions);
+        if (action) { e.preventDefault(); e.stopPropagation(); handleRootAction(action.key); }
+      }}
+      className={paletteClass}
+      filter={paletteItemScore}
+      loop
+    >
+      {drilled && <div className="flex items-center gap-2 px-4 pt-3 text-xs text-sol-text-dim"><button aria-label="Back to search" className="flex items-center gap-1 hover:text-sol-text" onClick={() => { setQuery(drilled.query); setDrilled(null); }}><KeyCap size="xs">←</KeyCap> Search</button><span aria-hidden>›</span><span className="truncate">{contextLabel}</span></div>}
+      {pick && (
+        <div className="px-4 pt-3 pb-0">
+          <PalettePickHeader pick={pick} />
+        </div>
+      )}
+      <PaletteSearchBar trailing={<KeyCap>Esc</KeyCap>}>
+        <CommandPrimitive.Input
+          value={query}
+          onValueChange={setQuery}
+          placeholder={pick ? (pick.kinds.includes("person") ? "Search people, roles, sessions..." : "Search sessions, docs...") : hostedMode ? "Ask, or go to\u2026" : hasTargets ? "Action or jump to..." : "Jump to..."}
+          className={paletteInputClass}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing) return;
+            const rows = Array.from(paletteRef.current?.querySelectorAll<HTMLElement>('[cmdk-item]:not([aria-disabled="true"])') ?? []).filter(row => row.offsetParent !== null);
+            const index = paletteDigitIndex(e.nativeEvent, rows.length);
+            if (index >= 0) { e.preventDefault(); rows[index].click(); return; }
+            if ((e.key === "Backspace" || e.key === "ArrowLeft") && !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && !query && drilled) { e.preventDefault(); setQuery(drilled.query); setDrilled(null); return; }
+            if ((e.key === "ArrowRight" || e.key === "Tab") && !e.shiftKey && !picking) {
+              const selected = rows.find(row => row.getAttribute("aria-selected") === "true");
+              const type = selected?.dataset.paletteType as PaletteTargetType | undefined;
+              const id = selected?.dataset.paletteId;
+              if (type === "person") { e.preventDefault(); selected!.click(); return; }
+              if (type && id) {
+                e.preventDefault();
+                const store = useInboxStore.getState();
+                // A role has no collection of its own: its row is the stub below, by its short id.
+                const collection = ({ session: store.sessions, task: store.tasks, doc: store.docs, plan: store.plans, project: store.projects, trigger: store.agentTasks, initiative: store.initiatives } as Partial<Record<PaletteTargetType, Record<string, any>>>)[type];
+                const row = collection?.[id] || (type === "session" ? recentSessions.find(row => row._id === id) : undefined) || { _id: id, title: selected?.dataset.paletteTitle, short_id: selected?.dataset.paletteShortId };
+                setDrilled({ type, row, query }); setQuery(""); return;
+              }
+              if (selected?.dataset.paletteAction) { e.preventDefault(); selected.click(); return; }
+            }
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              if (askable) navigateToSession({ _id: startHostedConversation(query.trim()) });
+              else openFullSearch();
+            }
+          }}
+        />
+      </PaletteSearchBar>
+      <CommandPaletteList>
+        {!query.trim() && (
+          <CommandPrimitive.Empty className="py-6 text-center text-sm text-sol-text-dim">
+            No results found.
+          </CommandPrimitive.Empty>
+        )}
+
+        {filterCompletion?.kind === "value" && filterGroup}
+
+        {/* A command the query names (its label starts with what was typed)
+            leads the list, so Enter runs it. Scores alone cannot do this:
+            cmdk 1.1.1 never reorders groups (its sort looks a group up by
+            data-value, which holds the heading, while it tracks the group by
+            its useId), so groups paint in this order whatever their items score. */}
+        {createLeads && createGroup}
+
+        {!standalone && !picking && namedCommands.length > 0 && (
+          <CommandPrimitive.Group heading="Commands" className={groupClass}>
+            {namedCommands.map(renderCommand)}
+          </CommandPrimitive.Group>
+        )}
+
+        {pageLeads && pagesGroup}
+
+        {askLeads && askHostedRow && (
+          <CommandPrimitive.Group className={groupClass}>{askHostedRow}</CommandPrimitive.Group>
+        )}
+
+        {(["person", "role"] as const).map((kind) => {
+          const rows = whoRows.filter((r) => r.kind === kind);
+          return rows.length > 0 && (
+            <CommandPrimitive.Group key={kind} heading={kind === "person" ? "People" : "Roles"} className={groupClass}>
+              {rows.map((r) => (
+                <CommandPrimitive.Item
+                  key={`pickwho-${r.kind}-${r.id}`}
+                  value={`__pick__ ${r.o.label}|||${r.kind}:${r.id}`}
+                  onSelect={() => finishPick({ kind: r.kind, id: r.id, label: r.o.label })}
+                  className={itemClass}
+                >
+                  <span className="flex w-4 flex-shrink-0 justify-center">{r.o.face}</span>
+                  <span className="truncate flex-1">{r.o.label}</span>
+                  {r.o.hint && <span className="text-[10px] text-sol-text-dim flex-shrink-0">{r.o.hint}</span>}
+                </CommandPrimitive.Item>
+              ))}
+            </CommandPrimitive.Group>
+          );
+        })}
+
+        {pick && (pick.extras ?? []).some((x) => !x.needsQuery || query.trim()) && (
+          <CommandPrimitive.Group heading={whoRows.length ? "Agents" : undefined} className={groupClass}>
+            {(pick.extras ?? []).filter((x) => !x.needsQuery || query.trim()).map((x) => (
+              <CommandPrimitive.Item
+                key={`pick-${x.key}`}
+                value={`__pick__ ${x.label}|||${x.key}`}
+                onSelect={() => finishPick({ kind: "extra", key: x.key })}
+                className={`${itemClass} ${x.primary ? "text-sol-text data-[selected=true]:bg-sol-violet/15" : ""}`}
+              >
+                {x.icon === "doc" ? (
+                  <FileText className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                ) : x.icon === "slack" ? (
+                  <Hash className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                ) : (
+                  <Sparkles className="w-4 h-4 flex-shrink-0 text-sol-violet" />
+                )}
+                <div className="flex-1 min-w-0">
+                  <div className="truncate">{x.label}</div>
+                  {x.description && <div className="truncate text-[11px] text-sol-text-dim mt-0.5">{x.description}</div>}
+                </div>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && query.trim() && <RepositoryPaletteItems query={query} navigate={navigate} itemClass={itemClass} groupClass={groupClass} />}
+
+        {!picking && (nestedMatches.length > 0 || personVerbMatches.length > 0) && (
+          <CommandPrimitive.Group heading="Go to action" className={groupClass}>
+            {personVerbMatches.map(({ person, action }) => (
+              <CommandPrimitive.Item key={`personverb-${person._id}-${action.key}`} value={`__entity__ ${person.name} ${action.label}`} data-palette-action={action.key} className={itemClass} onSelect={() => runPersonAction(person, action.key)}>
+                <MemberFace member={person.member} size={16} title="" showHuddle={false} /><span className="truncate text-sol-text-dim">{person.name}</span><span aria-hidden>›</span><span className="flex-1 truncate">{action.label}</span>
+              </CommandPrimitive.Item>
+            ))}
+            {nestedMatches.map(({ action, option }) => (
+              <CommandPrimitive.Item key={`nested-${action.key}-${option.key}`} value={`__entity__ ${action.label} ${option.label}`} data-palette-action={action.key} className={itemClass} onSelect={() => { setEnteredViaRoot(true); setActionSearch(option.label); setActionMode(action.key as ActionMode); }}>
+                <action.icon className="w-4 h-4 shrink-0" /><span className="truncate text-sol-text-dim">{action.label.replace(/[…]|\.\.\./g, "")}</span><span aria-hidden>›</span><span className="flex-1 truncate">{option.label}</span><KeyCap size="xs">→</KeyCap>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {/* The empty palette leads with a new conversation and folds the
+            other things it can make (a to-do, a note, a routine) behind one
+            row, so the recents and the pages stay in view; then this
+            conversation's actions behind one row. */}
+        {quietRoot && (createOpen ? createGroup : (
+          <CommandPrimitive.Group heading="Create" className={groupClass}>
+            {createKinds.slice(0, 1).map(createItem)}
+            <CommandPrimitive.Item
+              value={paletteValue("New to-do, note or routine", "create more")}
+              onSelect={() => setCreateOpen(true)}
+              className={itemClass}
+            >
+              <ChevronRight className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">{`${modeWords.newTask}, note or routine`}</span>
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        ))}
+        {quietRoot && hasTargets && targets.length === 1 && (
+          <CommandPrimitive.Group heading={`This ${targetKind}`} className={groupClass}>
+            <CommandPrimitive.Item value={paletteValue(`This ${targetKind}`, "quiet actions")} onSelect={drillTarget} className={itemClass}>
+              <ChevronRight className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">{contextLabel}</span>
+              <KeyCap size="xs">→</KeyCap>
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        )}
+
+        {hasTargets && !picking && !quietRoot && (
+          <CommandPrimitive.Group
+            heading={contextLabel}
+            className={groupClass}
+          >
+            {actions.map((action) => {
+              const Icon = action.icon;
+              if (action.key === "person_huddle") return <PersonHuddleItem key="action-person_huddle" person={target as PalettePerson} className={itemClass} onDone={closePalette} />;
+              return (
+                <CommandPrimitive.Item
+                  key={`action-${action.key}`}
+                  data-palette-action={action.key}
+                  value={`action ${action.label}|||${action.key}`}
+                  onSelect={() => handleRootAction(action.key)}
+                  className={itemClass}
+                >
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  <span className="truncate flex-1">{action.label}</span>
+                  {action.shortcutAction ? <MenuKeyCaps action={action.shortcutAction} /> : action.hotkey && <span className="flex gap-0.5"><KeyCap size="xs">{isMac ? "⌥" : "Alt"}</KeyCap><KeyCap size="xs">{action.hotkey.toUpperCase()}</KeyCap></span>}
+                </CommandPrimitive.Item>
+              );
+            })}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && !query.trim() && recentVisitRows.length > 0 && (
+          <CommandPrimitive.Group heading="Recently visited" className={groupClass}>
+            {(quietRoot ? recentVisitRows.slice(0, QUIET_RECENTS) : recentVisitRows).map((row) => (
+              <CommandPrimitive.Item
+                key={`rv-${row.key}`}
+                data-palette-type={["session", "task", "doc", "plan", "project", "trigger"].includes(row.objectType) ? row.objectType : undefined} data-palette-id={row.sessionId || row.entity?._id} data-palette-title={row.title}
+                value={`recently visited ${row.title}|||${row.key}`}
+                onSelect={() => handleRecentVisitSelect(row)}
+                className={itemClass}
+              >
+                <RecentVisitGlyph item={row} className="w-4 h-4 flex-shrink-0" />
+                <span className="truncate flex-1">{row.title}</span>
+                {/* Hosted mode names a kind only where the glyph leaves it unsaid:
+                    a conversation's own icon already says it. */}
+                {!(hostedMode && row.objectType === "session") && <span className="text-[10px] text-sol-text-dim flex-shrink-0">{visitObjectLabel(row.objectType, modeWords).toLowerCase()}</span>}
+                <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{hostedMode ? hostedRowTime(row.ts, Date.now()) : visitTimeAgo(row.ts)}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {quietRoot && pagesGroup}
+
+        {/* Global view switcher — drills into the label/project submenu. Not
+            target-bound, so it's always offered (main app only: the standalone
+            Electron palette window has no session panel to filter). */}
+        {!standalone && !picking && !quietRoot && surfaceMode.shows("actions.fleet") && (
+          <CommandPrimitive.Group heading="View" className={groupClass}>
+            <CommandPrimitive.Item
+              key="view-switch"
+              value="switch view filter label project sessions"
+              onSelect={() => { setEnteredViaRoot(true); setActionMode("view"); }}
+              className={itemClass}
+            >
+              <Filter className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">Switch view (label / project)...</span>
+              <MenuKeyCaps action="view.switch" />
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        )}
+
+        {/* Saved layouts. The rail's Layouts section is the other way in — this
+            is the one that still works with the left sidebar closed, so every
+            gesture there (switch, save, update, rename, delete) has a row here.
+            Switch rows carry the ⌥N keycap, and the list is in rail order so the
+            hint matches the chord. */}
+        {!standalone && !picking && !quietRoot && surfaceMode.shows("actions.fleet") && (
+          <CommandPrimitive.Group heading="Layouts" className={groupClass}>
+            {layouts.map((v, i) => (
+              <CommandPrimitive.Item
+                key={`wb-${v._id}`}
+                value={`switch to layout ${v.name} layout workbench arrangement`}
+                onSelect={() => { closePalette(); switchToWorkbench(v.prefs as WorkbenchSnapshot, router, pathname, v._id); }}
+                className={itemClass}
+              >
+                <LayoutDashboard className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">Switch to layout: {v.name}</span>
+                {i < 9 && <MenuKeyCaps action={`workbench.${i + 1}` as ShortcutAction} />}
+              </CommandPrimitive.Item>
+            ))}
+            {currentLayout && (
+              <CommandPrimitive.Item
+                key="wb-update-current"
+                value={`update current layout ${currentLayout.name} workbench arrangement`}
+                onSelect={() => {
+                  closePalette();
+                  useInboxStore.getState().updateWorkbench(currentLayout._id, pathname ?? undefined);
+                  toast.success(`"${currentLayout.name}" now matches the current layout`);
+                }}
+                className={itemClass}
+              >
+                <RefreshCw className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">Update current layout: {currentLayout.name}</span>
+              </CommandPrimitive.Item>
+            )}
+            <CommandPrimitive.Item
+              key="wb-save"
+              value="save current layout as new layout workbench arrangement"
+              onSelect={() => { setEnteredViaRoot(true); setActionMode("layout_save"); }}
+              className={itemClass}
+            >
+              <Plus className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">Save current layout as...</span>
+            </CommandPrimitive.Item>
+            {myLayouts.length > 0 && (
+              <>
+                <CommandPrimitive.Item
+                  key="wb-update"
+                  value="update layout to current arrangement workbench"
+                  onSelect={() => { setEnteredViaRoot(true); setActionMode("layout_update"); }}
+                  className={itemClass}
+                >
+                  <RefreshCw className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                  <span className="truncate flex-1">Update layout...</span>
+                </CommandPrimitive.Item>
+                <CommandPrimitive.Item
+                  key="wb-rename"
+                  value="rename layout workbench arrangement"
+                  onSelect={() => { setEnteredViaRoot(true); setActionMode("layout_rename"); }}
+                  className={itemClass}
+                >
+                  <Pencil className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                  <span className="truncate flex-1">Rename layout...</span>
+                </CommandPrimitive.Item>
+                <CommandPrimitive.Item
+                  key="wb-delete"
+                  value="delete remove layout workbench arrangement"
+                  onSelect={() => { setEnteredViaRoot(true); setActionMode("layout_delete"); }}
+                  className={itemClass}
+                >
+                  <Trash2 className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                  <span className="truncate flex-1">Delete layout...</span>
+                </CommandPrimitive.Item>
+              </>
+            )}
+          </CommandPrimitive.Group>
+        )}
+
+        {teammateRows.length > 0 && (
+          <CommandPrimitive.Group heading="Teammates" className={groupClass}>
+            {teammateRows.map((row) => (
+              <TeammateItem
+                key={`mate-${row.id}`}
+                row={row}
+                className={itemClass}
+                following={followLeaderId === row.id}
+                onOpen={(person) => { setDrilled({ type: "person", row: person, query }); setQuery(""); }}
+              />
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {/* The company's objects (goals, roles, projects) come before the
+            fleet's: there are few of them, each one is a way into the Org
+            screen, and a fuzzy match on dozens of sessions must not bury them. */}
+        {goalMatches.length > 0 && (
+          <CommandPrimitive.Group heading="Goals" className={groupClass}>
+            {goalMatches.map((g: any) => (
+              <CommandPrimitive.Item
+                key={`goal-${g._id}`}
+                value={`${PALETTE_ORG} ${g.title} ${g.short_id}|||${g._id}`}
+                data-palette-type="initiative" data-palette-id={g._id} data-palette-title={g.title} data-palette-short-id={g.short_id}
+                onSelect={() => navigate(objectHref("initiative", g.short_id))}
+                className={itemClass}
+              >
+                <Flag className="w-4 h-4 flex-shrink-0 text-sol-magenta" />
+                <span className="truncate flex-1">{g.title || "Untitled"}</span>
+                <ShortId id={g.short_id} className="text-[10px] text-sol-text-dim tabular-nums" />
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {roleMatches.length > 0 && (
+          <CommandPrimitive.Group heading="Roles" className={groupClass}>
+            {roleMatches.map((r) => (
+              <CommandPrimitive.Item
+                key={`role-${r._id}`}
+                value={`${PALETTE_ORG} ${r.name} @${r.handle} ${r.short_id}|||${r._id}`}
+                data-palette-type="role" data-palette-id={r._id} data-palette-title={r.name} data-palette-short-id={r.short_id}
+                onSelect={() => navigate(objectHref("role", r.short_id))}
+                className={itemClass}
+              >
+                <RoleFace role={r} size={16} className="flex-shrink-0" />
+                <span className="truncate flex-1">{r.name}</span>
+                <span className="text-[10px] text-sol-text-dim font-mono flex-shrink-0">@{r.handle}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && projectMatches.length > 0 && (
+          <CommandPrimitive.Group heading="Projects" className={groupClass}>
+            {projectMatches.map(project => (
+              <CommandPrimitive.Item key={`project-${project._id}`} value={`${PALETTE_ORG} ${project.title}|||${project._id}`} data-palette-type="project" data-palette-id={project._id} data-palette-title={project.title} onSelect={() => navigate(paletteObjectPath("project", project))} className={itemClass}>
+                <Folder className="w-4 h-4 shrink-0 text-sol-blue" /><span className="truncate flex-1">{project.title}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {showFavorites && !query.trim() && pickAllows("session") && (
+          <CommandPrimitive.Group heading="Favorites" className={groupClass}>
+            {favorites!.slice(0, 5).map((fav: any) => (
+              <CommandPrimitive.Item
+                key={`fav-${fav._id}`}
+                data-palette-type="session" data-palette-id={fav._id} data-palette-title={fav.title} data-palette-short-id={fav.short_id}
+                value={`favorite ${sessionSearchHaystack(fav)} ${fav.session_id || ""}|||${fav._id}`}
+                onSelect={() => chooseSession(fav)}
+                className={itemClass}
+              >
+                <SessionGlyph
+                  row={identityRowOf(fav)}
+                  className="flex-shrink-0"
+                  fallback={<span className="text-amber-400 flex-shrink-0"><NavIcon type="star" /></span>}
+                />
+                <SessionIdentityLine row={identityRowOf(fav)} title={sessionCardTitle(fav)} className="flex-1" />
+                {!hostedMode && <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{fav.message_count} msgs</span>}
+                <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{paletteRowTime(hostedMode)(fav.updated_at, Date.now())}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {showBookmarks && !picking && (
+          <CommandPrimitive.Group heading="Bookmarks" className={groupClass}>
+            {(query ? bookmarks! : bookmarks!.slice(0, 6)).map((bm: any) => (
+              <CommandPrimitive.Item
+                key={`bm-${bm._id}`}
+                value={`bookmark ${bm.message_preview || bm.conversation_title || ""}|||${bm._id}`}
+                onSelect={() => navigateToSession(
+                  {
+                    _id: bm.conversation_id,
+                    title: bm.conversation_title,
+                    updated_at: bm.conversation_updated_at,
+                    message_count: bm.conversation_message_count,
+                  },
+                  { messageId: bm.message_id }
+                )}
+                className={itemClass}
+              >
+                <span className="text-sol-cyan flex-shrink-0">
+                  <NavIcon type="bookmark" />
+                </span>
+                <span className="truncate flex-1">{bm.message_preview || bm.conversation_title}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {recentShown.length > 0 && pickAllows("session") && (
+          <CommandPrimitive.Group heading={query.trim() ? modeWords.conversations : modeWords.recentConversations} className={groupClass}>
+            {recentShown.map((conv: any) => (
+              <PaletteSessionRow key={`recent-${conv._id}`} conv={conv} bucket={labelForConv(conv._id)} standing={standingOf(conv)} device={deviceOfRecent(conv)} onSelect={() => chooseSession(conv)} />
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!hostedMode && serverSearchGroups}
+
+        {(!picking || pickAllows("channel")) && chatChannelRows.length > 0 && (
+          <CommandPrimitive.Group heading="Chat" className={groupClass}>
+            {chatChannelRows.map((c) => (
+              <CommandPrimitive.Item
+                key={`chatc-${c.id}`}
+                value={`__chat__ ${c.label}|||${c.id}`}
+                onSelect={() => {
+                  if (pick) {
+                    finishPick(
+                      c.kind === "person"
+                        ? { kind: "person", id: c.id, label: c.label }
+                        : { kind: "channel", id: c.id, label: c.label },
+                    );
+                    return;
+                  }
+                  navigate(`/chat/${c.id}`);
+                }}
+                className={itemClass}
+              >
+                {c.kind === "dm" || c.kind === "person" ? (
+                  <AvatarImg
+                    src={c.image}
+                    alt=""
+                    className="w-4 h-4 rounded-full flex-shrink-0"
+                    fallback={<User className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />}
+                  />
+                ) : c.isPrivate ? (
+                  <Lock className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                ) : (
+                  <Hash className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                )}
+                <span className="truncate flex-1">{c.label}</span>
+                <span className="text-[10px] text-sol-text-dim flex-shrink-0">
+                  {c.kind === "dm" ? "direct message" : c.kind === "person" ? "new direct message" : "channel"}
+                </span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {taskMatches.length > 0 && (
+          <CommandPrimitive.Group heading={modeWords.tasksPage} className={groupClass}>
+            {taskMatches.map((t: any) => (
+              <PaletteTaskRow key={`task-${t._id}`} task={t} status={TASK_STATUS_META[t.status]} valuePrefix={entityValuePrefix("task")} onSelect={() => chooseEntity("task", t, `/tasks/${t._id}`)} />
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {docMatches.length > 0 && (
+          <CommandPrimitive.Group heading={hostedMode ? modeWords.docsPage : "Documents"} className={groupClass}>
+            {docMatches.map((d: any) => (
+              <CommandPrimitive.Item
+                key={`doc-${d._id}`}
+                data-palette-type="doc" data-palette-id={d._id} data-palette-title={d.title} data-palette-short-id={d.short_id}
+                value={`${entityValuePrefix("doc")} ${d.title} ${d.doc_type || ""}|||${d._id}`}
+                onSelect={() => chooseEntity("doc", d, `/docs/${d._id}`)}
+                className={itemClass}
+              >
+                {hostedMode ? <span className="flex-shrink-0 text-sol-text-dim"><NavIcon type="file" /></span> : <FileText className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />}
+                <span className="truncate flex-1">{d.title || "Untitled"}</span>
+                {/* A file name is a developer's detail; hosted mode keeps the time. */}
+                {!hostedMode && d.source_file && (
+                  <span className="text-[10px] text-sol-text-dim/70 font-mono truncate max-w-[140px] flex-shrink-0">{d.source_file.split("/").pop()}</span>
+                )}
+                {/* Every hosted note is a note; the heading already says so. */}
+                {!hostedMode && <span className="text-[10px] text-sol-text-dim flex-shrink-0 capitalize">{d.doc_type || "note"}</span>}
+                <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{paletteRowTime(hostedMode)(d.updated_at, Date.now())}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {planMatches.length > 0 && (
+          <CommandPrimitive.Group heading="Plans" className={groupClass}>
+            {planMatches.map((p: any) => {
+              const st = PLAN_STATUS_META[p.status];
+              return (
+                <CommandPrimitive.Item
+                  key={`plan-${p._id}`}
+                data-palette-type="plan" data-palette-id={p._id} data-palette-title={p.title} data-palette-short-id={p.short_id}
+                  value={`__entity__ ${p.title} ${p.short_id}|||${p._id}`}
+                  onSelect={() => chooseEntity("plan", p, `/plans/${p.short_id || p._id}`)}
+                  className={itemClass}
+                >
+                  <MapIcon className="w-4 h-4 flex-shrink-0 text-sol-yellow" />
+                  <span className="truncate flex-1">{p.title || "Untitled"}</span>
+                  {st && <span className={`text-[10px] flex-shrink-0 ${st.color}`}>{st.label}</span>}
+                  <ShortId id={p.short_id} className="text-[10px] text-sol-text-dim tabular-nums" />
+                  <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{paletteRowTime(hostedMode)(p.updated_at, Date.now())}</span>
+                </CommandPrimitive.Item>
+              );
+            })}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && decisionRef && (
+          <CommandPrimitive.Group heading={decisionRef.kind === "stack" ? "Decision stack" : decisionRef.kind === "proposal" ? "Staffing proposal" : "Decision"} className={groupClass}>
+            <CommandPrimitive.Item
+              value={`__entity__ ${decisionRef.id}|||${decisionRef.id}`}
+              data-palette-type={decisionRef.kind === "stack" ? "decision_stack" : decisionRef.kind === "proposal" ? "org_proposal" : "decision"}
+              data-palette-short-id={decisionRef.id}
+              onSelect={() => navigate(decisionRef.href)}
+              className={itemClass}
+            >
+              <Sparkles className="w-4 h-4 flex-shrink-0 text-sol-yellow" />
+              <span className="font-mono text-sol-text-dim">{decisionRef.id}</span>
+              <span className="flex-1 truncate">{decisionRef.kind === "stack" ? "open the stack" : decisionRef.kind === "proposal" ? "open it on the org page" : "open the decision page"}</span>
+              <KeyCap size="xs">→</KeyCap>
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && triggerMatches.length > 0 && (
+          <CommandPrimitive.Group heading={modeWords.triggers} className={groupClass}>
+            {triggerMatches.map((t: any) => (
+              <CommandPrimitive.Item
+                key={`trigger-${t._id}`}
+                data-palette-type="trigger" data-palette-id={t._id} data-palette-title={t.title} data-palette-short-id={t.short_id}
+                value={`${entityValuePrefix("routine")} ${t.title} ${t.short_id || ""}|||${t._id}`}
+                onSelect={() => navigate(`/triggers/${t._id}`)}
+                className={itemClass}
+              >
+                {t.schedule_type === "recurring" ? (
+                  <Repeat className={`w-4 h-4 flex-shrink-0 ${t.status === "paused" ? "text-sol-yellow" : "text-sol-violet"}`} />
+                ) : t.schedule_type === "event" ? (
+                  <Zap className="w-4 h-4 flex-shrink-0 text-sol-yellow" />
+                ) : (
+                  <Clock className={`w-4 h-4 flex-shrink-0 ${t.status === "paused" ? "text-sol-yellow" : "text-sol-cyan"}`} />
+                )}
+                <span className="truncate flex-1">{t.title || "Untitled trigger"}</span>
+                {t.status === "paused" && (
+                  <span className="text-[10px] text-sol-yellow flex-shrink-0">paused</span>
+                )}
+                {!hostedMode && t.short_id && (
+                  <ShortId id={t.short_id} className="text-[10px] text-sol-text-dim tabular-nums" />
+                )}
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && vaultNoteMatches.length > 0 && (
+          <CommandPrimitive.Group heading="Notes" className={groupClass}>
+            {vaultNoteMatches.map((n) => (
+              <CommandPrimitive.Item
+                key={`vnote-${n.path}`}
+                value={`__entity__ ${n.base} ${n.path}|||vault`}
+                onSelect={() => openVaultNote(n.path)}
+                className={itemClass}
+              >
+                <FileText className="w-4 h-4 flex-shrink-0 text-sol-cyan" />
+                <span className="truncate flex-1">{n.base}</span>
+                {n.path.includes("/") && (
+                  <span className="text-[10px] text-sol-text-dim/70 font-mono truncate max-w-[180px] flex-shrink-0">
+                    {n.path.slice(0, n.path.lastIndexOf("/"))}
+                  </span>
+                )}
+                <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{formatDateSmart(n.mtime)}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {hostedMode && serverSearchGroups}
+
+        {!picking && !createLeads && !quietRoot && createGroup}
+
+        {!picking && !quietRoot && !pageLeads && pagesGroup}
+
+        {!picking && surfaceMode.shows("mods.sidebar") && <ModPaletteGroup groupClass={groupClass} itemClass={itemClass} navigate={navigate} close={closePalette} query={query} />}
+
+        {!picking && vaultReady && surfaceMode.showsPage("/files") && (
+          <CommandPrimitive.Group heading="Files" className={groupClass}>
+            <CommandPrimitive.Item
+              key="vault-random"
+              value="Files vault random note surprise"
+              onSelect={() => {
+                const s = useVaultStore.getState();
+                const notes = Object.keys(s.files).filter(
+                  (p) => !s.files[p].dir && /\.(md|markdown)$/i.test(p),
+                );
+                if (!notes.length) return;
+                const pick = notes[Math.floor(Math.random() * notes.length)];
+                s.noteOpened(pick);
+                navigate(filesHref({ path: pick }));
+              }}
+              className={itemClass}
+            >
+              <Shuffle className="w-4 h-4 text-sol-cyan flex-shrink-0" />
+              <span className="truncate">Files: Random note</span>
+            </CommandPrimitive.Item>
+            <CommandPrimitive.Item
+              key="vault-new-note"
+              value="Files vault new note create markdown"
+              onSelect={() => {
+                closePalette();
+                void useVaultStore.getState().newNote("").then((p) => {
+                  if (p) navigate(filesHref({ path: p }));
+                });
+              }}
+              className={itemClass}
+            >
+              <FilePlus2 className="w-4 h-4 text-sol-cyan flex-shrink-0" />
+              <span className="truncate">Files: New note</span>
+            </CommandPrimitive.Item>
+            <CommandPrimitive.Item
+              key="vault-daily"
+              value="Files vault daily note today journal"
+              onSelect={() => {
+                closePalette();
+                void useVaultStore.getState().openDailyNote().then((p) => {
+                  if (p) {
+                    useVaultStore.getState().noteOpened(p);
+                    navigate(filesHref({ path: p }));
+                  }
+                });
+              }}
+              className={itemClass}
+            >
+              <CalendarDays className="w-4 h-4 text-sol-cyan flex-shrink-0" />
+              <span className="truncate">Files: Today&apos;s daily note</span>
+            </CommandPrimitive.Item>
+            <CommandPrimitive.Item
+              key="vault-graph"
+              value="Files vault graph view links map"
+              onSelect={() => navigate(filesHref({ graph: true }))}
+              className={itemClass}
+            >
+              <Waypoints className="w-4 h-4 text-sol-cyan flex-shrink-0" />
+              <span className="truncate">Files: Open graph</span>
+            </CommandPrimitive.Item>
+          </CommandPrimitive.Group>
+        )}
+
+        {!standalone && !picking && (
+          <CommandPrimitive.Group heading={namedCommands.length > 0 ? "More commands" : "Commands"} className={groupClass}>
+            {otherCommands.map(renderCommand)}
+            {/* Faces over your work and pages in panes drive a team and a
+                fleet; hosted mode leaves them to developer mode. */}
+            {!isPeopleWindow() && fleetCommands && (
+              <CommandPrimitive.Item
+                key="cmd-people"
+                value="People window buddy list roster presence pop out floating who is online"
+                onSelect={() => { closePalette(); void popOutPeople(); }}
+                className={itemClass}
+              >
+                <PictureInPicture2 className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">{POP_OUT_PEOPLE_TITLE}</span>
+              </CommandPrimitive.Item>
+            )}
+            {/* A web page as a pane. With an address typed, the palette IS the
+                address bar — it already holds what you typed, so making you
+                retype it into the pane would be the worse answer. Otherwise
+                the pane opens blank with its own bar focused. */}
+            {fleetCommands && <CommandPrimitive.Item
+              key="cmd-browser-pane"
+              // A typed address never fuzzy-matches the keywords ("3200" is in
+              // none of them), so while one is typed the row takes the always
+              // shown `__entity__` form.
+              value={
+                browserPaneUrl
+                  ? `__entity__ open url in a pane|||${browserPaneUrl}`
+                  : "Open URL in a pane browser web page preview localhost dev server site address"
+              }
+              onSelect={() => {
+                closePalette();
+                if (browserPaneUrl) openBrowserPane({ kind: "url", url: browserPaneUrl });
+                else if (!openBeside(BROWSER_ROUTE)) navigate(BROWSER_ROUTE);
+              }}
+              className={itemClass}
+            >
+              <Globe className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">
+                {browserPaneUrl ? `Open ${displayHost(browserPaneUrl)} in a pane` : "Open a URL in a pane"}
+              </span>
+            </CommandPrimitive.Item>}
+            <CommandPrimitive.Item
+              key="cmd-theme"
+              value="Switch theme dark light mode appearance"
+              onSelect={() => { closePalette(); toggleTheme(); }}
+              className={itemClass}
+            >
+              {theme === "dark" ? (
+                <Sun className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              ) : (
+                <Moon className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              )}
+              <span className="truncate flex-1">Switch to {theme === "dark" ? "light" : "dark"} theme</span>
+            </CommandPrimitive.Item>
+            {/* Assistant mode is always Minimal, so the style row waits for developer mode. */}
+            {!hostedMode && (
+              <CommandPrimitive.Item
+                key="cmd-visual-style"
+                value="Switch interface style minimal classic appearance"
+                onSelect={() => { closePalette(); setVisualStyle(visualStyle === "minimal" ? "classic" : "minimal"); }}
+                className={itemClass}
+              >
+                <LayoutDashboard className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">Switch to {visualStyle === "minimal" ? "Classic" : "Minimal"} style</span>
+              </CommandPrimitive.Item>
+            )}
+          </CommandPrimitive.Group>
+        )}
+
+        {showWorkspaces && !picking && (
+          <CommandPrimitive.Group heading="Workspaces" className={groupClass}>
+            {projects.map((dir) => (
+              <CommandPrimitive.Item
+                key={`proj-${dir}`}
+                value={`workspace ${getShortPath(dir)} ${dir}`}
+                onSelect={() => navigate(`/team/activity?filter=my&dir=${encodeURIComponent(dir)}`)}
+                className={itemClass}
+              >
+                <span className="text-sol-text-dim flex-shrink-0">
+                  <NavIcon type="folder" />
+                </span>
+                <span className="truncate">{getShortPath(dir)}</span>
+                <span className="text-[10px] text-sol-text-dim truncate ml-auto max-w-[200px]">{dir}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && chatHits.length > 0 && (
+          <CommandPrimitive.Group heading="Chat messages" className={groupClass}>
+            {chatHits.map((h) => (
+              <CommandPrimitive.Item
+                key={`chatm-${h._id}`}
+                value={`__chat__ ${h.snippet?.slice(0, 80) ?? ""}|||${h._id}`}
+                onSelect={() => navigate(h.permalink)}
+                className={itemClass}
+              >
+                <MessageSquare className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <div className="flex-1 min-w-0">
+                  <div className="truncate text-sm">{h.snippet}</div>
+                  <div className="truncate text-[11px] text-sol-text-dim mt-0.5">
+                    {chatAuthorName(h)} · {h.channel_kind === "dm" ? "direct message" : `#${h.channel_name}`}
+                  </div>
+                </div>
+                <span className="text-[10px] text-sol-text-dim tabular-nums flex-shrink-0">{formatDateSmart(h.created_at)}</span>
+              </CommandPrimitive.Item>
+            ))}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && query.trim().length >= 2 && !searchAwaiting && (
+          <CommandPrimitive.Group className={groupClass}>
+            <CommandPrimitive.Item
+              value="__search__page"
+              onSelect={openFullSearch}
+              className={itemClass}
+            >
+              <Search className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+              <span className="truncate flex-1">
+                Open full search for &ldquo;{previewQuery(query)}&rdquo;
+              </span>
+              {/* Cmd+Enter has one owner: the Ask row while asking is on offer. */}
+              {!askable && <ModEnterCaps />}
+            </CommandPrimitive.Item>
+            {vaultReady && surfaceMode.showsPage("/files") && (
+              <CommandPrimitive.Item
+                key="vault-content-search"
+                value={`__entity__ vault content search|||${query.trim()}`}
+                onSelect={() => {
+                  useVaultStore.getState().openSearch(query.trim());
+                  navigate(filesHref());
+                }}
+                className={itemClass}
+              >
+                <Search className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">
+                  Search note content for &ldquo;{previewQuery(query)}&rdquo;
+                </span>
+              </CommandPrimitive.Item>
+            )}
+            {activeTeamId && chatOn && (
+              <CommandPrimitive.Item
+                value="__chat__ open-chat-search"
+                onSelect={() => {
+                  // Stay in the room the reader is in: /chat alone would fall
+                  // back to the busiest channel and offer the wrong in: filter.
+                  const m = pathname?.match(/^\/chat\/([^/?#]+)/);
+                  const base = m ? `/chat/${m[1]}` : "/chat";
+                  navigate(`${base}?search=${encodeURIComponent(query.trim())}`);
+                }}
+                className={itemClass}
+              >
+                <MessageSquare className="w-4 h-4 flex-shrink-0 text-sol-text-dim" />
+                <span className="truncate flex-1">
+                  Search chat for &ldquo;{previewQuery(query)}&rdquo;
+                </span>
+              </CommandPrimitive.Item>
+            )}
+          </CommandPrimitive.Group>
+        )}
+
+        {!picking && query.trim() && !searchAwaiting && (
+          <CommandPrimitive.Group className={groupClass}>
+            {!hostedFirst && (
+              <CommandPrimitive.Item
+                value="__compose__"
+                onSelect={() => startCompose(query.trim())}
+                className={itemClass}
+              >
+                <span className="text-sol-yellow flex-shrink-0">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 4v16m8-8H4" />
+                  </svg>
+                </span>
+                <span className="truncate">{modeWords.newConversation}: &ldquo;{previewQuery(query)}&rdquo;</span>
+              </CommandPrimitive.Item>
+            )}
+            {!askLeads && askHostedRow}
+            {/* Hosted mode has no Files page: a note made from a query is a
+                doc in the active workspace, where its Notes page lists it. */}
+            {hostedMode && (
+              <CommandPrimitive.Item
+                key="doc-new-named"
+                value={`__compose__ new named doc note|||${query.trim()}`}
+                onSelect={() => {
+                  const title = query.trim();
+                  closePalette();
+                  void useInboxStore.getState().createDoc({ title, content: "", doc_type: "note", ...docWorkspaceStamp }, { version: 1, kind: "navigate" })
+                    .catch(() => toast.error("Couldn't make that note"));
+                }}
+                className={itemClass}
+              >
+                <FilePlus2 className={`w-4 h-4 flex-shrink-0 ${hostedMode ? "text-sol-text-dim" : "text-sol-cyan"}`} />
+                <span className="truncate flex-1">
+                  New note &ldquo;{previewQuery(query)}&rdquo;
+                </span>
+              </CommandPrimitive.Item>
+            )}
+            {vaultReady && surfaceMode.showsPage("/files") && (
+              <CommandPrimitive.Item
+                key="vault-new-named"
+                value={`__compose__ vault new named note|||${query.trim()}`}
+                onSelect={() => {
+                  const name = query.trim().replace(/^\/+/, "");
+                  const path = MARKDOWN_RE.test(name) ? name : `${name}.md`;
+                  const s = useVaultStore.getState();
+                  // Name already taken → this is an open, not a create.
+                  if (s.files[path]) { openVaultNote(path); return; }
+                  closePalette();
+                  void s.createFile(path).then(() => {
+                    s.noteOpened(path);
+                    navigate(filesHref({ path }));
+                  }).catch(() => toast.error(`Couldn't create ${path}`));
+                }}
+                className={itemClass}
+              >
+                <FilePlus2 className="w-4 h-4 text-sol-cyan flex-shrink-0" />
+                <span className="truncate flex-1">
+                  Files: New note &ldquo;{previewQuery(query)}&rdquo;
+                </span>
+              </CommandPrimitive.Item>
+            )}
+          </CommandPrimitive.Group>
+        )}
+
+        {/* Operator names trail everything and, like compose, wait for the
+            search to answer: cmdk preselects the first row it registers,
+            and a word that may be plain text must not be completed by Enter. */}
+        {filterCompletion?.kind === "operator" && !searchAwaiting && filterGroup}
+      </CommandPaletteList>
+
+      {/* Key hints only where there is room and, usually, a keyboard: at
+          phone width they broke mid-word ("navigat e"). */}
+      <div className="px-3 py-2 border-t border-sol-border/60 hidden sm:flex items-center justify-between text-[10px] text-sol-text-dim bg-sol-bg-alt/40 whitespace-nowrap">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">&#8593;</KeyCap>
+            <KeyCap size="xs">&#8595;</KeyCap>
+            navigate
+          </span>
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">&#9166;</KeyCap>
+            open
+          </span>
+          {/* The palette's speed keys work in every mode, so every mode says them. */}
+          {!picking && <span className="flex items-center gap-1"><KeyCap size="xs">→</KeyCap> actions</span>}
+          <span className="flex items-center gap-1"><KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap><KeyCap size="xs">1–9</KeyCap> pick</span>
+          {drilled && <span className="flex items-center gap-1"><KeyCap size="xs">←</KeyCap> back</span>}
+          {askable && !askLeads && (
+            <span className="flex items-center gap-1">
+              <KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap>
+              <KeyCap size="xs">&#9166;</KeyCap>
+              ask the assistant
+            </span>
+          )}
+          {!askable && query.trim().length >= 2 && (
+            <span className="flex items-center gap-1">
+              <KeyCap size="xs">{isMac ? "⌘" : "Ctrl"}</KeyCap>
+              <KeyCap size="xs">&#9166;</KeyCap>
+              full search
+            </span>
+          )}
+        </div>
+        {hostedMode ? (
+          <span className="flex items-center gap-1">
+            <KeyCap size="xs">Esc</KeyCap>
+            close
+          </span>
+        ) : (
+          <span className="flex items-center gap-1">
+            <MenuKeyCaps action="palette.toggle" />
+            toggle
+          </span>
+        )}
+      </div>
+    </CommandPrimitive>
+  );
+
+  if (standalone) {
+    return paletteContent;
+  }
+
+  if (!open) return null;
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Command menu" className="fixed inset-0 z-[9999]">
+      <div
+        className="absolute inset-0 bg-black/60 backdrop-blur-[2px]"
+        onClick={closePalette}
+      />
+      <div className="absolute inset-0 flex items-start justify-center pt-[min(20vh,160px)]">
+        {paletteContent}
+      </div>
+    </div>
+  );
+}
+
+export const CommandPalette = memo(CommandPaletteImpl);

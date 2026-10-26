@@ -1,0 +1,94 @@
+[
+  {
+    "test": "stale upload after delete and new reservation",
+    "deletion": {
+      "status": 200,
+      "data": {
+        "ok": true
+      }
+    },
+    "replacement": {
+      "status": 200,
+      "data": {
+        "id": "audit-backup-reuse"
+      }
+    },
+    "staleUpload": {
+      "status": 200,
+      "body": "{\"id\":\"audit-backup-reuse\",\"verified\":true,\"location\":\"local-object-storage\"}"
+    },
+    "downloadStatus": 200,
+    "advertisedDigest": "7abaa701a6f4bb8d9ea3872a315597eb6f2ccfd03392d8d10560837f6136d06a",
+    "actualDigest": "b6ac3cc10386331c765f04f041c147d0f278f2aed8eaa021e2d0057fc6f6ff9e",
+    "oldDigest": "b6ac3cc10386331c765f04f041c147d0f278f2aed8eaa021e2d0057fc6f6ff9e",
+    "newDigest": "7abaa701a6f4bb8d9ea3872a315597eb6f2ccfd03392d8d10560837f6136d06a",
+    "list": {
+      "status": 200,
+      "data": {
+        "location": "local-object-storage",
+        "backups": [
+          {
+            "id": "audit-backup-reuse",
+            "checkpoint_id": "cp-new",
+            "size": 128,
+            "digest": "7abaa701a6f4bb8d9ea3872a315597eb6f2ccfd03392d8d10560837f6136d06a",
+            "status": "complete",
+            "created_at": 1792742619014
+          }
+        ]
+      }
+    }
+  },
+  {
+    "test": "revoked in-flight event request",
+    "revoke": {
+      "status": 200,
+      "data": {
+        "ok": true
+      }
+    },
+    "newRead": {
+      "status": 403,
+      "data": {
+        "error": "Project access is not allowed"
+      }
+    },
+    "eventResponse": {
+      "status": 200,
+      "body": "{\"id\":\"audit-revoked-event\",\"seq\":1,\"duplicate\":false}"
+    },
+    "ownerEvents": {
+      "status": 200,
+      "data": {
+        "events": [
+          {
+            "version": 1,
+            "id": "audit-revoked-event",
+            "workspaceId": "audit-bob",
+            "occurredAt": 1792742619074,
+            "kind": "checkpoint",
+            "payload": {
+              "checkpointId": "audit-checkpoint",
+              "parentId": null,
+              "label": "TEST AUDIT",
+              "files": [],
+              "totalFiles": 0,
+              "part": 1,
+              "parts": 1,
+              "source": "local",
+              "backup": "local-only"
+            },
+            "actor": {
+              "id": "bob",
+              "name": "Bob"
+            },
+            "receivedAt": 1792742620351,
+            "seq": 1
+          }
+        ],
+        "cursor": 1,
+        "hasMore": false
+      }
+    }
+  }
+]

@@ -1,0 +1,596 @@
+import { lazy } from "react";
+import type { LazyExoticComponent, ComponentType } from "react";
+
+/**
+ * routes.manifest.ts — PROPOSED single source of truth for web routing (Wave 1 seed).
+ *
+ * Adding a page today means editing FOUR independent lists that must agree, and 3 of
+ * the 4 drift modes are silent:
+ *   1. src/App.tsx                — the React Router <Route> table (what URL renders what).
+ *   2. components/TabContent.tsx  — the tab-shell pattern→component table (what the
+ *                                   persistent dashboard tab system can render in place).
+ *   3. lib/tabRoutes.ts           — NON_TAB_EXACT / NON_TAB_PREFIXES (which routes live
+ *                                   OUTSIDE the tab shell; intercepting them rewrites the
+ *                                   URL without navigating).
+ *   4. components/DashboardLayout — the isOnXPage booleans that compose isFullWidthPage
+ *                                   (which pages drop the centered max-w container).
+ *
+ * This manifest captures every route once, with its real tab membership, full-width flag,
+ * and guest-allowance, so a single edit can eventually drive all four (Wave 2 cutover).
+ *
+ * THIS FILE IS ADDITIVE. It does not yet drive any consumer. routes.manifest.test.ts is a
+ * completeness/parity guard that fails loudly if any of the four sources drifts from here —
+ * that guard is what makes the Wave 2 cutover safe.
+ */
+
+export type RouteEntry = {
+  /**
+   * The React Router path pattern, WITHOUT a leading slash for the root entry ("") and
+   * WITH react-router `:param` syntax for dynamic segments — i.e. the exact `path` prop
+   * passed to <Route> in App.tsx (children are pre-joined to their absolute path here, so
+   * e.g. the Settings index is "settings", `/settings/cli` is "settings/cli").
+   */
+  path: string;
+  /**
+   * Lazy component reference, mirroring the App.tsx / TabContent import target. Null for a
+   * route App.tsx matches with `element={null}`: it renders nothing of its own, and matching
+   * it is what lets its layout act on the URL (the settings splat opens a section's modal).
+   */
+  component: LazyExoticComponent<ComponentType<unknown>> | null;
+  /**
+   * The App.tsx layout group this route renders under. Drives nothing yet; recorded so the
+   * Wave 2 generator can re-create the nested <Route element={<Layout/>}> structure.
+   */
+  layout: RouteLayout;
+  /**
+   * Set when the dashboard tab shell (TabContent) can render this route in place. The value
+   * is the *static* TabContent pattern key (the path with `:param` placeholders), which is
+   * how the parity test joins a TabContent regex back to its manifest entry. Routes that are
+   * NOT tab-routable (marketing, auth, settings, share, palette, standalone-only) omit it.
+   */
+  tab?: string;
+  /**
+   * True when DashboardLayout treats this as a full-width page (one of the isOnXPage
+   * booleans that compose isFullWidthPage) — it drops the centered `max-w-4xl` container.
+   * Dynamic detail routes inherit this from their `startsWith("/x/")` check.
+   */
+  fullWidth?: boolean;
+  /**
+   * Guest (unauthenticated) access. Two flavors, both marked true here; the parity test and
+   * Wave 2 must preserve BOTH (see rootCauseNotes):
+   *   - "public": rendered with no AuthGuard at all (marketing, auth, share). guestKind="public".
+   *   - "shell":  inside DashboardShell but explicitly allowed via guestOk (the /conversation/
+   *               read-only share path). guestKind="shell".
+   */
+  guestOk?: boolean;
+  guestKind?: "public" | "shell";
+};
+
+export type RouteLayout =
+  | "marketing"
+  | "auth"
+  | "dashboardShell"
+  | "standalone"
+  | "share"
+  | "codeReview"
+  | "palette"
+  | "people"
+  | "callPanel"
+  | "settings"
+  | "welcome"
+  | "redirect";
+
+// -- Lazy component refs — import targets copied verbatim from App.tsx / TabContent.tsx so
+//    the manifest points at the exact same modules. --
+
+const cast = <P>(c: LazyExoticComponent<ComponentType<P>>) =>
+  c as unknown as LazyExoticComponent<ComponentType<unknown>>;
+
+// Marketing
+const Landing = lazy(() => import("@/app/(marketing)/page"));
+const About = lazy(() => import("@/app/(marketing)/about/page"));
+const Features = lazy(() => import("@/app/(marketing)/features/page"));
+const FeatureDeepDive = lazy(() => import("@/app/(marketing)/features/FeatureDeepDivePage"));
+const Documentation = lazy(() => import("@/app/(marketing)/documentation/page"));
+const DocumentationGuide = lazy(() => import("@/app/(marketing)/documentation/guides/GuidePage"));
+const Privacy = lazy(() => import("@/app/(marketing)/privacy/page"));
+const Security = lazy(() => import("@/app/(marketing)/security/page"));
+const Support = lazy(() => import("@/app/(marketing)/support/page"));
+const Terms = lazy(() => import("@/app/(marketing)/terms/page"));
+const Changelog = lazy(() => import("@/app/(marketing)/changelog/page"));
+const Pricing = lazy(() => import("@/app/(marketing)/pricing/page"));
+const Download = lazy(() => import("@/app/(marketing)/download/page"));
+const BlogIndex = lazy(() => import("@/app/(marketing)/blog/page"));
+const BlogGitBlame = lazy(() => import("@/app/(marketing)/blog/git-blame-for-ai-agents/page"));
+const BlogAgentInbox = lazy(() => import("@/app/(marketing)/blog/an-inbox-for-your-agents/page"));
+const BlogTeamMemory = lazy(() => import("@/app/(marketing)/blog/your-agents-forget-your-team-does-not/page"));
+const BlogTriggers = lazy(() => import("@/app/(marketing)/blog/this-post-wrote-itself/page"));
+const BlogPublish = lazy(() => import("@/app/(marketing)/blog/a-url-for-everything-your-agent-makes/page"));
+const BlogAgentsTalk = lazy(() => import("@/app/(marketing)/blog/agents-that-talk-to-each-other/page"));
+const BlogPullRequests = lazy(() => import("@/app/(marketing)/blog/the-pull-request-that-knows-its-sessions/page"));
+const BlogTeamSees = lazy(() => import("@/app/(marketing)/blog/what-your-team-sees/page"));
+const BlogWorktrees = lazy(() => import("@/app/(marketing)/blog/one-repository-twenty-checkouts/page"));
+const BlogTurns = lazy(() => import("@/app/(marketing)/blog/the-tree-at-the-end-of-every-turn/page"));
+const BlogChartReply = lazy(() => import("@/app/(marketing)/blog/the-chart-in-the-reply/page"));
+const BlogQuestions = lazy(() => import("@/app/(marketing)/blog/the-questions-your-agents-save-for-you/page"));
+const BlogTaskPage = lazy(() => import("@/app/(marketing)/blog/the-task-your-agent-reports-to/page"));
+const BlogCloud = lazy(() => import("@/app/(marketing)/blog/codecast-in-the-cloud/page"));
+const BlogJumps = lazy(() => import("@/app/(marketing)/blog/fewer-bigger-jumps/page"));
+const BlogFieldManual = lazy(() => import("@/app/(marketing)/blog/field-manual/page"));
+const BlogFieldManualChapter = lazy(() => import("@/app/(marketing)/blog/field-manual/ChapterPage"));
+const CompareIndex = lazy(() => import("@/app/(marketing)/compare/page"));
+const Compare = lazy(() => import("@/app/(marketing)/compare/ComparePage"));
+
+// The hosted assistant's front door, and the retired simple lane's addresses
+const Welcome = lazy(() => import("@/app/welcome/page"));
+const LaneRedirect = lazy(() => import("@/components/LaneRedirect"));
+
+// Auth
+const Login = lazy(() => import("@/app/login/page"));
+const Signup = lazy(() => import("@/app/signup/page"));
+const ForgotPassword = lazy(() => import("@/app/forgot-password/page"));
+const ResetPassword = lazy(() => import("@/app/reset-password/page"));
+const AuthCli = lazy(() => import("@/app/auth/cli/page"));
+const ArtifactAuth = lazy(() => import("@/app/artifacts/auth/page"));
+const JoinTeam = lazy(() => import("@/app/join/[code]/page"));
+
+// Dashboard / tab-routable
+const Inbox = lazy(() => import("@/app/inbox/page"));
+const Feed = lazy(() => import("@/app/feed/page"));
+const Changes = lazy(() => import("@/app/changes/page"));
+const Mods = lazy(() => import("@/app/mods/page"));
+const ModPane = lazy(() => import("@/app/m/page"));
+const ModObjects = lazy(() => import("@/app/objects/page"));
+const ModObject = lazy(() => import("@/app/o/page"));
+const Crosstalk = lazy(() => import("@/app/crosstalk/page"));
+const SessionMap = lazy(() => import("@/app/map/page"));
+const Browser = lazy(() => import("@/app/browser/page"));
+const Org = lazy(() => import("@/app/org/page"));
+const OrgScope = lazy(() => import("@/app/org/[id]/page"));
+const Chat = lazy(() => import("@/app/chat/page"));
+const Community = lazy(() => import("@/app/community/page"));
+const Search = lazy(() => import("@/app/search/page"));
+const Notifications = lazy(() => import("@/app/notifications/page"));
+const Questions = lazy(() => import("@/app/questions/page"));
+const Line = lazy(() => import("@/app/line/page"));
+const Expectations = lazy(() => import("@/app/expectations/page"));
+const Trial = lazy(() => import("@/app/trial/page"));
+const ProductViewPage = lazy(() => import("@/app/view/page"));
+const LineSettings = lazy(() => import("@/app/line/settings/page"));
+const LineTrace = lazy(() => import("@/app/line/trace/[ref]/page"));
+const LineWorkspace = lazy(() => import("@/app/line/[project]/page"));
+const DecisionDetail = lazy(() => import("@/app/decisions/[id]/page"));
+const DecisionStacks = lazy(() => import("@/app/decisions/stacks/page"));
+const DecisionStack = lazy(() => import("@/app/decisions/stacks/[id]/page"));
+const Threads = lazy(() => import("@/app/threads/page"));
+const Conversation = lazy(() => import("@/app/conversation/[id]/page"));
+const ConversationDiff = lazy(() => import("@/app/conversation/[id]/diff/page"));
+const Docs = lazy(() => import("@/app/docs/page"));
+const Capabilities = lazy(() => import("@/app/capabilities/page"));
+const AgentFeatures = lazy(() => import("@/app/agent-features/page"));
+const Vault = lazy(() => import("@/app/vault/page"));
+const Artifacts = lazy(() => import("@/app/artifacts/page"));
+const DocDetail = lazy(() => import("@/app/docs/[id]/page"));
+const Plans = lazy(() => import("@/app/plans/page"));
+const Calls = lazy(() => import("@/app/calls/page"));
+const CallDetailEntry = lazy(() => import("@/app/calls/[id]/page"));
+const PlanDetail = lazy(() => import("@/app/plans/[id]/page"));
+const Tasks = lazy(() => import("@/app/tasks/page"));
+const TaskDetail = lazy(() => import("@/app/tasks/[id]/page"));
+const ProjectDetail = lazy(() => import("@/app/projects/[id]/page"));
+const Goals = lazy(() => import("@/app/goals/page"));
+const Goal = lazy(() => import("@/app/goals/[id]/page"));
+const Projects = lazy(() => import("@/app/projects/page"));
+// Routines = our DOT-graph orchestration page at /routines (App import: @/app/workflows/page).
+// Workflows = Anthropic dynamic-workflow runs dashboard at /workflows (import: @/app/workflows/dashboard).
+// The entry redirects to /triggers in hosted mode, where Routines names it.
+const Routines = lazy(() => import("@/app/workflows/entry"));
+const Workflows = lazy(() => import("@/app/workflows/dashboard"));
+// One run's page (the-line.md L10): the run panel, its gate as a decision card.
+const WorkflowRun = lazy(() => import("@/app/workflows/runs/[id]/page"));
+// Triggers = delayed/recurring/event-driven agent runs (renamed from "Schedules";
+// the /schedules path stays routable as an alias for old links).
+const Triggers = lazy(() => import("@/app/triggers/page"));
+const TriggerDetail = lazy(() => import("@/app/triggers/[id]/page"));
+const Sessions = lazy(() => import("@/app/sessions/page"));
+const Resources = lazy(() => import("@/app/resources/page"));
+const Anchor = lazy(() => import("@/app/anchor/page"));
+const SlackConnect = lazy(() => import("@/app/slack/connect/page"));
+const WhiskReturn = lazy(() => import("@/app/connect/whisk/page"));
+// One component serves the index and every section
+// so section switches reconcile in place instead of remounting.
+const TeamActivity = lazy(() => import("@/app/team/activity/page"));
+const TeamCharts = lazy(() => import("@/app/team/charts/page"));
+const TeamMember = lazy(() => import("@/app/team/[username]/page"));
+const AdminDaemonLogs = lazy(() => import("@/app/admin/daemon-logs/page"));
+const ConfigPage = lazy(() => import("@/app/config/page"));
+const Memory = lazy(() => import("@/app/memory/page"));
+const Evals = lazy(() => import("@/app/evals/page"));
+const Ops = lazy(() => import("@/app/ops/page"));
+
+// Standalone shell pages (outside the shared shell — page-specific props / not tab-routable)
+const Explore = lazy(() => import("@/app/explore/page"));
+const Windows = lazy(() => import("@/app/windows/page"));
+const Orchestration = lazy(() => import("@/app/orchestration/page"));
+const Cli = lazy(() => import("@/app/cli/page"));
+const PublicProfile = lazy(() => import("@/app/u/[username]/page"));
+
+// Sharing
+const Share = lazy(() => import("@/app/share/[token]/page"));
+const ShareMessage = lazy(() => import("@/app/share/message/[token]/page"));
+const ShareDoc = lazy(() => import("@/app/share/doc/[token]/page"));
+const SharePlan = lazy(() => import("@/app/share/plan/[token]/page"));
+const ShareTask = lazy(() => import("@/app/share/task/[token]/page"));
+const ShareCall = lazy(() => import("@/app/share/call/[token]/page"));
+const ShareProject = lazy(() => import("@/app/share/project/[token]/page"));
+const ShareInitiative = lazy(() => import("@/app/share/initiative/[token]/page"));
+const ShareDecision = lazy(() => import("@/app/share/decision/[token]/page"));
+const ShareStack = lazy(() => import("@/app/share/stack/[token]/page"));
+const ShareTrigger = lazy(() => import("@/app/share/trigger/[token]/page"));
+const ShareRun = lazy(() => import("@/app/share/run/[token]/page"));
+const ReloadOutsideApp = lazy(() => import("@/components/ReloadOutsideApp").then((m) => ({ default: m.ReloadOutsideApp })));
+
+// Browsing a repository
+const RepoIndex = lazy(() => import("@/app/repo/page"));
+const RepoHome = lazy(() => import("@/app/repo/[owner]/[name]/page"));
+const RepoTree = lazy(() => import("@/app/repo/[owner]/[name]/tree/[ref]/page"));
+const RepoBlob = lazy(() => import("@/app/repo/[owner]/[name]/blob/[ref]/page"));
+const RepoCommits = lazy(() => import("@/app/repo/[owner]/[name]/commits/[ref]/page"));
+const RepoCompare = lazy(() => import("@/app/repo/[owner]/[name]/compare/[range]/page"));
+const RepoBranches = lazy(() => import("@/app/repo/[owner]/[name]/branches/page"));
+const RepoWorktrees = lazy(() => import("@/app/repo/[owner]/[name]/worktrees/page"));
+const RepoTags = lazy(() => import("@/app/repo/[owner]/[name]/tags/page"));
+const RepoPulls = lazy(() => import("@/app/repo/[owner]/[name]/pulls/page"));
+const RepoSessions = lazy(() => import("@/app/repo/[owner]/[name]/sessions/page"));
+const RepoSearch = lazy(() => import("@/app/repo/[owner]/[name]/search/page"));
+
+// Code review
+const CommitView = lazy(() => import("@/app/commit/[owner]/[repo]/[sha]/page"));
+const PrView = lazy(() => import("@/app/pr/[owner]/[repo]/[number]/page"));
+const ReviewView = lazy(() => import("@/app/review/[id]/page"));
+const ReviewBatch = lazy(() => import("@/app/review/batch/page"));
+
+// Palette
+const Palette = lazy(() => import("@/app/palette/page"));
+
+// People window
+const People = lazy(() => import("@/app/people/page"));
+const CallPanel = lazy(() => import("@/app/call-panel/page"));
+const MeetingOffer = lazy(() => import("@/app/meeting-offer/page"));
+const CallRing = lazy(() => import("@/app/call-ring/page"));
+const AgentDock = lazy(() => import("@/app/agent-dock/page"));
+const ShareCursors = lazy(() => import("@/app/share-cursors/page"));
+
+// Settings
+const Settings = lazy(() => import("@/app/settings/page"));
+const SettingsCli = lazy(() => import("@/app/settings/cli/page"));
+const SettingsAgents = lazy(() => import("@/app/settings/agents/page"));
+const SettingsAgentLibrary = lazy(() => import("@/app/settings/agent-library/page"));
+const SettingsDevices = lazy(() => import("@/app/settings/devices/page"));
+const SettingsMigrate = lazy(() => import("@/app/settings/migrate/page"));
+const SettingsSync = lazy(() => import("@/app/settings/sync/page"));
+const SettingsProfile = lazy(() => import("@/app/settings/profile/page"));
+const SettingsAccounts = lazy(() => import("@/app/settings/accounts/page"));
+const SettingsAccountsLinkGithub = lazy(() => import("@/app/settings/accounts/link-github/page"));
+const SettingsClaudeAccounts = lazy(() => import("@/app/settings/claude-accounts/page"));
+const SettingsTeam = lazy(() => import("@/app/settings/team/page"));
+const SettingsTeamCreate = lazy(() => import("@/app/settings/team/create/page"));
+const SettingsTeamJoin = lazy(() => import("@/app/settings/team/join/page"));
+const SettingsNotifications = lazy(() => import("@/app/settings/notifications/page"));
+const SettingsIntegrations = lazy(() => import("@/app/settings/integrations/page"));
+const SettingsDesktop = lazy(() => import("@/app/settings/desktop/page"));
+const SettingsApps = lazy(() => import("@/app/settings/apps/page"));
+
+/**
+ * The single source of truth. Order is grouped to mirror App.tsx for reviewability; the
+ * test never relies on order (TabContent's own specificity ordering is independent).
+ */
+export const ROUTES: RouteEntry[] = [
+  // -- Marketing (MarketingLayout, no AuthGuard → public) --
+  { path: "", component: cast(Landing), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "about", component: cast(About), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "features", component: cast(Features), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "features/:slug", component: cast(FeatureDeepDive), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "documentation", component: cast(Documentation), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "documentation/:slug", component: cast(DocumentationGuide), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "privacy", component: cast(Privacy), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "security", component: cast(Security), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "support", component: cast(Support), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "terms", component: cast(Terms), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "changelog", component: cast(Changelog), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "pricing", component: cast(Pricing), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "download", component: cast(Download), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog", component: cast(BlogIndex), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/git-blame-for-ai-agents", component: cast(BlogGitBlame), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/an-inbox-for-your-agents", component: cast(BlogAgentInbox), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/your-agents-forget-your-team-does-not", component: cast(BlogTeamMemory), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/this-post-wrote-itself", component: cast(BlogTriggers), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/a-url-for-everything-your-agent-makes", component: cast(BlogPublish), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/agents-that-talk-to-each-other", component: cast(BlogAgentsTalk), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/the-pull-request-that-knows-its-sessions", component: cast(BlogPullRequests), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/what-your-team-sees", component: cast(BlogTeamSees), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/one-repository-twenty-checkouts", component: cast(BlogWorktrees), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/the-tree-at-the-end-of-every-turn", component: cast(BlogTurns), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/the-chart-in-the-reply", component: cast(BlogChartReply), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/the-questions-your-agents-save-for-you", component: cast(BlogQuestions), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/the-task-your-agent-reports-to", component: cast(BlogTaskPage), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/codecast-in-the-cloud", component: cast(BlogCloud), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/fewer-bigger-jumps", component: cast(BlogJumps), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/field-manual", component: cast(BlogFieldManual), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "blog/field-manual/:chapter", component: cast(BlogFieldManualChapter), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "compare", component: cast(CompareIndex), layout: "marketing", guestOk: true, guestKind: "public" },
+  { path: "compare/:slug", component: cast(Compare), layout: "marketing", guestOk: true, guestKind: "public" },
+
+  // -- Auth (bare routes, no AuthGuard → public) --
+  { path: "login", component: cast(Login), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "signup", component: cast(Signup), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "forgot-password", component: cast(ForgotPassword), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "reset-password", component: cast(ResetPassword), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "auth/cli", component: cast(AuthCli), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "slack/connect", component: cast(SlackConnect), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "connect/whisk", component: cast(WhiskReturn), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "pages/auth", component: cast(ArtifactAuth), layout: "auth", guestOk: true, guestKind: "public" },
+  { path: "join/:code", component: cast(JoinTeam), layout: "auth", guestOk: true, guestKind: "public" },
+
+  // -- Dashboard tab shell (DashboardShell) — tab-routable; conversation routes are guest-OK --
+  { path: "inbox", component: cast(Inbox), layout: "dashboardShell", tab: "/inbox", fullWidth: true },
+  { path: "feed", component: cast(Feed), layout: "dashboardShell", tab: "/feed" },
+  // The daily edition owns its 1180px reading column (changes-page.md 4).
+  { path: "changes", component: cast(Changes), layout: "dashboardShell", tab: "/changes", fullWidth: true },
+  // Codecast mods: the list, and one mod's pane (components/mods).
+  { path: "mods", component: cast(Mods), layout: "dashboardShell", tab: "/mods" },
+  { path: "m/:mod", component: cast(ModPane), layout: "dashboardShell", tab: "/m/:mod", fullWidth: true },
+  { path: "m/:mod/:pane", component: cast(ModPane), layout: "dashboardShell", tab: "/m/:mod/:pane", fullWidth: true },
+  // Objects of mod-declared kinds: a kind's list and one object's page.
+  { path: "objects/:prefix", component: cast(ModObjects), layout: "dashboardShell", tab: "/objects/:prefix", fullWidth: true },
+  { path: "o/:id", component: cast(ModObject), layout: "dashboardShell", tab: "/o/:id", fullWidth: true },
+  { path: "crosstalk", component: cast(Crosstalk), layout: "dashboardShell", tab: "/crosstalk", fullWidth: true },
+  { path: "map", component: cast(SessionMap), layout: "dashboardShell", tab: "/map", fullWidth: true },
+  // A web page as a pane. Full-bleed via pageLayout FULL_WIDTH_PATTERNS (like
+  // /chat), so no fullWidth flag here.
+  { path: "browser", component: cast(Browser), layout: "dashboardShell", tab: "/browser" },
+  // Full-bleed via pageLayout FULL_WIDTH_PATTERNS, like /chat: no fullWidth flag here.
+  { path: "org", component: cast(Org), layout: "dashboardShell", tab: "/org", fullWidth: true },
+  { path: "org/:id", component: cast(OrgScope), layout: "dashboardShell", tab: "/org/:id", fullWidth: true },
+  // The read views' objects (/org/goals/in-2, /org/projects/pj-…): the same screen.
+  { path: "org/:view/:id", component: cast(OrgScope), layout: "dashboardShell", tab: "/org/:view/:id", fullWidth: true },
+  // Chat is full-bleed via pageLayout's FULL_WIDTH_PATTERNS (like /sessions and
+  // /anchor), not via a DashboardLayout isOnXPage flag — so it carries no
+  // fullWidth here. See the reverse-drift check in routes.manifest.test.ts.
+  { path: "chat", component: cast(Chat), layout: "dashboardShell", tab: "/chat" },
+  { path: "chat/:channelId", component: cast(Chat), layout: "dashboardShell", tab: "/chat/:channelId" },
+  // The public rooms (chat in community scope): a visitor reads them in the
+  // guest shell, like a shared conversation. Full-bleed via FULL_WIDTH_PATTERNS.
+  { path: "community", component: cast(Community), layout: "dashboardShell", tab: "/community", guestOk: true, guestKind: "shell" },
+  { path: "community/:channelId", component: cast(Community), layout: "dashboardShell", tab: "/community/:channelId", guestOk: true, guestKind: "shell" },
+  { path: "search", component: cast(Search), layout: "dashboardShell", tab: "/search" },
+  { path: "notifications", component: cast(Notifications), layout: "dashboardShell", tab: "/notifications" },
+  // Full-bleed via lib/pageLayout FULL_WIDTH_PATTERNS, so no `fullWidth` flag here.
+  { path: "questions", component: cast(Questions), layout: "dashboardShell", tab: "/questions" },
+  // Full-bleed via lib/pageLayout FULL_WIDTH_PATTERNS, like /questions.
+  { path: "line", component: cast(Line), layout: "dashboardShell", tab: "/line" },
+  { path: "expectations", component: cast(Expectations), layout: "dashboardShell", tab: "/expectations" },
+  { path: "trial", component: cast(Trial), layout: "dashboardShell", tab: "/trial" },
+  { path: "view", component: cast(ProductViewPage), layout: "dashboardShell", tab: "/view" },
+  { path: "line/settings", component: cast(LineSettings), layout: "dashboardShell", tab: "/line/settings" },
+  { path: "line/trace/:ref", component: cast(LineTrace), layout: "dashboardShell", tab: "/line/trace/:ref" },
+  { path: "line/:project", component: cast(LineWorkspace), layout: "dashboardShell", tab: "/line/:project" },
+  { path: "decisions/stacks", component: cast(DecisionStacks), layout: "dashboardShell", tab: "/decisions/stacks" },
+  { path: "decisions/stacks/:id", component: cast(DecisionStack), layout: "dashboardShell", tab: "/decisions/stacks/:id" },
+  { path: "decisions/:id", component: cast(DecisionDetail), layout: "dashboardShell", tab: "/decisions/:id" },
+  // Full-bleed via lib/pageLayout FULL_WIDTH_PATTERNS, so no `fullWidth` flag here.
+  { path: "threads", component: cast(Threads), layout: "dashboardShell", tab: "/threads" },
+  { path: "conversation/:id", component: cast(Conversation), layout: "dashboardShell", tab: "/conversation/:id", fullWidth: true, guestOk: true, guestKind: "shell" },
+  { path: "conversation/:id/diff", component: cast(ConversationDiff), layout: "dashboardShell", tab: "/conversation/:id/diff", fullWidth: true, guestOk: true, guestKind: "shell" },
+  { path: "docs", component: cast(Docs), layout: "dashboardShell", tab: "/docs", fullWidth: true },
+  { path: "capabilities", component: cast(Capabilities), layout: "dashboardShell", tab: "/capabilities", fullWidth: true },
+  { path: "agent-features", component: cast(AgentFeatures), layout: "dashboardShell", tab: "/agent-features" },
+  { path: "files", component: cast(Vault), layout: "dashboardShell", tab: "/files", fullWidth: true },
+  { path: "vault", component: cast(Vault), layout: "dashboardShell", tab: "/vault", fullWidth: true }, // permanent pre-rename alias for /files
+  { path: "pages", component: cast(Artifacts), layout: "dashboardShell", tab: "/pages" },
+  { path: "artifacts", component: cast(Artifacts), layout: "dashboardShell", tab: "/artifacts" }, // pre-rename alias for /pages
+  { path: "docs/:id", component: cast(DocDetail), layout: "dashboardShell", tab: "/docs/:id", fullWidth: true },
+  { path: "calls", component: cast(Calls), layout: "dashboardShell", tab: "/calls", fullWidth: true },
+  { path: "calls/:id", component: cast(CallDetailEntry), layout: "dashboardShell", tab: "/calls/:id", fullWidth: true },
+  { path: "plans", component: cast(Plans), layout: "dashboardShell", tab: "/plans", fullWidth: true },
+  { path: "plans/:id", component: cast(PlanDetail), layout: "dashboardShell", tab: "/plans/:id", fullWidth: true },
+  { path: "tasks", component: cast(Tasks), layout: "dashboardShell", tab: "/tasks", fullWidth: true },
+  { path: "tasks/:id", component: cast(TaskDetail), layout: "dashboardShell", tab: "/tasks/:id", fullWidth: true },
+  { path: "goals", component: cast(Goals), layout: "dashboardShell", tab: "/goals", fullWidth: true },
+  { path: "goals/:id", component: cast(Goal), layout: "dashboardShell", tab: "/goals/:id", fullWidth: true },
+  { path: "projects", component: cast(Projects), layout: "dashboardShell", tab: "/projects", fullWidth: true },
+  { path: "projects/:id", component: cast(ProjectDetail), layout: "dashboardShell", tab: "/projects/:id", fullWidth: true },
+  { path: "projects/:id/:taskId", component: cast(ProjectDetail), layout: "dashboardShell", tab: "/projects/:id/:taskId", fullWidth: true },
+  { path: "workflows", component: cast(Workflows), layout: "dashboardShell", tab: "/workflows", fullWidth: true },
+  { path: "workflows/runs/:id", component: cast(WorkflowRun), layout: "dashboardShell", tab: "/workflows/runs/:id", fullWidth: true },
+  { path: "routines", component: cast(Routines), layout: "dashboardShell", tab: "/routines", fullWidth: true },
+  { path: "triggers", component: cast(Triggers), layout: "dashboardShell", tab: "/triggers", fullWidth: true },
+  { path: "triggers/:id", component: cast(TriggerDetail), layout: "dashboardShell", tab: "/triggers/:id", fullWidth: true },
+  { path: "schedules", component: cast(Triggers), layout: "dashboardShell", tab: "/schedules", fullWidth: true },
+  { path: "schedules/:id", component: cast(TriggerDetail), layout: "dashboardShell", tab: "/schedules/:id", fullWidth: true },
+  { path: "sessions", component: cast(Sessions), layout: "dashboardShell", tab: "/sessions" },
+  { path: "resources", component: cast(Resources), layout: "dashboardShell", tab: "/resources" },
+  // Full-bleed via pageLayout's FULL_WIDTH_PATTERNS (like /sessions), not an isOnXPage flag.
+  { path: "anchor", component: cast(Anchor), layout: "dashboardShell", tab: "/anchor" },
+  { path: "team/activity", component: cast(TeamActivity), layout: "dashboardShell", tab: "/team/activity" },
+  { path: "team/charts", component: cast(TeamCharts), layout: "dashboardShell", tab: "/team/charts" },
+  { path: "team/:username", component: cast(TeamMember), layout: "dashboardShell", tab: "/team/:username" },
+  { path: "admin/daemon-logs", component: cast(AdminDaemonLogs), layout: "dashboardShell", tab: "/admin/daemon-logs" },
+  // Full-bleed via pageLayout's FULL_WIDTH_PATTERNS (like /sessions), not an isOnXPage flag.
+  { path: "config", component: cast(ConfigPage), layout: "dashboardShell", tab: "/config" },
+  { path: "memory", component: cast(Memory), layout: "dashboardShell", tab: "/memory" },
+  // One area for every Evals view: the page reads its sub-paths itself
+  // (components/evals/evalsPaths.ts), so a new view needs no route here.
+  { path: "evals", component: cast(Evals), layout: "dashboardShell", tab: "/evals" },
+  { path: "evals/*", component: cast(Evals), layout: "dashboardShell", tab: "/evals/*" },
+  // Ops the same way (components/ops/opsPaths.ts): tabs, issues and replays.
+  { path: "ops", component: cast(Ops), layout: "dashboardShell", tab: "/ops" },
+  { path: "ops/*", component: cast(Ops), layout: "dashboardShell", tab: "/ops/*" },
+
+  // -- Standalone shell pages (outside the shared shell) --
+  // `windows` is NOT in DashboardShell in App.tsx, yet TabContent CAN render it in
+  // place — so it carries a `tab` here even though its layout is "standalone".
+  { path: "explore", component: cast(Explore), layout: "standalone" },
+  { path: "windows", component: cast(Windows), layout: "standalone", tab: "/windows", fullWidth: true },
+  { path: "orchestration", component: cast(Orchestration), layout: "standalone" },
+  { path: "cli", component: cast(Cli), layout: "standalone" },
+
+  // -- Sharing (no AuthGuard → public) --
+  { path: "share/:token", component: cast(Share), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/message/:token", component: cast(ShareMessage), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/doc/:token", component: cast(ShareDoc), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/plan/:token", component: cast(SharePlan), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/task/:token", component: cast(ShareTask), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/call/:token", component: cast(ShareCall), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/project/:token", component: cast(ShareProject), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/initiative/:token", component: cast(ShareInitiative), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/decision/:token", component: cast(ShareDecision), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/stack/:token", component: cast(ShareStack), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/trigger/:token", component: cast(ShareTrigger), layout: "share", guestOk: true, guestKind: "public" },
+  { path: "share/run/:token", component: cast(ShareRun), layout: "share", guestOk: true, guestKind: "public" },
+  // A guest's meeting page boots standalone (shareBoot); inside the app this
+  // route only turns an in-app navigation into the full load the page needs.
+  { path: "meet/:token", component: cast(ReloadOutsideApp), layout: "share", guestOk: true, guestKind: "public" },
+
+  // -- Browsing a repository. The tree and blob pages carry the file path in the
+  //    query string (`?path=`), not the route, so every path here is a fixed set
+  //    of segments and the tab shell can render all four in place. --
+  { path: "repo", component: cast(RepoIndex), layout: "dashboardShell", tab: "/repo", fullWidth: true },
+  { path: "repo/:owner/:name", component: cast(RepoHome), layout: "codeReview", tab: "/repo/:owner/:name", fullWidth: true },
+  { path: "repo/:owner/:name/tree/:ref", component: cast(RepoTree), layout: "codeReview", tab: "/repo/:owner/:name/tree/:ref", fullWidth: true },
+  { path: "repo/:owner/:name/blob/:ref", component: cast(RepoBlob), layout: "codeReview", tab: "/repo/:owner/:name/blob/:ref", fullWidth: true },
+  { path: "repo/:owner/:name/commits/:ref", component: cast(RepoCommits), layout: "codeReview", tab: "/repo/:owner/:name/commits/:ref", fullWidth: true },
+  { path: "repo/:owner/:name/compare/:range", component: cast(RepoCompare), layout: "codeReview", tab: "/repo/:owner/:name/compare/:range", fullWidth: true },
+  { path: "repo/:owner/:name/branches", component: cast(RepoBranches), layout: "codeReview", tab: "/repo/:owner/:name/branches", fullWidth: true },
+  { path: "repo/:owner/:name/worktrees", component: cast(RepoWorktrees), layout: "codeReview", tab: "/repo/:owner/:name/worktrees", fullWidth: true },
+  { path: "repo/:owner/:name/tags", component: cast(RepoTags), layout: "codeReview", tab: "/repo/:owner/:name/tags", fullWidth: true },
+  { path: "repo/:owner/:name/pulls", component: cast(RepoPulls), layout: "codeReview", tab: "/repo/:owner/:name/pulls", fullWidth: true },
+  { path: "repo/:owner/:name/sessions", component: cast(RepoSessions), layout: "codeReview", tab: "/repo/:owner/:name/sessions", fullWidth: true },
+  { path: "repo/:owner/:name/search", component: cast(RepoSearch), layout: "codeReview", tab: "/repo/:owner/:name/search", fullWidth: true },
+
+  // -- The standalone family: the same page components with no shell around
+  //    them. Layout "standalone" and guest-public, because a public repository
+  //    must be readable by somebody who has never signed in; NO `tab`, because
+  //    a page that is its own window can never be a tab (lib/tabRoutes excludes
+  //    the whole /r prefix, which is what the guest-public rule below checks).
+  //    No `fullWidth` either: that flag names a DashboardLayout behaviour, and
+  //    these routes never render DashboardLayout. --
+  { path: "r/:owner/:name", component: cast(RepoHome), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/tree/:ref", component: cast(RepoTree), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/blob/:ref", component: cast(RepoBlob), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/commits/:ref", component: cast(RepoCommits), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/compare/:range", component: cast(RepoCompare), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/branches", component: cast(RepoBranches), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/tags", component: cast(RepoTags), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/pulls", component: cast(RepoPulls), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/sessions", component: cast(RepoSessions), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:name/search", component: cast(RepoSearch), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:repo/commit/:sha", component: cast(CommitView), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:repo/pull/:number", component: cast(PrView), layout: "standalone", guestOk: true, guestKind: "public" },
+  { path: "r/:owner/:repo/pull/:number/:view", component: cast(PrView), layout: "standalone", guestOk: true, guestKind: "public" },
+
+  // -- Code review --
+  { path: "commit/:owner/:repo/:sha", component: cast(CommitView), layout: "codeReview", tab: "/commit/:owner/:repo/:sha", fullWidth: true },
+  { path: "pr/:owner/:repo/:number", component: cast(PrView), layout: "codeReview", tab: "/pr/:owner/:repo/:number", fullWidth: true },
+  { path: "pr/:owner/:repo/:number/:view", component: cast(PrView), layout: "codeReview", tab: "/pr/:owner/:repo/:number/:view", fullWidth: true },
+  { path: "review/:id", component: cast(ReviewView), layout: "codeReview" },
+  { path: "review/batch", component: cast(ReviewBatch), layout: "codeReview" },
+
+  // -- Palette (TransparentWindowLayout) --
+  { path: "palette", component: cast(Palette), layout: "palette" },
+
+  // -- The people window (its own OS window / browser popup, no tab shell) --
+  { path: "people", component: cast(People), layout: "people" },
+
+  // -- The call panel (a huddle in its own OS window, no tab shell) --
+  //    Its own layout value rather than "standalone": the parity test asserts
+  //    IN_SHELL_ROOT_SEGMENTS equals the manifest's single-segment
+  //    dashboardShell/standalone routes, so calling it standalone would force
+  //    "call-panel" into the in-shell set — the opposite of what it is.
+  { path: "call-panel", component: cast(CallPanel), layout: "callPanel" },
+
+  // -- The meeting-offer window (TransparentWindowLayout): the record-this-
+  //    meeting card as a small chromeless corner window --
+  { path: "meeting-offer", component: cast(MeetingOffer), layout: "palette" },
+
+  // -- The ring window (TransparentWindowLayout): an incoming huddle as a
+  //    small chromeless corner card. Same family as the meeting offer, and
+  //    for the same reason: a ring must reach somebody who is in another app
+  //    entirely, which a card inside an app window cannot do. --
+  { path: "call-ring", component: cast(CallRing), layout: "palette" },
+
+  // -- The agent dock (TransparentWindowLayout): the pill on the screen's
+  //    edge with a dot per live agent and the card beside it. On by
+  //    default, turned off per machine. --
+  { path: "agent-dock", component: cast(AgentDock), layout: "palette" },
+
+  // -- The share cursors glass (TransparentWindowLayout): teammates' pointers
+  //    drawn on the sharer's own screen, over what the share captures. --
+  { path: "share-cursors", component: cast(ShareCursors), layout: "palette" },
+
+  // -- The hosted assistant's front door (pl-840). Outside the tab shell:
+  //    lib/tabRoutes lists /welcome as a NON_TAB prefix. Someone new starts
+  //    here, so a signed-out visitor reads it. The simple lane folded into the
+  //    main app; /simple and below redirect to their main-app pages
+  //    (lib/laneRedirect.ts). --
+  { path: "welcome", component: cast(Welcome), layout: "welcome", guestOk: true, guestKind: "public" },
+  { path: "simple/*", component: cast(LaneRedirect), layout: "redirect" },
+  // The hosted page names as addresses (lib/laneRedirect.ts PAGE_ALIASES):
+  // /approvals is /questions, /plan and /mail are settings sections. Ahead of
+  // the :username catch-all, so a typed or shared name never reads as a
+  // profile 404.
+  { path: "approvals", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "plan", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "mail", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "integrations", component: cast(LaneRedirect), layout: "redirect" },
+  // The non-developer funnel's address, open to a signed-out visitor.
+  { path: "everyone", component: cast(LaneRedirect), layout: "redirect", guestOk: true, guestKind: "public" },
+  // Renamed pages' old addresses (lib/renamedPages.ts).
+  { path: "initiatives", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "initiatives/:id", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "team", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "company", component: cast(LaneRedirect), layout: "redirect" },
+  { path: "roadmap", component: cast(LaneRedirect), layout: "redirect" },
+
+  // -- Settings (SettingsLayout; index = /settings) --
+  { path: "settings", component: cast(Settings), layout: "settings" },
+  { path: "settings/cli", component: cast(SettingsCli), layout: "settings" },
+  { path: "settings/agents", component: cast(SettingsAgents), layout: "settings" },
+  { path: "settings/agent-library", component: cast(SettingsAgentLibrary), layout: "settings" },
+  { path: "settings/devices", component: cast(SettingsDevices), layout: "settings" },
+  { path: "settings/migrate", component: cast(SettingsMigrate), layout: "settings" },
+  { path: "settings/sync", component: cast(SettingsSync), layout: "settings" },
+  { path: "settings/profile", component: cast(SettingsProfile), layout: "settings" },
+  { path: "settings/accounts", component: cast(SettingsAccounts), layout: "settings" },
+  { path: "settings/accounts/link-github", component: cast(SettingsAccountsLinkGithub), layout: "settings" },
+  { path: "settings/claude-accounts", component: cast(SettingsClaudeAccounts), layout: "settings" },
+  { path: "settings/team", component: cast(SettingsTeam), layout: "settings" },
+  { path: "settings/team/create", component: cast(SettingsTeamCreate), layout: "settings" },
+  { path: "settings/team/join", component: cast(SettingsTeamJoin), layout: "settings" },
+  { path: "settings/notifications", component: cast(SettingsNotifications), layout: "settings" },
+  { path: "settings/integrations", component: cast(SettingsIntegrations), layout: "settings" },
+  { path: "settings/integrations/github-app", component: cast(SettingsIntegrations), layout: "settings" },
+  { path: "settings/desktop", component: cast(SettingsDesktop), layout: "settings" },
+  { path: "settings/apps", component: cast(SettingsApps), layout: "settings" },
+  // Sections with no page of their own (provider-keys, daemon, sounds): SettingsLayout opens
+  // them as a modal over the settings index.
+  { path: "settings/*", component: null, layout: "settings" },
+
+  // -- Public profiles (anonymous, guest-viewable, at the ROOT: /<handle>) --
+  // MUST stay last: React Router ranks static segments above this dynamic one, so
+  // every real route wins; only unmatched single-segment paths fall through here.
+  // Claim collisions are blocked by RESERVED_USERNAMES in convex/users.ts.
+  { path: ":username", component: cast(PublicProfile), layout: "standalone", guestOk: true, guestKind: "public" },
+];
+
+// -- Helpers (used by the parity test; safe for Wave 2 consumers too) --
+
+/** Absolute URL form of a route's `path` (leading slash; "" → "/"). */
+export function routeHref(path: string): string {
+  return path === "" ? "/" : `/${path}`;
+}
+
+/** All tab-routable entries (those TabContent can render in place), keyed by their `tab` value. */
+export function tabRoutes(): RouteEntry[] {
+  return ROUTES.filter((r) => r.tab !== undefined);
+}

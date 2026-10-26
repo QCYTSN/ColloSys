@@ -1,0 +1,367 @@
+"use client";
+import { useRef, useState, useCallback } from "react";
+import { useRouter } from "next/navigation";
+import { CollabDocEditor } from "./editor/CollabDocEditor";
+import { AppLoader } from "./AppLoader";
+import { useMentionQuery, useActiveMentionScope } from "../hooks/useMentionQuery";
+import { useImageUpload } from "../hooks/useImageUpload";
+import { ErrorBoundary } from "./ErrorBoundary";
+import { ContextChatInput } from "./ContextChatInput";
+import { MessageReview } from "./MessageReview";
+import { MarkdownBlocks } from "./tools/MarkdownRenderer";
+import { DOC_MD_COMPONENTS } from "../lib/docMarkdownComponents";
+import { DocReviewBar } from "./DocReviewBar";
+import { useSurface } from "../lib/surfaces";
+import { SlotActions } from "./workspace/Slot";
+import { useInboxStore } from "../store/inboxStore";
+import { ArrowLeft, Edit3, MoreHorizontal, Copy, Check, MessageSquareQuote } from "lucide-react";
+import Link from "next/link";
+import { copyToClipboard } from "../lib/utils";
+import { toast } from "sonner";
+import { useTitlebarHead } from "../hooks/useTitlebarHead";
+import { MenuKeyCaps } from "./KeyboardShortcutsHelp";
+import { matchesAction } from "../shortcuts";
+import { leadingHeading, stripTitleHeading } from "@codecast/shared/docs";
+import { useDrafting } from "./docs/drafting/useDrafting";
+import { AlternativesPanel, DraftingControls, OverflowPanel, TrimBar, useDraftingMenu } from "./docs/drafting/DraftingUI";
+
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { useTabActive } from "../hooks/usePagePresence";
+import { useFollowScroll } from "../hooks/useFollowSurface";
+// Module-level so MessageReview's memo holds (a fresh inline arrow would defeat
+// it). Renders the doc's markdown as a flat run of blocks — each a direct child
+// of MessageReview's measurement container, so every block is hover-quotable.
+const renderDocBlocks = (content: string) => (
+  <MarkdownBlocks content={content} components={DOC_MD_COMPONENTS} />
+);
+
+interface DocumentDetailLayoutProps {
+  docId: string;
+  title: string;
+  markdownContent: string;
+  editable?: boolean;
+  placeholder?: string;
+  /**
+   * The document is one text and its title is its first heading: no separate
+   * title field, the editor's first block is the title (DocTitleExtension),
+   * and review mode splits the leading heading off the body to render it in
+   * the same place. `title` is then only the fallback for a body that has no
+   * heading yet, and `onTitleChange` is not used.
+   */
+  titleInBody?: boolean;
+  onTitleChange?: (title: string) => void;
+  backHref: string;
+  topBarLeft?: React.ReactNode;
+  topBarRight?: React.ReactNode;
+  /** Always-visible content shown between the title and the body editor (e.g. a plan's goal). */
+  leadContent?: React.ReactNode;
+  metaContent?: React.ReactNode;
+  children?: React.ReactNode;
+  footerContent?: React.ReactNode;
+  contextType?: string;
+  linkedObjectId?: string;
+  cliEditedAt?: number;
+  /** Forwarded to CollabDocEditor — see its `contentReady` doc. */
+  contentReady?: boolean;
+  /** The session this doc came from, if any — the default target when sending
+   *  review annotations to an agent. */
+  ownerConversationId?: string;
+  /** Mount in edit mode. Defaults true: editing IS the doc surface; the
+   *  quotable read view is the opt-in Review mode. */
+  defaultEditing?: boolean;
+  /** Mounted inside another page (a role's brief on the scope page): no back
+   *  link and no close, since the host page owns navigation. */
+  embedded?: boolean;
+  /** The drafting layer (alternatives, ghosts, the Lab); `overflow` adds the
+   *  Overflow panel, which keeps its text on the docs row. */
+  drafting?: { overflow?: boolean };
+}
+
+export function DocumentDetailLayout({
+  docId,
+  title,
+  markdownContent,
+  editable: initialEditable = true,
+  placeholder = "Start writing, use / for commands, @ to mention...",
+  titleInBody = false,
+  onTitleChange,
+  backHref,
+  topBarLeft,
+  topBarRight,
+  leadContent,
+  metaContent,
+  children,
+  footerContent,
+  contextType = "doc",
+  linkedObjectId,
+  cliEditedAt,
+  contentReady = true,
+  ownerConversationId,
+  defaultEditing = true,
+  embedded = false,
+  drafting,
+}: DocumentDetailLayoutProps) {
+  const router = useRouter();
+  const titlebarRef = useTitlebarHead<HTMLDivElement>();
+  // Edit mode is the default: the doc opens as the live collaborative editor
+  // (rich pills, dates, checkboxes in place). Review mode is the opt-in
+  // toggle — the body re-renders as quotable blocks (hover any block to
+  // annotate and send to the agent).
+  const [isEditing, setIsEditing] = useState(defaultEditing && initialEditable);
+  const reviewKey = `doc:${docId}`;
+  // The review submit bar replaces the context chat only while a batch of
+  // pending notes exists — quoting a first block summons it, sending/clearing
+  // the batch dismisses it.
+  const hasReviewNotes = useInboxStore(
+    (s) => (s.reviewComments[reviewKey] ?? []).length > 0
+  );
+  const [showMeta, setShowMeta] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const handleMentionQuery = useMentionQuery(useActiveMentionScope());
+  const handleImageUpload = useImageUpload();
+  const getMarkdownRef = useRef<(() => string) | null>(null);
+  // The body is the doc's one scroller: a follower reads where the leader reads.
+  const bodyScrollRef = useRef<HTMLDivElement | null>(null);
+  useFollowScroll("doc", bodyScrollRef);
+  const draft = useDrafting(docId);
+  // Hosted mode reads a note, it does not run a writing lab on it.
+  const internals = useSurface("docs.internals");
+  const draftingOn = !!drafting && isEditing && internals;
+  const overflowEnabled = !!drafting?.overflow;
+  const draftMenu = useDraftingMenu(draft, overflowEnabled);
+
+  // Cmd/Ctrl+E toggles edit mode from anywhere on the surface — including
+  // while the editor itself has focus (a modifier chord is never typing).
+  const paneActive = useTabActive();
+  useWatchEffect(() => {
+    if (!initialEditable || !paneActive) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (matchesAction(e, "doc.toggleEdit")) {
+        e.preventDefault();
+        setIsEditing((v) => !v);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [initialEditable, paneActive]);
+  const getContextBody = useCallback(
+    () => getMarkdownRef.current?.() ?? markdownContent,
+    [markdownContent]
+  );
+
+  // The title as the reader sees it and the body under it. With the title in
+  // the body, both come from the markdown itself; otherwise the title is the
+  // separate field and the body is the whole content.
+  const shownTitle = (titleInBody ? leadingHeading(markdownContent) : null) || title || "Untitled";
+  const bodyMarkdown = titleInBody ? stripTitleHeading(markdownContent) : markdownContent;
+
+  const handleCopyMarkdown = () => {
+    const md = getMarkdownRef.current?.() ?? markdownContent;
+    const full = title && !titleInBody ? `# ${title}\n\n${md}` : md;
+    copyToClipboard(full)
+      .then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        toast.success("Copied!");
+      })
+      .catch(() => toast.error("Failed to copy"));
+  };
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Wraps the action cluster to a second row rather than letting it overflow
+          (and clip its trailing icons) once the back/type/watch cluster and the
+          icons can no longer share one line — e.g. a narrow split-pane doc view. */}
+      <div ref={titlebarRef} data-page-head className="cc-panel__head justify-between">
+        <div className="flex items-center gap-3">
+          {!embedded && (
+            <Link
+              href={backHref}
+              className="text-sol-text-dim hover:text-sol-cyan transition-colors"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </Link>
+          )}
+          {topBarLeft}
+        </div>
+        <div className="flex items-center gap-1 ml-auto">
+          {internals && <button
+            onClick={handleCopyMarkdown}
+            className="p-1.5 rounded-md text-xs flex items-center gap-1 text-sol-text-dim hover:text-sol-text transition-colors"
+            title="Copy as Markdown"
+          >
+            {copied ? <Check className="w-3.5 h-3.5 text-sol-green" /> : <Copy className="w-3.5 h-3.5" />}
+          </button>}
+          {initialEditable && internals && (
+            // Editing is the default state, so the button offers the opt-in:
+            // Review renders the body as quotable blocks to annotate and send
+            // to the agent. While reviewing it flips to an accent-filled state
+            // so the departure from the default is unmistakable.
+            <button
+              onClick={() => setIsEditing(!isEditing)}
+              className={`px-2 py-1 mx-0.5 rounded-md text-xs font-medium flex items-center gap-1.5 border transition-colors ${
+                isEditing
+                  ? "text-sol-text-muted border-sol-border/40 hover:text-sol-text hover:border-sol-border hover:bg-sol-bg-alt/60"
+                  : "bg-sol-cyan/15 text-sol-cyan border-sol-cyan/40 hover:bg-sol-cyan/25"
+              }`}
+              title={isEditing ? "Review mode — quote blocks to the agent" : "Back to editing"}
+            >
+              {isEditing ? <MessageSquareQuote className="w-3.5 h-3.5" /> : <Edit3 className="w-3.5 h-3.5" />}
+              <span>{isEditing ? "Review" : "Edit"}</span>
+              <MenuKeyCaps action="doc.toggleEdit" className="contents" />
+            </button>
+          )}
+          {draftingOn && <DraftingControls d={draft} overflowEnabled={overflowEnabled} />}
+          {/* Hosted mode leads with what a person does with a note: copy its
+              text, labelled, without the title line. */}
+          {!internals && (
+            <button
+              type="button"
+              onClick={() => {
+                const md = getMarkdownRef.current?.() ?? markdownContent;
+                copyToClipboard((titleInBody ? stripTitleHeading(md) : md).trim())
+                  .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600); })
+                  .catch(() => toast.error("Couldn't copy that. Select the text and copy it instead."));
+              }}
+              data-cc-note-copy
+              className="mr-1 inline-flex h-7 items-center gap-1.5 rounded-md border border-sol-border px-2.5 text-xs text-sol-text-muted transition-colors hover:bg-sol-bg-highlight hover:text-sol-text"
+            >
+              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+              {copied ? "Copied" : "Copy"}
+            </button>
+          )}
+          {topBarRight}
+          {/* Shared controls in the detail's own header. Closing here is a
+              navigation, so the slot's default hide is overridden — the
+              affordance stays identical either way. */}
+          {!embedded && internals && <SlotActions slot="primary" onClose={() => router.push(backHref)} />}
+          {metaContent && (
+            <button
+              onClick={() => setShowMeta(!showMeta)}
+              className="p-1.5 rounded-md text-sol-text-dim hover:text-sol-text transition-colors"
+              title="Info"
+            >
+              <MoreHorizontal className="w-3.5 h-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {showMeta && metaContent && (
+        <div className="px-10 py-3 border-b border-sol-border/10 flex-shrink-0 max-w-5xl mx-auto w-full">
+          {metaContent}
+        </div>
+      )}
+
+      <div ref={bodyScrollRef} className="flex-1 overflow-y-auto">
+        <div className="flex flex-col min-h-full">
+        <div className="flex-1 flex items-start w-full">
+        {draftingOn && <AlternativesPanel d={draft} />}
+        <div className="flex-1 min-w-0 max-w-5xl mx-auto px-10 pt-10 pb-8 w-full">
+          {titleInBody && isEditing ? null : (
+            // Editing the title here only applies to the separate-field mode;
+            // with the title in the body the editor's first block is the title
+            // and review mode shows it as a static heading in the same spot.
+            <h1
+              contentEditable={isEditing && !titleInBody}
+              suppressContentEditableWarning
+              onBlur={(e) => {
+                const text = e.currentTarget.textContent || "";
+                if (text !== title) onTitleChange?.(text);
+              }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); (e.target as HTMLElement).blur(); } }}
+              className={`doc-title ${isEditing ? "outline-none cursor-text" : ""}`}
+            >
+              {shownTitle}
+            </h1>
+          )}
+
+          {leadContent && <div className="mt-2">{leadContent}</div>}
+
+          <div className={titleInBody && isEditing ? "" : "mt-4"} onContextMenu={draftingOn ? draftMenu.onContextMenu : undefined}>
+            {isEditing ? (
+              <ErrorBoundary name="DocEditor" level="panel">
+                <CollabDocEditor
+                  key={docId}
+                  docId={docId}
+                  markdownContent={markdownContent}
+                  title={titleInBody ? title : undefined}
+                  onMentionQuery={handleMentionQuery}
+                  onImageUpload={handleImageUpload}
+                  editable
+                  placeholder={placeholder}
+                  getMarkdownRef={getMarkdownRef}
+                  cliEditedAt={cliEditedAt}
+                  contentReady={contentReady}
+                  draftingRef={drafting ? draft.draftingRef : undefined}
+                  onEditor={drafting ? draft.setEditor : undefined}
+                />
+              </ErrorBoundary>
+            ) : !bodyMarkdown.trim() && !contentReady ? (
+              // The detail (which carries the content) hasn't synced yet — an
+              // empty body here means "loading", never "empty document".
+              <AppLoader className="min-h-0 bg-transparent py-8" size={24} />
+            ) : !bodyMarkdown.trim() && initialEditable ? (
+              // An empty doc in read mode is a dead end (nothing to read,
+              // nothing clickable) — offer the way in directly.
+              <button
+                onClick={() => setIsEditing(true)}
+                className="block w-full text-left py-6 text-sm text-sol-text-dim hover:text-sol-text-muted transition-colors cursor-text"
+              >
+                Empty document — click to start writing
+              </button>
+            ) : (
+              // doc-read-body aligns the reading view with the editor's visual
+              // language (editor.css) so mode toggles don't restyle the doc.
+              // Double-click anywhere in the text is the direct path into
+              // editing; the review rail's hover-quote (single-click) and text
+              // selection are untouched by it.
+              <div
+                className="prose prose-invert prose-sm max-w-none text-sol-text doc-read-body"
+                onDoubleClick={initialEditable ? () => setIsEditing(true) : undefined}
+              >
+                <MessageReview
+                  conversationId={reviewKey}
+                  messageId={reviewKey}
+                  content={bodyMarkdown}
+                  renderBlock={renderDocBlocks}
+                />
+              </div>
+            )}
+          </div>
+
+          {children && (
+            <div className="mt-16 pt-8 border-t border-sol-border/15">
+              {children}
+            </div>
+          )}
+        </div>
+        {draftingOn && overflowEnabled && <OverflowPanel d={draft} />}
+        </div>
+        {draftingOn && <TrimBar d={draft} />}
+        {draftingOn && draftMenu.element}
+        {footerContent && (
+          <div className="max-w-5xl mx-auto px-10 pb-4 w-full">
+            {footerContent}
+          </div>
+        )}
+        {hasReviewNotes && !isEditing ? (
+          <DocReviewBar
+            reviewKey={reviewKey}
+            docId={docId}
+            title={shownTitle}
+            ownerConversationId={ownerConversationId}
+          />
+        ) : (
+          <ContextChatInput
+            contextType={contextType}
+            contextTitle={shownTitle}
+            getContextBody={getContextBody}
+            linkedObjectId={linkedObjectId}
+          />
+        )}
+        </div>
+      </div>
+    </div>
+  );
+}

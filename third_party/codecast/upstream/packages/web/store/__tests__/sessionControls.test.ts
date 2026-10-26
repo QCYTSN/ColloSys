@@ -1,0 +1,169 @@
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import { convHasPendingSend, isSessionEffectivelyIdle, useInboxStore } from "../inboxStore";
+import { sessionIdleAt } from "../../lib/liveness";
+
+const ID = "a".repeat(32);
+const store = () => useInboxStore.getState();
+
+describe("session controls use the default optimistic store path", () => {
+  beforeEach(() => {
+    useInboxStore.setState({
+      sessions: { [ID]: {
+        _id: ID, session_id: "session-a", agent_type: "claude_code", agent_status: "working",
+        last_heartbeat: Date.now(), permission_mode: "default", is_idle: false, has_pending: false, message_count: 2,
+        updated_at: Date.now(),
+      } },
+      conversations: {}, messages: {}, pendingMessages: {}, pending: {}, pagination: {},
+    });
+    store()._setDispatch(async () => null);
+  });
+
+  afterEach(() => store()._clearRuntimeBindings());
+
+  it("stops locally and adds the interruption line before the dispatch resolves", async () => {
+    let acknowledge!: () => void;
+    store()._setDispatch(() => new Promise<void>((resolve) => { acknowledge = resolve; }));
+    const request = store().convCommand(ID, "sendEscapeToSession");
+    expect(store().sessions[ID].agent_status).toBe("idle");
+    expect(isSessionEffectivelyIdle(store().sessions[ID])).toBe(true);
+    expect(store().pendingMessages[ID]).toHaveLength(1);
+    expect(store().pendingMessages[ID][0].content).toBe("[Request interrupted by user]");
+    expect(convHasPendingSend(store().pendingMessages[ID])).toBe(false);
+    expect(store().pending[`sessions:${ID}:agent_status`]?.value).toBe("idle");
+    acknowledge();
+    await request;
+  });
+
+  it("paints the interruption line for a conversation the inbox window does not hold", async () => {
+    // A subagent or stashed conversation the user is viewing: the view seeds
+    // conversations[id], but no sessions row exists (the inbox overlay never
+    // listed it). The line must still appear at once.
+    useInboxStore.setState({ sessions: {}, conversations: { [ID]: { _id: ID, agent_type: "codex", status: "active" } } });
+    await store().sendEscape(ID);
+    expect(store().pendingMessages[ID]).toHaveLength(1);
+    expect(store().pendingMessages[ID][0].content).toBe("<turn_aborted>");
+  });
+
+  it("forwards the press time so the daemon can judge it against its own injections", async () => {
+    const dispatched: Array<{ action: string; args: any }> = [];
+    store()._setDispatch(async (action, args) => { dispatched.push({ action, args }); return null; });
+    const pressedAt = Date.now() - 5;
+    await store().convCommand(ID, "sendEscapeToSession", { pressed_at: pressedAt });
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].action).toBe("convCommand");
+    expect(dispatched[0].args).toEqual([ID, "sendEscapeToSession", { pressed_at: pressedAt }]);
+    expect(store().pendingMessages[ID][0].content).toBe("[Request interrupted by user]");
+  });
+
+  it("protects local state from both overlay paths until the daemon echoes it", async () => {
+    await store().sendEscape(ID);
+    // The overlay ships the daemon's raw status, the one fact the live
+    // derivation reads: the press must hold it, or the stopped row derives
+    // working again a minute later.
+    // A liveness payload carries every fact field (an absent one clears).
+    const working = { agent_status: "working", is_idle: false, last_heartbeat: Date.now(), message_count: 2, updated_at: Date.now() };
+    store().applyInboxLivenessPayload("mine", { [ID]: working });
+    expect(store().sessions[ID].agent_status).toBe("idle");
+    expect(store().sessions[ID].is_idle).toBe(true);
+    expect(sessionIdleAt(store().sessions[ID], Date.now() + 60_000)).toBe(true);
+    store().syncOverlay("sessions", { [ID]: { ...working, agent_status: "thinking" } });
+    expect(store().sessions[ID].agent_status).toBe("idle");
+    expect(sessionIdleAt(store().sessions[ID], Date.now() + 60_000)).toBe(true);
+    store().applyInboxLivenessPayload("mine", { [ID]: { ...working, agent_status: "idle", is_idle: true } });
+    expect(store().pending[`sessions:${ID}:agent_status`]).toBeUndefined();
+    store().applyInboxLivenessPayload("mine", { [ID]: working });
+    expect(store().sessions[ID].agent_status).toBe("working");
+    expect(sessionIdleAt(store().sessions[ID], Date.now() + 60_000)).toBe(false);
+  });
+
+  it("does not create a pending-state write on an unchanged overlay", () => {
+    const pending = store().pending;
+    store().syncOverlay("sessions", { [ID]: { agent_status: "working" } });
+    expect(store().pending).toBe(pending);
+    store().applyInboxLivenessPayload("mine", { [ID]: { agent_status: "working", is_idle: false } });
+    expect(store().pending).toBe(pending);
+  });
+
+  for (const channel of ["snapshot", "tail", "recovery"] as const) {
+    for (const content of ["[Request interrupted by user]", "[Request interrupted by user for tool use]", "<turn_aborted>\nThe user interrupted the previous turn."]) {
+      it(`reconciles the ${channel} interruption echo without a duplicate: ${content.slice(0, 30)}`, async () => {
+        await store().sendEscape(ID);
+        const timestamp = store().pendingMessages[ID][0].timestamp + 1;
+        const messages = [{ _id: "server-interrupt", role: "user", content, timestamp }];
+        if (channel === "snapshot") store().setMessages(ID, messages);
+        if (channel === "tail") store().applyTailMessages(ID, timestamp - 10, messages, timestamp);
+        if (channel === "recovery") store().mergeMessages(ID, messages, "append");
+        expect(store().pendingMessages[ID]).toHaveLength(0);
+        expect(store().messages[ID]).toHaveLength(1);
+      });
+    }
+  }
+
+  it("changes permission mode immediately and uses normal echo protection", async () => {
+    const command = store().convCommand(ID, "sendKeysToSession", { keys: "BTab" }, { permission_mode: "plan" });
+    expect(store().sessions[ID].permission_mode).toBe("plan");
+    store().syncOverlay("sessions", { [ID]: { permission_mode: "default" } });
+    expect(store().sessions[ID].permission_mode).toBe("plan");
+    store().syncOverlay("sessions", { [ID]: { permission_mode: "plan" } });
+    expect(store().pending[`sessions:${ID}:permission_mode`]).toBeUndefined();
+    await command;
+  });
+
+  it("does not mistake an earlier interruption for the new command's echo", async () => {
+    const timestamp = store().sessions[ID].updated_at + 1;
+    const messages = [
+      { _id: "older-interrupt", role: "user", content: "[Request interrupted by user]", timestamp },
+      { _id: "reply", role: "assistant", content: "Stopped. What next?", timestamp: timestamp + 1 },
+    ];
+    store().setMessages(ID, messages);
+    await store().sendEscape(ID);
+    store().setMessages(ID, messages);
+    expect(store().pendingMessages[ID]).toHaveLength(1);
+  });
+
+  it("paints one interruption line however many times Escape is pressed", async () => {
+    // Every press still reaches the daemon (it judges whether a turn is live);
+    // only the line is deduped, because a turn ends in at most one interruption.
+    await store().sendEscape(ID);
+    await store().sendEscape(ID);
+    await store().sendEscape(ID);
+    expect(store().pendingMessages[ID]).toHaveLength(1);
+  });
+
+  it("does not add a line when the server tail already ends in an interruption", async () => {
+    const timestamp = store().sessions[ID].updated_at + 1;
+    store().setMessages(ID, [{ _id: "server-interrupt", role: "user", content: "[Request interrupted by user]", timestamp }]);
+    await store().sendEscape(ID);
+    expect(store().pendingMessages[ID] ?? []).toHaveLength(0);
+  });
+
+  it("paints again once the conversation has moved past the last interruption", async () => {
+    await store().sendEscape(ID);
+    const first = store().pendingMessages[ID][0];
+    const timestamp = first.timestamp + 1;
+    store().setMessages(ID, [
+      { _id: "server-interrupt", role: "user", content: "[Request interrupted by user]", timestamp },
+      { _id: "reply", role: "assistant", content: "Stopped.", timestamp: timestamp + 1 },
+    ]);
+    await store().sendEscape(ID);
+    expect(store().pendingMessages[ID]).toHaveLength(1);
+    expect(store().pendingMessages[ID][0]._id).not.toBe(first._id);
+  });
+
+  it("protects model selection through the standard action decorator", () => {
+    store().syncRecord("conversations", ID, { _id: ID, model: "claude-sonnet", effort: "medium" });
+    store().setConversationModel(ID, { model: "claude-opus", effort: "high" });
+    store().syncRecord("conversations", ID, { _id: ID, model: "claude-sonnet", effort: "medium" });
+    expect(store().conversations[ID]).toMatchObject({ model: "claude-opus", effort: "high" });
+    store().syncRecord("conversations", ID, { _id: ID, model: "claude-opus", effort: "high" });
+    expect(store().pending[`conversations:${ID}:model`]).toBeUndefined();
+  });
+
+  it("continues to classify actual pending messages as sends", () => {
+    const id = store().addOptimisticMessage(ID, "Keep going");
+    expect(convHasPendingSend(store().pendingMessages[ID])).toBe(true);
+    store().markOptimisticAsFailed(ID, id);
+    expect(convHasPendingSend(store().pendingMessages[ID])).toBe(false);
+  });
+
+});

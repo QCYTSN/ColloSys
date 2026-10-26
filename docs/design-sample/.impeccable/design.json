@@ -1,0 +1,369 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-25T08:14:15.002Z",
+  "title": "REJECTED SAMPLE — ColloSys workbench; historical record, not an approved design system",
+  "extensions": {
+    "colorMeta": {
+      "chalk": {
+        "role": "neutral",
+        "displayName": "Chalk",
+        "tonalRamp": [
+          "oklch(15.00% 0.00263 106.45)",
+          "oklch(26.43% 0.00263 106.45)",
+          "oklch(37.86% 0.00263 106.45)",
+          "oklch(49.29% 0.00263 106.45)",
+          "oklch(60.71% 0.00263 106.45)",
+          "oklch(72.14% 0.00263 106.45)",
+          "oklch(83.57% 0.00263 106.45)",
+          "oklch(95.00% 0.00263 106.45)"
+        ]
+      },
+      "shell": {
+        "role": "neutral",
+        "displayName": "Shell",
+        "tonalRamp": [
+          "oklch(15.00% 0.00530 106.50)",
+          "oklch(26.43% 0.00530 106.50)",
+          "oklch(37.86% 0.00530 106.50)",
+          "oklch(49.29% 0.00530 106.50)",
+          "oklch(60.71% 0.00530 106.50)",
+          "oklch(72.14% 0.00530 106.50)",
+          "oklch(83.57% 0.00530 106.50)",
+          "oklch(95.00% 0.00530 106.50)"
+        ]
+      },
+      "subtle": {
+        "role": "neutral",
+        "displayName": "Subtle surface",
+        "tonalRamp": [
+          "oklch(15.00% 0.00528 106.50)",
+          "oklch(26.43% 0.00528 106.50)",
+          "oklch(37.86% 0.00528 106.50)",
+          "oklch(49.29% 0.00528 106.50)",
+          "oklch(60.71% 0.00528 106.50)",
+          "oklch(72.14% 0.00528 106.50)",
+          "oklch(83.57% 0.00528 106.50)",
+          "oklch(95.00% 0.00528 106.50)"
+        ]
+      },
+      "divider": {
+        "role": "neutral",
+        "displayName": "Divider",
+        "tonalRamp": [
+          "oklch(15.00% 0.00810 114.23)",
+          "oklch(26.43% 0.00810 114.23)",
+          "oklch(37.86% 0.00810 114.23)",
+          "oklch(49.29% 0.00810 114.23)",
+          "oklch(60.71% 0.00810 114.23)",
+          "oklch(72.14% 0.00810 114.23)",
+          "oklch(83.57% 0.00810 114.23)",
+          "oklch(95.00% 0.00810 114.23)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Ink",
+        "tonalRamp": [
+          "oklch(15.00% 0.00889 159.51)",
+          "oklch(26.43% 0.00889 159.51)",
+          "oklch(37.86% 0.00889 159.51)",
+          "oklch(49.29% 0.00889 159.51)",
+          "oklch(60.71% 0.00889 159.51)",
+          "oklch(72.14% 0.00889 159.51)",
+          "oklch(83.57% 0.00889 159.51)",
+          "oklch(95.00% 0.00889 159.51)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Muted text",
+        "tonalRamp": [
+          "oklch(15.00% 0.02423 134.24)",
+          "oklch(26.43% 0.02423 134.24)",
+          "oklch(37.86% 0.02423 134.24)",
+          "oklch(49.29% 0.02423 134.24)",
+          "oklch(60.71% 0.02423 134.24)",
+          "oklch(72.14% 0.02423 134.24)",
+          "oklch(83.57% 0.02423 134.24)",
+          "oklch(95.00% 0.02423 134.24)"
+        ]
+      },
+      "walnut": {
+        "role": "primary",
+        "displayName": "Walnut",
+        "tonalRamp": [
+          "oklch(15.00% 0.08061 53.75)",
+          "oklch(26.43% 0.08061 53.75)",
+          "oklch(37.86% 0.08061 53.75)",
+          "oklch(49.29% 0.08061 53.75)",
+          "oklch(60.71% 0.08061 53.75)",
+          "oklch(72.14% 0.08061 53.75)",
+          "oklch(83.57% 0.08061 53.75)",
+          "oklch(95.00% 0.08061 53.75)"
+        ]
+      },
+      "walnut-wash": {
+        "role": "primary",
+        "displayName": "Walnut wash",
+        "tonalRamp": [
+          "oklch(15.00% 0.01537 77.07)",
+          "oklch(26.43% 0.01537 77.07)",
+          "oklch(37.86% 0.01537 77.07)",
+          "oklch(49.29% 0.01537 77.07)",
+          "oklch(60.71% 0.01537 77.07)",
+          "oklch(72.14% 0.01537 77.07)",
+          "oklch(83.57% 0.01537 77.07)",
+          "oklch(95.00% 0.01537 77.07)"
+        ]
+      },
+      "white": {
+        "role": "neutral",
+        "displayName": "White",
+        "tonalRamp": [
+          "oklch(15.00% 0.00000 89.88)",
+          "oklch(26.43% 0.00000 89.88)",
+          "oklch(37.86% 0.00000 89.88)",
+          "oklch(49.29% 0.00000 89.88)",
+          "oklch(60.71% 0.00000 89.88)",
+          "oklch(72.14% 0.00000 89.88)",
+          "oklch(83.57% 0.00000 89.88)",
+          "oklch(95.00% 0.00000 89.88)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Selected work headline",
+        "purpose": "Desktop work title; 21 px and 20 px at the recorded narrower breakpoints."
+      },
+      "title": {
+        "displayName": "Activity index title",
+        "purpose": "Compact index heading; no marketing display role."
+      },
+      "body": {
+        "displayName": "Assistant context",
+        "purpose": "Final-cascade 14 px reading text."
+      },
+      "body-compact": {
+        "displayName": "User context",
+        "purpose": "Final-cascade 13 px text within the user-message surface."
+      },
+      "label": {
+        "displayName": "Operational metadata",
+        "purpose": "11 px base for metadata; source uses weight changes where appropriate."
+      },
+      "code": {
+        "displayName": "Code reading",
+        "purpose": "Observed inline and block code treatment; the reused diff renderer retains its own internals."
+      }
+    },
+    "shadows": [
+      {
+        "name": "menu",
+        "value": "0 9px 30px #2d372219",
+        "purpose": "Transient menu separation."
+      },
+      {
+        "name": "dialog",
+        "value": "0 18px 65px #1a261f30",
+        "purpose": "Modal layer above the workbench."
+      },
+      {
+        "name": "unread-control",
+        "value": "0 5px 16px #33402c26",
+        "purpose": "Floating new-content control."
+      },
+      {
+        "name": "toast",
+        "value": "0 5px 18px #28372125",
+        "purpose": "Temporary outcome feedback."
+      },
+      {
+        "name": "search-focus",
+        "value": "0 0 0 2px #86553414",
+        "purpose": "Input focus halo; not structural elevation."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.2, 0.8, 0.2, 1)",
+        "purpose": "Shared state-change and arrival easing."
+      },
+      {
+        "name": "control-colors",
+        "value": "140ms",
+        "purpose": "Button background and foreground changes."
+      },
+      {
+        "name": "detail-arrival",
+        "value": "180ms",
+        "purpose": "Detail heading opacity and 3 px arrival."
+      },
+      {
+        "name": "menu-arrival",
+        "value": "140ms",
+        "purpose": "Menu opacity and 3 px arrival."
+      },
+      {
+        "name": "overlay-arrival",
+        "value": "160ms",
+        "purpose": "Overlay opacity."
+      },
+      {
+        "name": "dialog-arrival",
+        "value": "200ms",
+        "purpose": "Dialog opacity and 6 px arrival."
+      },
+      {
+        "name": "working-spinner",
+        "value": "1.3s linear infinite",
+        "purpose": "Functional loading feedback; reduced motion disables it."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "none",
+        "purpose": "Both system preference and sample setting disable animation and transitions."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "compact-desktop",
+        "value": "1300px"
+      },
+      {
+        "name": "dense-desktop",
+        "value": "1050px"
+      },
+      {
+        "name": "index-detail-switch",
+        "value": "800px"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Confirmation button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Sample-only explicit restore rehearsal confirmation; enabled appearance shown after consent. Disabled state is present in source.",
+      "html": "<button type=\"button\" class=\"ds-confirm-button\">确认演练<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"15\" height=\"15\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z\"></path></svg></button>",
+      "css": ".ds-confirm-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border:1px solid #dfe1d5;border-radius:6px;background:#fff;color:#4e5945;font-size:11px;font-weight:500;white-space:nowrap}.ds-confirm-button:hover{background:#f0f2e8}.ds-confirm-button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-confirm-button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-confirm-button:disabled{cursor:not-allowed;opacity:.45}.ds-confirm-button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-confirm-button{transition:none;animation:none}}.ds-confirm-button{border:0;background:#84603f;color:#fff;padding:9px 13px}.ds-confirm-button:hover{background:#6f4d30}"
+    },
+    {
+      "name": "Secondary action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Neutral checkpoint navigation action, with the implemented hover and focus treatments.",
+      "html": "<button type=\"button\" class=\"ds-secondary-button\">查看检查点<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"15\" height=\"15\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z\"></path></svg></button>",
+      "css": ".ds-secondary-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border:1px solid #dfe1d5;border-radius:6px;background:#fff;color:#4e5945;font-size:11px;font-weight:500;white-space:nowrap}.ds-secondary-button:hover{background:#f0f2e8}.ds-secondary-button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-secondary-button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-secondary-button:disabled{cursor:not-allowed;opacity:.45}.ds-secondary-button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-secondary-button{transition:none;animation:none}}"
+    },
+    {
+      "name": "Text action",
+      "kind": "button",
+      "refersTo": "button-text",
+      "description": "Restore-preview rehearsal utility. Static HTML does not execute stale-preview logic.",
+      "html": "<button type=\"button\" class=\"ds-text-button\">模拟预览失效</button>",
+      "css": ".ds-text-button{background:transparent;border:0;color:#626b5d;padding:7px 0;font-size:11px;font-weight:400}.ds-text-button:hover{color:#865534}.ds-text-button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-text-button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-text-button:disabled{cursor:not-allowed;opacity:.45}.ds-text-button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-text-button{transition:none;animation:none}}"
+    },
+    {
+      "name": "Selected icon action",
+      "kind": "button",
+      "refersTo": "button-icon",
+      "description": "The selected bookmark control. The same Phosphor family supplies ordinary actions.",
+      "html": "<button type=\"button\" class=\"ds-icon-button\" aria-label=\"取消关注\" title=\"取消关注\" aria-pressed=\"true\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z\"></path></svg></button>",
+      "css": ".ds-icon-button{height:28px;width:28px;display:inline-flex;align-items:center;justify-content:center;border:0;border-radius:6px;background:transparent;color:#626b5d;padding:0}.ds-icon-button:hover{background:#eceee7;color:#272c29}.ds-icon-button[aria-pressed=true]{color:#865534;background:#f0e9df}.ds-icon-button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-icon-button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-icon-button:disabled{cursor:not-allowed;opacity:.45}.ds-icon-button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-icon-button{transition:none;animation:none}}"
+    },
+    {
+      "name": "Activity search",
+      "kind": "input",
+      "refersTo": "search",
+      "description": "Source-derived search field with its external focus ring and shortcut hint. Filtering is not implemented in this static preview.",
+      "html": "<label class=\"ds-search\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z\"></path></svg><input type=\"text\" aria-label=\"搜索动态\" placeholder=\"搜索动态、成员或文件\"><kbd>Ctrl K</kbd></label>",
+      "css": ".ds-search{display:flex;align-items:center;margin:0 20px 17px;gap:7px;padding:8px 9px;border:1px solid #e2e4dc;border-radius:7px;background:#fcfcfa;color:#626b5d;font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5}.ds-search svg{flex-shrink:0}.ds-search input{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;border:0;outline:0;background:transparent;min-width:0;width:100%;font-size:11px;color:#272c29}.ds-search:focus-within{border-color:#a17a50;box-shadow:0 0 0 2px #86553414}.ds-search input::placeholder{color:#626b5d}.ds-search input:focus-visible{outline:0}.ds-search kbd{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;font-size:11px;white-space:nowrap;color:#626b5d}"
+    },
+    {
+      "name": "Project navigation",
+      "kind": "nav",
+      "refersTo": "navigation",
+      "description": "The actual vertical workbench navigation, with a selected row and counts. The snippet shows the desktop form.",
+      "html": "<nav class=\"ds-nav\" aria-label=\"项目导航\"><button type=\"button\" class=\"ds-active\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z\"></path></svg>工作动态<span>6</span></button><button type=\"button\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z\"></path></svg>我的关注<span>1</span></button><button type=\"button\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z\"></path></svg>检查点</button></nav>",
+      "css": ".ds-nav{display:flex;flex-direction:column;gap:5px}.ds-nav button{display:flex;align-items:center;gap:10px;width:100%;border:0;background:transparent;padding:10px 12px;text-align:left;color:#60685f;border-radius:7px;font-size:13px;font-weight:400}.ds-nav button>span{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums}.ds-nav button:hover{background:#eaece5}.ds-nav button.ds-active{background:#e6e8e0;color:#2c392c;font-weight:600}.ds-nav button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-nav button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-nav button:disabled{cursor:not-allowed;opacity:.45}.ds-nav button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-nav button{transition:none;animation:none}}"
+    },
+    {
+      "name": "Active member filter",
+      "kind": "chip",
+      "refersTo": "filter-chip",
+      "description": "A removable member filter. Source has shared focus treatment and no chip-specific hover change.",
+      "html": "<button type=\"button\" class=\"ds-filter-chip\">林舟<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z\"></path></svg>清除筛选</button>",
+      "css": ".ds-filter-chip{align-self:flex-start;margin:0 20px 10px;display:flex;align-items:center;gap:5px;background:#f0e9df;color:#865534;font-size:11px;font-weight:400;border:0;border-radius:4px;padding:4px 7px}.ds-filter-chip{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-filter-chip:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-filter-chip:disabled{cursor:not-allowed;opacity:.45}.ds-filter-chip svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-filter-chip{transition:none;animation:none}}"
+    },
+    {
+      "name": "Selected activity row",
+      "kind": "card",
+      "refersTo": "activity",
+      "description": "The sample's recurring clickable activity container, not a general-purpose card. Text, counts and state come from the reading fixture.",
+      "html": "<button type=\"button\" class=\"ds-activity ds-selected\" aria-current=\"true\"><span class=\"ds-person\"><span class=\"ds-avatar\" aria-hidden=\"true\">舟</span><strong>林舟</strong><span>Codex</span><time>14:32</time></span><span class=\"ds-activity-title\">让会话回到上次读到的地方</span><p>保留阅读位置与文件选择，补齐新消息提示</p><span class=\"ds-activity-foot\"><span class=\"ds-complete\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"14\" height=\"14\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z\"></path></svg>已完成</span><span><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"13\" height=\"13\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M181.66,146.34a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32-11.32L164.69,152l-18.35-18.34a8,8,0,0,1,11.32-11.32Zm-72-24a8,8,0,0,0-11.32,0l-24,24a8,8,0,0,0,0,11.32l24,24a8,8,0,0,0,11.32-11.32L91.31,152l18.35-18.34A8,8,0,0,0,109.66,122.34ZM216,88V216a16,16,0,0,1-16,16H56a16,16,0,0,1-16-16V40A16,16,0,0,1,56,24h96a8,8,0,0,1,5.66,2.34l56,56A8,8,0,0,1,216,88Zm-56-8h28.69L160,51.31Zm40,136V96H152a8,8,0,0,1-8-8V40H56V216H200Z\"></path></svg>4 个文件</span></span></button>",
+      "css": ".ds-activity{display:block;width:calc(100% - 20px);margin:0 10px 6px;padding:15px 13px 14px;border:1px solid transparent;background:transparent;border-radius:8px;text-align:left;font-size:13px;font-weight:400;color:#272c29}.ds-activity:hover{background:#f0f1eb}.ds-activity.ds-selected{background:#eeeee6;border-color:#dedfd1}.ds-person{display:flex;align-items:center;gap:7px;font-size:11px;color:#626b5d}.ds-person strong{font-weight:500;color:#50594d}.ds-person time{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap}.ds-avatar{height:23px;width:23px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;flex-shrink:0;background:#e7eadb;color:#536247}.ds-activity-title{display:block;font-weight:550;font-size:13px;line-height:1.7;margin-top:9px;color:#31392e;overflow-wrap:anywhere}.ds-activity p{color:#626b5d;font-size:11px;line-height:1.6;margin:3px 0 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.ds-activity-foot{display:flex;justify-content:space-between;align-items:center;gap:6px;margin-top:12px}.ds-activity-foot>span{display:flex;align-items:center;gap:4px;color:#626b5d;font-size:11px}.ds-activity-foot .ds-complete{display:inline-flex;gap:5px;color:#58764a;white-space:nowrap}.ds-activity{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-activity:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-activity:disabled{cursor:not-allowed;opacity:.45}.ds-activity svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-activity{transition:none;animation:none}}"
+    },
+    {
+      "name": "User context message",
+      "kind": "custom",
+      "refersTo": "user-message",
+      "description": "Source fixture user message with speaker, time and the asymmetric reading surface. It is static captured context, not an editable composer.",
+      "html": "<article class=\"ds-message\"><div class=\"ds-message-heading\"><span class=\"ds-message-avatar\" aria-hidden=\"true\">舟</span><strong>林舟</strong><span>提出需求</span><time>14:28</time></div><div class=\"ds-message-body\"><p>切回会话时，保留我上次阅读的位置。收到新的 Agent 回复时，也不要把我拉到最底部。</p><p>只有我点击「回到最新」，才重新跟随内容。中文长回复和代码块的高度变化也需要考虑。</p></div></article>",
+      "css": ".ds-message{margin:0 0 26px;font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;font-weight:400;line-height:1.5}.ds-message-heading{display:flex;align-items:center;gap:8px;font-size:11px;color:#626b5d;margin-bottom:10px}.ds-message-heading strong{font-weight:550;color:#434d3d}.ds-message-heading time{margin-left:auto;font-size:11px;font-variant-numeric:tabular-nums}.ds-message-avatar{height:23px;width:23px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:500;flex-shrink:0;background:#e7eadb;color:#536247}.ds-message-body{line-height:1.95;overflow-wrap:anywhere;background:#f3f4ee;border-radius:0 9px 9px 9px;padding:14px 18px;margin-left:31px;font-size:13px;color:#4e5748}.ds-message-body p{margin:0}.ds-message-body p+p{margin-top:12px}"
+    },
+    {
+      "name": "Persistent checkpoint evidence",
+      "kind": "custom",
+      "refersTo": "evidence-footer",
+      "description": "The reader footer names source-device storage separately from remote backup. This teammate example offers inspection, not local recovery.",
+      "html": "<footer class=\"ds-evidence\"><div><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"18\" height=\"18\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z\"></path></svg><span><strong>检查点已在源设备保存</strong><small><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"12\" height=\"12\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M53.92,34.62A8,8,0,1,0,42.08,45.38L81.32,88.55l-.06.12A65,65,0,0,0,72,88a64,64,0,0,0,0,128h88a87.34,87.34,0,0,0,31.8-5.93l10.28,11.31a8,8,0,1,0,11.84-10.76ZM160,200H72a48,48,0,0,1,0-96c1.1,0,2.2,0,3.3.12A88.4,88.4,0,0,0,72,128a8,8,0,0,0,16,0,72.25,72.25,0,0,1,5.06-26.54l87,95.7A71.66,71.66,0,0,1,160,200Zm88-72a87.89,87.89,0,0,1-22.35,58.61A8,8,0,0,1,213.71,176,72,72,0,0,0,117.37,70a8,8,0,0,1-9.48-12.89A88,88,0,0,1,248,128Z\"></path></svg>尚无异地备份</small></span></div><button type=\"button\" class=\"ds-evidence-button\">查看检查点<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"15\" height=\"15\" viewBox=\"0 0 256 256\" fill=\"currentColor\" aria-hidden=\"true\"><path d=\"M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z\"></path></svg></button></footer>",
+      "css": ".ds-evidence{height:67px;flex-shrink:0;border-top:1px solid #e4e5df;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 30px;background:#fafaf5;font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;font-weight:400}.ds-evidence>div{display:flex;gap:10px;align-items:center;color:#626b5d}.ds-evidence svg{flex-shrink:0}.ds-evidence strong{display:block;font-size:11px;font-weight:500;color:#515c43}.ds-evidence small{display:flex;align-items:center;gap:4px;margin-top:3px;font-size:11px;color:#626b5d}.ds-evidence-button{display:inline-flex;align-items:center;justify-content:center;gap:8px;padding:8px 12px;border:1px solid #dfe1d5;border-radius:6px;background:#fff;color:#4e5945;font-size:11px;font-weight:500;white-space:nowrap}.ds-evidence-button:hover{background:#f0f2e8}.ds-evidence-button{font-family:'Collo Google Sans','Microsoft YaHei UI','PingFang SC',sans-serif;line-height:1.5;cursor:pointer;transition:background-color 140ms cubic-bezier(0.2,0.8,0.2,1),color 140ms cubic-bezier(0.2,0.8,0.2,1);touch-action:manipulation}.ds-evidence-button:focus-visible{outline:2px solid #865534;outline-offset:3px}.ds-evidence-button:disabled{cursor:not-allowed;opacity:.45}.ds-evidence-button svg{flex-shrink:0}@media(prefers-reduced-motion:reduce){.ds-evidence-button{transition:none;animation:none}}"
+    }
+  ],
+  "narrative": {
+    "northStar": "A durable small-team reading desk",
+    "overview": "PROVISIONAL SAMPLE RECORD — pending user selection. This document describes only the single original workbench sample at /design-lab. Its tokens are authoritative for reproducing this sample, not approved global ColloSys rules. Google Sans, the supplied peanut artwork and a unified icon family are user choices; the current implementation selects Phosphor. Whole-product adoption remains undecided.\n\nThe sample presents a small team's shared work as a durable reading desk: chalk surfaces, compact navigation, a resizable activity index and a wider reader. Quiet walnut accents identify focused actions; restrained olive neutrals separate surfaces. The implemented selected activity is a neutral tint, not a walnut-filled card. Members lead to work, captured context, file differences and checkpoint evidence.\n\nThis is a source-grounded record of the current owned integration files, including their final CSS overrides. It does not certify final visual quality, contrast compliance or production integration. Earlier screenshots precede legibility and navigation fixes; final screenshot review is recorded separately. The scene is synthetic, and restore rehearsal never writes files. Sidecar tonal ramps are generated preview aids, not implemented palette steps.",
+    "keyCharacteristics": [
+      "Google Sans for interface and reading, system Chinese sans-serif fallback, monospace only for code and file paths.",
+      "Warm flat surfaces with bounded row selection and thin structural dividers.",
+      "Member-first scanning, generous message reading and persistent checkpoint provenance.",
+      "Phosphor regular icons, with the current-project folder using Phosphor duotone.",
+      "Short state transitions that respect both system and sample reduced-motion settings."
+    ],
+    "rules": [
+      {
+        "name": "The Evidence Rule",
+        "body": "Preserve the distinction between locally saved, source-device saved, shared and off-machine backed up. Status text and icons carry the meaning; color supports it.",
+        "section": "colors"
+      },
+      {
+        "name": "The Reading Scale Rule",
+        "body": "Keep operational metadata at or above the implemented 11 px floor. Preserve the current 13 px user-message and 14 px assistant-message treatments when reproducing this sample; this is not a substitute for a final legibility audit.",
+        "section": "typography"
+      },
+      {
+        "name": "The Surface Rule",
+        "body": "Keep navigation, activity rows and the reading canvas flat. Reserve elevation for temporary menus, dialogs and floating feedback already present in the sample.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do keep this record scoped to the single provisional sample until the user selects a direction.",
+      "Do use the supplied artwork, Google Sans and the existing Phosphor mapping when extending this sample.",
+      "Do preserve visible text for completion, pending, offline, failure and backup states.",
+      "Do retain the explicit index/detail switch at narrow widths and the reader's per-activity position.",
+      "Do show teammate checkpoint provenance and allow only source-member recovery rehearsal.",
+      "Do preserve focus-visible treatment and both reduced-motion controls."
+    ],
+    "donts": [
+      "Don't migrate the whole product or treat these sample measurements as globally approved.",
+      "Don't infer Agent attribution from a manual edit or imply that shared differences are complete remote backups.",
+      "Don't mix icon families or replace the supplied peanut image with a redrawn mark.",
+      "Don't introduce marketing layouts or image-generated compositions into this workbench record.",
+      "Don't treat synthetic interactions or pre-fix screenshots as proof of production integration or final visual quality."
+    ]
+  }
+}

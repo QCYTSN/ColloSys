@@ -1,0 +1,158 @@
+import { Suspense, lazy } from "react";
+import { useInboxStore } from "../../store/inboxStore";
+import { AppLoader } from "../../components/AppLoader";
+import { ShortcutProvider } from "../../shortcuts";
+import { useSyncMentionDocs } from "../../hooks/useSyncDocs";
+import { AuthGuard } from "../../components/AuthGuard";
+import { ErrorBoundary } from "../../components/ErrorBoundary";
+import { CallPanel } from "../../components/calls/CallPanel";
+import { TeamMembersPump } from "../../components/TeamAvatarBar";
+import { useEnsureDispatch } from "../../hooks/useEnsureDispatch";
+import { useChatChannelsSync } from "../../hooks/useChatSync";
+import { useSyncReplication } from "../../hooks/useSyncRole";
+import { useSyncTeams } from "../../hooks/useSyncTeams";
+import { useSyncInboxSessions } from "../../hooks/useSyncInboxSessions";
+import { useSyncTeamInboxSessions } from "../../hooks/useSyncTeamInboxSessions";
+import { useCallSync } from "../../hooks/useCallSync";
+import { useWalkieSync } from "../../hooks/useWalkieSync";
+import { isVoiceHost } from "../../lib/desktop";
+import type { Id } from "@codecast/convex/convex/_generated/dataModel";
+
+// The command palette in PICK mode is how the stage's transcript rail chooses
+// where the live words go ("+ feed": a session, a doc, a new agent). The
+// palette is a store surface (`palette.open`), and this window mounts none
+// of the shell that normally renders it, so without this the feed button set
+// a flag nobody painted. Loaded on first use: most of this window's life is
+// a strip or a few circles that never open it.
+const CommandPalette = lazy(() =>
+  import("../../components/CommandPalette").then((m) => ({ default: m.CommandPalette })),
+);
+
+/**
+ * /call-panel — a huddle as a whole window, in whichever of its four sizes.
+ *
+ * Like /people it bypasses DashboardShell and DashboardLayout: no tab shell, no
+ * sidebar, no shared tab state to write. On the desktop the shell gives it a
+ * real window (main.js createCallWindow) — frameless and see-through, because
+ * its small sizes are circles of people's faces floating over the work and
+ * `transparent` cannot be turned on after a window is built. The route is also
+ * what an older desktop build lands on through the detached-tab rung of the
+ * popout ladder. It is never a browser popup — that was the bug this window
+ * exists to end.
+ *
+ * Its pumps are deliberately the SHORT list. This window is not the phone: the
+ * ring and the knock belong to the people window (or the main window), which
+ * is where a person answers things. Mounting them here would put a second
+ * answerer on the same events for as long as a call runs. What it does need is
+ * the call plane itself — `useCallSync` is also what binds the Convex client
+ * into callManager, so without it this window could not join at all — plus
+ * the few collections the stage names a room from. On a shell that keeps this
+ * window alive as the voice host it also mounts the walkie's ear
+ * (VoiceHostSyncEffects): the burst has to be heard in the window the call
+ * will grow in.
+ */
+export default function CallPanelPage() {
+  return (
+    <AuthGuard>
+      <CallPanelWindow />
+    </AuthGuard>
+  );
+}
+
+function CallPanelWindow() {
+  // Hold the first paint until IDB hydration lands, exactly as /people does:
+  // React's first frame otherwise races loadCache() and the window paints an
+  // empty stage for a beat. The flag flips true even on an empty or unreadable
+  // cache, so it cannot hang.
+  //
+  // With ONE exception, and it is the whole reason the size is in the URL. In
+  // the small sizes this window is a few circles over somebody's work, and
+  // a loading card floating on top of their screen is worse than the empty
+  // moment it replaces. Nothing at all is the honest first frame there.
+  //
+  // The voice host is a see-through window that is hidden, a strip or a few
+  // circles for most of its life: nothing at all is its honest first frame
+  // too. It shows a loader only when it opened straight onto a stage.
+  const hydrated = useInboxStore((s) => s.clientStateInitialized);
+  const paletteOpen = useInboxStore((s) => s.palette.open);
+  const small =
+    typeof window !== "undefined" &&
+    (/[?&]size=(circles|speaker|tiny)/.test(window.location.search) ||
+      (isVoiceHost() && !/[?&]room=/.test(window.location.search)));
+  if (!hydrated) return small ? null : <AppLoader />;
+  return (
+    <>
+      {/* Each pump behind its own inline boundary: a Convex query that throws
+          here degrades to "this data didn't arrive", never to a dead window
+          with somebody's microphone open in it. */}
+      <ErrorBoundary name="Call panel sync" level="inline" fallback={null}>
+        <CallPanelSyncEffects />
+      </ErrorBoundary>
+      <ErrorBoundary name="Call panel" level="inline">
+        <CallPanel />
+      </ErrorBoundary>
+      {/* Over the stage (the palette's own z-index outranks it), and always
+          dark like the stage, whatever theme the app is in. */}
+      {paletteOpen && (
+        <div className="dark">
+          <ErrorBoundary name="CommandPalette" level="inline">
+            <ShortcutProvider>
+              <Suspense fallback={null}>
+                <CommandPalette />
+              </Suspense>
+            </ShortcutProvider>
+          </ErrorBoundary>
+        </div>
+      )}
+    </>
+  );
+}
+
+function CallPanelSyncEffects() {
+  const activeTeamId = useInboxStore((s) => s.clientState.ui?.active_team_id) as
+    | Id<"teams">
+    | undefined;
+  // The stage's chat rail sends messages, so this window needs the server
+  // dispatch wired. Idempotent across windows.
+  useEnsureDispatch();
+  // teamHasFeature reads the teams collection; without a feeder, calling looks
+  // switched off rather than unknown. The sidebar used to be the only feeder,
+  // which held until routes started rendering without a sidebar.
+  useSyncTeams();
+  // Channel rooms are named from the rail (a huddle in #design says so).
+  useSyncReplication(false);
+  useChatChannelsSync();
+  // The call plane: occupancy, live rooms, the lock — and `bindConvex`, which
+  // is what lets this window take the call over in the first place.
+  useCallSync();
+  // What the feed picker lists: the sessions (also what names a fed agent in
+  // the chat rail) and the docs. The voice host mounted the sessions already
+  // for its idle faces; every shape of this window needs them once the
+  // transcript rail can point words at one.
+  useSyncInboxSessions();
+  useSyncMentionDocs();
+  return (
+    <>
+      {isVoiceHost() && <VoiceHostSyncEffects />}
+      <TeamMembersPump teamId={activeTeamId} />
+    </>
+  );
+}
+
+/**
+ * What the voice host mounts on top of the call plane.
+ *
+ * THE WALKIE'S EAR. On a shell with a voice host this window is the one the
+ * door elects (lib/calls/walkieDoor), so a teammate's burst is heard here and
+ * the seat it takes is the seat the call grows in. The ring and the knock
+ * stay with the people window and the main window: they are answered there,
+ * and the answer arrives here as a command.
+ *
+ * And the sessions, because the idle faces draw each teammate's activity
+ * line — the same pair /people and /faces mount.
+ */
+function VoiceHostSyncEffects() {
+  useSyncTeamInboxSessions();
+  useWalkieSync();
+  return null;
+}

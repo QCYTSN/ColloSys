@@ -1,0 +1,860 @@
+.doc-editor {
+  font-family: var(--font-mono), monospace;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--sol-text);
+}
+
+.doc-editor-content {
+  min-height: 40vh;
+  padding: 0 0 120px 0;
+  cursor: text;
+}
+
+.doc-editor-content .tiptap {
+  min-height: 40vh;
+}
+
+/* Preserve tabs/spaces so TabIndentExtension's inserted \t renders as an
+   indent instead of collapsing to a single space (ProseMirror's default). */
+.doc-editor .tiptap {
+  white-space: pre-wrap;
+  tab-size: 4;
+}
+
+/* Headings — the exact scale of the reading view (DOC_MD_COMPONENTS), in px,
+   so toggling between edit and review reflows nothing. */
+.doc-editor .tiptap h1 {
+  font-size: 21px;
+  font-weight: 700;
+  color: var(--sol-text);
+  margin-top: 2.5rem;
+  margin-bottom: 0.75rem;
+  line-height: 1.3;
+}
+
+.doc-editor .tiptap h1:first-child {
+  margin-top: 0;
+}
+
+/* The title. One rule for the document's title wherever it renders: the
+   editor's first block in a title-first doc (DocTitleExtension), the static
+   heading review mode puts in the same spot, and the separate title field a
+   plan still has. Same box either way, so switching modes reflows nothing. */
+.doc-title,
+.doc-editor--title-first .tiptap > h1:first-child {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: var(--sol-text);
+  line-height: 1.25;
+  margin-top: 0;
+  margin-bottom: 1.25rem;
+  overflow-wrap: break-word;
+}
+
+/* Placeholders in a title-first doc: the empty title always reads "Untitled";
+   the body hint shows only on the first paragraph under it while that is
+   empty. The Placeholder extension decorates every empty block, so CSS picks. */
+.doc-editor--title-first .tiptap > h1.is-empty:first-child::before,
+.doc-editor--title-first .tiptap > h1:first-child + p.is-empty::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--sol-text-dim);
+  pointer-events: none;
+  height: 0;
+  opacity: 0.6;
+}
+
+.doc-editor .tiptap h2 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--sol-text);
+  margin-top: 2rem;
+  margin-bottom: 0.5rem;
+  line-height: 1.3;
+}
+
+.doc-editor .tiptap h3 {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--sol-text);
+  margin-top: 1.5rem;
+  margin-bottom: 0.375rem;
+  line-height: 1.4;
+}
+
+/* Paragraphs */
+.doc-editor .tiptap p {
+  margin-bottom: 1em;
+}
+
+/* A blank paragraph (just its trailing break) costs one line-height, not
+   line-height plus a paragraph margin — matching the reading view, where
+   markdown collapses runs of blank lines instead of stacking double gaps. */
+.doc-editor .tiptap p:has(> br.ProseMirror-trailingBreak:only-child) {
+  margin-bottom: 0;
+}
+
+.doc-editor .tiptap p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: var(--sol-text-dim);
+  pointer-events: none;
+  height: 0;
+  opacity: 0.6;
+}
+
+/* Lists */
+.doc-editor .tiptap ul {
+  list-style-type: disc;
+  padding-left: 1.5em;
+  margin: 0.8em 0;
+}
+
+.doc-editor .tiptap ol {
+  list-style-type: decimal;
+  padding-left: 1.5em;
+  margin: 0.8em 0;
+}
+
+.doc-editor .tiptap li {
+  margin: 0.3em 0;
+}
+
+.doc-editor .tiptap li::marker {
+  color: var(--sol-text-dim);
+}
+
+/* Task list */
+.doc-editor .tiptap ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+  margin: 0.25em 0;
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li > label {
+  flex-shrink: 0;
+  margin-top: 0.15em;
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--sol-border);
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  position: relative;
+  transition: all 0.15s ease;
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked {
+  background: #2aa198;
+  border-color: #2aa198;
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li > label input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--sol-bg);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.doc-editor .tiptap ul[data-type="taskList"] li[data-checked="true"] > div {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+/* Code */
+.doc-editor .tiptap code {
+  background: var(--sol-bg-highlight);
+  color: #2aa198;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-family: var(--font-mono), monospace;
+}
+
+.doc-editor .tiptap pre {
+  position: relative;
+  background: none;
+  border: none;
+  border-radius: 0;
+  padding: 0.5em 0 0.5em 1em;
+  margin: 1.2em 0;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
+}
+
+.doc-editor .tiptap pre::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: linear-gradient(
+    to bottom,
+    var(--sol-cyan) 0%,
+    var(--sol-blue) 40%,
+    var(--sol-violet) 100%
+  );
+  opacity: 0.35;
+}
+
+.doc-editor .tiptap pre code {
+  background: none;
+  color: var(--sol-text-secondary, var(--sol-text-muted));
+  padding: 0;
+  border-radius: 0;
+  font-size: inherit;
+}
+
+/* Blockquote */
+.doc-editor .tiptap blockquote {
+  border-left: 3px solid var(--sol-border);
+  padding-left: 1em;
+  margin: 1.2em 0;
+  color: var(--sol-text-dim);
+  font-style: italic;
+}
+
+/* Horizontal rule */
+.doc-editor .tiptap hr {
+  border: none;
+  border-top: 1px solid var(--sol-border);
+  margin: 2em 0;
+  opacity: 0.4;
+}
+
+/* Strong / emphasis */
+.doc-editor .tiptap strong {
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+.doc-editor .tiptap em {
+  font-style: italic;
+}
+
+/* Highlight */
+.doc-editor .editor-highlight {
+  background: rgba(181, 137, 0, 0.2);
+  border-radius: 2px;
+  padding: 0.05em 0.15em;
+}
+
+/* Links */
+.doc-editor .editor-link {
+  color: #268bd2;
+  text-decoration: underline;
+  text-decoration-color: rgba(38, 139, 210, 0.3);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition: text-decoration-color 0.15s;
+}
+
+.doc-editor .editor-link:hover {
+  text-decoration-color: #268bd2;
+}
+
+/* Mentions - HTML serialization fallback (simple inline) */
+.editor-mention {
+  display: inline;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.editor-mention:hover {
+  opacity: 0.8;
+}
+
+.mention-person {
+  background: rgba(133, 153, 0, 0.15);
+  color: #859900;
+}
+
+.mention-task {
+  background: rgba(181, 137, 0, 0.15);
+  color: #b58900;
+}
+
+.mention-doc {
+  background: rgba(42, 161, 152, 0.15);
+  color: #2aa198;
+}
+
+.mention-session {
+  background: rgba(38, 139, 210, 0.15);
+  color: #268bd2;
+}
+
+.mention-plan {
+  background: rgba(108, 113, 196, 0.15);
+  color: #6c71c4;
+}
+
+.mention-label {
+  background: rgba(211, 54, 130, 0.15);
+  color: #d33682;
+}
+
+/* Rich mention node views */
+.mention-node-wrap {
+  display: inline-block;
+  vertical-align: middle;
+  margin: 2px 2px;
+}
+
+/* Person inline chip */
+.mention-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  vertical-align: middle;
+}
+
+.mention-inline-person {
+  padding: 3px 10px 3px 4px;
+  border-radius: 100px;
+  background: rgba(133, 153, 0, 0.08);
+  border: 1px solid rgba(133, 153, 0, 0.2);
+}
+
+.mention-inline-person:hover {
+  background: rgba(133, 153, 0, 0.15);
+  border-color: rgba(133, 153, 0, 0.35);
+}
+
+.mention-inline-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sol-text);
+  line-height: 1.3;
+}
+
+/* Date mention inline pill */
+.mention-inline-date {
+  padding: 2px 10px 2px 6px;
+  border-radius: 100px;
+  background: rgba(203, 75, 22, 0.08);
+  border: 1px solid rgba(203, 75, 22, 0.2);
+  gap: 5px;
+}
+
+.mention-inline-date:hover {
+  background: rgba(203, 75, 22, 0.15);
+  border-color: rgba(203, 75, 22, 0.35);
+}
+
+.mention-date-resolved {
+  font-size: 11px;
+  color: var(--sol-text-dim);
+  opacity: 0.8;
+  font-family: var(--font-mono), monospace;
+}
+
+/* Date pill HTML serialization fallback */
+.doc-editor .editor-date-pill {
+  display: inline;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  font-size: 0.9em;
+  font-weight: 500;
+  background: rgba(203, 75, 22, 0.15);
+  color: #cb4b16;
+  cursor: default;
+}
+
+/* Images */
+.doc-editor .editor-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+  margin: 0.8em 0;
+  border: 1px solid var(--sol-border);
+}
+
+/* Image upload placeholder */
+.image-upload-placeholder {
+  position: relative;
+  max-width: 100%;
+  min-height: 80px;
+  border-radius: 6px;
+  margin: 0.8em 0;
+  border: 1px solid var(--sol-border);
+  background: var(--sol-bg-alt, #073642);
+  overflow: hidden;
+}
+
+.image-upload-preview {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  filter: blur(2px) brightness(0.5);
+  opacity: 0.6;
+}
+
+.image-upload-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.image-upload-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(255, 255, 255, 0.15);
+  border-top-color: var(--sol-cyan, #2aa198);
+  border-radius: 50%;
+  animation: img-upload-spin 0.7s linear infinite;
+}
+
+@keyframes img-upload-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Selection */
+.doc-editor .tiptap ::selection {
+  background: rgba(42, 161, 152, 0.25);
+}
+
+/* Focus ring for the editor */
+.doc-editor .tiptap:focus {
+  outline: none;
+}
+
+/* Table styles (from markdown paste) */
+.doc-editor .tiptap table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.8em 0;
+}
+
+.doc-editor .tiptap th,
+.doc-editor .tiptap td {
+  border: 1px solid var(--sol-border);
+  padding: 0.4em 0.8em;
+  text-align: left;
+}
+
+.doc-editor .tiptap th {
+  background: var(--sol-bg-highlight);
+  font-weight: 600;
+  color: var(--sol-text);
+}
+
+/* Compact mode for inline/modal usage */
+.doc-editor-compact .doc-editor-content {
+  min-height: unset;
+  padding: 0;
+}
+
+.doc-editor-compact .doc-editor-content .tiptap {
+  min-height: unset;
+}
+
+/* Collaborative cursors (React overlay) */
+.collab-cursor {
+  border-left: 2px solid;
+  pointer-events: none;
+}
+
+.collab-cursor-label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 3px 3px 3px 0;
+  white-space: nowrap;
+  color: #fff;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.9;
+  animation: collab-cursor-fade 0.2s ease-in;
+}
+
+@keyframes collab-cursor-fade {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 0.9; transform: translateY(0); }
+}
+
+/* Compose editor overrides */
+.compose-editor .doc-editor-content {
+  min-height: 0;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.compose-editor .doc-editor-content .tiptap {
+  min-height: 0;
+}
+
+.compose-editor {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* Wiki links — [[Doc Title]] */
+.doc-editor .wiki-link {
+  display: inline;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  background: color-mix(in srgb, var(--sol-cyan) 12%, transparent);
+  color: var(--sol-cyan);
+  border: 1px solid color-mix(in srgb, var(--sol-cyan) 20%, transparent);
+}
+
+.doc-editor .wiki-link:hover {
+  background: color-mix(in srgb, var(--sol-cyan) 22%, transparent);
+  border-color: color-mix(in srgb, var(--sol-cyan) 40%, transparent);
+}
+
+.doc-editor .wiki-link-note { color: var(--sol-text-muted); border-color: color-mix(in srgb, var(--sol-text-dim) 20%, transparent); background: color-mix(in srgb, var(--sol-text-dim) 8%, transparent); }
+.doc-editor .wiki-link-design { color: var(--sol-violet); border-color: color-mix(in srgb, var(--sol-violet) 20%, transparent); background: color-mix(in srgb, var(--sol-violet) 10%, transparent); }
+.doc-editor .wiki-link-spec { color: var(--sol-cyan); border-color: color-mix(in srgb, var(--sol-cyan) 20%, transparent); background: color-mix(in srgb, var(--sol-cyan) 10%, transparent); }
+.doc-editor .wiki-link-investigation { color: var(--sol-yellow); border-color: color-mix(in srgb, var(--sol-yellow) 20%, transparent); background: color-mix(in srgb, var(--sol-yellow) 10%, transparent); }
+
+/* Wiki link typing state — the [[ trigger highlight */
+.wiki-link-typing {
+  background: color-mix(in srgb, var(--sol-cyan) 8%, transparent);
+  border-radius: 2px;
+}
+
+/* ── Read-mode body parity ──────────────────────────────────────────────────
+   The doc reading view (DocumentDetailLayout) shares the editor's visual
+   language so toggling edit mode restyles nothing: same body color and
+   rhythm, same inline-code chip, same blockquote/hr treatment. Heading sizes
+   are matched in DOC_MD_COMPONENTS (they're Tailwind utilities there). */
+.doc-read-body {
+  color: var(--sol-text);
+  line-height: 1.8;
+}
+
+.doc-read-body :not(pre) > code {
+  background: var(--sol-bg-highlight);
+  color: #2aa198;
+  padding: 0.15em 0.4em;
+  border-radius: 3px;
+  font-size: 0.9em;
+  font-weight: normal;
+}
+
+.doc-read-body :not(pre) > code::before,
+.doc-read-body :not(pre) > code::after {
+  content: none; /* the prose plugin's backtick pseudo-quotes */
+}
+
+.doc-read-body blockquote {
+  border-left: 3px solid var(--sol-border);
+  color: var(--sol-text-dim);
+}
+
+.doc-read-body blockquote p::before,
+.doc-read-body blockquote p::after {
+  content: none; /* the prose plugin's decorative curly quotes */
+}
+
+.doc-read-body hr {
+  border: none;
+  border-top: 1px solid var(--sol-border);
+  margin: 2em 0;
+  opacity: 0.4;
+}
+
+.doc-read-body a:not(.not-prose) {
+  color: #268bd2;
+  text-decoration-color: rgba(38, 139, 210, 0.3);
+  text-underline-offset: 2px;
+}
+
+/* ── Drafting (DraftingExtension, components/docs/drafting) ─────────────────
+   One accent for the whole layer (violet), so the affordances read as a
+   single system laid over the prose rather than a scatter of colours. */
+.doc-editor {
+  --draft: var(--sol-violet);
+  --draft-soft: color-mix(in srgb, var(--sol-violet) 45%, transparent);
+}
+
+/* Ghosts read dimmed always: the writer chose to dim them. */
+.doc-editor .draft-ghost {
+  opacity: 0.24;
+  transition: opacity 160ms ease;
+}
+.doc-editor .draft-ghost:hover {
+  opacity: 0.5;
+}
+/* A proposed cut (the Lab's trim): clicking keeps it. */
+.doc-editor .draft-ghost--proposal {
+  opacity: 0.3;
+  cursor: pointer;
+}
+
+/* Alternatives and Lab marks only while drafting is on. */
+.drafting-on .draft-alt {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--draft) 38%, transparent);
+  text-underline-offset: 5px;
+  border-radius: 2px;
+  transition: background-color 140ms ease, text-decoration-color 140ms ease;
+}
+.drafting-on .draft-alt:hover {
+  text-decoration-color: var(--draft);
+  background: color-mix(in srgb, var(--draft) 9%, transparent);
+}
+.drafting-on .draft-alt-para .draft-alt {
+  text-decoration: none;
+}
+.drafting-on .draft-flag {
+  text-decoration: underline wavy;
+  text-decoration-thickness: 1px;
+  text-decoration-color: color-mix(in srgb, var(--sol-orange) 70%, transparent);
+  text-underline-offset: 4px;
+  cursor: help;
+}
+
+/* The dot pager: one dot per version, under the end of the run. The first is
+   the original; the filled one is showing; a lit filled dot means the run is
+   on a variation, not the original. */
+.draft-dots {
+  position: relative;
+  display: inline-block;
+  width: 0;
+  height: 0;
+  vertical-align: baseline;
+}
+.draft-dots__row {
+  position: absolute;
+  right: 0;
+  top: 8px;
+  display: flex;
+  gap: 2px;
+  line-height: 0;
+  animation: draft-in 180ms ease-out;
+}
+.draft-dot {
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--draft-soft);
+  cursor: pointer;
+  transition: transform 120ms ease, background-color 120ms ease;
+}
+.draft-dot:hover {
+  transform: scale(1.5);
+  background: var(--draft-soft);
+}
+.draft-dot--ai {
+  border-radius: 1px;
+}
+.draft-dot--on {
+  background: color-mix(in srgb, var(--draft) 55%, transparent);
+  border-color: transparent;
+}
+.draft-dot--on:not(.draft-dot--original) {
+  background: var(--draft);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--draft) 22%, transparent);
+}
+
+/* Paragraph versions: a rule in the left gutter with the pager running down it. */
+.drafting-on .draft-alt-para {
+  position: relative;
+}
+.drafting-on .draft-alt-para::before {
+  content: "";
+  position: absolute;
+  left: -18px;
+  top: 0.35em;
+  bottom: 0.35em;
+  width: 1px;
+  background: linear-gradient(to bottom, transparent, var(--draft-soft) 15%, var(--draft-soft) 85%, transparent);
+}
+.draft-dots--para {
+  position: absolute;
+  left: -24px;
+  top: 50%;
+  width: auto;
+  height: auto;
+}
+.draft-dots--para .draft-dots__row {
+  position: static;
+  flex-direction: column;
+  transform: translateY(-50%);
+  background: var(--sol-bg);
+  padding: 3px 1px;
+}
+
+/* The alternatives panel is open: everything but the stretch it works on recedes. */
+.drafting-focus > *:not(.draft-lit-block) {
+  opacity: 0.28;
+  transition: opacity 200ms ease;
+}
+.drafting-focus .draft-lit-block {
+  color: color-mix(in srgb, var(--sol-text-muted) 45%, transparent);
+}
+.drafting-focus .draft-lit {
+  color: var(--sol-text);
+  background: color-mix(in srgb, var(--draft) 10%, transparent);
+  border-radius: 2px;
+}
+
+@keyframes draft-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
+}
+
+/* ── Drafting surfaces around the editor ── */
+.draft-accent { color: var(--sol-violet); }
+.draft-accent-bg { background: var(--sol-violet); }
+.draft-toggle--on {
+  color: var(--sol-violet);
+  background: color-mix(in srgb, var(--sol-violet) 12%, transparent);
+}
+.draft-lab-button {
+  border-color: color-mix(in srgb, var(--sol-border) 80%, transparent);
+  font-family: var(--font-mono), monospace;
+}
+.draft-trim--on {
+  border-color: color-mix(in srgb, var(--sol-violet) 60%, transparent);
+  color: var(--sol-violet);
+  background: color-mix(in srgb, var(--sol-violet) 10%, transparent);
+}
+
+.draft-panel {
+  position: sticky;
+  top: 0;
+  /* Above the doc composer's sticky bar (z-10), whose fade would otherwise
+     wash out the panel's bottom hints. */
+  z-index: 20;
+  align-self: flex-start;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  height: calc(100dvh - 160px);
+  max-height: 100%;
+  padding: 44px 20px 16px;
+  font-family: var(--font-mono), monospace;
+  animation: draft-panel-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.draft-panel--left {
+  width: 248px;
+  border-right: 1px solid color-mix(in srgb, var(--sol-border) 35%, transparent);
+  background: linear-gradient(to right, color-mix(in srgb, var(--sol-bg-alt) 70%, transparent), transparent);
+}
+.draft-panel--right {
+  width: 288px;
+  border-left: 1px solid color-mix(in srgb, var(--sol-border) 35%, transparent);
+  background: linear-gradient(to left, color-mix(in srgb, var(--sol-bg-alt) 70%, transparent), transparent);
+  --enter: 8px;
+}
+@keyframes draft-panel-in {
+  from { opacity: 0; transform: translateX(var(--enter, -8px)); }
+  to { opacity: 1; transform: none; }
+}
+
+.draft-scope {
+  font-style: italic;
+  font-size: 13px;
+  color: var(--sol-text-dim);
+  transition: color 120ms ease;
+}
+.draft-scope:hover { color: var(--sol-text-muted); }
+.draft-scope--on { color: var(--sol-violet); }
+
+.draft-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--sol-border) 70%, transparent);
+  padding: 4px 0 4px 20px;
+  font-size: 13px;
+  color: var(--sol-text);
+  outline: none;
+  font-variant-ligatures: none;
+}
+.draft-input:focus { border-bottom-color: var(--sol-violet); }
+
+.draft-overflow {
+  width: 100%;
+  min-height: 0;
+  resize: none;
+  background: transparent;
+  border: 0;
+  outline: none;
+  font-size: 12.5px;
+  line-height: 1.65;
+  color: var(--sol-text-muted);
+  font-variant-ligatures: none;
+}
+.draft-overflow::placeholder { color: color-mix(in srgb, var(--sol-text-dim) 70%, transparent); }
+
+.draft-trimbar {
+  position: sticky;
+  bottom: 14px;
+  z-index: 20;
+  margin: 0 auto 14px;
+  width: min(780px, calc(100% - 48px));
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 55%, transparent);
+  background: color-mix(in srgb, var(--sol-card) 94%, transparent);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 14px 40px -12px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-mono), monospace;
+  font-size: 12px;
+  animation: draft-bar-in 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes draft-bar-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+.draft-chip {
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--sol-border) 60%, transparent);
+  color: var(--sol-text-muted);
+  white-space: nowrap;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.draft-chip:hover { color: var(--sol-text); border-color: var(--sol-violet); }
+
+@media (prefers-reduced-motion: reduce) {
+  .draft-dots__row, .draft-panel, .draft-trimbar { animation: none; }
+}

@@ -1,0 +1,46 @@
+# Route split: HTTP actions (anything the CLI or a browser calls by path) live
+# on the backend under /http/, and the Convex API and file storage at its root.
+# Getting this split wrong fails silently — the request reaches a port that
+# answers, just not the route that knows it.
+#
+# HTTP actions go to 3210 with the /http prefix added HERE, never to the
+# backend's site port (3211). That port is `dev_site_proxy`
+# (crates/local_backend/src/proxy.rs): it adds the same prefix and forwards to
+# 3210, through a service hard-coded to 4 requests at a time. At ~13 HTTP
+# actions a second, with model calls holding a slot for 10s, every request
+# behind it queued: 2026-10-13 the same action answered in 0.1s on
+# 3210/http and in 5 to 17s on 3211, for every `cast` command, webhook, sign
+# in and published page.
+#
+# TLS: convex.codecast.sh is DNS-only in Cloudflare, NOT proxied (verified
+# 2026-09-13: no cf-ray, server: railway-hikari). Clients therefore talk to this
+# origin directly and need a PUBLICLY TRUSTED certificate — a Cloudflare Origin
+# CA certificate would be rejected, because only Cloudflare's proxy trusts those
+# and there is no proxy in the path.
+#
+# The certificate must exist BEFORE cutover, and an HTTP challenge cannot supply
+# it: HTTP-01 requires the hostname to already point here, which is only true
+# after the switch. So this uses a DNS challenge, which proves control through a
+# DNS record instead. That needs a Cloudflare API token with DNS:Edit on the
+# codecast.sh zone in CLOUDFLARE_API_TOKEN, and a Caddy binary built with the
+# caddy-dns/cloudflare module — the stock binary does not include it.
+{
+	admin off
+	acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+}
+
+convex.codecast.sh {
+	@http_actions path /.well-known/* /api/auth/* /api/github-app/* /api/webhooks/* /cli/*
+	handle @http_actions {
+		rewrite * /http{uri}
+		reverse_proxy 127.0.0.1:3210
+	}
+	handle /api/storage/* {
+		reverse_proxy 127.0.0.1:3210 {
+			header_down Cache-Control "public, max-age=31536000, immutable"
+		}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:3210
+	}
+}

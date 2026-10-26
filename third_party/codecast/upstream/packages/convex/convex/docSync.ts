@@ -1,0 +1,683 @@
+import { mutation, query } from "./functions";
+import { DOC_REWRITTEN_ERROR, docTitleFromContent, serializeDraftRuns } from "@codecast/shared/docs";
+import { ConvexError, v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
+import { packSnapshotContent, readSnapshotContent } from "./lib/docSnapshot";
+import { requireAccessibleDoc } from "./lib/access";
+import { checkConversationAccess } from "./privacy";
+import { notFound } from "./lib/auth";
+import { afterRoleDocWrite } from "./orgRoles";
+import { canSendProductMessage } from "./pendingMessages";
+
+const MAX_DELTA_FETCH = 100;
+const MAX_SNAPSHOT_FETCH = 10;
+
+const vClientId = v.union(v.string(), v.number());
+
+async function requireAuth(ctx: any): Promise<Id<"users">> {
+  const userId = await getAuthUserId(ctx);
+  if (!userId) throw new Error("Not authenticated");
+  return userId;
+}
+
+// The sync/presence id names the entity whose content is being synced: a real
+// `docs` row id (the document editor), or a synthetic "<ns>:<conversationId>"
+// id — "compose:" for the collab composer, "comment:" for comment threads
+// (which also allow ":<messageId>" suffixes). The OT buffer and presence
+// drafts ARE that entity's content, so every endpoint gates on access to it.
+// Unknown id shapes fail closed.
+async function requireSyncableEntity(ctx: any, userId: Id<"users">, id: string): Promise<void> {
+  const docId = ctx.db.normalizeId("docs", id);
+  if (docId) {
+    await requireAccessibleDoc(ctx, userId, docId);
+    return;
+  }
+  const synthetic = id.match(/^(compose|comment):([^:]+)/);
+  if (synthetic) {
+    const convId = ctx.db.normalizeId("conversations", synthetic[2]);
+    const conversation = convId ? await ctx.db.get(convId) : null;
+    if (!conversation) notFound();
+    // Both namespaces follow the conversation's full access ladder: a
+    // share-link redeemer or an assigned session owner co-writes in the collab
+    // composer and comments on threads, so their presence belongs there too.
+    if ((await checkConversationAccess(ctx, userId, conversation)) === "denied") notFound();
+    return;
+  }
+  notFound();
+}
+
+/**
+ * The web editor has two paths that can replace the whole collaborative doc
+ * with EMPTY content while the doc's markdown prop is still loading (the
+ * snapshot query resolves before the heavier doc-detail query):
+ *
+ * 1. First open of a doc with no snapshot yet: the editor seeds one from the
+ *    markdown prop. An empty prop seeds an empty v1 snapshot.
+ * 2. A client still running a JS bundle from before the "Inconsistent open
+ *    depths" fix: its ExternalEditSync pushed the markdown prop into the live
+ *    editor via setContent, arriving as a whole-doc replace step at version
+ *    > 1. Current clients instead remount from the server snapshot on a CLI
+ *    edit (see `shouldResyncOnExternalEdit` in the web `docSyncCache`), so this
+ *    shape should only come from a stale tab that hasn't reloaded yet.
+ *
+ * Either way, submitSnapshot would then overwrite the real markdown in
+ * `doc.content` with "". This predicate detects both shapes so the mutation
+ * can reject them wholesale: no empty snapshot is written and the markdown is
+ * preserved. The clients are gated too (contentReady); this is the backstop
+ * that protects against old/cached clients.
+ *
+ * A genuine full clear by a person arrives at version > 1 on a doc without a
+ * CLI stamp and is allowed through. On a CLI-edited doc a legit clear is also
+ * blocked here — the collab layer still empties for collaborators, only the
+ * markdown mirror keeps its last value; the next non-empty snapshot overwrites
+ * it. That stale mirror is a far smaller cost than silently destroying a doc.
+ */
+export function isRacyEmptyOverwrite(args: {
+  version: number;
+  derivedMarkdown: string;
+  existingContent: string | undefined | null;
+  cliEditedAt: number | undefined | null;
+}): boolean {
+  if (args.derivedMarkdown.trim() !== "") return false;
+  if ((args.existingContent ?? "").trim() === "") return false;
+  return args.version <= 1 || args.cliEditedAt != null;
+}
+
+export const getSnapshot = query({
+  args: { id: v.string(), version: v.optional(v.number()) },
+  returns: v.union(
+    v.object({ content: v.null() }),
+    v.object({ content: v.string(), version: v.number() }),
+  ),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.id);
+    const snapshot = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) =>
+        q.eq("id", args.id).lte("version", args.version ?? Infinity),
+      )
+      .order("desc")
+      .first();
+    if (!snapshot) return { content: null };
+    return { content: readSnapshotContent(snapshot), version: snapshot.version };
+  },
+});
+
+// What a collab snapshot writes back to the docs row. The editor's first block
+// is the title heading, so the stored title follows it (docs.docTextUpdates is
+// the same rule for the CLI paths). Only a CHANGED body counts as an edit:
+// the editor snapshots on open and on compaction too, and stamping updated_at
+// for a byte-identical body made every doc read as "Updated just now" the
+// moment someone looked at it. A title-only repair (stored title disagreeing
+// with an unchanged heading) is not an edit either.
+export function snapshotDocPatch(
+  md: string,
+  doc: { content?: string | null; title: string },
+  now: number,
+): { content: string; title: string; updated_at: number } | { title: string } | null {
+  const title = docTitleFromContent(md, doc.title);
+  if (md !== (doc.content ?? "").trim()) return { content: md, title, updated_at: now };
+  if (title !== doc.title) return { title };
+  return null;
+}
+
+export const submitSnapshot = mutation({
+  args: {
+    id: v.string(),
+    version: v.number(),
+    content: v.string(),
+  },
+  returns: v.null(),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.id);
+    const existing = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) =>
+        q.eq("id", args.id).eq("version", args.version),
+      )
+      .first();
+    if (existing) return;
+
+    // Parse once and guard against a racy empty overwrite BEFORE writing
+    // anything. Otherwise an empty snapshot from a not-yet-loaded editor would
+    // clobber the doc's real markdown (see isRacyEmptyOverwrite).
+    let parsed: any;
+    try {
+      parsed = JSON.parse(args.content);
+    } catch {
+      parsed = null;
+    }
+    const md = parsed ? toMarkdown(parsed).trim() : "";
+    // The sync id is a real `docs` row id only for the document editor. The chat
+    // composer reuses this same OT backend under a synthetic "compose:<convId>"
+    // id, which is not a docs id — normalizeId returns null for it, so we skip the
+    // docs-table coupling (content patch + mention notifications) entirely. Calling
+    // ctx.db.get with a non-id string would throw.
+    const docId = ctx.db.normalizeId("docs", args.id);
+    const docForGuard = docId ? await ctx.db.get(docId) : null;
+    if (
+      isRacyEmptyOverwrite({
+        version: args.version,
+        derivedMarkdown: md,
+        existingContent: (docForGuard as any)?.content,
+        cliEditedAt: (docForGuard as any)?.cli_edited_at,
+      })
+    ) {
+      // Rare and always suspicious — log it so wipe attempts from stale
+      // clients are visible in prod logs.
+      console.log("submitSnapshot: blocked empty overwrite", {
+        id: args.id,
+        version: args.version,
+        existingLen: ((docForGuard as any)?.content ?? "").length,
+      });
+      return;
+    }
+
+    try {
+      await ctx.db.insert("doc_snapshots", {
+        id: args.id,
+        version: args.version,
+        content_gz: packSnapshotContent(args.content),
+      });
+    } catch (e: any) {
+      if (e.message?.includes("duplicate") || e.message?.includes("conflict")) return;
+      // Even gzipped, a pathologically huge doc could still exceed the 1 MiB
+      // limit. Skip the snapshot rather than throwing — the doc stays syncable
+      // via delta replay; only cold-load compaction is lost.
+      if (e.message?.includes("too large")) return;
+      throw e;
+    }
+    if (args.version > 1) {
+      const oldSnapshots = await ctx.db
+        .query("doc_snapshots")
+        .withIndex("id_version", (q: any) =>
+          q.eq("id", args.id).gt("version", 1).lt("version", args.version),
+        )
+        .take(MAX_SNAPSHOT_FETCH);
+      await Promise.all(oldSnapshots.map((doc: any) => ctx.db.delete(doc._id)));
+    }
+    try {
+      const doc = docForGuard;
+      if (doc && parsed) {
+        const patch = snapshotDocPatch(md, doc as any, Date.now());
+        if (patch) await ctx.db.patch(doc._id, patch);
+        // A role's brief or charter saved from the web editor lands here, not
+        // in docs.update: run the same after-write hook (brief state mirror,
+        // charter wake) so the editor and the CLI agree.
+        if (patch && "content" in patch) await afterRoleDocWrite(ctx, doc, patch.content);
+
+        const newMentions = extractPersonMentionIds(parsed);
+        if (newMentions.size > 0) {
+          let oldMentions = new Set<string>();
+          if (args.version > 1) {
+            const prevSnapshot = await ctx.db
+              .query("doc_snapshots")
+              .withIndex("id_version", (q: any) =>
+                q.eq("id", args.id).lt("version", args.version),
+              )
+              .order("desc")
+              .first();
+            if (prevSnapshot) {
+              try {
+                oldMentions = extractPersonMentionIds(JSON.parse(readSnapshotContent(prevSnapshot)));
+              } catch {}
+            }
+          }
+          const added = [...newMentions].filter((id) => !oldMentions.has(id));
+          if (added.length > 0) {
+            const actor = await ctx.db.get(userId);
+            const actorName = actor?.name || actor?.email || "Someone";
+            const docTitle = doc.title || "a document";
+            for (const mentionedId of added) {
+              if (mentionedId === userId.toString()) continue;
+              try {
+                await ctx.runMutation(internal.notificationRouter.ensureSubscribed, {
+                  user_id: mentionedId as Id<"users">,
+                  entity_type: "doc",
+                  entity_id: doc._id.toString(),
+                  reason: "mentioned",
+                  via: "human",
+                });
+                await ctx.runMutation(internal.notificationRouter.emit, {
+                  event_type: "mention",
+                  actor_user_id: userId,
+                  entity_type: "doc",
+                  entity_id: doc._id.toString(),
+                  message: `${actorName} mentioned you in "${docTitle}"`,
+                  conversation_id: doc.conversation_id,
+                  direct_recipient_id: mentionedId as Id<"users">,
+                });
+              } catch {}
+            }
+          }
+        }
+      }
+    } catch {}
+  },
+});
+
+function wrapMarks(text: string, marks?: any[]): string {
+  if (!marks?.length || !text) return text;
+  let out = text;
+  for (const mark of marks) {
+    switch (mark.type) {
+      case "bold": case "strong": out = `**${out}**`; break;
+      case "italic": case "em": out = `*${out}*`; break;
+      case "strike": out = `~~${out}~~`; break;
+      case "code": out = `\`${out}\``; break;
+      // A bare URL stays bare, the same rule serializeEntityRef follows.
+      case "link": if (out !== mark.attrs?.href) out = `[${out}](${mark.attrs?.href || ""})`; break;
+    }
+  }
+  return out;
+}
+
+// Entity-typed mentions serialize to the canonical `@[Title id]` vocabulary so
+// the reference survives into doc.content — read mode and the CLI render it as
+// a live pill. Bare `@label` (the old form) dropped the id, so a doc edited on
+// web lost its object references. Person mentions keep `@Name`.
+const MENTION_REF_TYPES = new Set(["task", "plan", "session", "doc"]);
+
+function mentionToMarkdown(attrs: any): string {
+  const label = attrs?.label || attrs?.id || "";
+  if (attrs?.type && MENTION_REF_TYPES.has(attrs.type) && attrs?.id) {
+    const ref = attrs.type === "doc" ? `doc:${attrs.id}` : attrs.shortId || attrs.id;
+    return `@[${label} ${ref}]`;
+  }
+  return `@${label}`;
+}
+
+export function toMarkdown(node: any, ctx: { indent: string; ordered: boolean; itemIndex: number } = { indent: "", ordered: false, itemIndex: 0 }): string {
+  if (node.type === "text") return wrapMarks(node.text || "", node.marks);
+  if (node.type === "hardBreak") return "\n";
+  if (node.type === "horizontalRule") return "\n---\n\n";
+  if (node.type === "mention") return mentionToMarkdown(node.attrs);
+  // Date pills round-trip as `@[<label> date:<iso>]` — before this case they
+  // fell through to "" and the date was wiped from doc.content on every edit.
+  if (node.type === "dateMention") {
+    const iso = node.attrs?.dateValue || node.attrs?.id || "";
+    return `@[${node.attrs?.label || iso} date:${iso}]`;
+  }
+  // The editor's entity pill atoms (EntityIdExtension / EntityRefExtension).
+  // Each must write back the exact markdown it was converted from — before
+  // these cases, entityId nodes fell through to "" and every ct-/pl- id was
+  // silently wiped from doc.content on the first web edit.
+  if (node.type === "entityId") return node.attrs?.shortId || "";
+  if (node.type === "entityRef") {
+    const a = node.attrs || {};
+    if (a.form === "mention") return `@[${a.label} ${a.refId}]`;
+    const href = a.href || "";
+    if (!a.label || a.label === href) return href;
+    return `[${a.label}](${href})`;
+  }
+  if (node.type === "image") {
+    const alt = node.attrs?.alt || "";
+    const src = node.attrs?.src || "";
+    return `![${alt}](${src})`;
+  }
+
+  if (!node.content) {
+    if (node.type === "paragraph") return "\n";
+    return "";
+  }
+
+  const inline = (n: any) => toMarkdown(n, ctx);
+  // Drafting marks (alternatives, ghosts, Lab flags) open once around every
+  // adjacent node that carries them, so a span holding bold text stays one span.
+  const children = serializeDraftRuns(node.content, inline);
+
+  switch (node.type) {
+    case "heading":
+      return "#".repeat(node.attrs?.level || 1) + " " + children.trim() + "\n\n";
+    case "paragraph":
+      return children + "\n\n";
+    case "bulletList":
+      return node.content.map((li: any, i: number) =>
+        toMarkdown(li, { indent: ctx.indent, ordered: false, itemIndex: i })
+      ).join("") + "\n";
+    case "orderedList": {
+      const start = node.attrs?.start ?? 1;
+      return node.content.map((li: any, i: number) =>
+        toMarkdown(li, { indent: ctx.indent, ordered: true, itemIndex: start + i })
+      ).join("") + "\n";
+    }
+    case "taskList":
+      return node.content.map((li: any, i: number) =>
+        toMarkdown(li, { indent: ctx.indent, ordered: false, itemIndex: i })
+      ).join("") + "\n";
+    case "listItem": {
+      const prefix = ctx.ordered ? `${ctx.itemIndex}. ` : "- ";
+      const body = node.content.map((child: any) => {
+        const md = toMarkdown(child, { indent: ctx.indent + "  ", ordered: false, itemIndex: 0 });
+        return md.replace(/\n$/, "");
+      }).join("\n" + ctx.indent + "  ");
+      return ctx.indent + prefix + body.trim() + "\n";
+    }
+    case "taskItem": {
+      const checked = node.attrs?.checked ? "x" : " ";
+      const body = node.content.map((child: any) => {
+        const md = toMarkdown(child, { indent: ctx.indent + "  ", ordered: false, itemIndex: 0 });
+        return md.replace(/\n$/, "");
+      }).join("\n" + ctx.indent + "  ");
+      return ctx.indent + `- [${checked}] ` + body.trim() + "\n";
+    }
+    case "blockquote": {
+      const inner = node.content.map(inline).join("");
+      return inner.trim().split("\n").map((l: string) => "> " + l).join("\n") + "\n\n";
+    }
+    case "codeBlock": {
+      const lang = node.attrs?.language || "";
+      return "```" + lang + "\n" + children + "\n```\n\n";
+    }
+    case "table": {
+      const rows = (node.content || []).map((row: any) =>
+        (row.content || []).map((cell: any) =>
+          (cell.content || []).map(inline).join("").replace(/\n+/g, " ").trim()
+        )
+      );
+      if (rows.length === 0) return "";
+      const colCount = Math.max(...rows.map((r: string[]) => r.length));
+      const padded = rows.map((r: string[]) => {
+        while (r.length < colCount) r.push("");
+        return r;
+      });
+      let md = "| " + padded[0].join(" | ") + " |\n";
+      md += "| " + padded[0].map(() => "---").join(" | ") + " |\n";
+      for (let i = 1; i < padded.length; i++) {
+        md += "| " + padded[i].join(" | ") + " |\n";
+      }
+      return md + "\n";
+    }
+    default:
+      return children;
+  }
+}
+
+function extractPersonMentionIds(node: any): Set<string> {
+  const ids = new Set<string>();
+  if (node.type === "mention" && node.attrs?.type === "person" && node.attrs?.id) {
+    ids.add(node.attrs.id);
+  }
+  if (node.content) {
+    for (const child of node.content) {
+      for (const id of extractPersonMentionIds(child)) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+export const latestVersion = query({
+  args: { id: v.string() },
+  returns: v.union(v.null(), v.number()),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.id);
+    const latestDelta = await ctx.db
+      .query("doc_deltas")
+      .withIndex("id_version", (q: any) => q.eq("id", args.id))
+      .order("desc")
+      .first();
+    if (latestDelta) return latestDelta.version;
+    const latestSnapshot = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) => q.eq("id", args.id))
+      .order("desc")
+      .first();
+    return latestSnapshot?.version ?? null;
+  },
+});
+
+/**
+ * The steps a client at `version` is missing, oldest first, or "gap" when the
+ * history cannot bring it forward.
+ *
+ * The history is contiguous except across a rewrite: `docs.resetSync` (a CLI
+ * or API edit) deletes every delta and writes the new content as a snapshot
+ * past the newest version any client holds. A client from before the rewrite
+ * then sees either the first remaining delta starting after its version, or
+ * no deltas and a newer snapshot. Its steps describe the old content, so they
+ * can be neither sent to it nor accepted from it; it must reload the snapshot
+ * (the web editor's isSyncGap does).
+ */
+async function stepsAfter(
+  ctx: any,
+  id: string,
+  version: number,
+): Promise<{ steps: string[]; clientIds: (string | number)[] } | "gap"> {
+  const deltas = await ctx.db
+    .query("doc_deltas")
+    .withIndex("id_version", (q: any) => q.eq("id", id).gt("version", version))
+    .take(MAX_DELTA_FETCH);
+  const steps: string[] = [];
+  const clientIds: (string | number)[] = [];
+  if (deltas.length === 0) {
+    const snapshot = await ctx.db
+      .query("doc_snapshots")
+      .withIndex("id_version", (q: any) => q.eq("id", id).gt("version", version))
+      .first();
+    return snapshot ? "gap" : { steps, clientIds };
+  }
+  const start = deltas[0].version - deltas[0].steps.length;
+  if (start > version) return "gap";
+  deltas.forEach((delta: any, i: number) => {
+    // The first delta can straddle the client's version; skip what it holds.
+    const own = i === 0 ? delta.steps.slice(version - start) : delta.steps;
+    for (const step of own) { steps.push(step); clientIds.push(delta.clientId); }
+  });
+  return { steps, clientIds };
+}
+
+export const getSteps = query({
+  args: { id: v.string(), version: v.number() },
+  returns: v.object({
+    steps: v.array(v.string()),
+    clientIds: v.array(vClientId),
+    version: v.number(),
+  }),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.id);
+    const missing = await stepsAfter(ctx, args.id, args.version);
+    const { steps, clientIds } = missing === "gap" ? { steps: [], clientIds: [] } : missing;
+    return { steps, clientIds, version: args.version + steps.length };
+  },
+});
+
+export const submitSteps = mutation({
+  args: {
+    id: v.string(),
+    version: v.number(),
+    clientId: vClientId,
+    steps: v.array(v.string()),
+  },
+  returns: v.union(
+    v.object({
+      status: v.literal("needs-rebase"),
+      clientIds: v.array(vClientId),
+      steps: v.array(v.string()),
+    }),
+    v.object({ status: v.literal("synced") }),
+  ),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.id);
+    const missing = await stepsAfter(ctx, args.id, args.version);
+    if (missing === "gap") {
+      // Steps written against content that no longer exists would land in the
+      // history as if they followed the rewrite, and every other client would
+      // then apply them to the new content (ProseMirror's "Invalid content for
+      // node"). Refuse them; the editor's gap detector remounts this tab.
+      throw new ConvexError(DOC_REWRITTEN_ERROR);
+    }
+    if (missing.steps.length > 0) {
+      return { status: "needs-rebase" as const, clientIds: missing.clientIds, steps: missing.steps };
+    }
+    await ctx.db.insert("doc_deltas", {
+      id: args.id,
+      version: args.version + args.steps.length,
+      clientId: args.clientId,
+      steps: args.steps,
+    });
+    return { status: "synced" as const };
+  },
+});
+
+// --- Presence ---
+
+const PRESENCE_COLORS = [
+  "#e06c75", "#61afef", "#c678dd", "#98c379", "#e5c07b",
+  "#56b6c2", "#be5046", "#d19a66",
+];
+
+const vAnchor = v.object({ message_id: v.string(), offset: v.number() });
+const CLAIM_TTL_MS = 15_000;
+
+// The session a composer presence id names, or null for any other doc id.
+async function composeConversation(ctx: any, docId: string): Promise<any | null> {
+  const m = docId.match(/^compose:([^:]+)$/);
+  const convId = m ? ctx.db.normalizeId("conversations", m[1]) : null;
+  return convId ? await ctx.db.get(convId) : null;
+}
+
+async function myPresenceRow(ctx: any, userId: Id<"users">, docId: string) {
+  return await ctx.db
+    .query("doc_presence")
+    .withIndex("by_user_doc", (q: any) => q.eq("user_id", userId).eq("doc_id", docId))
+    .first();
+}
+
+function presenceIdentity(user: any) {
+  const name = user.name || user.email || "Anonymous";
+  return {
+    user_name: name,
+    user_color: PRESENCE_COLORS[name.charCodeAt(0) % PRESENCE_COLORS.length],
+    user_image: user.image || user.github_avatar_url || undefined,
+  };
+}
+
+export const updatePresence = mutation({
+  args: {
+    doc_id: v.string(),
+    cursor_pos: v.optional(v.number()),
+    anchor_pos: v.optional(v.number()),
+    // Composer co-presence only: the sender's live draft, capped so a long message
+    // doesn't bloat the row. Omitted by the document editor.
+    draft_text: v.optional(v.string()),
+    // Composer co-presence only: where the sender is reading the transcript.
+    anchor: v.optional(vAnchor),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.doc_id);
+    const user = await ctx.db.get(userId);
+    if (!user) return;
+    const existing = await myPresenceRow(ctx, userId, args.doc_id);
+    const draft = args.draft_text === undefined ? undefined : args.draft_text.slice(0, 2000);
+    const anchor = args.anchor ? { message_id: args.anchor.message_id.slice(0, 128), offset: Math.min(1, Math.max(0, args.anchor.offset)) } : undefined;
+    // Whether this person's words can go into the session themselves, by the
+    // same rule a send checks. Decided here so a reader never has to.
+    const conversation = await composeConversation(ctx, args.doc_id);
+    const canSend = conversation ? await canSendProductMessage(ctx, userId, conversation) : undefined;
+    const now = Date.now();
+    const moved = anchor && (existing?.anchor?.message_id !== anchor.message_id || existing?.anchor?.offset !== anchor.offset);
+    const fields = {
+      cursor_pos: args.cursor_pos,
+      anchor_pos: args.anchor_pos,
+      draft_text: draft,
+      anchor,
+      anchor_at: anchor ? (moved ? now : existing?.anchor_at ?? now) : undefined,
+      can_send: canSend,
+      ...presenceIdentity(user),
+      updated_at: now,
+    };
+    if (existing) await ctx.db.patch(existing._id, fields);
+    else await ctx.db.insert("doc_presence", { doc_id: args.doc_id, user_id: userId, ...fields });
+  },
+});
+
+/**
+ * Record that I sent other people's drafts as parts of one joint turn. Each
+ * named author's composer reads the claim off my presence row and clears the
+ * words it names. Claims older than CLAIM_TTL_MS are dropped on read.
+ */
+export const claimDrafts = mutation({
+  args: {
+    doc_id: v.string(),
+    // how: "joint" (sent with mine as one turn), "composer" (taken into my
+    // draft), "session" (sent on its own in the author's name).
+    claims: v.array(v.object({ user_id: v.id("users"), text: v.string(), how: v.optional(v.string()) })),
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.doc_id);
+    const user = await ctx.db.get(userId);
+    if (!user) return;
+    const now = Date.now();
+    const existing = await myPresenceRow(ctx, userId, args.doc_id);
+    const kept = (existing?.claims ?? []).filter((c: any) => c.at > now - CLAIM_TTL_MS);
+    const claims = [...kept, ...args.claims.slice(0, 8).map((c) => ({ user_id: c.user_id, text: c.text.slice(0, 2000), at: now, how: c.how?.slice(0, 16) }))];
+    if (existing) await ctx.db.patch(existing._id, { claims, updated_at: now });
+    else await ctx.db.insert("doc_presence", { doc_id: args.doc_id, user_id: userId, ...presenceIdentity(user), claims, updated_at: now });
+  },
+});
+
+export const removePresence = mutation({
+  args: { doc_id: v.string() },
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    const existing = await myPresenceRow(ctx, userId, args.doc_id);
+    if (existing) await ctx.db.delete(existing._id);
+  },
+});
+
+export const getPresence = query({
+  args: { doc_id: v.string() },
+  returns: v.array(v.object({
+    user_id: v.id("users"),
+    user_name: v.string(),
+    user_color: v.string(),
+    user_image: v.optional(v.string()),
+    cursor_pos: v.optional(v.number()),
+    anchor_pos: v.optional(v.number()),
+    draft_text: v.optional(v.string()),
+    can_send: v.optional(v.boolean()),
+    anchor: v.optional(vAnchor),
+    anchor_at: v.optional(v.number()),
+    claims: v.optional(v.array(v.object({ user_id: v.id("users"), text: v.string(), at: v.number(), how: v.optional(v.string()) }))),
+    updated_at: v.number(),
+  })),
+  handler: async (ctx, args) => {
+    const userId = await requireAuth(ctx);
+    await requireSyncableEntity(ctx, userId, args.doc_id);
+    const now = Date.now();
+    const staleThreshold = now - 30_000;
+    const presences = await ctx.db
+      .query("doc_presence")
+      .withIndex("by_doc", (q: any) => q.eq("doc_id", args.doc_id))
+      .collect();
+    return presences
+      .filter((p: any) => p.user_id !== userId && p.updated_at > staleThreshold)
+      .map((p: any) => {
+        const claims = (p.claims ?? []).filter((c: any) => c.at > now - CLAIM_TTL_MS);
+        return {
+          user_id: p.user_id,
+          user_name: p.user_name,
+          user_color: p.user_color,
+          user_image: p.user_image,
+          cursor_pos: p.cursor_pos,
+          anchor_pos: p.anchor_pos,
+          draft_text: p.draft_text,
+          can_send: p.can_send,
+          anchor: p.anchor,
+          anchor_at: p.anchor_at,
+          claims: claims.length ? claims : undefined,
+          updated_at: p.updated_at,
+        };
+      });
+  },
+});
+

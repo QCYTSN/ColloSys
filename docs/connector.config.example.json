@@ -1,0 +1,11 @@
+{
+  "root": "D:\\Projects\\my-project",
+  "state": "D:\\ColloSysState\\my-project-alice",
+  "backend": "http://127.0.0.1:8787",
+  "projectId": "demo-project",
+  "workspaceId": "replace-with-a-unique-workspace-id",
+  "userId": "alice",
+  "label": "Alice 的项目",
+  "token": "REPLACE_WITH_AN_AUTHENTICATED_SESSION_TOKEN",
+  "port": 8793
+}

@@ -1,0 +1,115 @@
+// Run: node --test packages/electron/buildFiles.test.js
+//
+// Every local module the shell requires must be in the packaged build.
+//
+// electron-builder ships an ALLOWLIST (`build.files`), so a new file beside
+// main.js runs perfectly from source and is simply absent from the .app. The
+// failure is not subtle and not recoverable: the packaged app dies at boot with
+// "Cannot find module './x'" before it draws anything, and there is no build
+// step that would have caught it — from-source verification passes.
+//
+// It has happened twice already (callWindowPolicy.js and meetingDetector.js
+// both landed missing), which is why this is a test and not a comment.
+const { test } = require("node:test");
+const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const { join } = require("node:path");
+
+const HERE = __dirname;
+const pkg = JSON.parse(readFileSync(join(HERE, "package.json"), "utf8"));
+
+// `require("./x")` and `require("./x.js")` → "x.js"; a native addon and an ES
+// module keep their own extension (`require("./native/x.node")`,
+// `require("./appWindows.mjs")`).
+function localRequires(file) {
+  const src = readFileSync(join(HERE, file), "utf8");
+  const out = new Set();
+  for (const m of src.matchAll(/require\(["']\.\/([^"']+)["']\)/g)) {
+    out.add(/\.(js|mjs|node)$/.test(m[1]) ? m[1] : `${m[1]}.js`);
+  }
+  return [...out].sort();
+}
+
+// Every local module reachable from the entry points, following requires
+// through the modules themselves (osPermissions.js is what loads the addon).
+function reachableRequires(entries) {
+  const seen = new Map();
+  const queue = [...entries];
+  while (queue.length) {
+    const file = queue.shift();
+    if (seen.has(file)) continue;
+    const deps = file.endsWith(".js") ? localRequires(file) : [];
+    seen.set(file, deps);
+    queue.push(...deps);
+  }
+  return seen;
+}
+
+test("every local module reachable from main.js and preload.js is packaged", () => {
+  const allowed = new Set(pkg.build.files);
+  const missing = [];
+  for (const [file, deps] of reachableRequires(["main.js", "preload.js"])) {
+    for (const dep of deps) {
+      if (!allowed.has(dep)) missing.push(`${file} requires ./${dep}`);
+    }
+  }
+  assert.deepEqual(
+    missing,
+    [],
+    `Add these to build.files in packages/electron/package.json, or the packaged app crashes at boot:\n  ${missing.join("\n  ")}`,
+  );
+});
+
+test("native addons are unpacked from the asar", () => {
+  // A .node inside the asar can't be dlopen'd; electron-builder must leave it
+  // on disk (app.asar.unpacked) for require() to reach it.
+  const natives = pkg.build.files.filter((f) => f.endsWith(".node"));
+  assert.ok(natives.length > 0, "the notifications addon is packaged");
+  for (const f of natives) {
+    const unpacked = (pkg.build.asarUnpack ?? []).some((glob) =>
+      new RegExp(`^${glob.replace(/[.]/g, "\\.").replace(/\*/g, "[^/]*")}$`).test(f),
+    );
+    assert.ok(unpacked, `${f} is not matched by build.asarUnpack`);
+  }
+});
+
+test("every tray image is packaged", () => {
+  // Same allowlist, same failure, quieter symptom: an image left out of
+  // build.files does not crash the app, it just leaves a blank mark in the menu
+  // bar. The retina companions are named by AppKit rather than by the code, so
+  // no require scan would find them.
+  const { TRAY_ASSET_FILES } = require("./trayIcon");
+  const allowed = new Set(pkg.build.files);
+  const missing = TRAY_ASSET_FILES.filter((f) => !allowed.has(f));
+  assert.deepEqual(missing, [], `Add these to build.files in packages/electron/package.json:\n  ${missing.join("\n  ")}`);
+});
+
+test("the entry points themselves are packaged", () => {
+  const allowed = new Set(pkg.build.files);
+  assert.ok(allowed.has("main.js"));
+  assert.ok(allowed.has("preload.js"));
+});
+
+test("release verification preserves explicit module extensions", () => {
+  const { execFileSync } = require("node:child_process");
+  const script = readFileSync(join(HERE, "scripts/release.sh"), "utf8");
+  const normalize = script.match(/case "\$mod" in .*? esac/)[0];
+  for (const mod of ["notificationRouter", "notificationRouter.js", "appWindows.mjs", "native/notifications.node"]) {
+    const actual = execFileSync("bash", ["-c", `${normalize}; printf '%s' "$f"`], { env: { ...process.env, mod }, encoding: "utf8" });
+    assert.equal(actual, `/${localRequires("main.js").find(f => f === mod || f === `${mod}.js`) ?? mod}`);
+  }
+});
+
+test("release updates a download pointer behind the package version", () => {
+  const { execFileSync } = require("node:child_process");
+  const script = readFileSync(join(HERE, "scripts/release.sh"), "utf8");
+  const edits = script.split("\n").filter(line => line.startsWith("sed -i") && line.includes('"$WEB_SERVER"'));
+  let text = 'const MAC_DMG_URL = "https://dl.codecast.sh/desktop/Codecast-1.1.111-arm64.dmg";\nconst MAC_DMG_VERSION = "1.1.111";\n';
+  for (const edit of edits) {
+    const command = edit.replace("sed -i ''", "sed").replace(' "$WEB_SERVER"', "");
+    text = execFileSync("bash", ["-c", command], { input: text, env: { ...process.env, OLD_VERSION: "1.1.112", NEW_VERSION: "1.1.113" }, encoding: "utf8" });
+  }
+  assert.ok(text.includes("Codecast-1.1.113-arm64.dmg"));
+  assert.ok(text.includes('MAC_DMG_VERSION = "1.1.113"'));
+  assert.ok(!text.includes("1.1.111"));
+});

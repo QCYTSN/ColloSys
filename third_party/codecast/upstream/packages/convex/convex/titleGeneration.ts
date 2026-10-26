@@ -1,0 +1,749 @@
+import { FOREIGN_TEXT_CAPS, escapeForeignControlChars, fenceForeignText, inlineForeignText } from "@codecast/shared/contracts";
+import { internalMutation, internalAction, internalQuery, type MutationCtx } from "./functions";
+import { v } from "convex/values";
+import { internal } from "./_generated/api";
+import type { Doc } from "./_generated/dataModel";
+import { isRefusalProse } from "./idleSummary";
+import { isHostedAgentType, isToolResultCarrier, parseWorkflowHarnessFrame } from "@codecast/shared/contracts";
+import { callModel, CHEAP_MODEL, type SurfaceRequest } from "./lib/anthropic";
+import { earlierTitlesAfter } from "./searchCore";
+import { redactSecrets } from "./redact";
+
+// Floor between generateTitle schedulings for one conversation. The
+// no-subtitle fallback fires on every sync batch of an untitled conversation;
+// without a floor, one busy untitled session enqueues a job per batch (~1/s),
+// and once the scheduler lags, subtitles stop being written, which makes every
+// active conversation untitled — jobs then arrive faster than they run and the
+// queue never recovers (the 2026-07 scheduler wedge). The stamp starts unset,
+// so a new session still gets its first title at message 2.
+const TITLE_GEN_MIN_INTERVAL_MS = 5 * 60 * 1000;
+
+// Single gate for scheduling title generation from message writes. Covers the
+// count milestones for every count in (prevMessageCount, newMessageCount] plus
+// the no-subtitle self-heal, then rate-limits by title_gen_scheduled_at.
+export async function maybeScheduleTitleGeneration(
+  ctx: MutationCtx,
+  conversation: Doc<"conversations">,
+  prevMessageCount: number,
+  newMessageCount: number,
+): Promise<void> {
+  if (conversation.skip_title_generation) return;
+  let shouldGen = false;
+  for (let c = prevMessageCount + 1; c <= newMessageCount; c++) {
+    if (shouldGenerateTitle(c)) { shouldGen = true; break; }
+  }
+  if (!shouldGen && conversation.subtitle === undefined && newMessageCount > 2) {
+    shouldGen = true;
+  }
+  if (!shouldGen) return;
+  const now = Date.now();
+  if (now - (conversation.title_gen_scheduled_at ?? 0) < TITLE_GEN_MIN_INTERVAL_MS) return;
+  await ctx.db.patch(conversation._id, { title_gen_scheduled_at: now });
+  await ctx.scheduler.runAfter(0, internal.titleGeneration.generateTitle, {
+    conversation_id: conversation._id,
+  });
+}
+
+/** A hosted turn's answer has landed in full: name the conversation from it
+ *  now. The count milestone at message 2 fires while the reply is still
+ *  streaming into its row, so that pass can see only the ask, and the floor
+ *  above then holds every later pass of a short conversation, which leaves the
+ *  ask itself as the title. Only while no pass has titled it (a pass always
+ *  writes a subtitle), so later turns follow the usual milestones. */
+export async function titleAfterHostedAnswer(ctx: MutationCtx, conversation: Doc<"conversations">): Promise<void> {
+  if (conversation.skip_title_generation || conversation.title_is_custom || conversation.subtitle !== undefined) return;
+  await ctx.db.patch(conversation._id, { title_gen_scheduled_at: Date.now() });
+  await ctx.scheduler.runAfter(0, internal.titleGeneration.generateTitle, { conversation_id: conversation._id });
+}
+
+export const setTitleAndSubtitle = internalMutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    title: v.string(),
+    // Optional: when the generated subtitle fails the refusal guard, the
+    // caller omits it and the conversation keeps its last good subtitle
+    // (a stale summary beats refusal prose on the inbox card).
+    subtitle: v.optional(v.string()),
+    // The session's short name, generated alongside the title. Optional so a
+    // model response without one leaves the last good name in place.
+    short_title: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const conv = await ctx.db.get(args.conversation_id);
+    if (!conv) return;
+    const patch: { title?: string; subtitle?: string; short_title?: string; earlier_titles?: string[] } = {};
+    if (args.subtitle !== undefined) patch.subtitle = args.subtitle;
+    if (!conv.title_is_custom) {
+      patch.title = args.title;
+      if (args.short_title !== undefined) patch.short_title = args.short_title;
+      // The title being replaced stays findable (searchCore.searchFieldsOf).
+      // Only a title a previous pass generated: a daemon placeholder is the
+      // opening prompt cut short, which first_prompt already holds.
+      const earlier = conv.subtitle !== undefined ? earlierTitlesAfter(conv, args.title) : undefined;
+      if (earlier) patch.earlier_titles = earlier;
+    }
+    if (Object.keys(patch).length === 0) return;
+    await ctx.db.patch(args.conversation_id, patch);
+  },
+});
+
+export const generateTitle = internalAction({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    if (!process.env.ANTHROPIC_API_KEY) {
+      console.error("ANTHROPIC_API_KEY not configured");
+      return;
+    }
+
+    const conversation = await ctx.runQuery(internal.titleGeneration.getConversationForTitle, {
+      conversation_id: args.conversation_id,
+    });
+
+    if (!conversation || (conversation.spine.length === 0 && conversation.recent.length === 0)) {
+      return;
+    }
+
+    try {
+      const reply = await callModel({ ...titleRequest(conversation), label: "Title generation" });
+      if (!reply) return;
+      const text = reply.text;
+
+      const parsed = extractTitleJson(text);
+      const title = parsed?.title?.trim();
+      const shortTitle = cleanShortTitle(parsed?.short_title);
+
+      if (title && title.length < 200) {
+        // The JSON fence stops refusals from replacing the whole output, but
+        // not a model that complies with the format while writing refusal
+        // prose INSIDE the subtitle value ("I don't see a recent
+        // conversation…"). Guard the value itself; on refusal keep the last
+        // good subtitle by omitting the field.
+        const rawSubtitle = parsed?.subtitle?.trim() || "";
+        const subtitle = rawSubtitle && isRefusalProse(rawSubtitle) ? undefined : rawSubtitle;
+        await ctx.runMutation(internal.titleGeneration.setTitleAndSubtitle, {
+          conversation_id: args.conversation_id,
+          title,
+          ...(subtitle !== undefined ? { subtitle } : {}),
+          ...(shortTitle ? { short_title: shortTitle } : {}),
+        });
+      } else {
+        console.error("Title generation returned no usable JSON:", text.slice(0, 120));
+      }
+    } catch (error) {
+      console.error("Failed to generate title:", error);
+    }
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Short names for tasks, plans and (as a backfill) sessions
+//
+// A reference pill shows an object's short NAME on repeat mentions. Sessions
+// get theirs from the title pass above; tasks and plans have no LLM pass, and
+// their titles are written by people and agents in a dozen places. Rather than
+// hook every insert, a cron finds rows without a name (indexed on the missing
+// field) and asks for one from the title alone — a tenth of a title pass in
+// tokens, and it never touches the title itself.
+// ---------------------------------------------------------------------------
+
+const shortTitleTarget = v.union(v.id("conversations"), v.id("tasks"), v.id("plans"));
+
+export const generateShortTitle = internalAction({
+  args: { id: shortTitleTarget },
+  handler: async (ctx, args) => {
+    if (!process.env.ANTHROPIC_API_KEY) return;
+    const row = await ctx.runQuery(internal.titleGeneration.getRowForShortTitle, { id: args.id });
+    if (!row?.title) return;
+    try {
+      const reply = await callModel({
+        ...shortTitleRequest({ kind: row.kind, title: row.title, context: row.context }),
+        label: "Short title generation",
+      });
+      if (!reply) return;
+      // An answer that fails the name rule is stored as "" (asked, no usable
+      // name), which readers treat as absent and the cron's index skips. Asking
+      // again mostly gets the same answer: leaving the field unset re-asked
+      // the same 80 rows every two minutes and held the scheduler's slots
+      // doing it.
+      const shortTitle = cleanShortTitle(extractTitleJson(reply.text)?.short_title) ?? "";
+      await ctx.runMutation(internal.titleGeneration.setShortTitle, { id: args.id, short_title: shortTitle });
+    } catch (error) {
+      console.error("Failed to generate short title:", error);
+    }
+  },
+});
+
+export const getRowForShortTitle = internalQuery({
+  args: { id: shortTitleTarget },
+  handler: async (ctx, args) => {
+    const row: any = await ctx.db.get(args.id);
+    if (!row) return null;
+    // Which kind the id names is in the id itself; the row's shape tells it
+    // apart without a second read.
+    if ("goal" in row || "acceptance_criteria" in row) {
+      return { kind: "plan" as const, title: row.title as string | undefined, context: row.goal as string | undefined };
+    }
+    if ("session_id" in row && "agent_type" in row) {
+      return { kind: "session" as const, title: row.title as string | undefined, context: row.subtitle as string | undefined };
+    }
+    return { kind: "task" as const, title: row.title as string | undefined, context: (row.description as string | undefined)?.slice(0, 300) };
+  },
+});
+
+export const setShortTitle = internalMutation({
+  args: { id: shortTitleTarget, short_title: v.string() },
+  handler: async (ctx, args) => {
+    const row: any = await ctx.db.get(args.id);
+    // A name that landed meanwhile (or a title pass for a session) wins.
+    if (!row || row.short_title) return;
+    await ctx.db.patch(args.id as any, { short_title: args.short_title });
+  },
+});
+
+/** The name-only request: one task, plan or session title in, a short name out. */
+export function shortTitleRequest(input: { kind: "session" | "task" | "plan"; title: string; context?: string }): SurfaceRequest {
+  return {
+    model: CHEAP_MODEL,
+    max_tokens: 60,
+    prompt: buildShortTitlePrompt(input.kind, input.title, input.context),
+  };
+}
+
+export function buildShortTitlePrompt(kind: "session" | "task" | "plan", title: string, context?: string): string {
+  const noun = kind === "session" ? "work session" : kind;
+  return `Give this ${noun} a short name: 1-2 words, 20 characters max. The NAME a teammate would say out loud to refer to it, never a generic word alone ("Fix", "Update"). Prefer the title's most specific noun.
+Examples: "Auth redirect" for "Auth redirect fix", "Chokidar" for "Replace chokidar", "Italy trip" for "Italy trip planning".
+
+Title: ${JSON.stringify(inlineForeignText(title))}${context ? `\nContext:\n${fenceForeignText(escapeForeignControlChars(context), `${kind} being named`, { maxChars: FOREIGN_TEXT_CAPS.descriptionChars })}` : ""}
+
+Output ONLY the JSON object, no markdown, no preamble:
+{"short_title": "..."}`;
+}
+
+// The cron: tasks and plans without a name, oldest-unnamed first. Bounded per
+// run so a backlog drains at a steady, cheap pace; new rows are named within
+// a few minutes of creation. A title edit clears the field, so edited rows
+// come back through here.
+export const FILL_SHORT_TITLES_BATCH = 40;
+export const fillShortTitles = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    let scheduled = 0;
+    for (const table of ["tasks", "plans"] as const) {
+      const rows = await ctx.db
+        .query(table)
+        .withIndex("by_short_title", (q) => q.eq("short_title", undefined))
+        .take(FILL_SHORT_TITLES_BATCH);
+      for (const row of rows) {
+        if (!row.title?.trim()) continue;
+        await ctx.scheduler.runAfter(scheduled * 1000, internal.titleGeneration.generateShortTitle, { id: row._id });
+        scheduled++;
+      }
+    }
+    return { scheduled };
+  },
+});
+
+// Session backfill: schedule the name-only pass for titled conversations
+// without a short name, newest first from `cursor` (a creation-time ms). Only
+// LLM-titled or custom-titled rows — a daemon placeholder title is not worth
+// naming. Loop until done:
+//   npx convex run titleGeneration:sweepMissingShortTitles '{"cursor": <ms>}'
+export const sweepMissingShortTitles = internalMutation({
+  args: {
+    cursor: v.number(),
+    batch: v.optional(v.number()),
+    spread_s: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batch = args.batch ?? 200;
+    const rows = await ctx.db
+      .query("conversations")
+      .withIndex("by_creation_time", (q) => q.lt("_creationTime", args.cursor))
+      .order("desc")
+      .take(batch);
+    let scheduled = 0;
+    for (const c of rows) {
+      if (c.short_title !== undefined || !c.title || c.skip_title_generation) continue;
+      if (!c.subtitle && !c.title_is_custom) continue;
+      await ctx.scheduler.runAfter(
+        scheduled * (args.spread_s ?? 1) * 1000,
+        internal.titleGeneration.generateShortTitle,
+        { id: c._id },
+      );
+      scheduled++;
+    }
+    return {
+      scheduled,
+      scanned: rows.length,
+      cursor: rows.length ? rows[rows.length - 1]._creationTime : null,
+      done: rows.length < batch,
+    };
+  },
+});
+
+// One-shot recovery sweep: schedule generateTitle for every recent
+// conversation that never got a subtitle (untitled cards in the inbox). Live
+// conversations self-heal via maybeScheduleTitleGeneration on their next sync;
+// this catches the idle ones nothing will touch again. Walks _creationTime
+// from `cursor`; loop until done:
+//   npx convex run titleGeneration:sweepUntitled '{"cursor": <start_ms>}'
+export const sweepUntitled = internalMutation({
+  args: {
+    cursor: v.number(),
+    batch: v.optional(v.number()),
+    // Seconds between scheduled generations, so the sweep itself doesn't
+    // flood the scheduler or the Anthropic API.
+    spread_s: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batch = args.batch ?? 200;
+    const rows = await ctx.db
+      .query("conversations")
+      .withIndex("by_creation_time", (q) => q.gte("_creationTime", args.cursor))
+      .take(batch);
+    const now = Date.now();
+    let scheduled = 0;
+    for (const c of rows) {
+      if (c.skip_title_generation || c.subtitle !== undefined) continue;
+      if ((c.message_count ?? 0) <= 2) continue;
+      await ctx.db.patch(c._id, { title_gen_scheduled_at: now });
+      await ctx.scheduler.runAfter(
+        scheduled * (args.spread_s ?? 2) * 1000,
+        internal.titleGeneration.generateTitle,
+        { conversation_id: c._id },
+      );
+      scheduled++;
+    }
+    return {
+      scheduled,
+      scanned: rows.length,
+      cursor: rows.length ? rows[rows.length - 1]._creationTime : null,
+      done: rows.length < batch,
+    };
+  },
+});
+
+// One-shot backfill of conversations.first_prompt for sessions that began
+// before the message writers stamped it. Walks _creationTime from `cursor` and
+// reschedules itself until it reaches the newest row, a small batch at a time:
+// each stamp is a write to a conversation doc, which every open inbox reads.
+//   packages/convex/run.sh titleGeneration:sweepFirstPrompts '{"cursor": <start_ms>}'
+export const sweepFirstPrompts = internalMutation({
+  args: { cursor: v.number(), batch: v.optional(v.number()), stamped: v.optional(v.number()) },
+  handler: async (ctx, args): Promise<{ stamped: number; scanned: number; cursor: number; done: boolean }> => {
+    const batch = args.batch ?? 25;
+    const rows = await ctx.db
+      .query("conversations")
+      .withIndex("by_creation_time", (q) => q.gt("_creationTime", args.cursor))
+      .take(batch);
+    let stamped = args.stamped ?? 0;
+    for (const c of rows) {
+      if (c.first_prompt || (c.message_count ?? 0) === 0) continue;
+      const opening = firstPromptOf(await ctx.db
+        .query("messages")
+        .withIndex("by_conversation_id", (q) => q.eq("conversation_id", c._id))
+        .order("asc")
+        .take(12));
+      if (!opening) continue;
+      await ctx.db.patch(c._id, { first_prompt: redactSecrets(opening) });
+      stamped++;
+    }
+    const done = rows.length < batch;
+    const cursor = rows.length ? rows[rows.length - 1]._creationTime : args.cursor;
+    if (!done) {
+      await ctx.scheduler.runAfter(250, internal.titleGeneration.sweepFirstPrompts, { cursor, batch, stamped });
+    }
+    return { stamped, scanned: rows.length, cursor, done };
+  },
+});
+
+// Spine sampling: the session's timespan is split into equal time buckets and
+// each contributes up to a few human prompts. Most user-role rows in agentic
+// sessions are tool-result carriers, so an end-anchored fetch would miss the
+// middle of long sessions entirely; time buckets keep coverage uniform over
+// the session's whole life while the per-bucket take() bounds result size.
+const SPINE_BUCKETS = 12;
+const SPINE_PER_BUCKET = 4;
+const SPINE_END_FETCH = 10;
+
+// User rows that are real prompts but carry no topic signal — interruption
+// markers, bare image sends, background-task callbacks, import notices, fork
+// scaffolding, and a workflow subagent's relay of the request that started
+// the run (every agent in the run carries the same one; its own computed task
+// follows). They'd waste spine slots and anchor the model on noise.
+export function isLowSignalPrompt(content: string): boolean {
+  const t = content.trimStart();
+  return (
+    parseWorkflowHarnessFrame(t)?.kind === "user request" ||
+    t.startsWith("[Request interrupted") ||
+    t.startsWith("<task-notification>") ||
+    t.startsWith("<fork-boilerplate>") ||
+    t.startsWith("[Codecast import]") ||
+    /^\[image\]$/i.test(t.trim())
+  );
+}
+
+// The opening of the first prompt a session was given, for search
+// (conversations.first_prompt): what the session was when it began, which its
+// title stops saying once the work moves on. A workflow subagent's first
+// prompt is its computed task, without the harness's frame line. `rows` are
+// oldest first. Stamped once by the message writers, while the session is
+// young enough that the batch at hand holds its opening.
+const FIRST_PROMPT_CHARS = 400;
+export const FIRST_PROMPT_STAMP_WINDOW = 50;
+export function firstPromptOf(
+  rows: ReadonlyArray<{ role: string; content?: string | null; tool_results?: readonly unknown[] | null }>,
+): string | undefined {
+  for (const m of rows) {
+    if (m.role !== "user" || !m.content || isToolResultCarrier(m) || isLowSignalPrompt(m.content)) continue;
+    const text = (parseWorkflowHarnessFrame(m.content.trimStart())?.body ?? m.content).replace(/\s+/g, " ").trim();
+    if (text) return text.slice(0, FIRST_PROMPT_CHARS);
+  }
+  return undefined;
+}
+
+// The fields of a message row the title selector reads. A database row fits,
+// and so does a row an eval rebuilt from `/cli/read`.
+export type TitleRow = {
+  _id: string;
+  role: string;
+  content?: string;
+  tool_results?: readonly unknown[] | null;
+  timestamp: number;
+};
+
+/** What the title request is built from: the spine, the recent window and the anchor. */
+export type TitleInput = {
+  spine: Array<{ role: string; content?: string }>;
+  recent: Array<{ role: string; content?: string }>;
+  currentTitle?: string;
+  messageCount: number;
+  /** A conversation with the hosted assistant: everyday errands, named in
+   *  the person's words rather than as engineering work. */
+  hosted?: boolean;
+};
+
+// The [t0, t1) time buckets the spine samples across. Empty when the prompts
+// span no time, so a session whose prompts share one timestamp reads only the
+// opening and trailing windows.
+export function spineBucketBounds(lo: number, hi: number): Array<[number, number]> {
+  if (!(hi > lo)) return [];
+  const span = hi + 1 - lo;
+  return Array.from({ length: SPINE_BUCKETS }, (_, k) => [
+    lo + (span * k) / SPINE_BUCKETS,
+    lo + (span * (k + 1)) / SPINE_BUCKETS,
+  ]);
+}
+
+// The spine reads over an in-memory transcript: the same three views the
+// query below takes from its index (opening prompts, trailing prompts, a few
+// per time bucket), in the same order, for a caller that holds the rows
+// instead of a database. `rows` is the whole transcript, oldest first.
+export function pickSpineRows<R extends TitleRow>(rows: R[]): R[] {
+  const prompts = rows
+    .filter((m) => m.role === "user" && m.tool_results == null && m.content != null)
+    .sort((a, b) => a.timestamp - b.timestamp);
+  const firstPrompts = prompts.slice(0, SPINE_END_FETCH);
+  const lastPrompts = [...prompts].reverse().slice(0, SPINE_END_FETCH);
+  const lo = firstPrompts[0]?.timestamp;
+  const hi = lastPrompts[0]?.timestamp;
+  const buckets = lo !== undefined && hi !== undefined
+    ? spineBucketBounds(lo, hi).map(([t0, t1]) =>
+        prompts.filter((m) => m.timestamp >= t0 && m.timestamp < t1).slice(0, SPINE_PER_BUCKET))
+    : [];
+  return [...firstPrompts, ...lastPrompts, ...buckets.flat()];
+}
+
+// What the title model sees, from the rows the query read: `spine` is every
+// prompt row the spine reads returned (duplicates allowed), `latest` the
+// newest 20 rows of any role, newest first.
+export function selectTitleInput(
+  rows: { spine: TitleRow[]; latest: TitleRow[] },
+  conversation: { title?: string; subtitle?: string; title_is_custom?: boolean; message_count?: number; agent_type?: string },
+): TitleInput {
+  const isHumanText = (m: TitleRow) => !!m.content && !isToolResultCarrier(m);
+
+  const seenSpine = new Set<string>();
+  const orderedSpine = rows.spine
+    .filter((m) => {
+      if (seenSpine.has(m._id)) return false;
+      seenSpine.add(m._id);
+      return true;
+    })
+    .sort((a, b) => a.timestamp - b.timestamp);
+
+  // Recent window: the last few exchanges (any role) so the subtitle can
+  // describe what is happening right now.
+  const recent = [...rows.latest]
+    .reverse()
+    .filter(
+      (m) =>
+        (m.role === "user" || m.role === "assistant") &&
+        isHumanText(m) &&
+        !isLowSignalPrompt(m.content!)
+    );
+
+  const recentIds = new Set(recent.map((m) => m._id));
+  const spine = orderedSpine.filter(
+    (m) => isHumanText(m) && !isLowSignalPrompt(m.content!) && !recentIds.has(m._id)
+  );
+
+  // Anchor on the existing title only when it came from a previous LLM pass
+  // (which always writes a subtitle). Daemon-created placeholder titles have
+  // no subtitle and must not be kept verbatim; custom titles are never
+  // overwritten, so anchoring on them is pointless.
+  const llmTitled = !conversation.title_is_custom && !!conversation.subtitle;
+
+  // A workflow subagent's task opens with a header of harness boilerplate
+  // longer than the excerpt the model sees; read past it to the task.
+  const text = (m: TitleRow) => ({ role: m.role, content: parseWorkflowHarnessFrame(m.content)?.body ?? m.content });
+  return {
+    spine: spine.map(text),
+    recent: recent.map(text),
+    currentTitle: llmTitled ? conversation.title : undefined,
+    messageCount: conversation.message_count ?? 0,
+    ...(isHostedAgentType(conversation.agent_type) ? { hosted: true } : {}),
+  };
+}
+
+export const getConversationForTitle = internalQuery({
+  args: {
+    conversation_id: v.id("conversations"),
+  },
+  handler: async (ctx, args) => {
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (!conversation) return null;
+
+    const userPrompts = (dir: "asc" | "desc") =>
+      ctx.db
+        .query("messages")
+        .withIndex("by_conversation_role_timestamp", (q) =>
+          q.eq("conversation_id", args.conversation_id).eq("role", "user")
+        )
+        .order(dir)
+        .filter((q) =>
+          q.and(
+            q.eq(q.field("tool_results"), undefined),
+            q.neq(q.field("content"), undefined)
+          )
+        );
+
+    // Prompts cluster in time, so buckets alone under-sample dense stretches.
+    // Union three views: the opening prompts (where the user states the goal),
+    // time buckets across the span (the arc), and the trailing prompts (where
+    // the work is now). selectTitleInput dedupes and re-sorts chronologically.
+    const firstPrompts = await userPrompts("asc").take(SPINE_END_FETCH);
+    const lastPrompts = await userPrompts("desc").take(SPINE_END_FETCH);
+
+    const spineRows: Doc<"messages">[] = [...firstPrompts, ...lastPrompts];
+    const lo = firstPrompts[0]?.timestamp;
+    const hi = lastPrompts[0]?.timestamp;
+    if (lo !== undefined && hi !== undefined) {
+      const promptsInRange = (t0: number, t1: number) =>
+        ctx.db
+          .query("messages")
+          .withIndex("by_conversation_role_timestamp", (q) =>
+            q
+              .eq("conversation_id", args.conversation_id)
+              .eq("role", "user")
+              .gte("timestamp", t0)
+              .lt("timestamp", t1)
+          )
+          .filter((q) =>
+            q.and(
+              q.eq(q.field("tool_results"), undefined),
+              q.neq(q.field("content"), undefined)
+            )
+          )
+          .take(SPINE_PER_BUCKET);
+
+      const bucketRows = await Promise.all(spineBucketBounds(lo, hi).map(([t0, t1]) => promptsInRange(t0, t1)));
+      spineRows.push(...bucketRows.flat());
+    }
+
+    const latest = await ctx.db
+      .query("messages")
+      .withIndex("by_conversation_id", (q) =>
+        q.eq("conversation_id", args.conversation_id)
+      )
+      .order("desc")
+      .take(20);
+
+    return selectTitleInput({ spine: spineRows, latest }, conversation);
+  },
+});
+
+// How many spine prompts / recent messages reach the model, and how hard each
+// is truncated. Sized so the full context stays within the budget of the
+// previous two-window design (~7KB of message text) — this runs on a cadence,
+// so the spend per call must not grow with session length.
+const SPINE_MAX = 20;
+const SPINE_CHARS = 250;
+const RECENT_MAX = 4;
+const RECENT_CHARS = 350;
+
+/** The title request prod posts for a selected input. */
+export function titleRequest(input: TitleInput): SurfaceRequest {
+  return {
+    model: CHEAP_MODEL,
+    max_tokens: 400,
+    prompt: (input.hosted ? buildHostedTitlePrompt : buildTitlePrompt)({
+      messageText: buildTitleMessageContext(input.spine, input.recent),
+      currentTitle: input.currentTitle,
+      messageCount: input.messageCount,
+    }),
+  };
+}
+
+type TitlePromptInput = {
+  messageText: string;
+  currentTitle?: string;
+  messageCount: number;
+};
+
+/** Keep a correct title, replace one that names a minority step. */
+function titleAnchor(currentTitle: string | undefined, unit: string): string {
+  return currentTitle
+    ? `\nThe current title is ${JSON.stringify(currentTitle)}. Judge it against the user requests below: if it names the goal most of the requests serve, keep it VERBATIM — do not reword a correct title. If it names only a recent step or a minority topic while most requests serve a different goal, replace it with a title for that dominant goal. Requests that refine, polish, or extend the thing built earlier in the ${unit} serve that same goal — they are NOT a reason to retitle.`
+    : "";
+}
+
+/** The title pass for a conversation with the hosted assistant. Its title is
+ *  the name a person reads in their inbox, their header and their approvals,
+ *  so it names the thing in their words: never the developer's vocabulary
+ *  ("session", "task", "setup") that the coding prompt's examples teach. */
+export function buildHostedTitlePrompt(input: TitlePromptInput): string {
+  return `Name this conversation between a person and their assistant. It is everyday life and work: errands, plans, reminders, notes, messages to write, things to compare or look up.
+
+Title: 2-5 words naming what the conversation AS A WHOLE is about, the thing the person wants, in their own words where they fit. Name the thing itself, not the act of arranging it. Never use the words "session", "task", "setup", "agent", "assistant", "implementation", "request" or "capabilities".${titleAnchor(input.currentTitle, "conversation")}
+Examples: "Italy trip", "Dentist reminder", "Declining Sam's dinner", "Robot vacuums compared", "Weeknight chickpea dinners", "Passport renewal"
+Anti-examples: "Vitamin reminder setup" (say "Vitamin reminder"), "Passport renewal task" (say "Passport renewal"), "Session capabilities" (say what they asked about, such as "What you can do"), "Weekend getaway planning request"
+When the person names a day, a place or a person that tells this conversation apart from a similar one, keep it in the title ("Declining Sam's dinner", "Friday plant watering").
+
+Short title: 1-2 words, under 20 characters and shorter than the title: its most specific noun, or the person or place it is about. Examples: "Italy" for "Italy trip", "Sam's dinner" for "Declining Sam's dinner", "Dentist" for "Dentist reminder". Never a generic word alone ("Tasks", "Reminder", "Plan").
+
+Subtitle: Bullet points (2-3 lines), each starting with "- ", saying what was asked and what was found, made or decided, in plain words a person would use.
+Example:
+"- Asked for three easy weeknight chickpea dinners\n- Got a curry, a sheet-pan bake and a salad with shopping list\n- Saved the list as a note"
+
+Conversation with ${input.messageCount} messages:
+${input.messageText}
+
+Do not respond to the conversation. Output ONLY the JSON object, no markdown, no preamble:
+{"title": "...", "short_title": "...", "subtitle": "..."}`;
+}
+
+export function buildTitlePrompt(input: TitlePromptInput): string {
+  const anchor = titleAnchor(input.currentTitle, "session");
+
+  return `Generate a title and subtitle for this session. Most sessions are coding work, but some are not — research, planning, writing, travel, general questions. Title whatever the session is actually about, on its own terms. Never comment on the session's type: if it is not coding, just title the real topic — never emit a title like "Not a coding session".
+
+Title: 2-5 words max. Short noun phrase or verb phrase naming what the session AS A WHOLE is about — the goal most of the user's requests serve, not whatever step is in progress right now. Think git branch names but readable.${anchor}
+Examples: "Auth redirect fix", "Dark mode settings", "Replace chokidar", "Inbox card redesign", "FD leak debug", "Italy trip planning", "Q3 pricing research"
+Anti-examples (too verbose): "Investigate Non-Resumable Session Root Cause", "Implement agent-triggered community chat with leave option", "Add Sessions tab to mobile with chronological summaries"
+
+Short title: 1-2 words, 20 characters max. The NAME a teammate would say out loud to refer to this session, distinct from the title, never a generic word alone ("Fix", "Update"). Prefer the title's most specific noun. Examples: "Auth redirect" for "Auth redirect fix", "Chokidar" for "Replace chokidar", "Italy trip" for "Italy trip planning".
+
+Subtitle: Bullet points (2-4 lines) describing what the session covered. Each bullet starts with "- ". For coding work, cover what was built/fixed/changed, key files or components, and current state. For anything else, summarize what was asked and what was found or decided. The subtitle tracks the latest activity — recency belongs here, not in the title.
+Examples:
+"- Switched from chokidar to native fs.watch, cut FD usage 3x\n- Updated daemon.ts and fileWatcher.ts\n- Working, deployed"
+"- Fixed OAuth refresh token race condition in auth middleware\n- Added retry logic in sessionValidator.ts\n- In progress, needs testing"
+
+Session with ${input.messageCount} messages:
+${input.messageText}
+
+Do not respond to the conversation. Output ONLY the JSON object, no markdown, no preamble:
+{"title": "...", "short_title": "...", "subtitle": "..."}`;
+}
+
+// Build the conversation excerpt fed to the title model. Two sections: the
+// user's prompts sampled evenly across the WHOLE session (the topic signal the
+// title must name) and the last few exchanges (the status the subtitle must
+// describe). The labels let each prompt instruction bind to the right block.
+export function buildTitleMessageContext(
+  spine: Array<{ role: string; content?: string }>,
+  recent: Array<{ role: string; content?: string }>,
+): string {
+  const truncate = (content: string | undefined, maxLen: number) => {
+    if (!content) return "[no text]";
+    return content.length <= maxLen ? content : content.slice(0, maxLen) + "...";
+  };
+  const fmt = (m: { role: string; content?: string }, maxLen: number) =>
+    `${m.role === "assistant" ? "Assistant" : "User"}: ${truncate(m.content, maxLen)}`;
+
+  const sampledSpine = sampleEvenly(spine, SPINE_MAX);
+  const recentWindow = recent.slice(-RECENT_MAX);
+
+  const sections: string[] = [];
+  if (sampledSpine.length) {
+    sections.push(
+      `=== User requests across the session (oldest to newest) ===\n${sampledSpine
+        .map((m) => fmt(m, SPINE_CHARS))
+        .join("\n\n")}`
+    );
+  }
+  if (recentWindow.length) {
+    sections.push(
+      `=== Most recent activity ===\n${recentWindow.map((m) => fmt(m, RECENT_CHARS)).join("\n\n")}`
+    );
+  }
+  return sections.join("\n\n");
+}
+
+// Pull the {"title", "subtitle"} object out of a model response. The model
+// occasionally wraps the JSON in a fence or a preamble (or answers the
+// conversation instead) — take the outermost brace span and parse that. A null
+// here means skip the update; raw text must never become a title.
+export function extractTitleJson(
+  text: string,
+): { title?: string; subtitle?: string; short_title?: string } | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return null;
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1));
+    if (typeof parsed !== "object" || parsed === null) return null;
+    return {
+      title: typeof parsed.title === "string" ? parsed.title : undefined,
+      subtitle: typeof parsed.subtitle === "string" ? parsed.subtitle : undefined,
+      short_title: typeof parsed.short_title === "string" ? parsed.short_title : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// A short title is a NAME: one or two words, no sentence punctuation, within
+// the budget every reference surface renders it in. Anything else (a whole
+// title echoed back, a stray quote, an empty value) is dropped so the pill
+// falls back to deriving a name from the title.
+export const SHORT_TITLE_MAX_CHARS = 22;
+export function cleanShortTitle(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const t = raw.trim().replace(/^["'`]+|["'`.:;,]+$/g, "").trim();
+  if (!t) return undefined;
+  if (t.length > SHORT_TITLE_MAX_CHARS) return undefined;
+  if (t.split(/\s+/).length > 3) return undefined;
+  return t;
+}
+
+// Evenly sample `max` items, always keeping the first and last.
+export function sampleEvenly<T>(items: T[], max: number): T[] {
+  if (items.length <= max) return items;
+  if (max <= 1) return [items[0]];
+  const picked: T[] = [];
+  for (let i = 0; i < max; i++) {
+    picked.push(items[Math.round((i * (items.length - 1)) / (max - 1))]);
+  }
+  return picked;
+}
+
+export function shouldGenerateTitle(messageCount: number): boolean {
+  if (messageCount === 2) return true;
+  if (messageCount <= 20) return messageCount % 5 === 0;
+  if (messageCount <= 60) return messageCount % 10 === 0;
+  return messageCount % 20 === 0;
+}

@@ -1,0 +1,306 @@
+"use client";
+
+// Usage meters for Claude Code accounts — the compact rendering of the daemon's
+// per-profile usage snapshots (session / weekly / model-scoped windows + extra
+// usage credits). Shared by the header chip's popover and the Claude Accounts
+// settings page so both always tell the same story.
+
+import { useRef, useState } from "react";
+import { useMutation } from "convex/react";
+import { api } from "@codecast/convex/convex/_generated/api";
+import { toast } from "sonner";
+import { RefreshCw } from "lucide-react";
+import { isWindowRolled, worstUsagePercent, type CcUsage } from "@codecast/convex/convex/ccAccountsShared";
+import { formatAgo, formatCountdown, labeledUsageWindows } from "@codecast/shared/contracts";
+import { usageTone } from "../lib/usageTone";
+import { useMountEffect } from "../hooks/useMountEffect";
+import { useWatchEffect } from "../hooks/useWatchEffect";
+import { profileFlowPhase, type SignInDevice } from "./ProfileSignInDialog";
+import { SpinnerDot } from "./MintTokenDialog";
+import { useInboxStore } from "../store/inboxStore";
+
+export type { CcUsage };
+
+// Data older than this gets an explicit "as of" note: dormant profiles keep
+// their last reading once their token expires (~8h), and the reader must be
+// able to tell a live meter from a memory.
+const STALE_AFTER_MS = 20 * 60 * 1000;
+
+type ExtraSpend = NonNullable<CcUsage["extra"]>;
+
+function money(n: number): string {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+function showExtraSpend(extra: ExtraSpend): boolean {
+  if (extra.enabled) return true;
+  return (extra.limit ?? 0) > 0 || (extra.used ?? 0) > 0;
+}
+
+function extraSpendDollars(extra: ExtraSpend): string | null {
+  if (extra.limit == null && extra.used == null) return null;
+  if ((extra.limit ?? 0) === 0 && (extra.used ?? 0) === 0) return null;
+  if (extra.limit != null && extra.used != null) return `${money(extra.used)} / ${money(extra.limit)} extra`;
+  if (extra.limit != null) return `limit ${money(extra.limit)} extra`;
+  return `${money(extra.used!)} extra used`;
+}
+
+function extraSpendTitle(extra: ExtraSpend): string {
+  const dollars = extraSpendDollars(extra);
+  const pct = `${Math.round(extra.percent)}% of extra spend used`;
+  if (extra.spend_limit_reached) return dollars ? `${dollars}: extra spend cap reached` : "Extra spend cap reached";
+  if (!extra.enabled) return dollars ? `${dollars}: extra spend is off` : "Extra spend is off";
+  return dollars ? `${dollars} (${pct})` : `Extra usage credits: ${pct}`;
+}
+
+export function UsageMeterRow({
+  label,
+  percent,
+  resetsAt,
+  now,
+  title,
+}: {
+  label: string;
+  percent: number;
+  resetsAt?: number;
+  now: number;
+  title?: string;
+}) {
+  // A window whose reset has passed reads empty, whatever the snapshot says:
+  // the measurement described a window that no longer exists. The bar clears
+  // and the value cell says "reset" rather than claiming a fresh 0% reading.
+  const rolled = isWindowRolled({ resets_at: resetsAt }, now);
+  const live = rolled ? 0 : percent;
+  const tone = usageTone(live);
+  const clamped = Math.min(100, Math.max(0, live));
+  const resetNote = resetsAt && resetsAt > now ? `resets in ${formatCountdown(resetsAt - now)}` : null;
+  const rolledNote = rolled
+    ? `${label}: window reset ${formatAgo(now - (resetsAt as number))} — the last reading (${Math.round(percent)}%) is from the window before it`
+    : null;
+  return (
+    <div
+      className="flex items-center gap-2"
+      title={rolledNote ?? title ?? `${label}: ${Math.round(percent)}% used${resetNote ? ` — ${resetNote}` : ""}`}
+    >
+      <span className="w-12 shrink-0 text-[10px] uppercase tracking-wider text-sol-text-dim">{label}</span>
+      <div className="h-[5px] min-w-0 flex-1 overflow-hidden rounded-full bg-sol-bg-inset">
+        <div
+          className="h-full rounded-full transition-[width] duration-500"
+          style={{
+            width: `${clamped}%`,
+            background: tone,
+            // A hairline sliver keeps a near-zero meter visibly "alive".
+            minWidth: live > 0 ? 3 : 0,
+          }}
+        />
+      </div>
+      {rolled ? (
+        <span className="w-9 shrink-0 text-right font-mono text-[10px] text-sol-text-dim">reset</span>
+      ) : (
+        <span
+          className="w-9 shrink-0 text-right font-mono text-[11px] tabular-nums"
+          style={{ color: live >= 80 ? tone : "var(--sol-text-muted)" }}
+        >
+          {Math.round(live)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The full meter block for one account (either provider): one row per limit
+ * window, followed by credits notes. A staleness note marks a snapshot that
+ * is a memory rather than a live reading. */
+export function AccountUsageBars({ usage, now }: { usage?: CcUsage | null; now: number }) {
+  if (!usage) {
+    return (
+      <div className="text-[11px] italic text-sol-text-dim">
+        No usage data yet — reported by the daemon within a few minutes.
+      </div>
+    );
+  }
+  const stale = now - usage.fetched_at > STALE_AFTER_MS;
+  return (
+    <div className="space-y-0.5">
+      {labeledUsageWindows(usage).map((w) => (
+        <UsageMeterRow key={w.label} label={w.name} percent={w.percent} resetsAt={w.resets_at} now={now} />
+      ))}
+      {usage.extra && showExtraSpend(usage.extra) && (
+        <UsageMeterRow
+          label="Extra"
+          percent={usage.extra.percent}
+          now={now}
+          title={extraSpendTitle(usage.extra)}
+        />
+      )}
+      {usage.extra && extraSpendDollars(usage.extra) && (
+        <div className={`pt-0.5 text-[10px] ${usage.extra.spend_limit_reached ? "text-sol-red" : "text-sol-text-dim"}`}>
+          {extraSpendDollars(usage.extra)}
+          {usage.extra.spend_limit_reached ? " · extra spend cap reached" : !usage.extra.enabled ? " · extra spend off" : null}
+        </div>
+      )}
+      {usage.credits && (usage.credits.has_credits || usage.credits.unlimited) && (
+        <div className="pt-0.5 text-[10px] text-sol-text-dim">
+          Credits: {usage.credits.unlimited ? "unlimited" : usage.credits.balance ?? "available"}
+        </div>
+      )}
+      {usage.reset_credits && usage.reset_credits.available > 0 && (
+        <div
+          className="pt-0.5 text-[10px] text-sol-cyan"
+          title="Codex has granted a free rate-limit reset — redeemable from the Codex CLI when a window pegs"
+        >
+          {usage.reset_credits.available} rate-limit reset credit
+          {usage.reset_credits.available > 1 ? "s" : ""} available
+        </div>
+      )}
+      {stale && <div className="pt-0.5 text-[10px] text-sol-text-dim">as of {formatAgo(now - usage.fetched_at)}</div>}
+    </div>
+  );
+}
+
+/** "login expired" next to a profile whose saved login the daemon could not
+ * refresh: switching there lands on a dead credential until that account
+ * signs in again. Renders nothing for a live profile. */
+export function LoginExpiredBadge({ profile }: { profile: { login_expired_at?: number | null } }) {
+  if (!profile.login_expired_at) return null;
+  return (
+    <span
+      className="shrink-0 rounded bg-sol-red/10 px-1.5 py-0.5 text-[10px] text-sol-red"
+      title="The saved login for this account no longer works — sign into it again and sessions can use it"
+    >
+      login expired
+    </span>
+  );
+}
+
+export type { ProfileLoginFlow } from "./ProfileSignInDialog";
+
+/**
+ * The one place a browser opens for a saved account: a person clicks it. The
+ * click opens the sign-in dialog (ProfileSignInDialog), which starts the
+ * daemon's `claude auth login` for that profile and follows it to the end.
+ * The dialog lives at window level, so it outlives the panel this sits in;
+ * while a flow runs, this line says so and reopens the dialog.
+ */
+export function ProfileSignInButton({
+  device,
+  profile,
+  className,
+  force = false,
+}: {
+  device: SignInDevice;
+  profile: { name: string; email?: string; login_expired_at?: number | null };
+  className?: string;
+  // A failed machine switch that found a dead snapshot should still offer
+  // sign-in even if the heartbeat has not yet stamped login_expired_at.
+  force?: boolean;
+}) {
+  const openSignIn = useInboxStore((s) => s.openProfileSignIn);
+  const now = useCoarseNowLocal();
+  if ((!force && !profile.login_expired_at) || device.is_remote || device.online === false) return null;
+  const phase = profileFlowPhase(device, profile.name, now);
+  const machine = device.label || "the selected machine";
+  const open = (start: boolean) => openSignIn({ deviceId: device.device_id, profile: profile.name, start });
+
+  if (phase === "pending") {
+    return (
+      <button
+        type="button"
+        onClick={() => open(false)}
+        title="Open the sign-in: relaunch it, or finish it from here with a code"
+        className={`inline-flex max-w-full items-center gap-1 text-[10px] text-amber-500 hover:text-amber-400 ${className ?? ""}`}
+      >
+        <SpinnerDot />
+        <span className="min-w-0 break-words underline decoration-dotted underline-offset-2">sign-in pending on {machine}</span>
+      </button>
+    );
+  }
+  const failed = phase === "rejected" || phase === "stalled";
+  return (
+    <button
+      type="button"
+      onClick={() => open(true)}
+      title={
+        failed
+          ? `The last sign-in didn't complete${device.login_flow?.reason ? `: ${device.login_flow.reason}` : ""}. Opens the browser on ${machine} for ${profile.email ?? profile.name}; the machine's current login stays as it is.`
+          : `Opens the browser on ${machine} for ${profile.email ?? profile.name}; the machine's current login stays as it is`
+      }
+      className={`shrink-0 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-500 hover:bg-amber-500/20 ${className ?? ""}`}
+    >
+      {failed ? "sign in again · retry" : "sign in again"}
+    </button>
+  );
+}
+
+function useCoarseNowLocal(): number {
+  const [now, setNow] = useState(() => Date.now());
+  useMountEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 5_000);
+    return () => clearInterval(t);
+  });
+  return now;
+}
+
+// A refresh request is "in flight" until the daemon's heartbeat moves some
+// profile's reading, or this long passes (the command's own TTL is 5 min;
+// past this the click has visibly failed and the button should be usable).
+const REFRESH_WAIT_MS = 30_000;
+
+type RefreshableDevice = {
+  device_id: string;
+  online?: boolean;
+  is_remote?: boolean;
+  profiles: Array<{ usage?: CcUsage | null }>;
+  codex_accounts?: { profiles: Array<{ usage?: CcUsage | null }> } | null;
+};
+
+function newestReading(device: RefreshableDevice): number {
+  const all = [...device.profiles, ...(device.codex_accounts?.profiles ?? [])];
+  return all.reduce((max, p) => Math.max(max, p.usage?.fetched_at ?? 0), 0);
+}
+
+/** Refresh every account's usage on one machine now. Shared by the header
+ * chip's panel and the Claude Accounts settings page. The daemon answers by
+ * heartbeating fresh readings; the spinner runs until one lands. */
+export function UsageRefreshButton({ device, className }: { device: RefreshableDevice; className?: string }) {
+  const requestRefresh = useMutation(api.accountSwitch.requestUsageRefresh);
+  const [awaiting, setAwaiting] = useState<number | null>(null); // the newest reading at click time
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const newest = newestReading(device);
+  const spinning = awaiting !== null && newest <= awaiting;
+  useWatchEffect(() => {
+    if (!spinning && awaiting !== null) setAwaiting(null);
+  }, [spinning, awaiting]);
+  useMountEffect(() => () => { if (timer.current) clearTimeout(timer.current); });
+  const online = device.online !== false && device.is_remote !== true;
+
+  const click = async () => {
+    if (spinning) return;
+    setAwaiting(newest);
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => setAwaiting(null), REFRESH_WAIT_MS);
+    try {
+      await requestRefresh({ device_id: device.device_id });
+    } catch (err) {
+      setAwaiting(null);
+      toast.error(err instanceof Error ? err.message : "Refresh failed");
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={click}
+      disabled={!online || spinning}
+      aria-label="Refresh usage for every account on this machine"
+      title={
+        online
+          ? "Refresh usage for every account on this machine"
+          : "The daemon on this machine is offline"
+      }
+      className={`shrink-0 rounded p-1 text-sol-text-dim transition-colors hover:bg-sol-bg-alt hover:text-sol-text disabled:opacity-50 disabled:hover:bg-transparent ${className ?? ""}`}
+    >
+      <RefreshCw className={`h-3 w-3 ${spinning ? "animate-spin" : ""}`} />
+    </button>
+  );
+}

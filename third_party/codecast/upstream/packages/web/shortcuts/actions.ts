@@ -1,0 +1,329 @@
+"use client";
+
+import { isHostedUi } from "../components/simple/lanePaths";
+import { toast } from "sonner";
+import { isForeignSession } from "../lib/liveEntities";
+import { resolvePaletteTarget } from "../lib/paletteTarget";
+
+import { useCallback } from "react";
+import { useOpenSession } from "../hooks/useOpenSession";
+import { usePathname, useRouter } from "next/navigation";
+import { useInboxStore, selectCommentRailOpen, selectNavCollapsed, showInboxHome } from "../store/inboxStore";
+import { useInboxSelection } from "../lib/inboxSelection";
+import { isInboxRoute, isInboxSessionView } from "../lib/inboxRouting";
+import { overlayConversationId } from "../store/workspace";
+import { focusComposer } from "../lib/composerControl";
+import { isPeopleWindow } from "../lib/desktop";
+import { useShortcutAction } from "./ShortcutProvider";
+import { useUndoWalk } from "../hooks/useUndoWalk";
+import { useTriageActions } from "../components/triage/useTriageActions";
+import { toggleTriageBarCompact } from "../components/triage/graduation";
+import { checkMilestone } from "../tips/useTips";
+import { switchToWorkbench, sortedWorkbenches } from "../lib/workbenchSwitch";
+import { isHostedMode, surfaceShownNow } from "../lib/surfaces";
+import { writeLane } from "../components/simple/lanePref";
+
+// The session a per-session chord (stash/kill/defer/pin/rename/label) acts on:
+// the row the user sees highlighted. The fleet board's drill-in overlay wins
+// outright when one is open: it is the topmost surface, a tile click only
+// fills the workspace secondary slot (it never moves currentSessionId), and it
+// can only exist on the inbox board — so it is read BEFORE isOnInboxPage,
+// whose tab-aware pathname can lag the real URL right after a nav (the chord
+// then consumed the key and no-op'd on a null side-panel selection). Otherwise
+// on the inbox page it's the dismissed/stashed peek (viewingDismissedId), else
+// the live current session; off the inbox it's the side panel's selection.
+// This MUST mirror sessionListActiveId in DashboardLayout — without the
+// viewingDismissedId term, peeking a stashed/dismissed session and hitting
+// kill tore down whichever live session was sitting behind the peek (the row
+// visible above it), not the hidden one you were looking at. heldViewId is the
+// same rule for a link target the inbox pane holds on screen while it is not
+// in `sessions` (a teammate's share opened from the browser handoff): the
+// current session sits hidden behind it, and Ctrl+Shift+Backspace there
+// killed that session 24 seconds after it was created (jx7970z, 2026-10-06).
+export function focusedActionSessionId(
+  store: Pick<
+    ReturnType<typeof useInboxStore.getState>,
+    "currentSessionId" | "viewingDismissedId" | "heldViewId" | "sidePanelSessionId" | "workspace"
+  >,
+  isOnInboxPage: boolean,
+): string | null | undefined {
+  return overlayConversationId(store.workspace)
+    ?? (isOnInboxPage
+      ? (store.heldViewId ?? store.viewingDismissedId ?? store.currentSessionId)
+      : store.sidePanelSessionId);
+}
+
+export function useGlobalShortcutActions() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const inboxSource = useInboxStore((s) => s.currentConversation?.source);
+  const isOnInboxPage = isInboxSessionView(pathname, inboxSource);
+  const openSession = useOpenSession();
+
+  useShortcutAction('palette.toggle', useCallback(() => {
+    const state = useInboxStore.getState();
+    if (state.palette.open) {
+      state.closePalette();
+      return;
+    }
+    // A ticked multi-selection (lib/inboxSelection) is the target when there
+    // is one, ahead of the conversation open beside it: the bar says "N
+    // selected", so every verb acts on all of it.
+    const picked = useInboxSelection.getState().ids
+      .map((id) => state.sessions[id] ?? state.conversations[id])
+      .filter(Boolean);
+    if (picked.length > 1) {
+      state.openPalette({ targets: picked, targetType: 'session' });
+      return;
+    }
+    const target = resolvePaletteTarget(state, pathname);
+    if (target) { state.openPalette(target); return; }
+    if (isInboxRoute(pathname)) {
+      const focusedId = focusedActionSessionId(state, true);
+      const session = focusedId ? state.sessions[focusedId] ?? state.conversations[focusedId] : null;
+      if (session) {
+        state.openPalette({ targets: [session], targetType: 'session' });
+        return;
+      }
+    }
+    if (pathname === '/tasks' || pathname === '/docs') return false;
+    state.togglePalette();
+  }, [pathname]));
+
+  useShortcutAction('session.next', useCallback(() => {
+    const store = useInboxStore.getState();
+    if (isOnInboxPage) {
+      store.navigateDown();
+    } else {
+      const ordered = store.visualOrder();
+      if (ordered.length === 0) return;
+      const idx = ordered.findIndex(s => s._id === store.sidePanelSessionId);
+      const newIdx = Math.min(idx + 1, ordered.length - 1);
+      if (newIdx === idx) return;
+      store.selectPanelSession(ordered[newIdx]._id);
+    }
+  }, [isOnInboxPage]));
+
+  useShortcutAction('session.prev', useCallback(() => {
+    const store = useInboxStore.getState();
+    if (isOnInboxPage) {
+      store.navigateUp();
+    } else {
+      const ordered = store.visualOrder();
+      if (ordered.length === 0) return;
+      const idx = ordered.findIndex(s => s._id === store.sidePanelSessionId);
+      const newIdx = Math.max(idx - 1, 0);
+      if (newIdx === idx) return;
+      store.selectPanelSession(ordered[newIdx]._id);
+    }
+  }, [isOnInboxPage]));
+
+  useShortcutAction('session.jumpIdle', useCallback(() => {
+    // Ctrl+I: top of the your-move stack — Questions first, then Needs Input,
+    // then Done (which reads as its extension); never Dormant, a machine wakes
+    // those. The store hands back exactly the cards the panel files in those
+    // sections, in render order (yourMoveOrder), so the target is always the
+    // first such card the user can see — whatever view mode or old-session
+    // toggle is up. Re-deriving membership here from a per-row classify is
+    // what drifted: it missed the staleness net that files a quiet "working"
+    // row under NEEDS INPUT and the in-flight send that lifts one out.
+    const store = useInboxStore.getState();
+    const first = store.yourMoveOrder()[0];
+    if (first) openSession(first._id);
+  }, [openSession]));
+
+  useShortcutAction('session.jumpPinned', useCallback(() => {
+    const store = useInboxStore.getState();
+    const first = store.visualOrder().find(s => s.is_pinned);
+    if (first) openSession(first._id);
+  }, [openSession]));
+
+  // The people wall, over whatever you were doing. Never in the people window
+  // itself: the wall is already that window's whole view, and a modal wall over
+  // it would be the same faces twice.
+  useShortcutAction('people.wall', useCallback(() => {
+    if (isPeopleWindow()) return;
+    useInboxStore.getState().togglePeopleWall();
+  }, []));
+
+  // The verb bodies live in components/triage/useTriageActions — ONE
+  // implementation shared with the triage bar's buttons, so a chord and its
+  // button can never diverge (advance order, drill-in close, milestones).
+  const triage = useTriageActions(isOnInboxPage);
+  const focusedId = useCallback(() =>
+    focusedActionSessionId(useInboxStore.getState(), isOnInboxPage), [isOnInboxPage]);
+
+  useShortcutAction('session.pin', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.pin(currentId);
+  }, [focusedId, triage]));
+
+  // Leave the focused row lit. Deliberately NOT a triage verb: it moves
+  // nothing and advances nothing — the session stays where it is, wearing the
+  // dot, until the next visit acknowledges it.
+  useShortcutAction('session.markUnread', useCallback(() => {
+    const currentId = focusedId();
+    if (!currentId) return;
+    useInboxStore.getState().markSessionUnread(currentId);
+    toast.success("Marked unread");
+  }, [focusedId]));
+
+  useShortcutAction('session.stash', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.hide(currentId, "stash", "key");
+  }, [focusedId, triage]));
+
+  useShortcutAction('session.stashHide', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.hide(currentId, "stash", "key", { hidden: true });
+  }, [focusedId, triage]));
+
+  useShortcutAction('session.kill', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.hide(currentId, "kill", "key");
+  }, [focusedId, triage]));
+
+  useShortcutAction('session.deferAdvance', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.park(currentId, "defer", "key");
+  }, [focusedId, triage]));
+
+  useShortcutAction('session.dormantAdvance', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.park(currentId, "dormant", "key");
+  }, [focusedId, triage]));
+
+  useShortcutAction('session.snooze', useCallback(() => {
+    const state = useInboxStore.getState();
+    const target = resolvePaletteTarget(state, pathname);
+    const id = focusedId();
+    const session = target?.targetType === 'session' ? target.targets[0] : id ? state.sessions[id] ?? state.conversations[id] : null;
+    if (session && !session.inbox_killed_at && state.currentUser && !isForeignSession(session, session, state.currentUser._id.toString())) {
+      state.openPalette({ targets: [session], targetType: 'session', mode: 'snooze' });
+    }
+  }, [focusedId, pathname]));
+
+  useShortcutAction('session.rename', useCallback(() => {
+    const store = useInboxStore.getState();
+    const currentId = focusedActionSessionId(store, isOnInboxPage);
+    const session = currentId ? store.sessions[currentId] ?? store.conversations[currentId] : null;
+    if (session) store.openSessionRename(session);
+  }, [isOnInboxPage]));
+
+  useShortcutAction('session.moveToBucket', useCallback(() => {
+    const currentId = focusedId();
+    if (currentId) triage.label(currentId);
+  }, [focusedId, triage]));
+
+  useShortcutAction('view.switch', useCallback(() => {
+    // Straight into the palette's label/project view submenu (no targets —
+    // the filter is global panel state, not a per-session action).
+    useInboxStore.getState().openPalette({ mode: 'view' });
+  }, []));
+
+  useShortcutAction('ui.toggleShortcutsHelp', useCallback(() => {
+    useInboxStore.getState().toggleShortcutsPanel();
+  }, []));
+
+  useShortcutAction('ui.openTours', useCallback(() => {
+    const s = useInboxStore.getState();
+    s.setToursPanelOpen(!s.toursPanelOpen);
+  }, []));
+
+  // Assistant mode on or off (client_state.ui.lane), from the palette.
+  useShortcutAction('ui.toggleLane', useCallback(() => {
+    writeLane(isHostedMode(useInboxStore.getState()) ? 'full' : 'simple');
+  }, []));
+
+  useShortcutAction('ui.openSettings', useCallback(() => {
+    const s = useInboxStore.getState();
+    if (s.settingsModalSection) s.closeSettingsModal();
+    else s.openSettingsModal();
+  }, []));
+
+  useShortcutAction('ui.zenToggle', useCallback(() => {
+    const store = useInboxStore.getState();
+    const zen = store.clientState.ui?.zen_mode ?? false;
+    if (!zen) checkMilestone('m-first-zen');
+    store.setZenNavOpen(false);
+    store.updateClientUI({ zen_mode: !zen });
+  }, []));
+
+  // Hosted mode has one inbox view, so the key that cycles views there
+  // switches what the inbox lists: the assistant's conversations, or
+  // everything (hostedOnlyInbox).
+  useShortcutAction('inbox.toggleFlatView', useCallback(() => {
+    const store = useInboxStore.getState();
+    if (isHostedUi(store.clientState.ui)) {
+      store.updateClientUI({ hosted_inbox_everything: !store.clientState.ui?.hosted_inbox_everything });
+      return;
+    }
+    store.cycleInboxViewMode();
+  }, []));
+
+  // No chord: the bar hides from its own menu, and the palette is the way
+  // back — a hidden bar is not something to toggle by reflex.
+  useShortcutAction('inbox.toggleTriageBar', useCallback(() => {
+    toggleTriageBarCompact();
+  }, []));
+
+  // Hosted mode's Cmd+1 is the Inbox nav row: its home, with nothing open,
+  // so a blank slate for the next errand is one key away.
+  useShortcutAction('nav.inbox', useCallback(() => {
+    if (isHostedUi(useInboxStore.getState().clientState.ui)) showInboxHome();
+    router.push("/inbox");
+  }, [router]));
+
+  useShortcutAction('nav.back', useCallback(() => { window.history.back(); }, []));
+  useShortcutAction('nav.forward', useCallback(() => { window.history.forward(); }, []));
+
+  useShortcutAction('compose.focus', useCallback(() => { focusComposer(); }, []));
+
+  useShortcutAction('sidebar.toggleLeft', useCallback(() => {
+    const store = useInboxStore.getState();
+    if (store.clientState.ui?.zen_mode) store.setZenNavOpen(!store.zenNavOpen);
+    else store.setNavCollapsed(!selectNavCollapsed(store));
+  }, []));
+
+  useShortcutAction('sidebar.toggleRight', useCallback(() => {
+    useInboxStore.getState().toggleSidePanel();
+  }, []));
+
+
+  useShortcutAction('sidebar.toggleComments', useCallback(() => {
+    const store = useInboxStore.getState();
+    store.setCommentRailOpen(!selectCommentRailOpen(store));
+  }, []));
+
+  useShortcutAction('terminal.toggle', useCallback(() => {
+    if (!surfaceShownNow("terminal")) return;
+    const store = useInboxStore.getState();
+    store.setDockOpen(store.workspace.dock.pane == null);
+  }, []));
+
+  useShortcutAction('anchor.toggle', useCallback(() => {
+    useInboxStore.getState().toggleAnchorPanel();
+  }, []));
+
+  // ⌥1–⌥9: the first nine saved workbenches, in the rail's own order — the
+  // hint printed on a row is the key that switches to it. No saved layouts,
+  // no keys: the chords cost nothing until you save one.
+  const switchWorkbench = useCallback((i: number) => {
+    const store = useInboxStore.getState();
+    const v = sortedWorkbenches(store)[i];
+    if (v) switchToWorkbench(v.prefs as any, router, pathname, v._id);
+  }, [router, pathname]);
+  useShortcutAction('workbench.1', useCallback(() => switchWorkbench(0), [switchWorkbench]));
+  useShortcutAction('workbench.2', useCallback(() => switchWorkbench(1), [switchWorkbench]));
+  useShortcutAction('workbench.3', useCallback(() => switchWorkbench(2), [switchWorkbench]));
+  useShortcutAction('workbench.4', useCallback(() => switchWorkbench(3), [switchWorkbench]));
+  useShortcutAction('workbench.5', useCallback(() => switchWorkbench(4), [switchWorkbench]));
+  useShortcutAction('workbench.6', useCallback(() => switchWorkbench(5), [switchWorkbench]));
+  useShortcutAction('workbench.7', useCallback(() => switchWorkbench(6), [switchWorkbench]));
+  useShortcutAction('workbench.8', useCallback(() => switchWorkbench(7), [switchWorkbench]));
+  useShortcutAction('workbench.9', useCallback(() => switchWorkbench(8), [switchWorkbench]));
+
+  // ui.undo, ui.redo and ui.undoHistory, plus the held-modifier peek of the timeline.
+  useUndoWalk();
+
+}

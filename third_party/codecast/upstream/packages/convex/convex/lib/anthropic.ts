@@ -1,0 +1,188 @@
+// One call to the Anthropic Messages API on the deployment's own key, so a
+// feature that needs a model never asks the caller's machine for one. Returns
+// null when the key is missing or the call fails; the caller decides what a
+// missing answer means.
+
+import { priceFor, usageCost } from "@platform/agent/meter";
+import { replyText, type MessagesRequest } from "@platform/assistant/messages";
+import { CHEAP_MODEL, sendsThinkingOff } from "@codecast/shared/contracts/modelOptions";
+
+// sendsThinkingOff: whether prod posts this model with thinking off; the evals
+// read the same rule to know which surfaces their replay cannot match.
+export { CHEAP_MODEL, sendsThinkingOff };
+/** The current Sonnet, for work the cheap model is too small for. It refuses any temperature. */
+export const STRONG_MODEL = "claude-sonnet-5-5";
+
+export interface ModelUsage {
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface ModelReply {
+  text: string;
+  usage: ModelUsage;
+  /** Why the model stopped ("end_turn", "max_tokens", ...), as the API reported it. */
+  stop_reason?: string | null;
+}
+
+/** One call's outcome for a caller that pays for it: the reply, if any, and the usage the API reported, even for a call that failed. */
+export interface MeteredCall {
+  reply: ModelReply | null;
+  /** Null when the API reported none (no response, a timeout, an error without usage). */
+  usage: ModelUsage | null;
+  /** Why there is no reply, in the API's words when it gave any. */
+  error?: string;
+}
+
+/**
+ * One Messages API request, as the server sends it. The evals replay the same
+ * object, so a prompt measured offline is the prompt prod posts.
+ */
+export type SurfaceRequest = MessagesRequest & {
+  /** Images sent after the prompt, each introduced by its label, so the model can see what the prompt names by that label. */
+  images?: Array<{ label: string; url: string }>;
+};
+
+/** The user turn: the prompt alone, or the prompt followed by each labelled image. */
+function userContent(req: SurfaceRequest) {
+  if (!req.images?.length) return req.prompt;
+  return [
+    { type: "text" as const, text: req.prompt },
+    ...req.images.flatMap((img) => [
+      { type: "text" as const, text: `${img.label}:` },
+      { type: "image" as const, source: { type: "url" as const, url: img.url } },
+    ]),
+  ];
+}
+
+/**
+ * The JSON body prod posts for a request. Key order is model, max_tokens,
+ * temperature, thinking, system, messages, tools: every server call site uses
+ * that order, so JSON.stringify of this object is byte-identical to what each
+ * site sent.
+ *
+ * The cheap model thinks by default, and its thinking spends the reply's
+ * max_tokens. Its prompts are short single answers sized for a model that
+ * did not think, so it runs with thinking off.
+ */
+export function anthropicBody(req: SurfaceRequest) {
+  return {
+    model: req.model,
+    max_tokens: req.max_tokens,
+    ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
+    ...(sendsThinkingOff(req.model) ? { thinking: { type: "disabled" as const } } : {}),
+    ...(req.system ? { system: req.system } : {}),
+    messages: [{ role: "user" as const, content: userContent(req) }],
+    ...(req.tools ? { tools: req.tools } : {}),
+  };
+}
+
+/**
+ * POST one request to the Messages API on the deployment's key: the one fetch
+ * every server site goes through. Returns the raw response so a site that
+ * reads the status or the usage can; null when the key is missing.
+ */
+export async function postMessages(req: SurfaceRequest, opts: { signal?: AbortSignal; apiKey?: string } = {}): Promise<Response | null> {
+  // The evals pass their own key; prod reads its deployment's.
+  const apiKey = opts.apiKey ?? process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return null;
+  return fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    signal: opts.signal,
+    headers: { "Content-Type": "application/json", "x-api-key": apiKey, "anthropic-version": "2023-06-01" },
+    body: JSON.stringify(anthropicBody(req)),
+  });
+}
+
+// The reply's text: every text block, in order, trimmed (@platform/assistant,
+// whose own tools read Messages replies the same way).
+export { replyText } from "@platform/assistant/messages";
+
+type CallArgs = Omit<SurfaceRequest, "model"> & {
+  model?: string;
+  label: string;
+  /** Give up after this long, so a stalled call cannot outlive its caller. */
+  timeout_ms?: number;
+};
+
+export async function callModel(args: CallArgs): Promise<ModelReply | null> {
+  return (await callModelMetered(args)).reply;
+}
+
+const usageOf = (data: any): ModelUsage | null =>
+  data?.usage && (typeof data.usage.input_tokens === "number" || typeof data.usage.output_tokens === "number")
+    ? { input_tokens: data.usage.input_tokens ?? 0, output_tokens: data.usage.output_tokens ?? 0 }
+    : null;
+
+/** callModel, keeping the usage of a call that failed when the API reported it, so a caller with a spend cap can bill it. */
+export async function callModelMetered(args: CallArgs): Promise<MeteredCall> {
+  if (!process.env.ANTHROPIC_API_KEY) return { reply: null, usage: null };
+  const abort = new AbortController();
+  const timer = args.timeout_ms ? setTimeout(() => abort.abort(), args.timeout_ms) : undefined;
+  try {
+    const response = await postMessages(
+      {
+        model: args.model ?? CHEAP_MODEL,
+        system: args.system,
+        prompt: args.prompt,
+        max_tokens: args.max_tokens,
+        temperature: args.temperature,
+        images: args.images,
+      },
+      { signal: abort.signal },
+    );
+    if (!response) return { reply: null, usage: null };
+    if (!response.ok) {
+      const body = await response.text();
+      console.error(`${args.label} API error:`, response.status, body.slice(0, 300));
+      let usage: ModelUsage | null = null;
+      let message = `the model API answered ${response.status}`;
+      try {
+        const parsed = JSON.parse(body);
+        usage = usageOf(parsed);
+        if (typeof parsed?.error?.message === "string") message = `${message}: ${parsed.error.message}`;
+      } catch {}
+      return { reply: null, usage, error: message };
+    }
+    const data = await response.json();
+    const text = replyText(data);
+    if (!text) {
+      console.error(`${args.label} empty reply:`, data.stop_reason, (data.content ?? []).map((b: any) => b?.type).join(","));
+      return { reply: null, usage: usageOf(data), error: `the model gave no answer (stopped: ${data.stop_reason ?? "unknown"})` };
+    }
+    const usage = usageOf(data) ?? { input_tokens: 0, output_tokens: 0 };
+    return { reply: { text, usage, stop_reason: data.stop_reason ?? null }, usage };
+  } catch (error) {
+    console.error(`${args.label} failed:`, error);
+    return { reply: null, usage: null, error: abort.signal.aborted ? "the model call timed out" : "the model call failed" };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/**
+ * A conservative stand-in for a call whose usage the API never reported (a
+ * timeout, a dropped connection): its prompt as input tokens, counted at
+ * three characters a token, which overstates English text; no output.
+ */
+export function estimatedUsage(system: string | undefined, prompt: string): ModelUsage {
+  return { input_tokens: Math.ceil(((system ?? "").length + prompt.length) / 3), output_tokens: 0 };
+}
+
+/** Dollars for a usage on the cheap model. */
+export function cheapModelCost(usage: ModelUsage): number {
+  return modelCost(CHEAP_MODEL, usage);
+}
+
+/**
+ * Dollars for a usage on `model`, from the one price table (`PRICE_OVERRIDES`
+ * in @platform/agent). A model it does not list is charged at its dearest
+ * entry, so a cap never undercounts.
+ */
+export function modelCost(model: string, usage: ModelUsage): number {
+  return usageCost({ input: usage.input_tokens, output: usage.output_tokens, cacheRead: 0, cacheWrite: 0 }, priceFor(model));
+}
+
+// The JSON value a reply starts with: one implementation, shared with the CLI
+// (learning-loop.md LL8, the model call contract).
+export { parseJsonBlock } from "@codecast/shared/contracts/modelCall";

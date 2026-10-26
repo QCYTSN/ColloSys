@@ -1,0 +1,393 @@
+import { useCallback, useRef, useSyncExternalStore } from "react";
+import { desktopAppWindow, hasAppWindow } from "../lib/desktopApps";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import {
+  useInboxStore,
+  useTrackedStore,
+  type ChatMessageRow,
+  type ChatNotifyLevel,
+  type ChatRailRow,
+} from "../store/inboxStore";
+import { chatToastTier, isHistoryLine, type ChatToastTier } from "../lib/chatTimeline";
+import { ChatToast, toastPreview, type ChatToastData } from "../components/chat/ChatToast";
+import { isChatContextOnScreen } from "../lib/chatFocus";
+import { isChatRailLive, subscribeChatRailLive } from "../lib/chatLive";
+import { knownAgentMember, memberName, sessionAuthorFor, slackAuthorFor, mentionsViewer as rowMentionsViewer, type ChatMember } from "../lib/chatViews";
+import { soundChatMessage } from "../lib/sounds";
+import { channelDisplayName } from "../lib/chatViews";
+import { dmOtherIds } from "@codecast/shared/chat";
+
+import { useWatchEffect } from "./useWatchEffect";
+import { notificationActor } from "../lib/notificationTypes";
+import { memberKind } from "@codecast/shared/team/memberKind";
+import { deliverChatToFace } from "../lib/chat/faceChat";
+// Arriving chat messages → in-app toasts.
+//
+// Mounted once, app-wide, beside the other background sync effects — the point
+// of a toast is to reach someone who is NOT looking at chat, so binding it to
+// the chat page would fire it exactly when it is least needed.
+//
+// The arrival signal is the channel rail (chat.listChannels), not the message
+// feed: the rail is the one chat subscription that runs everywhere, and it
+// already carries the newest message, its author and a sanitized preview. When
+// the channel happens to be open its full row is in the store too, and that row
+// is preferred — it knows about mentions and threads, which the rail cannot say.
+//
+// chatToastTier owns the policy. Nothing here decides whether to interrupt; it
+// only gathers the inputs honestly and renders what the tier asks for.
+
+/** How long a channel's toasts count toward its burst cap. */
+const BURST_WINDOW_MS = 45_000;
+const LOUD_DURATION_MS = 5 * 60_000;
+const QUIET_DURATION_MS = 90_000;
+
+type Seen = { messageId: string; unread: number; mentions: number };
+
+export function useChatToasts(): void {
+  const router = useRouter();
+  const s = useTrackedStore([
+    (s: any) => railKey(s.chatRail),
+    (s: any) => s.currentUser?._id,
+  ]);
+  const viewerId = String(s.currentUser?._id ?? "");
+  // The rail is persisted and hydrates from IndexedDB before any query answers,
+  // so "a rail exists" is not "a rail arrived". Until the server has answered
+  // once, nothing here is an arrival — see lib/chatLive.
+  const railLive = useSyncExternalStore(
+    subscribeChatRailLive,
+    isChatRailLive,
+    () => false,
+  );
+
+  // Per channel: the last arrival we have already reacted to, plus the unread
+  // numbers at that moment (so a burst can be counted without a message feed).
+  const seenRef = useRef<Map<string, Seen>>(new Map());
+  // Seeded on the first LIVE rail. Seeding from the cached one instead made a
+  // reload toast every channel whose newest message moved while the app was
+  // closed — the cold-boot flood this guard exists to prevent, arriving through
+  // the one door it was not watching.
+  const seededRef = useRef(false);
+  const burstRef = useRef<Map<string, number[]>>(new Map());
+
+  const open = useCallback(
+    (data: ChatToastData) => {
+      toast.dismiss(toastIdFor(data));
+      router.push(`/chat/${data.channelId}?m=${data.messageId}`);
+    },
+    [router],
+  );
+
+  const mute = useCallback((channelId: string) => {
+    const state: any = useInboxStore.getState();
+    // Muting must not be SILENT: a one-click mute with no feedback reads as
+    // "the toast went away" and leaves the channel dead for weeks before anyone
+    // connects the missing notifications to that click.
+    const prior: ChatNotifyLevel =
+      (state.chatRail ?? []).find((r: ChatRailRow) => String(r.channel_id) === channelId)
+        ?.notify_level ?? "all";
+    const name = state.chatChannels?.[channelId]?.name ?? "channel";
+    state.setChannelNotifyLevel(channelId, "none");
+    toast.dismiss(`chat:${channelId}`);
+    // A local Undo, not the window's history: notify level is a setting (never.ts), not a gesture to step back through.
+    toast(`Muted #${name}`, {
+      description: "No more notifications from this channel.",
+      action: {
+        label: "Undo",
+        onClick: () => useInboxStore.getState().setChannelNotifyLevel(channelId, prior),
+      },
+    });
+  }, []);
+
+  const snooze = useCallback((minutes: number) => {
+    useInboxStore.getState().updateClientUI({ chat_snooze_until: Date.now() + minutes * 60_000 });
+    toast.dismiss();
+  }, []);
+
+  // Every line shown once, whichever door it came through first: the rail
+  // (any line in a room) or a chat notification (a line the server knows is
+  // for you: a mention, a reply in your thread, a DM).
+  const shownRef = useRef<Set<string>>(new Set());
+
+  /** Sound it, then hand it to its author's face in the header, else a toast. */
+  const present = useCallback(
+    (data: ChatToastData, authorId: string, opts: { faceable: boolean; threadRootId?: string; at: number }) => {
+      shownRef.current.add(data.messageId);
+      // Every arrival gets the sound (Slack's rule: a banner is never silent).
+      soundChatMessage(data.messageId);
+      const showToast = () =>
+        toast.custom(
+          (id) => (
+            <ChatToast
+              data={data}
+              onOpen={open}
+              onMuteChannel={mute}
+              onSnooze={snooze}
+              onDismiss={() => toast.dismiss(id)}
+            />
+          ),
+          {
+            // A loud card keeps its own slot (it is about you, and a second mention
+            // must not silently replace the first). Quiet cards from one channel
+            // collapse onto one id, which is what makes a busy room one card.
+            id: toastIdFor(data),
+            duration: data.tier === "loud" ? LOUD_DURATION_MS : QUIET_DURATION_MS,
+          },
+        );
+      // A teammate's line drops from their face in the header instead of
+      // landing as a card over the work (lib/chat/faceChat). Agents, Slack
+      // authors and huddle digests have no face there, and neither does
+      // anyone while the header is hidden: those still toast.
+      const onFace =
+        opts.faceable &&
+        deliverChatToFace(
+          authorId,
+          {
+            messageId: data.messageId,
+            channelId: data.channelId,
+            channelName: data.channelName,
+            isDm: !!data.isDm,
+            threadRootId: opts.threadRootId,
+            inThread: !!data.inThread,
+            preview: data.preview,
+            at: opts.at,
+            loud: data.tier === "loud",
+            count: data.collapsedCount ?? 1,
+          },
+          showToast,
+        );
+      if (!onFace) showToast();
+    },
+    [open, mute, snooze],
+  );
+
+  useWatchEffect(() => {
+    const state: any = useInboxStore.getState();
+    const rail: ChatRailRow[] = state.chatRail ?? [];
+    if (!viewerId || rail.length === 0 || !railLive) return;
+
+    const seen = seenRef.current;
+    if (!seededRef.current) {
+      seededRef.current = true;
+      for (const row of rail) {
+        seen.set(String(row.channel_id), {
+          messageId: String(row.last_message?._id ?? ""),
+          unread: row.unread ?? 0,
+          mentions: row.unread_mentions ?? 0,
+        });
+      }
+      return;
+    }
+
+    const messages: Record<string, ChatMessageRow> = state.chatMessages ?? {};
+    const channels: Record<string, any> = state.chatChannels ?? {};
+    const members: any[] = state.teamMembers ?? [];
+    const byId = new Map<string, ChatMember>();
+    for (const m of members) if (m?._id) byId.set(String(m._id), m);
+    const snoozedUntil: number = state.clientState?.ui?.chat_snooze_until ?? 0;
+    const windowFocused = typeof document === "undefined" ? true : document.hasFocus();
+
+    for (const row of rail) {
+      const channelId = String(row.channel_id);
+      const last = row.last_message;
+      const prev = seen.get(channelId);
+      seen.set(channelId, {
+        messageId: String(last?._id ?? ""),
+        unread: row.unread ?? 0,
+        mentions: row.unread_mentions ?? 0,
+      });
+      if (!last || !prev) continue;
+      const messageId = String(last._id);
+      if (messageId === prev.messageId) continue;
+      if (shownRef.current.has(messageId)) continue;
+      if (last.user_id === viewerId) continue;
+
+      const full = messages[messageId];
+      // Named you: the full row when we have it (people only — role/session
+      // entries are objects), plus a rise in the server's mention count, which
+      // is what the rail can say even before the message body is loaded. The
+      // two together: `mentions.includes(viewerId)` missed a DM with no @
+      // (no mention list) whenever the body happened to already be in the
+      // store, and then notify_level "mentions" swallowed the toast.
+      const mentionsViewer =
+        (full ? rowMentionsViewer(full, viewerId) : false) ||
+        (row.unread_mentions ?? 0) > prev.mentions;
+      const threadRootId = full?.thread_root_id ?? last.thread_root_id;
+      const viewerInThread =
+        !!threadRootId &&
+        Object.values(messages).some(
+          (m) =>
+            m.user_id === viewerId &&
+            (m.thread_root_id === threadRootId || m._id === threadRootId),
+        );
+
+      const recent = (burstRef.current.get(channelId) ?? []).filter(
+        (t) => Date.now() - t < BURST_WINDOW_MS,
+      );
+      const channelRow = channels[channelId];
+      const isDm = channelRow?.kind === "dm";
+      // Any registered surface showing this exact channel+thread context
+      // counts as "already on screen" — the tier's compare stays byte-for-byte
+      // the same, it just answers against every hold instead of one slot.
+      const onScreen = isChatContextOnScreen(channelId, threadRootId ?? undefined);
+      const tier: ChatToastTier = chatToastTier({
+        authorId: String(last.user_id),
+        viewerId,
+        mentionsViewer,
+        isDm,
+        channelId,
+        activeChannelId: onScreen ? channelId : undefined,
+        activeThreadRootId: onScreen ? threadRootId ?? undefined : undefined,
+        threadRootId,
+        viewerInThread,
+        answersViewer: last.author_kind === "agent" && !!viewerInThread,
+        windowFocused,
+        channelMuted: row.notify_level === "none",
+        notifyLevel: row.notify_level,
+        doNotDisturb: snoozedUntil > Date.now(),
+        // A Slack import landing a channel's past: nobody just said it.
+        history: !!full && isHistoryLine(full),
+        recentToastsFromChannel: recent.length,
+      });
+      if (tier === "silent") continue;
+      // While a Chat window exists it is where chat happens, toasts
+      // included: every other window stays quiet so a message never lands
+      // twice, and the card's click opens the channel where it lives.
+      if (hasAppWindow("chat") && desktopAppWindow() !== "chat") continue;
+
+      recent.push(Date.now());
+      burstRef.current.set(channelId, recent);
+
+      const isCall = !!(full?.call ?? last.call);
+      const author = byId.get(String(last.user_id)) ?? knownAgentMember(String(last.user_id));
+      const slackAuthor = slackAuthorFor(full?.external_author ? full : last);
+      // A line a session typed is stored under its human: name the session.
+      const sessionAuthor = slackAuthor ? null : sessionAuthorFor(full?.origin_session_id ? full : last, { members: byId });
+      const isAgent = !slackAuthor && (!!sessionAuthor || last.author_kind === "agent" || !!author?.is_bot);
+      const data: ChatToastData = {
+        messageId,
+        channelId,
+        channelName: isDm
+          ? channelDisplayName(
+              { name: "", kind: "dm", dmMemberIds: dmOtherIds(channelRow?.dm_key, viewerId) },
+              members,
+            )
+          : channelRow?.name ?? "channel",
+        isDm,
+        authorName: isCall ? "Huddle" : slackAuthor?.name ?? sessionAuthor?.name ?? memberName(author),
+        authorAvatarUrl: isCall ? undefined : slackAuthor ? slackAuthor.avatarUrl : isAgent ? undefined : author?.image || author?.github_avatar_url,
+        authorIsAgent: isAgent,
+        authorAgentType: sessionAuthor?.session?.agentType,
+        preview: toastPreview(full?.content ?? last.preview ?? ""),
+        tier,
+        // How many messages this card stands in for: the server's unread count
+        // moved by more than one while we were away.
+        collapsedCount: Math.max(1, (row.unread ?? 0) - prev.unread),
+        inThread: !!threadRootId,
+        isCall,
+      };
+
+      present(data, String(last.user_id), {
+        faceable: !isCall && !isAgent && !slackAuthor,
+        threadRootId: threadRootId ?? undefined,
+        at: last.created_at ?? Date.now(),
+      });
+    }
+  }, [s, viewerId, railLive, present]);
+
+  // The server's word on lines addressed to you. The rail judges "for me"
+  // only from what this window has loaded: a reply in a thread you are in but
+  // have not opened reads as room chatter, and a mentions-only room drops it,
+  // while the bell already rang and the sound already played (DesktopProvider).
+  // A chat notification is the server saying this line is yours, so one the
+  // rail has not shown arrives here, addressed.
+  const notifSig = useInboxStore((st: any) => chatNotifSig(st.notifications));
+  const notifSeenRef = useRef<Set<string>>(new Set());
+  const mountedAtRef = useRef(Date.now());
+  useWatchEffect(() => {
+    if (!viewerId || !notifSig) return;
+    const st: any = useInboxStore.getState();
+    const members: any[] = st.teamMembers ?? [];
+    for (const n of Object.values(st.notifications ?? {}) as any[]) {
+      if (!isChatNotif(n)) continue;
+      const id = String(n._id);
+      if (notifSeenRef.current.has(id)) continue;
+      notifSeenRef.current.add(id);
+      // Only what lands while this window is up, and only while it is news.
+      if (n.read || n.created_at < mountedAtRef.current || Date.now() - n.created_at > NOTIF_FRESH_MS) continue;
+      const messageId = n.chat_message_id ? String(n.chat_message_id) : "";
+      if (!messageId || shownRef.current.has(messageId)) continue;
+      if ((st.clientState?.ui?.chat_snooze_until ?? 0) > Date.now()) continue;
+      if (hasAppWindow("chat") && desktopAppWindow() !== "chat") continue;
+      const channelId = String(n.entity_id ?? "");
+      const full: ChatMessageRow | undefined = st.chatMessages?.[messageId];
+      const railLast = (st.chatRail ?? []).find((r: ChatRailRow) => String(r.channel_id) === channelId)?.last_message;
+      const fromRail = railLast && String(railLast._id) === messageId ? railLast : undefined;
+      const threadRootId = full?.thread_root_id ?? fromRail?.thread_root_id ?? undefined;
+      const focused = typeof document === "undefined" ? true : document.hasFocus();
+      if (focused && isChatContextOnScreen(channelId, threadRootId)) continue;
+      const authorId = String(n.actor_user_id ?? full?.user_id ?? fromRail?.user_id ?? "");
+      if (!authorId || authorId === viewerId) continue;
+      const author = members.find((m) => String(m?._id) === authorId) ?? knownAgentMember(authorId);
+      // A Slack line authors as the workspace bridge ("Union (Slack)"): the
+      // row's snapshot, else the notification's, names who actually spoke.
+      const slackAuthor = full?.external_author ? slackAuthorFor(full) : fromRail?.external_author ? slackAuthorFor(fromRail) : null;
+      const face = notificationActor(n);
+      const viaSlack = !!slackAuthor || memberKind(author) === "slack";
+      const isAgent = !viaSlack && (!!face.session || !!author?.is_bot || full?.author_kind === "agent" || fromRail?.author_kind === "agent");
+      const isDm = n.type === "chat_dm" || st.chatChannels?.[channelId]?.kind === "dm";
+      const name = slackAuthor?.name || n.actor_name || memberName(author);
+      present(
+        {
+          messageId,
+          channelId,
+          channelName: isDm ? name : st.chatChannels?.[channelId]?.name ?? "channel",
+          isDm,
+          authorName: name,
+          authorAvatarUrl: isAgent ? undefined : slackAuthor?.avatarUrl || face.avatar || author?.image || author?.github_avatar_url,
+          authorIsAgent: isAgent,
+          authorAgentType: face.session?.agent_type,
+          preview: toastPreview(full?.content ?? fromRail?.preview ?? notifBody(n.message ?? "")),
+          tier: "loud",
+          inThread: n.type === "chat_reply" || !!threadRootId,
+        },
+        authorId,
+        { faceable: !isAgent && !viaSlack, threadRootId, at: n.created_at },
+      );
+    }
+  }, [notifSig, viewerId, present]);
+}
+
+/** A chat notification lands on screen only while it is this fresh. */
+const NOTIF_FRESH_MS = 2 * 60_000;
+const CHAT_NOTIF_TYPES = new Set(["chat_mention", "chat_reply", "chat_dm"]);
+
+function isChatNotif(n: any): boolean {
+  return !!n && CHAT_NOTIF_TYPES.has(n.type) && !n.quiet;
+}
+
+/** Wake only when the set of unread chat notifications moves. */
+function chatNotifSig(notifications: Record<string, any> | undefined): string {
+  let out = "";
+  for (const n of Object.values(notifications ?? {})) if (isChatNotif(n) && !n.read) out += `${n._id},`;
+  return out;
+}
+
+/** The line itself, without the row's "Cam replied in a thread in #team:" lead. */
+function notifBody(message: string): string {
+  const at = message.indexOf(": ");
+  return at > 0 && at < 80 ? message.slice(at + 2) : message;
+}
+
+function toastIdFor(data: ChatToastData): string {
+  return data.tier === "loud" ? `chat-loud:${data.messageId}` : `chat:${data.channelId}`;
+}
+
+/** Wake only on a real rail change: a new newest-message, or a moved count. */
+function railKey(rail: ChatRailRow[] | undefined): string {
+  let out = "";
+  for (const r of rail ?? []) {
+    out += `${r.channel_id}:${r.last_message?._id ?? ""}:${r.unread}:${r.unread_mentions}:${r.notify_level};`;
+  }
+  return out;
+}

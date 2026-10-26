@@ -1,0 +1,653 @@
+// Schedules (agent_tasks) projected onto the inbox — the synthesis model:
+//
+//   Schedules live in ONE collapsible TRIGGERS section; everything a schedule
+//   does stays behind its row until it needs you — then it's a normal card.
+//
+// Every ARMED schedule (recurring, once, event; inject or spawn — no user-facing
+// distinction) gets exactly one schedule-first row. Conversations never change
+// section because of a schedule; instead, work that is purely the schedule's —
+// a resting loop's home conversation after a machine wake, a once follow-up's
+// home that settled in Done, or an uneventful spawned run — is ABSORBED behind
+// its row (dropped from the triage buckets and keyboard nav, reachable by
+// clicking the row). Anything that needs a human (hard blocker, failed/flagged
+// run, or a turn the human initiated) is never absorbed: it triages as an
+// ordinary card.
+//
+// Data source is the per-user agentTasks.webList subscription (deduped by
+// Convex across the badge, the strip, and /schedules) — never the store.
+
+import type { InboxSession } from "../store/inboxStore";
+import { classifySession, isSessionHardBlocked, isSessionHidden } from "../store/inboxStore";
+import { isMachineDeliveredMessage } from "./sessionMessage";
+import type { WallCadence } from "@platform/assistant/cadence";
+
+export const ARMED_STATUSES = new Set(["scheduled", "running", "paused"]);
+
+/** A trigger that has finished: it ran out (completed) or gave up (failed). */
+export function isTriggerTerminal(status: string): boolean {
+  return status === "completed" || status === "failed";
+}
+
+/** How a list ends a trigger. An armed one is cancelled: that works for a
+ *  manager who does not own it, and keeps its run history. Only a finished one
+ *  is deleted. A cancelled one has nothing left to end. */
+export function triggerEndVerb(status: string): "cancel" | "delete" | null {
+  if (ARMED_STATUSES.has(status)) return "cancel";
+  return isTriggerTerminal(status) ? "delete" : null;
+}
+
+/** The words for ending a trigger, given the mode's noun for one (MODE_WORDS
+ *  `trigger`: "Trigger" or "Routine"): the button, the question it asks, and
+ *  the short answer that confirms it beside that question. */
+export function triggerEndWords(verb: "cancel" | "delete", noun: string): { label: string; ask: string; confirm: string } {
+  const thing = noun.toLowerCase();
+  return verb === "cancel"
+    ? { label: `Cancel ${thing}`, ask: `Cancel this ${thing}?`, confirm: "Cancel it" }
+    : { label: "Delete", ask: `Delete this ${thing}?`, confirm: "Delete it" };
+}
+
+// The agentTasks.webList payload fields the client reads.
+export type TaskRow = {
+  _id: string;
+  short_id?: string;
+  title: string;
+  prompt: string;
+  status: string;
+  mode?: string;
+  agent_type?: string;
+  schedule_type: "once" | "recurring" | "event";
+  run_at?: number;
+  interval_ms?: number;
+  /** A hosted routine said as a time of day: its wall clock (convex
+   *  assistant/routines.ts hostedWallCadence). Words read it over interval_ms. */
+  cadence?: WallCadence;
+  event_filter?: { event_type: string } | null;
+  project_path?: string;
+  run_count: number;
+  created_at: number;
+  last_run_at?: number;
+  last_run_summary?: string;
+  last_run_failed?: boolean;
+  last_run_needs_attention?: boolean;
+  last_run_conversation_id?: string;
+  last_run_conversation_title?: string;
+  last_run_session_uuid?: string;
+  originating_conversation_id?: string;
+  originating_conversation_title?: string;
+  // Conversation that created the trigger — attribution only (spawn triggers
+  // have no originating binding, but still trace to their parent through this).
+  created_by_conversation_id?: string;
+  created_by_conversation_title?: string;
+  target_conversation_id?: string;
+  // The routine's home is a hosted assistant conversation (agentTasks
+  // hostedHomeStamp): the assistant's routine, in hosted mode's scope.
+  hosted_home?: boolean;
+  retry_count?: number;
+  max_runtime_ms?: number;
+  // `cast trigger add --precheck`: the shell gate run before each scheduled or
+  // recurring firing, and the newest firing it refused.
+  precheck?: string;
+  last_precheck_skip_at?: number;
+  last_precheck_skip_reason?: string;
+  last_run_source?: string;
+  // Haiku-distilled presentation fields (agentTasks.generateDisplaySummary).
+  // display_title only exists when the stored title was a prompt slice; an
+  // explicit human title is left alone, so preferring display_title is safe.
+  display_title?: string;
+  display_summary?: string;
+  /** display_summary is written to the person (a hosted routine's summary,
+   *  agentTasks.ts summary_for_person); otherwise it describes an agent's
+   *  instruction and a hosted surface leaves it out. */
+  summary_for_person?: boolean;
+  // Set when the schedule was canceled as a side effect of killing its home
+  // conversation (vs. completing naturally). The server re-arms stamped tasks
+  // when the session is restored; the client reads it to SAY so.
+  canceled_on_kill_at?: number;
+  // Present on conversation-scoped rows (webListForConversation / webGet):
+  // false = a trigger anchored to a conversation the viewer can see but owned
+  // by another account (a daemon's bot login). Viewable, not manageable —
+  // verbs are owner-only. Absent (webList rows) = own.
+  is_own?: boolean;
+  // The owning account's display name, only when is_own is false.
+  owner_name?: string;
+};
+
+// Armed inject schedules bound to one conversation — exactly the set the
+// server cancels when that conversation is killed. Every kill surface
+// (sidebar button, palette, keyboard chord) consults this for its notice.
+export function armedInjectTasksFor(tasks: TaskRow[] | undefined, convId: string): TaskRow[] {
+  return (tasks ?? []).filter(
+    (t) => ARMED_STATUSES.has(t.status) && t.originating_conversation_id === convId,
+  );
+}
+
+// Schedules a kill of this conversation took down (stamped canceled_on_kill_at)
+// — the set the server re-arms when the session is restored.
+export function killCanceledTasksFor(tasks: TaskRow[] | undefined, convId: string): TaskRow[] {
+  return (tasks ?? []).filter(
+    (t) => t.status === "completed" && !!t.canceled_on_kill_at && t.originating_conversation_id === convId,
+  );
+}
+
+// Is this trigger in trouble RIGHT NOW? The one definition of "failing", shared
+// by every surface that shows health — the rail's red dot, the row's status dot,
+// the stat cell, and the attention banner — so a trigger never reads as broken in
+// one place and fine in another.
+//
+// Keyed on last_run_failed (the outcome of the latest run), never on retry_count.
+// retry_count is the current failure STREAK: failRun counts it up toward
+// max_retries and a successful run resets it. Reading it as health was the bug —
+// before completeTaskRun reset it, one old blip left a fully recovered trigger
+// screaming "retrying" forever while the rail (already on last_run_failed) showed
+// it green.
+export function isTriggerFailing(t: Pick<TaskRow, "last_run_failed">): boolean {
+  return !!t.last_run_failed;
+}
+
+// A prompt-slice title is cut at 60 chars mid-word or mid-parenthesis
+// ("Check the deploy (sha 9ee76"). Trim the dangling fragment so the fallback
+// reads like a name, not a cut. Only slice-width titles get the word trim —
+// a short explicit title is already whole.
+export function cleanPromptSliceTitle(title: string): string {
+  let t = title.trim();
+  const open = t.lastIndexOf("(");
+  if (open !== -1 && !t.includes(")", open)) t = t.slice(0, open);
+  if (title.length >= 60) t = t.replace(/\s+\S{1,3}$/, "");
+  t = t.trim().replace(/[\s,;:.—-]+$/, "");
+  return t || title;
+}
+
+// The readable name for a schedule, shared by every row surface.
+export function taskDisplayTitle(t: Pick<TaskRow, "display_title" | "title">): string {
+  return t.display_title?.trim() || cleanPromptSliceTitle(t.title);
+}
+
+// Cut a sentence for a one-line slot: whole words, an ellipsis only when
+// something was dropped.
+function cutLine(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max).replace(/\s+\S*$/, "");
+  return `${cut.replace(/[\s,;:.—-]+$/, "")}…`;
+}
+
+// A prompt's opening line as prose: markdown furniture stripped, the first
+// paragraph only. The fallback gist for a schedule whose Haiku summary has
+// not landed (or a loop, which has none).
+function promptOpening(prompt: string): string {
+  // The first paragraph that says something: a heading-only opener ("# Goal")
+  // names nothing, so it yields to the paragraph under it.
+  const paras = prompt.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const para = paras.find((p) => !/^#+\s/.test(p)) ?? paras[0] ?? "";
+  return cutLine(
+    para.replace(/^#+\s*/gm, "").replace(/^[-*>]\s+/gm, "").replace(/[`*_]/g, ""),
+    160,
+  );
+}
+
+// What each run does, in one sentence — the SECOND line of every trigger
+// row, on every surface. Always the standing description, never an outcome:
+// the outcome has its own line (lastRunHeadline).
+/** A routine's description as hosted mode shows it: only a summary written
+ *  to the person ("Each weekday at 8 AM I'll send you your open to-dos").
+ *  A summary distilled for a developer dashboard ("escalates if user wants
+ *  ...") reads as an internal note, so it is left out. */
+export function routineSummaryForPerson(t: Pick<TaskRow, "display_summary" | "summary_for_person">): string | null {
+  return (t.summary_for_person && t.display_summary?.trim()) || null;
+}
+
+export function taskGist(t: Pick<TaskRow, "display_summary" | "prompt">): string {
+  const s = t.display_summary?.trim();
+  return s ? cutLine(s, 200) : promptOpening(t.prompt || "");
+}
+
+// An agent's run summary is a paragraph; split it at the first clause
+// boundary (";", sentence end, or an em-dash) into a headline and the rest,
+// so the verdict reads first and the evidence second.
+export function splitResultSummary(text: string): { headline: string; detail: string | null } {
+  const m = text.match(/^([\s\S]{12,180}?[^;.\s])(?:;\s+|\.\s+|\s+—\s+)([\s\S]+)$/);
+  return m ? { headline: m[1], detail: m[2] } : { headline: text, detail: null };
+}
+
+// The last run's verdict in one line — the THIRD line of a trigger row. The
+// "Failed:" prefix the daemon stamps is dropped: the row's glyph and color
+// already say it.
+export function lastRunHeadline(t: Pick<TaskRow, "last_run_summary">): string | undefined {
+  const raw = t.last_run_summary?.trim();
+  if (!raw) return undefined;
+  return cutLine(splitResultSummary(raw.replace(/^Failed:?\s*/i, "")).headline, 200);
+}
+
+// Optimistic webList patch for schedule verbs (run now / pause / resume /
+// cancel): flip the row's fields in Convex's local query cache so the UI
+// renders the result of the click synchronously — local-first — and the server
+// echo reconciles. Shared by every surface that mutates schedules off the
+// webList subscription (rows, dock, /schedules page).
+export function patchTaskInWebList(
+  localStore: { getQuery: (q: unknown, a: unknown) => unknown; setQuery: (q: unknown, a: unknown, v: unknown) => void },
+  webListQuery: unknown,
+  taskId: string,
+  patch: Partial<TaskRow>,
+) {
+  const rows = localStore.getQuery(webListQuery, {}) as TaskRow[] | undefined;
+  if (!rows) return;
+  localStore.setQuery(
+    webListQuery,
+    {},
+    rows.map((t) => (t._id === taskId ? { ...t, ...patch } : t)),
+  );
+}
+
+// The most recent firing of a schedule that's already in the local message
+// cache — the synchronous fast path for "click the trigger row → land on its
+// last run". Matches exactly what the server's webListRuns matches (the
+// task-id marker substring on user turns), scanned newest-first over the
+// loaded window. Returns undefined when the window holds none (messages not
+// loaded, or the runs fell outside it) — callers fall back to the run-list
+// query rather than guessing.
+export function latestLoadedTriggerMessage(
+  messages: readonly { _id: string; role: string; content?: string; timestamp: number }[] | undefined,
+  taskId: string,
+): { messageId: string; timestamp: number } | undefined {
+  if (!messages?.length) return undefined;
+  const marker = `task-id="${taskId}"`;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (m.role === "user" && m.content?.includes(marker)) {
+      return { messageId: m._id, timestamp: m.timestamp };
+    }
+  }
+  return undefined;
+}
+
+// -- Foreign triggers: the roster's blind spot --
+//
+// agentTasks.webList is indexed by user_id alone, so it carries only triggers
+// the VIEWER armed. An agent on a remote daemon arms its triggers under
+// whatever account that daemon is logged into — often a team bot — while the
+// conversation belongs to a human. Such a trigger showed up in its
+// conversation's header strip (webListForConversation grades access by the
+// conversation, not the owner) and in no roster at all: not the inbox TRIGGERS
+// section, not /triggers, not the palette.
+//
+// The home conversation already carries the denormalized answer:
+// armed_trigger_kind, written by the same lifecycle that arms and cancels the
+// trigger. So the client can name its own blind spot exactly — conversations
+// stamped as armed that its roster cannot explain — and ask the server for
+// just those (agentTasks.webListForConversations).
+const ARMED_TRIGGER_KINDS = new Set(["standing", "once"]);
+
+export function foreignTriggerConvIds(
+  sessions: Record<string, InboxSession>,
+  ownTasks: TaskRow[] | undefined,
+  limit = 64,
+): string[] {
+  const explained = new Set<string>();
+  for (const t of ownTasks ?? []) {
+    if (t.originating_conversation_id && ARMED_STATUSES.has(t.status)) {
+      explained.add(t.originating_conversation_id);
+    }
+  }
+  const ids: string[] = [];
+  for (const id in sessions) {
+    const s = sessions[id];
+    if (!s || !ARMED_TRIGGER_KINDS.has(s.armed_trigger_kind ?? "none")) continue;
+    if (explained.has(s._id)) continue;
+    ids.push(s._id);
+  }
+  // Sorted before the cap: this array IS the subscription key, so an order
+  // that follows store push order would resubscribe on every heartbeat.
+  ids.sort();
+  return ids.length > limit ? ids.slice(0, limit) : ids;
+}
+
+// The roster every trigger surface reads: own rows plus the anchored foreign
+// rows the own roster does not already carry. Own wins a tie — it is the row
+// that carries the management verbs.
+export function mergeTriggerRosters(
+  own: TaskRow[],
+  foreign: TaskRow[],
+  sort?: (a: TaskRow, b: TaskRow) => number,
+): TaskRow[] {
+  if (foreign.length === 0) return own;
+  const seen = new Set(own.map((t) => t._id));
+  const extra = foreign.filter((t) => !seen.has(t._id));
+  if (extra.length === 0) return own;
+  const merged = [...own, ...extra];
+  return sort ? merged.sort(sort) : merged;
+}
+
+export interface TriggerRow {
+  task: TaskRow;
+  // Conversation this row opens: the home conversation (inject) or the newest
+  // visible run, falling back to the last recorded run even when folded (the
+  // dismissed-peek path handles it), then to the creating session for a spawn
+  // schedule that has never run. Undefined only when none of those exist.
+  openId?: string;
+  // The latest outcome landed after the user's read watermark.
+  unread: boolean;
+  // Pseudo rows synthesized from sessions rather than agent_tasks: a harness
+  // /loop sleeping on a ScheduleWakeup. They wear the same row anatomy but
+  // carry no server verbs (pause/run-now/cancel) — you can't reach inside a
+  // harness from here. Absent = a real trigger.
+  kind?: "loop";
+}
+
+// -- Pseudo rows: loops projected into the trigger set --
+//
+// The trigger set models one axis — "a machine will act here on its own on a
+// SCHEDULE" — and agent_tasks are only one source of that intent. A session
+// sleeping on a ScheduleWakeup (/loop) is the same standing intent, so it gets
+// a row in the same roster, mapped through the TaskRow shape every trigger
+// surface already renders. Subagents are deliberately NOT in this set: a
+// running worker is transient labor, not a standing trigger, and it already
+// renders nested under its parent session's card.
+
+// Freshness lives in shared/contracts/loopState — the server classifier and
+// this roster must agree on when a loop stops being a live standing intent.
+import { isLoopFresh } from "@codecast/shared/contracts";
+export { LOOP_OVERDUE_GRACE_MS, LOOP_WAKING_TTL_MS, isLoopFresh } from "@codecast/shared/contracts";
+
+export type LoopStateLike = NonNullable<InboxSession["loop_state"]>;
+
+export function loopTaskRow(sess: InboxSession, loop: LoopStateLike): TaskRow {
+  return {
+    _id: `loop:${sess._id}`,
+    // The reason IS the row's name ("watching CI run"); the session title
+    // rides the gist line so the row stays attributable.
+    title: loop.reason?.trim() || sess.title || "Self-paced loop",
+    display_summary: loop.reason?.trim() ? sess.title : undefined,
+    prompt: loop.prompt || loop.reason || "",
+    status: loop.status === "waking" ? "running" : "scheduled",
+    // "apply" is the unmarked norm — anything else grows a read-only chip,
+    // which would be a false claim about a harness loop.
+    mode: "apply",
+    schedule_type: "recurring",
+    run_at: loop.status === "armed" ? loop.wakeup_at : undefined,
+    project_path: sess.project_path,
+    run_count: 0,
+    created_at: loop.armed_at,
+    last_run_at: loop.fired_at,
+    originating_conversation_id: sess._id,
+  };
+}
+
+export interface TriggerInboxPartition {
+  // One row per armed schedule, soonest fire first (event/paused sink last).
+  rows: TriggerRow[];
+  // Sessions absorbed behind a row: resting loop homes + uneventful runs.
+  absorbedIds: Set<string>;
+  // conv id → ALL armed inject schedules. Exactly the set the kill transition
+  // cancels server-side; the kill toast and undo-revive read it.
+  armedInjectByConv: Map<string, TaskRow[]>;
+  // Collapsed-header briefing numbers.
+  unreadCount: number;
+  nextRunAt?: number;
+}
+
+const EMPTY: TriggerInboxPartition = {
+  rows: [],
+  absorbedIds: new Set(),
+  armedInjectByConv: new Map(),
+  unreadCount: 0,
+  nextRunAt: undefined,
+};
+
+// Roster order, shared by every surface that lists several triggers (the
+// inbox rows, the conversation header): tiers of "what's happening now →
+// what's happening next → what's idle". Live runs first, then scheduled by
+// soonest fire, then paused / event / no-run_at (newest-created first).
+export function compareTriggerRoster(a: TaskRow, b: TaskRow): number {
+  const tier = (t: TaskRow) => (t.status === "running" ? 0 : t.status === "scheduled" ? 1 : 2);
+  const ta = tier(a), tb = tier(b);
+  if (ta !== tb) return ta - tb;
+  const ar = a.status === "scheduled" ? a.run_at ?? Infinity : Infinity;
+  const br = b.status === "scheduled" ? b.run_at ?? Infinity : Infinity;
+  if (ar !== br) return ar - br;
+  return b.created_at - a.created_at;
+}
+
+export function partitionTriggerInbox(
+  tasks: TaskRow[] | undefined,
+  sessions: Record<string, InboxSession>,
+  opts: {
+    sessionsWithQueuedMessages?: Set<string>;
+    // clientState.ui.schedules_seen_at — outcomes newer than this are unread.
+    seenAt?: number;
+    // The session open in the conversation pane. Never absorbed — same rule as
+    // the focused-session overlay in partitionWorkingSet: the session you're
+    // viewing always has a card, so selection highlight and auto-scroll can
+    // land on it.
+    focusedId?: string | null;
+    // Clock for loop-freshness membership (armed wakeup overdue, waking turn
+    // aged out). Callers pass a coarse clock so membership re-evaluates on it;
+    // countdown text inside rows rides its own render-time clock.
+    now?: number;
+  } = {},
+): TriggerInboxPartition {
+  const seenAt = opts.seenAt ?? 0;
+  const now = opts.now ?? Date.now();
+  const sessList = Object.values(sessions);
+  if (!tasks?.length && !sessList.some((s) => s.loop_state)) {
+    return EMPTY;
+  }
+
+  // Index visible runs once: agent_task_id → top-level, non-hidden sessions.
+  const runsByTask = new Map<string, InboxSession[]>();
+  for (const s of sessList) {
+    if (!s.agent_task_id || isSessionHidden(s) || s.parent_conversation_id) continue;
+    let arr = runsByTask.get(s.agent_task_id);
+    if (!arr) runsByTask.set(s.agent_task_id, (arr = []));
+    arr.push(s);
+  }
+  for (const runs of runsByTask.values()) {
+    runs.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+  }
+
+  const rows: TriggerRow[] = [];
+  const absorbedIds = new Set<string>();
+  const armedInjectByConv = new Map<string, TaskRow[]>();
+  let unreadCount = 0;
+  let nextRunAt: number | undefined;
+
+  for (const task of tasks ?? []) {
+    if (!ARMED_STATUSES.has(task.status)) continue;
+
+    const unread = !!task.last_run_at && task.last_run_at > seenAt;
+    if (unread) unreadCount++;
+    if (task.status === "scheduled" && task.run_at !== undefined) {
+      if (nextRunAt === undefined || task.run_at < nextRunAt) nextRunAt = task.run_at;
+    }
+
+    if (task.originating_conversation_id) {
+      const convId = task.originating_conversation_id;
+      const armed = armedInjectByConv.get(convId);
+      if (armed) armed.push(task);
+      else armedInjectByConv.set(convId, [task]);
+
+      // Absorption parks the home behind the row only while the machine is
+      // driving — pinned, blocked, blank, hidden, or human-engaged
+      // conversations triage normally. A flagged latest run (failed /
+      // --needs-attention) escapes too, same as spawn runs below: the flag is
+      // a claim on the user until the next clean run overwrites it. A LOOP
+      // (recurring / event) absorbs whatever the home's rest verdict; a once
+      // follow-up absorbs only a home SETTLED IN DONE — delivered plus a named
+      // wake is parked, but a reminder must never hide an open ask or a live
+      // run (mirrors the armedOnceTriggerHome demotion in
+      // convex/inboxFilters.ts).
+      {
+        const home = sessions[convId];
+        const parks =
+          task.schedule_type === "recurring" ||
+          task.schedule_type === "event" ||
+          (!!home && classifySession(home).waiting && classifySession(home).rest === "done");
+        if (
+          home && parks &&
+          convId !== opts.focusedId &&
+          !home.is_pinned &&
+          home.message_count > 0 &&
+          !isSessionHidden(home) &&
+          !isSessionHardBlocked(home, opts.sessionsWithQueuedMessages) &&
+          !task.last_run_failed &&
+          !task.last_run_needs_attention &&
+          (!home.last_user_message || isMachineDeliveredMessage(home.last_user_message))
+        ) {
+          absorbedIds.add(convId);
+        }
+      }
+      rows.push({ task, openId: convId, unread });
+      continue;
+    }
+
+    // Spawn schedule: absorb its uneventful runs. A run escapes absorption
+    // (stays a loose card) when hard-blocked, or when it's the latest run and
+    // the schedule flagged it (failed / --needs-attention).
+    const runs = runsByTask.get(task._id) ?? [];
+    let newestAbsorbed: InboxSession | undefined;
+    for (const run of runs) {
+      const isLatest =
+        run._id === task.last_run_conversation_id ||
+        (!!task.last_run_session_uuid && run.session_id === task.last_run_session_uuid);
+      const escalated =
+        isSessionHardBlocked(run, opts.sessionsWithQueuedMessages) ||
+        (isLatest && (!!task.last_run_failed || !!task.last_run_needs_attention));
+      if (escalated || run._id === opts.focusedId) continue;
+      absorbedIds.add(run._id);
+      if (!newestAbsorbed) newestAbsorbed = run;
+    }
+    // A spawn trigger that has never run opens the session that created it —
+    // the only conversation that can explain the trigger before a run exists.
+    rows.push({
+      task,
+      openId: newestAbsorbed?._id ?? task.last_run_conversation_id ?? task.created_by_conversation_id,
+      unread,
+    });
+  }
+
+  // -- Pseudo rows: loops from the session cache --
+  for (const sess of sessList) {
+    const loop = sess.loop_state;
+    if (!loop || !isLoopFresh(loop, now)) continue;
+    // Dismiss/kill retires the session AND its loop (the harness dies with the
+    // tmux); a stashed home keeps its row — stash is the standing-loop home.
+    // Deliberately NOT isSessionHidden: that folds in stashed, which this loop
+    // must keep. inbox_killed_at is the other half of "retired" — the
+    // killSession mutation (the web's convCommand path) stamps it WITHOUT
+    // inbox_dismissed_at, so a session killed that way kept a loop row for a
+    // harness that no longer exists.
+    if (sess.inbox_dismissed_at || sess.inbox_killed_at) continue;
+    rows.push({ task: loopTaskRow(sess, loop), openId: sess._id, unread: false, kind: "loop" });
+    if (loop.status === "armed" && (nextRunAt === undefined || loop.wakeup_at < nextRunAt)) {
+      nextRunAt = loop.wakeup_at;
+    }
+    // Same resting rule as inject-trigger homes: the machine is driving, so the
+    // session lives behind its row. "Waking" is the machine's own turn; an
+    // armed loop rests only while the agent is actually asleep (is_idle) —
+    // a human-initiated turn surfaces the card like any other conversation.
+    if (
+      sess._id !== opts.focusedId &&
+      !sess.is_pinned &&
+      sess.message_count > 0 &&
+      !isSessionHidden(sess) &&
+      !sess.has_pending &&
+      !isSessionHardBlocked(sess, opts.sessionsWithQueuedMessages) &&
+      (loop.status === "waking" || sess.is_idle)
+    ) {
+      absorbedIds.add(sess._id);
+    }
+  }
+  rows.sort((a, b) => compareTriggerRoster(a.task, b.task));
+
+  return { rows, absorbedIds, armedInjectByConv, unreadCount, nextRunAt };
+}
+
+// "By trigger" lens grouping: each trigger row becomes a first-class group
+// header and claims the sessions it drives — the home conversation for inject
+// triggers and loops (originating_conversation_id), the runs for
+// spawn triggers (agent_task_id). Roster order is preserved (running → soonest
+// fire → paused/event, exactly what partitionTriggerInbox sorted); the first
+// row to claim a session keeps it. A trigger keeps its group even with zero
+// sessions — the trigger is the citizen here, its work may not have run yet.
+// Unclaimed sessions return as `rest` for the same project-group fallthrough
+// the label/plan lenses use.
+//
+// opts.hidden: stashed/dismissed sessions a trigger may ALSO claim — a
+// standing trigger's home conversation typically lives in the stash (that's
+// the standing-loop workflow), and this lens exists precisely to show each
+// trigger's work. Hidden sessions claimed here render as muted sub rows;
+// hidden sessions no trigger claims never enter `rest` — they stay in their
+// stashed/killed buckets.
+export function groupSessionsByTrigger(
+  rows: TriggerRow[],
+  items: InboxSession[],
+  opts: { hidden?: InboxSession[] } = {},
+): {
+  triggerGroups: Array<{ key: string; row: TriggerRow; items: InboxSession[] }>;
+  rest: InboxSession[];
+} {
+  // Visible actives first in each pool walk, hidden appended after — so a
+  // trigger with both shows its live work above its resting home.
+  const pool = [...items, ...(opts.hidden ?? [])];
+  const byId = new Map(pool.map((s) => [s._id, s]));
+  const byTaskId = new Map<string, InboxSession[]>();
+  for (const s of pool) {
+    if (!s.agent_task_id) continue;
+    let arr = byTaskId.get(s.agent_task_id);
+    if (!arr) byTaskId.set(s.agent_task_id, (arr = []));
+    arr.push(s);
+  }
+  const claimed = new Set<string>();
+  const triggerGroups = rows.map((row) => {
+    const members: InboxSession[] = [];
+    const claim = (s: InboxSession | undefined) => {
+      if (s && !claimed.has(s._id)) {
+        claimed.add(s._id);
+        members.push(s);
+      }
+    };
+    const homeId = row.task.originating_conversation_id;
+    if (homeId) {
+      claim(byId.get(homeId));
+    } else {
+      for (const run of byTaskId.get(row.task._id) ?? []) claim(run);
+      members.sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+    }
+    return { key: row.task._id, row, items: members };
+  });
+  return { triggerGroups, rest: items.filter((s) => !claimed.has(s._id)) };
+}
+
+// The dock roster's reading order: triggers grouped under the session they
+// fire into, so the roster answers "which sessions have machinery, and what"
+// instead of listing forty rows that each name their home in a truncated
+// footnote. Inject triggers and loops group by home conversation; spawn
+// triggers (no home — every run is a fresh session) group per project under a
+// synthetic key. Group order follows the roster order of each group's FIRST
+// row, so the group holding the soonest fire still sits at the top, and rows
+// keep their roster order inside a group.
+export interface TriggerHomeGroup {
+  key: string;
+  // The home conversation for inject/loop rows; absent for a spawn group.
+  homeId?: string;
+  // The spawn group's project (rows are grouped per project so the header
+  // can name where the fresh sessions land).
+  projectPath?: string;
+  rows: TriggerRow[];
+}
+
+export function groupTriggerRowsByHome(rows: TriggerRow[]): TriggerHomeGroup[] {
+  const groups: TriggerHomeGroup[] = [];
+  const byKey = new Map<string, TriggerHomeGroup>();
+  for (const row of rows) {
+    const homeId = row.task.originating_conversation_id;
+    const key = homeId ?? `spawn:${row.task.project_path ?? ""}`;
+    let g = byKey.get(key);
+    if (!g) {
+      g = homeId ? { key, homeId, rows: [] } : { key, projectPath: row.task.project_path, rows: [] };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.rows.push(row);
+  }
+  return groups;
+}

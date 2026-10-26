@@ -1,0 +1,1352 @@
+import { mutation, query, internalMutation, type MutationCtx } from "./functions";
+import { noteWriteCause } from "./lifecycleEvents";
+import { releaseQueuedRows } from "./pendingMessageWrites";
+import type { QueryCtx } from "./_generated/server";
+import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
+import { verifyApiToken } from "./apiTokens";
+import { Doc, Id } from "./_generated/dataModel";
+import { findConversationBySessionReference } from "./conversationSessionLookup";
+import { AGENT_STATUSES, ACTIVE_AGENT_STATUSES, HEARTBEAT_REFRESH_MS, isHostedAgentType } from "@codecast/shared/contracts";
+import { openTaskValidator } from "./lib/openTasksValidator";
+import { internal } from "./_generated/api";
+import {
+  NEEDS_INPUT_IDLE_CHECK_DELAY_MS,
+  NEEDS_INPUT_PERMISSION_CHECK_DELAY_MS,
+} from "./inboxFilters";
+import { isDaemonManagedRow, listLiveManagedSessions } from "./lib/liveSessions";
+import { scheduleLiveActivityRefresh } from "./lib/liveActivityRefresh";
+import { scheduleFedSessionSettle } from "./callChat";
+import { scheduleWorkerSettle } from "./workerSettle";
+
+// A status CHANGE is the entry point to the needs-input push (see
+// notifications.checkNeedsInput). "idle" only settles into needs_input after
+// the idle grace, so its check fires just past it; a permission block is
+// needs_input immediately, but the daemon's own permission record (with its
+// own push) lands asynchronously right after this write — the short delay lets
+// the check see it and stand down. Any newer status change makes a scheduled
+// check a no-op: it re-validates agent_status_updated_at at fire time.
+async function scheduleNeedsInputCheck(
+  ctx: any,
+  conversationId: Id<"conversations">,
+  agentStatus: string,
+  statusTs: number,
+  sessionBoundary?: boolean,
+): Promise<void> {
+  // A SESSION BOUNDARY settles the row without a turn having ended (a resume, a
+  // clear, a manual /compact). Nobody was working, so nobody is waiting: the
+  // push must not chime and the settle classifier must not invent a verdict for
+  // a turn that never happened. Standing the schedule down is what keeps a
+  // resume out of both (ct-49533).
+  if (sessionBoundary) return;
+  // A spawned worker that settles tells the session it reports to.
+  if (!ACTIVE_AGENT_STATUSES.has(agentStatus)) await scheduleWorkerSettle(ctx, conversationId, statusTs);
+  const delay =
+    agentStatus === "idle"
+      ? NEEDS_INPUT_IDLE_CHECK_DELAY_MS
+      : agentStatus === "permission_blocked"
+        ? NEEDS_INPUT_PERMISSION_CHECK_DELAY_MS
+        // A dead process is a stall: a hidden session whose agent died must
+        // resurface (the check's stall rule), and the check itself never
+        // chimes for "stopped" — this only drives the un-hide.
+        : agentStatus === "stopped"
+          ? NEEDS_INPUT_PERMISSION_CHECK_DELAY_MS
+          : null;
+  if (delay === null) return;
+  await ctx.scheduler.runAfter(delay, internal.notifications.checkNeedsInput, {
+    conversation_id: conversationId,
+    status_ts: statusTs,
+  });
+  // The settle classifier rides the same idle transition but has its OWN gate
+  // (idleSummary.classifySettle): the push check above stands down for pinned,
+  // agent-spawned and schedule-run rows, and those still need a verdict.
+  if (agentStatus === "idle") {
+    await ctx.scheduler.runAfter(delay, internal.idleSummary.classifySettle, {
+      conversation_id: conversationId,
+      status_ts: statusTs,
+    });
+  }
+}
+
+async function getAuthenticatedUserId(
+  ctx: { db: any },
+  apiToken?: string
+): Promise<Id<"users"> | null> {
+  const sessionUserId = await getAuthUserId(ctx as any);
+  if (sessionUserId) {
+    return sessionUserId;
+  }
+
+  if (apiToken) {
+    const result = await verifyApiToken(ctx, apiToken);
+    if (result) {
+      return result.userId;
+    }
+  }
+
+  return null;
+}
+
+// Whether a client (a daemon, an agent's hooks) may execute this conversation
+// and so report on it: register a process, heartbeat, report status, settle a
+// delivery. Only its owner, and never for a hosted conversation, whose turn
+// engine is the only writer of its status (setHostedAgentStatus); a local
+// agent holding the owner's token could otherwise flip a running turn.
+async function canExecuteConversation(ctx: { db: any }, userId: Id<"users">, conversationId: Id<"conversations">): Promise<boolean> {
+  const conversation = await ctx.db.get(conversationId);
+  if (!conversation || isHostedAgentType(conversation.agent_type)) return false;
+  return conversation.user_id?.toString() === userId.toString();
+}
+
+async function requireConversationExecution(ctx: { db: any }, userId: Id<"users">, conversationId: Id<"conversations">): Promise<void> {
+  if (!(await canExecuteConversation(ctx, userId, conversationId))) throw new Error("Unauthorized");
+}
+
+// Factored out of the mutation so tests can drive it with an explicit userId
+// (same pattern as performReparentSessionToDevice).
+export async function performRegisterManagedSession(
+  ctx: { db: any },
+  authUserId: Id<"users">,
+  args: {
+    session_id: string;
+    pid: number;
+    tmux_session?: string;
+    conversation_id?: Id<"conversations">;
+    device_id?: string;
+  },
+): Promise<any> {
+    const existing = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+    const linkedConversation = await ctx.db
+      .query("conversations")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+    const effectiveConversationId = args.conversation_id ?? existing?.conversation_id ?? linkedConversation?._id;
+    for (const conversationId of new Set([effectiveConversationId, existing?.conversation_id, linkedConversation?._id])) {
+      if (conversationId && !(await canExecuteConversation(ctx, authUserId, conversationId))) {
+        return { notOwner: true as const };
+      }
+    }
+    if (existing && existing.user_id.toString() !== authUserId.toString() && !existing.conversation_id) {
+      return { notOwner: true as const };
+    }
+    // Only a device this caller owns may be stamped as the conversation's
+    // runner. An UNKNOWN device is not somebody else's device: the daemon's
+    // first heartbeat is what creates the row, and a boot or an account switch
+    // can register a session before that beat lands. Refusing there loses the
+    // session entirely, so the registration proceeds and only the ownership
+    // stamp waits for a device we can confirm.
+    const ownedDevice = args.device_id
+      ? await ctx.db.query("devices")
+        .withIndex("by_user_device", (q: any) => q.eq("user_id", authUserId).eq("device_id", args.device_id))
+        .first()
+      : null;
+    const stampDeviceId = ownedDevice ? args.device_id : undefined;
+
+    if (stampDeviceId && effectiveConversationId) {
+      const conv = await ctx.db.get(effectiveConversationId);
+      const owner = (conv as any)?.owner_device_id as string | undefined;
+      if (owner && owner !== args.device_id) {
+        const ownerDevice = await ctx.db
+          .query("devices")
+          .withIndex("by_user_device", (q: any) =>
+            q.eq("user_id", authUserId).eq("device_id", owner),
+          )
+          .first();
+        const ownerOnline =
+          ownerDevice &&
+          !ownerDevice.is_remote &&
+          Date.now() - ownerDevice.last_seen < 2 * 60 * 1000;
+        if (ownerOnline) {
+          return { notOwner: true as const, owner } as any;
+        }
+        // Owner offline, or owner is a remote box → fall through and reclaim (stamp below).
+      }
+    }
+
+    const now = Date.now();
+    if (existing) {
+      if (existing.user_id.toString() !== authUserId.toString()) {
+        await ctx.db.delete(existing._id);
+      } else {
+        await ctx.db.patch(existing._id, {
+          pid: args.pid,
+          last_heartbeat: now,
+          ...(args.tmux_session !== undefined ? { tmux_session: args.tmux_session } : {}),
+          ...(effectiveConversationId ? { conversation_id: effectiveConversationId } : {}),
+        });
+        if (stampDeviceId && effectiveConversationId) {
+          // Registering a live local process for this conversation disproves any
+          // "couldn't start / no local checkout - clone it first" banner stamped
+          // before the session came up. Piggyback the clear on the ownership patch
+          // we already write (no extra read/write). setSessionError handles the
+          // reverse: refusing to WRITE such a banner while the session is live.
+          await ctx.db.patch(effectiveConversationId, { owner_device_id: stampDeviceId, session_error: undefined });
+        }
+        return existing._id;
+      }
+    }
+
+    // Remove stale sessions for same conversation, but carry forward a known
+    // tmux_session if this re-registration didn't supply one. Daemon paths
+    // sometimes re-register without a pane handle (e.g. after a transient
+    // findTmuxPaneForTty failure); we must not silently erase the live attach
+    // target the UI shows.
+    let inheritedTmuxSession: string | undefined;
+    if (effectiveConversationId) {
+      const old = await ctx.db
+        .query("managed_sessions")
+        .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", effectiveConversationId))
+        .collect();
+      for (const o of old) {
+        if (args.tmux_session === undefined && o.tmux_session && !inheritedTmuxSession) {
+          inheritedTmuxSession = o.tmux_session;
+        }
+        await ctx.db.delete(o._id);
+      }
+    }
+
+    const id = await ctx.db.insert("managed_sessions", {
+      session_id: args.session_id,
+      user_id: authUserId,
+      pid: args.pid,
+      tmux_session: args.tmux_session ?? inheritedTmuxSession,
+      conversation_id: effectiveConversationId,
+      started_at: now,
+      last_heartbeat: now,
+    });
+
+    // Claim ownership: stamp this device as the conversation's owner. Also clear
+    // any stale "no local checkout" banner — a fresh local process disproves it
+    // (see the matching patch on the re-registration path above).
+    if (stampDeviceId && effectiveConversationId) {
+      await ctx.db.patch(effectiveConversationId, { owner_device_id: stampDeviceId, session_error: undefined });
+    }
+
+    return id;
+}
+
+export const registerManagedSession = mutation({
+  args: {
+    session_id: v.string(),
+    pid: v.number(),
+    tmux_session: v.optional(v.string()),
+    conversation_id: v.optional(v.id("conversations")),
+    api_token: v.optional(v.string()),
+    // Device claiming this session. When set, we stamp the conversation's
+    // owner_device_id (single-owner invariant). If the conversation is already
+    // owned by a DIFFERENT device that is still online, we refuse the claim
+    // and return { notOwner: true } so the calling daemon backs off.
+    device_id: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+    return performRegisterManagedSession(ctx, authUserId, {
+      session_id: args.session_id,
+      pid: args.pid,
+      tmux_session: args.tmux_session,
+      conversation_id: args.conversation_id,
+      device_id: args.device_id,
+    });
+  },
+});
+
+export const updateSessionConversation = mutation({
+  args: {
+    session_id: v.string(),
+    conversation_id: v.id("conversations"),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+
+    if (!session) {
+      throw new Error("Managed session not found");
+    }
+
+    if (session.user_id.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized");
+    }
+
+    await requireConversationExecution(ctx, authUserId, args.conversation_id);
+    if (session.conversation_id) await requireConversationExecution(ctx, authUserId, session.conversation_id);
+
+    // Remove old sessions linked to this conversation to prevent duplicates
+    const oldSessions = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", args.conversation_id))
+      .collect();
+
+    for (const oldSession of oldSessions) {
+      if (oldSession._id !== session._id) {
+        await ctx.db.delete(oldSession._id);
+      }
+    }
+
+    await ctx.db.patch(session._id, {
+      conversation_id: args.conversation_id,
+    });
+
+    const conversation = await ctx.db.get(args.conversation_id);
+    if (conversation && conversation.user_id.toString() === authUserId.toString() && conversation.session_id !== session.session_id) {
+      await ctx.db.patch(args.conversation_id, {
+        session_id: session.session_id,
+      });
+    }
+  },
+});
+
+export const updateManagedSessionId = mutation({
+  args: {
+    old_session_id: v.string(),
+    new_session_id: v.string(),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.old_session_id))
+      .first();
+
+    if (!session) {
+      return { found: false };
+    }
+
+    if (session.user_id.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized");
+    }
+
+    if (session.conversation_id) await requireConversationExecution(ctx, authUserId, session.conversation_id);
+
+    const target = await ctx.db.query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.new_session_id))
+      .first();
+    if (target && target._id !== session._id) throw new Error("Session ID already registered");
+    const conversationAtTarget = await ctx.db.query("conversations")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.new_session_id))
+      .first();
+    if (conversationAtTarget && conversationAtTarget._id !== session.conversation_id) throw new Error("Session ID already registered");
+
+    await ctx.db.patch(session._id, {
+      session_id: args.new_session_id,
+    });
+
+    if (session.conversation_id) {
+      const conversation = await ctx.db.get(session.conversation_id);
+      if (conversation && conversation.user_id.toString() === authUserId.toString() && conversation.session_id !== args.new_session_id) {
+        await ctx.db.patch(session.conversation_id, {
+          session_id: args.new_session_id,
+        });
+      }
+    }
+
+    return { found: true, updated: true };
+  },
+});
+
+// Derived from the single source of truth in @codecast/shared/contracts so the
+// CLI daemon, the browser store, and this validator can never drift. Accepts
+// exactly AGENT_STATUSES — same set as before, just no longer hand-maintained.
+const agentStatusValidator = v.union(
+  ...AGENT_STATUSES.map((s) => v.literal(s)),
+);
+
+// Shared by heartbeat + heartbeatBatch: compute one session's heartbeat patch.
+// last_heartbeat always advances. The heartbeat carries the daemon's current
+// agent_status so the server self-heals a dropped transition — but only
+// overwrites when the incoming client_ts isn't older than the last applied write
+// time, and only advances agent_status_updated_at on an ACTUAL status change
+// (the heartbeat re-sends the current status, so bumping it unconditionally
+// would track "last heard" instead of "entered this status", which idle
+// detection depends on).
+// Refresh last_heartbeat at most this often (HEARTBEAT_REFRESH_MS, owned by
+// @codecast/shared/contracts because the liveness window is derived from it).
+// Every managed_sessions write invalidates listInboxSessions (it .collect()s
+// the whole table), so an unconditional last_heartbeat=now on every 30s beat —
+// ×N sessions ×N heartbeat sources — was a needless invalidation/OCC firehose.
+// The throttle means the stamp advances on the first flush PAST it, not on the
+// flush cadence: 60s apart in steady state and 85s behind a late flush, which
+// is why HEARTBEAT_ALIVE_MS is derived from this number rather than guessed
+// alongside it. Status observations still persist their ordering stamp
+// immediately: even an active reassertion must defeat a delayed older park write.
+
+// Returns null when neither status ordering nor heartbeat freshness advances.
+function buildHeartbeatPatch(
+  session: { agent_status?: string; agent_status_updated_at?: number; agent_status_write_at?: number; last_heartbeat?: number },
+  agentStatus: string | undefined,
+  clientTs: number | undefined,
+  now: number,
+): Record<string, any> | null {
+  const patch: Record<string, any> = {};
+  let statusChanged = false;
+  if (agentStatus) {
+    const tsStale = statusWriteIsStale(session, agentStatus, clientTs);
+    if (!tsStale && (clientTs ?? now) > (session.agent_status_write_at ?? 0)) {
+      patch.agent_status_write_at = clientTs ?? now;
+    }
+    // Only write agent_status when it actually changes — re-writing the same
+    // value is a no-op mutation that still invalidates every reader.
+    if (!tsStale && agentStatus !== session.agent_status) {
+      patch.agent_status = agentStatus;
+      patch.agent_status_updated_at = clientTs || now;
+      // A new status is a new settle; the boundary claim described the old one
+      // (ct-49533). undefined deletes the field.
+      patch.agent_status_boundary = undefined;
+      statusChanged = true;
+    }
+  }
+  const heartbeatStale = !session.last_heartbeat || now - session.last_heartbeat > HEARTBEAT_REFRESH_MS;
+  if (statusChanged || heartbeatStale) {
+    patch.last_heartbeat = now;
+  }
+  return Object.keys(patch).length > 0 ? patch : null;
+}
+
+export const heartbeat = mutation({
+  args: {
+    session_id: v.string(),
+    api_token: v.optional(v.string()),
+    agent_status: v.optional(agentStatusValidator),
+    client_ts: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+
+    if (!session) {
+      return { found: false };
+    }
+
+    if (session.user_id.toString() !== authUserId.toString()) {
+      // Don't throw — daemon's heartbeat loop swallows the error anyway,
+      // but throwing pollutes Convex logs every 30s. Returning found:false
+      // tells the daemon to re-register, which will reclaim ownership via
+      // the updated registerManagedSession path above.
+      console.warn(
+        `[heartbeat] cross-user heartbeat ignored: auth=${authUserId} session=${args.session_id} owner=${session.user_id} conv=${session.conversation_id ?? "?"}`,
+      );
+      return { found: false };
+    }
+
+    if (session.conversation_id && !(await canExecuteConversation(ctx, authUserId, session.conversation_id))) return { found: false };
+
+    const now = Date.now();
+    const patch = buildHeartbeatPatch(session, args.agent_status, args.client_ts, now);
+    if (patch) await ctx.db.patch(session._id, patch);
+
+    // The heartbeat self-heals dropped status transitions (a lost Stop hook) —
+    // those healed transitions must feed the needs-input push like any other.
+    if (patch?.agent_status && patch.agent_status_updated_at && session.conversation_id) {
+      await scheduleNeedsInputCheck(ctx, session.conversation_id, patch.agent_status, patch.agent_status_updated_at);
+      await scheduleLiveActivityRefresh(ctx, session.user_id, { urgent: true });
+    }
+
+    let dismissed = false;
+    if (session.conversation_id) {
+      const conv = await ctx.db.get(session.conversation_id);
+      if (conv && conv.inbox_dismissed_at && !conv.is_subagent) {
+        dismissed = true;
+      }
+    }
+
+    return { found: true, dismissed };
+  },
+});
+
+// Batched liveness heartbeat for many sessions in ONE transaction.
+//
+// Per-session heartbeats are individually cheap, but each is a separate
+// transaction, and EVERY commit that touches a managed_sessions row invalidates
+// the queries that .collect() them (listInboxSessions, plans, tasks, …). With a
+// large fleet that's ~N invalidations every 30s → the app's most expensive
+// query recomputes dozens of times/sec for no visible change. Folding all of a
+// daemon's heartbeats into one transaction collapses those N invalidations into
+// 1: the inbox recomputes once per flush instead of once per session. The daemon
+// caps batch size so a write conflict only retries a bounded slice, not the
+// whole fleet. (No dismissed-read here — the daemon ignores the response.)
+export const heartbeatBatch = mutation({
+  args: {
+    api_token: v.optional(v.string()),
+    sessions: v.array(v.object({
+      session_id: v.string(),
+      agent_status: v.optional(agentStatusValidator),
+      client_ts: v.optional(v.number()),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const now = Date.now();
+    let updated = 0;
+    for (const entry of args.sessions) {
+      const session = await ctx.db
+        .query("managed_sessions")
+        .withIndex("by_session_id", (q: any) => q.eq("session_id", entry.session_id))
+        .first();
+      // Silently skip unknown / cross-user rows (a stale daemon can carry either);
+      // throwing would abort the whole batch and pollute logs every 30s.
+      if (!session || session.user_id.toString() !== authUserId.toString()) continue;
+      if (session.conversation_id && !(await canExecuteConversation(ctx, authUserId, session.conversation_id))) continue;
+      const patch = buildHeartbeatPatch(session, entry.agent_status, entry.client_ts, now);
+      if (!patch) continue;
+      await ctx.db.patch(session._id, patch);
+      // Same self-healed-transition hook as the single heartbeat above.
+      if (patch.agent_status && patch.agent_status_updated_at && session.conversation_id) {
+        await scheduleNeedsInputCheck(ctx, session.conversation_id, patch.agent_status, patch.agent_status_updated_at);
+        await scheduleLiveActivityRefresh(ctx, session.user_id, { urgent: true });
+      }
+      updated++;
+    }
+    return { updated };
+  },
+});
+
+export const unregisterManagedSession = mutation({
+  args: {
+    session_id: v.string(),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    noteWriteCause(ctx, "daemon:unregisterManagedSession");
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+
+    if (!session) {
+      return { found: false };
+    }
+
+    if (session.user_id.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized");
+    }
+
+    await ctx.db.delete(session._id);
+    return { found: true };
+  },
+});
+
+// Daemon-authed catalog of this user's managed sessions, for the liveness
+// reconciler. Returns just the fields needed to re-verify a process is alive
+// (session_id, tmux_session, agent_pid) without the per-conversation joins
+// listActiveSessions does. Keep this lean — it's polled on a timer.
+export const listManagedSessionsForDaemon = query({
+  args: {
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const rows = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_user_id", (q: any) => q.eq("user_id", authUserId))
+      .collect();
+
+    return rows.map((s) => ({
+      session_id: s.session_id,
+      conversation_id: s.conversation_id,
+      tmux_session: s.tmux_session,
+      agent_pid: s.agent_pid,
+      last_metrics_at: s.last_metrics_at,
+    }));
+  },
+});
+
+export const isSessionManaged = query({
+  args: {
+    conversation_id: v.id("conversations"),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", args.conversation_id))
+      .first();
+
+    const STALE_THRESHOLD = 60 * 1000;
+    const now = Date.now();
+
+    if (!session) {
+      return { managed: false };
+    }
+
+    const isStale = now - session.last_heartbeat > STALE_THRESHOLD;
+
+    // Check if any child sessions (subagents) are still active
+    let has_active_children = false;
+    if (isStale) {
+      const children = await ctx.db
+        .query("conversations")
+        .withIndex("by_parent_conversation_id", (q: any) => q.eq("parent_conversation_id", args.conversation_id))
+        .collect();
+      for (const child of children) {
+        const childSession = await ctx.db
+          .query("managed_sessions")
+          .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", child._id))
+          .first();
+        if (childSession && now - childSession.last_heartbeat < STALE_THRESHOLD) {
+          has_active_children = true;
+          break;
+        }
+      }
+    }
+
+    return {
+      managed: !isStale || has_active_children,
+      has_active_children,
+      session_id: session.session_id,
+      pid: session.pid,
+      last_heartbeat: session.last_heartbeat,
+      tmux_session: session.tmux_session,
+      agent_status: session.agent_status,
+      hibernated_at: session.hibernated_at,
+      agent_status_updated_at: session.agent_status_updated_at,
+      permission_mode: session.permission_mode,
+    };
+  },
+});
+
+export const getPendingMessagesForSession = query({
+  args: {
+    session_id: v.string(),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+
+    if (!session || !session.conversation_id) {
+      return [];
+    }
+
+    if (session.user_id.toString() !== authUserId.toString()) {
+      throw new Error("Unauthorized");
+    }
+
+    await requireConversationExecution(ctx, authUserId, session.conversation_id);
+
+    const messages = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", session.conversation_id))
+      .filter((q: any) => q.eq(q.field("status"), "pending"))
+      .collect();
+
+    return messages;
+  },
+});
+
+export const markMessageDelivered = mutation({
+  args: {
+    message_id: v.id("pending_messages"),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const message = await ctx.db.get(args.message_id);
+    if (!message) {
+      throw new Error("Message not found");
+    }
+
+    await requireConversationExecution(ctx, authUserId, message.conversation_id);
+
+    await ctx.db.patch(args.message_id, {
+      status: "delivered" as const,
+      delivered_at: Date.now(),
+    });
+
+    const remaining = await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_status", (q) =>
+        q.eq("conversation_id", message.conversation_id).eq("status", "pending")
+      )
+      .first();
+    if (!remaining) {
+      await ctx.db.patch(message.conversation_id, { has_pending_messages: false });
+    }
+
+    return { success: true };
+  },
+});
+
+/** Whether a reported agent status is proof that the injected messages
+ * reached the agent. A processing state observed by a hook or read off the
+ * pane is: the agent is working, so what was pasted got consumed. The
+ * daemon's own post-injection "thinking" is not — it is the injection
+ * assuming its own success. Taking it as proof made the ack circular: a paste
+ * whose Enter never registered was reported "thinking", the row went terminal
+ * "delivered", and the two-minute healer that re-pends stale "injected" rows
+ * had nothing left to revive — the message sat in the composer for good
+ * (2026-09-03). */
+// Which "injected" rows an observed working status may terminalize: only a
+// paste the daemon saw land. Exported for tests.
+export function ackableInjectedRow(row: { paste_verified_at?: number }): boolean {
+  return typeof row.paste_verified_at === "number";
+}
+
+export function activeStatusAcksInjected(agentStatus: string, presumed: boolean | undefined): boolean {
+  if (presumed === true) return false;
+  return (
+    agentStatus === "working" ||
+    agentStatus === "thinking" ||
+    agentStatus === "compacting" ||
+    agentStatus === "permission_blocked"
+  );
+}
+
+export const updateAgentStatus = mutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    agent_status: agentStatusValidator,
+    client_ts: v.optional(v.number()),
+    api_token: v.optional(v.string()),
+    permission_mode: v.optional(v.union(v.literal("default"), v.literal("plan"), v.literal("acceptEdits"), v.literal("bypassPermissions"), v.literal("dontAsk"), v.literal("auto"))),
+    // The verified open background work behind this status (see schema
+    // open_tasks). Sent with settle verdicts; an empty array means "checked,
+    // nothing open" and is as informative as a full one.
+    open_tasks: v.optional(v.array(openTaskValidator)),
+    // The status is the daemon's own presumption, not an observation: it just
+    // pasted a message and reports "thinking" so the session reads live at
+    // once. Such a status paints the row but proves nothing about delivery —
+    // see activeStatusAcksInjected.
+    presumed: v.optional(v.boolean()),
+    // When the daemon parked the pane. A number stamps the field, null clears
+    // it, and absent leaves it alone — so a resume can undo the park in the
+    // same write that reports the new status.
+    hibernated_at: v.optional(v.union(v.number(), v.null())),
+    // This settle is a session boundary, not a turn ending (see the schema
+    // field). Absent means "a real settle" — the flag is cleared on every
+    // write that omits it, so it can never outlive its own settle.
+    session_boundary: v.optional(v.boolean()),
+    // When the lead turn behind this status ended (see the schema field).
+    turn_completed_at: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", args.conversation_id))
+      .first();
+
+    if (!session) return { applied: false, reason: "missing_session" };
+    if (session.user_id.toString() !== authUserId.toString()) return { applied: false, reason: "not_owner" };
+    if (!(await canExecuteConversation(ctx, authUserId, args.conversation_id))) return { applied: false, reason: "not_owner" };
+    if (statusWriteIsStale(session, args.agent_status, args.client_ts)) return { applied: false, reason: "stale_status" };
+
+    return await applyAgentStatus(ctx, session, args);
+  },
+});
+
+type AgentStatusWrite = {
+  conversation_id: Id<"conversations">;
+  agent_status: typeof agentStatusValidator.type;
+  client_ts?: number;
+  permission_mode?: Doc<"managed_sessions">["permission_mode"];
+  open_tasks?: Doc<"managed_sessions">["open_tasks"];
+  presumed?: boolean;
+  hibernated_at?: number | null;
+  session_boundary?: boolean;
+  turn_completed_at?: number;
+};
+
+// The hosted assistant's status writer (plan pl-840): the same status write
+// as updateAgentStatus, with every reaction (needs-input check, live activity,
+// huddle settle, injected acks), for a conversation whose turns run in this
+// backend. The engine is the only writer (canExecuteConversation refuses every
+// client), so there is no token, no device and
+// no stale-write fence. An active status refreshes last_heartbeat, which is
+// what keeps a running turn reading live; the engine re-asserts "working"
+// while a long turn runs.
+export const setHostedAgentStatus = internalMutation({
+  args: {
+    conversation_id: v.id("conversations"),
+    agent_status: agentStatusValidator,
+    turn_completed_at: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => applyHostedAgentStatus(ctx, args),
+});
+
+/** setHostedAgentStatus as a plain function, for the turn engine's own
+ *  mutations (assistant/turns.ts), which set the work state in the same
+ *  transaction that ends or parks a turn. */
+export async function applyHostedAgentStatus(ctx: MutationCtx, args: Pick<AgentStatusWrite, "conversation_id" | "agent_status" | "turn_completed_at">) {
+  const conversation = await ctx.db.get(args.conversation_id);
+  if (!conversation) return { applied: false, reason: "missing_session" };
+  if (!isHostedAgentType(conversation.agent_type)) return { applied: false, reason: "not_hosted" };
+  const session = await ensureHostedManagedSession(ctx, conversation);
+  return await applyAgentStatus(ctx, session, args);
+}
+
+/** The managed_sessions row a hosted conversation's status lives on, created
+ *  when missing. No process stands behind it (pid 0, no pane), and it is
+ *  marked `hosted`: its heartbeat proves a running turn, not a daemon, so the
+ *  user-wide daemon liveness and the stale-row reaper both skip it. Refuses a
+ *  local conversation: the flag is permanent, and on a daemon's row it would
+ *  hide that daemon from liveness and keep its dead row from the reaper. */
+export async function ensureHostedManagedSession(ctx: MutationCtx, conversation: Doc<"conversations">): Promise<Doc<"managed_sessions">> {
+  if (!isHostedAgentType(conversation.agent_type)) {
+    throw new Error("Only a hosted assistant conversation has a hosted status row");
+  }
+  const existing = await ctx.db
+    .query("managed_sessions")
+    .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", conversation._id))
+    .first();
+  if (existing) {
+    if (existing.hosted) return existing;
+    await ctx.db.patch(existing._id, { hosted: true });
+    return { ...existing, hosted: true };
+  }
+  const now = Date.now();
+  const id = await ctx.db.insert("managed_sessions", {
+    session_id: conversation.session_id,
+    conversation_id: conversation._id,
+    user_id: conversation.user_id,
+    pid: 0,
+    started_at: now,
+    last_heartbeat: 0,
+    agent_status: "idle",
+    agent_status_updated_at: now,
+    hosted: true,
+  });
+  return (await ctx.db.get(id))!;
+}
+
+// Everything updateAgentStatus does once the writer is known to own the
+// session and the write is fresh.
+async function applyAgentStatus(ctx: MutationCtx, session: Doc<"managed_sessions">, args: AgentStatusWrite) {
+  const patch: Record<string, any> = {
+    agent_status: args.agent_status,
+    agent_status_write_at: args.client_ts ?? Date.now(),
+    // undefined deletes the field: the flag describes THIS settle, so any
+    // write that does not claim a boundary clears the previous claim.
+    agent_status_boundary: args.session_boundary === true ? true : undefined,
+  };
+  // The turn stamp is not cleared the same way: the daemon re-publishes a
+  // parked settle without re-deriving it, and the next turn overwrites it.
+  if (args.turn_completed_at !== undefined) {
+    patch.turn_completed_at = args.turn_completed_at;
+  }
+
+  if (args.permission_mode !== undefined) {
+    patch.permission_mode = args.permission_mode;
+  }
+  if (args.hibernated_at !== undefined) {
+    // undefined in a patch deletes the field, which is how a resume clears
+    // the park stamp.
+    patch.hibernated_at = args.hibernated_at === null ? undefined : args.hibernated_at;
+  }
+  if (args.open_tasks !== undefined) {
+    // Re-stamp the time even when the list is unchanged: freshness is the
+    // signal (a stale report stops vouching for "waiting"). The overlay is
+    // keyed on the doc changing anyway, and settles are not hot.
+    patch.open_tasks = args.open_tasks;
+    patch.open_tasks_at = Date.now();
+  }
+
+  // Advance the change-time only on an actual change so the field stays a
+  // "when did the agent enter this status" signal (idle detection relies on
+  // it). Redundant same-status updates — e.g. PreToolUse re-firing "working"
+  // each tool call — must not reset it.
+  if (args.agent_status !== session.agent_status) {
+    patch.agent_status_updated_at = args.client_ts ?? Date.now();
+  }
+
+  // Active status updates prove the daemon is alive — refresh heartbeat too.
+  // This prevents stale-heartbeat inference from overriding a valid status update
+  // (e.g. after daemon restart before the heartbeat interval kicks in).
+  if (ACTIVE_AGENT_STATUSES.has(args.agent_status)) {
+    patch.last_heartbeat = Date.now();
+  }
+
+  if (Object.keys(patch).length > 0) {
+    await ctx.db.patch(session._id, patch);
+  }
+
+  // A turn just ended. A session in a huddle (fed its live transcript)
+  // answers in the room: its reply is mirrored into the huddle chat, and
+  // the words the room said while it worked are delivered as one catch up.
+  // Two signals say "ended", because not every client stamps the turn: the
+  // stamp advancing, or an active status settling. The mirror dedupes by
+  // message and the delivery by watermark, so a settle that fires both
+  // posts once.
+  const turnStampAdvanced =
+    args.turn_completed_at !== undefined && args.turn_completed_at > (session.turn_completed_at ?? 0);
+  const activeSettled =
+    ACTIVE_AGENT_STATUSES.has(session.agent_status ?? "") && !ACTIVE_AGENT_STATUSES.has(args.agent_status);
+  if (turnStampAdvanced || activeSettled) {
+    await scheduleFedSessionSettle(ctx, args.conversation_id);
+    // What people queued for the end of this turn goes in now.
+    await releaseQueuedRows(ctx, args.conversation_id);
+  }
+  // The activity line names what the agent does NOW; a settled turn does
+  // nothing, so the stamp comes off the row here rather than lingering until
+  // the next tool call. Only a settle pays the conversation read: the per
+  // tool call "working" re-assertion never reaches this branch.
+  if (activeSettled) {
+    const conv = await ctx.db.get(args.conversation_id);
+    if (conv?.activity) await ctx.db.patch(conv._id, { activity: undefined });
+  }
+
+  // agent_status_updated_at is only set on an ACTUAL status change — the
+  // needs-input push keys off transitions, never re-assertions.
+  if (patch.agent_status_updated_at) {
+    await scheduleNeedsInputCheck(ctx, args.conversation_id, args.agent_status, patch.agent_status_updated_at, args.session_boundary);
+    // The Lock Screen strip follows every status transition, boundary or not:
+    // a resume that lands the agent idle is a change the strip must show.
+    await scheduleLiveActivityRefresh(ctx, session.user_id, { urgent: true });
+  }
+
+  // An observed processing state proves the message reached the session — ack injected messages.
+  // Only rows whose paste the daemon has VERIFIED (paste_verified_at): the
+  // pre-paste "injected" mark is set before the guard even runs, and a working
+  // report from an unrelated turn acked one such row while its paste was being
+  // refused (the message never landed, 2026-09-08).
+  if (activeStatusAcksInjected(args.agent_status, args.presumed)) {
+    const injected = (await ctx.db
+      .query("pending_messages")
+      .withIndex("by_conversation_status", (q: any) =>
+        q.eq("conversation_id", args.conversation_id).eq("status", "injected")
+      )
+      .collect()).filter((msg: any) => ackableInjectedRow(msg));
+    const now = Date.now();
+    for (const msg of injected) {
+      await ctx.db.patch(msg._id, { status: "delivered" as const, delivered_at: now });
+    }
+    if (injected.length > 0) {
+      const remainingPending = await ctx.db
+        .query("pending_messages")
+        .withIndex("by_conversation_status", (q: any) =>
+          q.eq("conversation_id", args.conversation_id).eq("status", "pending")
+        )
+        .first();
+      if (!remainingPending) {
+        await ctx.db.patch(args.conversation_id, { has_pending_messages: false });
+      }
+    }
+  }
+  return { applied: true };
+}
+
+function statusWriteIsStale(
+  session: { agent_status?: string; agent_status_updated_at?: number; agent_status_write_at?: number },
+  status: string,
+  clientTs?: number,
+): boolean {
+  const previous = session.agent_status_write_at ?? session.agent_status_updated_at;
+  return clientTs !== undefined && previous !== undefined &&
+    (clientTs < previous || (clientTs === previous && status !== session.agent_status));
+}
+
+export const reportMetrics = mutation({
+  args: {
+    session_id: v.string(),
+    cpu: v.number(),
+    memory: v.number(),
+    pid_count: v.number(),
+    agent_pid: v.optional(v.number()),
+    agent_started_at: v.optional(v.number()),
+    awake_idle_ms: v.optional(v.number()),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const session = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_session_id", (q: any) => q.eq("session_id", args.session_id))
+      .first();
+
+    if (!session) return;
+    if (session.user_id.toString() !== authUserId.toString()) return;
+
+    const now = Date.now();
+    // The managed_sessions doc is in the read set of listInboxSessions' whole-table
+    // collect, so patching it every 30s × N sessions invalidates that subscription
+    // continuously (→ re-collect + isolate memory thrash). The live metric values
+    // live in session_metrics (inserted below) for the graphs; the copies on the
+    // registry doc only feed the metrics views and tolerate staleness. So throttle
+    // the hot-doc patch to ~5min/session (or when agent_pid changes), instead of
+    // hammering it on every report.
+    const SNAPSHOT_THROTTLE_MS = 5 * 60 * 1000;
+    const snapshotStale = !session.last_metrics_at || now - session.last_metrics_at > SNAPSHOT_THROTTLE_MS;
+    const agentPidChanged = args.agent_pid !== undefined && args.agent_pid !== session.agent_pid;
+    // The agent restarted. Unlike the metric copies this one cannot wait for
+    // the throttle: until it lands, the inbox renders the dead process's
+    // background watches as running. The tolerance absorbs the one-second
+    // resolution of the daemon's ps sampling — without it every tick would
+    // look like a restart and defeat the throttle entirely. A real restart
+    // moves the start by minutes.
+    const AGENT_START_JITTER_MS = 5_000;
+    const agentRestarted =
+      args.agent_started_at !== undefined &&
+      (session.agent_started_at === undefined ||
+        Math.abs(args.agent_started_at - session.agent_started_at) > AGENT_START_JITTER_MS);
+    if (snapshotStale || agentPidChanged || agentRestarted) {
+      await ctx.db.patch(session._id, {
+        current_cpu: args.cpu,
+        current_memory: args.memory,
+        current_pid_count: args.pid_count,
+        last_metrics_at: now,
+        ...(args.agent_pid !== undefined ? { agent_pid: args.agent_pid } : {}),
+        // Only on a real move: rewriting a within-tolerance sample would drift
+        // the stored start and re-push the liveness overlay for no reason.
+        ...(agentRestarted ? { agent_started_at: args.agent_started_at } : {}),
+        ...(args.awake_idle_ms !== undefined ? { awake_idle_ms: args.awake_idle_ms } : {}),
+      });
+
+      // Prune the time series on the throttled snapshot cadence (~5min/session),
+      // not on every insert. The per-insert range-scan was N scans/30s of pure
+      // overhead competing with message-sync mutations for the worker pool; a few
+      // extra minutes of rows past the 2h cutoff before pruning is harmless.
+      const cutoff = now - 2 * 60 * 60 * 1000;
+      const old = await ctx.db
+        .query("session_metrics")
+        .withIndex("by_session_collected", (q: any) =>
+          q.eq("session_id", args.session_id).lt("collected_at", cutoff)
+        )
+        .collect();
+      for (const row of old) {
+        await ctx.db.delete(row._id);
+      }
+    }
+
+    await ctx.db.insert("session_metrics", {
+      session_id: args.session_id,
+      user_id: authUserId,
+      cpu: args.cpu,
+      memory: args.memory,
+      pid_count: args.pid_count,
+      collected_at: now,
+    });
+  },
+});
+
+// The row set behind the /sessions page. Split from the query wrapper (like
+// performRegisterManagedSession) so the projection is testable without auth.
+export async function performListActiveSessions(ctx: { db: QueryCtx["db"] }, userId: Id<"users">) {
+  const recent = await listLiveManagedSessions(ctx, userId, { aliveMs: 24 * 60 * 60 * 1000 });
+  const parked = await ctx.db.query("managed_sessions")
+    .withIndex("by_user_status", q => q.eq("user_id", userId).eq("agent_status", "hibernated"))
+    .collect();
+  // The process monitor: a hosted row has no process to show or kill.
+  const sessions = [...new Map([...recent, ...parked].map(s => [s._id, s])).values()].filter(isDaemonManagedRow);
+
+  const results = [];
+  for (const session of sessions) {
+    let conversationTitle: string | undefined;
+    let projectPath: string | undefined;
+    let agentType: string | undefined;
+    let messageCount: number | undefined;
+    let conversationStatus: string | undefined;
+    let model: string | undefined;
+    let gitBranch: string | undefined;
+    let worktreeName: string | undefined;
+    let headline: string | undefined;
+    let isSubagent: boolean | undefined;
+    let conversationUpdatedAt: number | undefined;
+    let lastMessagePreview: string | undefined;
+    let lastMessageRole: string | undefined;
+    let isKilled = false;
+    let ownerDeviceId: string | undefined;
+
+    if (session.conversation_id) {
+      const conv = await ctx.db.get(session.conversation_id);
+      if (conv) {
+        // Killed rows are LISTED, not skipped. This is the process/tmux view,
+        // not the inbox: hiding a retired row here means killing from
+        // /sessions makes it vanish instantly, so a teardown that didn't take
+        // leaves the session invisible on the one surface built to catch that
+        // — while its tmux and process may still be alive and heartbeating.
+        // The 24h last_heartbeat cutoff above is the bound: a session whose
+        // teardown succeeded stops beating and ages out on its own.
+        isKilled = !!conv.inbox_killed_at;
+        ownerDeviceId = conv.user_id === userId ? conv.owner_device_id : undefined;
+        conversationTitle = conv.title;
+        projectPath = conv.project_path;
+        agentType = conv.agent_type;
+        messageCount = conv.message_count;
+        conversationStatus = conv.status;
+        model = conv.model;
+        gitBranch = conv.git_branch;
+        worktreeName = conv.worktree_name;
+        isSubagent = conv.is_subagent;
+        // updated_at moves on real conversation activity (messages, status) but
+        // NOT on idle heartbeats or metrics writes — the honest "last active"
+        // signal. The preview/role give every row something identifiable even
+        // when no insight headline exists (common for short/dead sessions).
+        conversationUpdatedAt = conv.updated_at;
+        lastMessagePreview = conv.last_message_preview;
+        lastMessageRole = conv.last_message_role;
+
+        const insight = await ctx.db
+          .query("session_insights")
+          .withIndex("by_conversation_id", (q: any) => q.eq("conversation_id", session.conversation_id))
+          .order("desc")
+          .first();
+        if (insight) {
+          headline = insight.headline || insight.summary?.slice(0, 120);
+        }
+      }
+    }
+
+    // The current_* copies on the registry doc are throttled to a ~5min write
+    // (SNAPSHOT_THROTTLE_MS in reportMetrics) to keep listInboxSessions' read
+    // set stable. That staleness is fine for the inbox but wrong for this
+    // monitoring view, which sorts and sums these numbers. Read the freshest
+    // time-series sample instead (≤30s old for active sessions, ≤3min for
+    // idle) and prefer it. This page is the ONLY consumer of
+    // listActiveSessions, so the extra per-session read never touches the hot
+    // inbox subscription the throttle exists to protect.
+    const latestMetric = await ctx.db
+      .query("session_metrics")
+      .withIndex("by_session_collected", (q: any) => q.eq("session_id", session.session_id))
+      .order("desc")
+      .first();
+
+    results.push({
+      _id: session._id,
+      session_id: session.session_id,
+      conversation_id: session.conversation_id,
+      pid: session.pid,
+      tmux_session: session.tmux_session,
+      started_at: session.started_at,
+      last_heartbeat: session.last_heartbeat,
+      agent_status: session.agent_status,
+      agent_status_updated_at: session.agent_status_updated_at,
+      hibernated_at: session.hibernated_at,
+      user_id: session.user_id,
+      owner_device_id: ownerDeviceId,
+      permission_mode: session.permission_mode,
+      // Prefer the freshest sample; fall back to the throttled snapshot only
+      // when no time-series row survives the 2h retention (e.g. long-idle).
+      current_cpu: latestMetric?.cpu ?? session.current_cpu,
+      current_memory: latestMetric?.memory ?? session.current_memory,
+      current_pid_count: latestMetric?.pid_count ?? session.current_pid_count,
+      agent_pid: session.agent_pid,
+      awake_idle_ms: session.awake_idle_ms,
+      // Honest "as of" for the displayed metrics: the sample time, not the
+      // throttled snapshot time.
+      last_metrics_at: latestMetric?.collected_at ?? session.last_metrics_at,
+      conversation_title: conversationTitle,
+      project_path: projectPath,
+      agent_type: agentType,
+      message_count: messageCount,
+      conversation_status: conversationStatus,
+      model,
+      git_branch: gitBranch,
+      worktree_name: worktreeName,
+      headline,
+      is_subagent: isSubagent,
+      conversation_updated_at: conversationUpdatedAt,
+      last_message_preview: lastMessagePreview,
+      last_message_role: lastMessageRole,
+      // Authoritative killed state for the page, straight off the row. The
+      // page's triage join (listInboxSessions) CANNOT supply it: that query
+      // applies shouldShowInInbox unconditionally, which drops a killed-and-
+      // unpinned row — exactly the rows revealed here. Same reason it beats the
+      // join for the subagent/orphan rows that filter also drops. The
+      // conversation doc is already fetched above, so this costs no extra read.
+      is_killed: isKilled,
+    });
+  }
+
+  return results;
+}
+
+export const listActiveSessions = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx as any);
+    if (!userId) throw new Error("Not authenticated");
+    return performListActiveSessions(ctx, userId);
+  },
+});
+
+export const getSessionMetrics = query({
+  args: {
+    session_id: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const userId = await getAuthUserId(ctx as any);
+    if (!userId) throw new Error("Not authenticated");
+
+    const rows = await ctx.db
+      .query("session_metrics")
+      .withIndex("by_session_collected", (q: any) =>
+        q.eq("session_id", args.session_id)
+      )
+      .collect();
+    // session_id is caller-supplied and enumerable; metrics rows carry the
+    // owner. Return only the caller's own rows so one user's session_id cannot
+    // read another's cpu/memory/pid metadata.
+    return rows.filter((r: any) => String(r.user_id) === String(userId));
+  },
+});
+
+export const getAggregateMetrics = query({
+  args: {},
+  handler: async (ctx) => {
+    const userId = await getAuthUserId(ctx as any);
+    if (!userId) throw new Error("Not authenticated");
+
+    const cutoff = Date.now() - 2 * 60 * 60 * 1000;
+    const rows = await ctx.db
+      .query("session_metrics")
+      .withIndex("by_user_collected", (q: any) =>
+        q.eq("user_id", userId).gte("collected_at", cutoff)
+      )
+      .collect();
+
+    // Bucket by 30-second windows and aggregate across sessions
+    const buckets = new Map<number, { cpu: number; memory: number; pid_count: number; count: number }>();
+    for (const row of rows) {
+      const bucket = Math.round(row.collected_at / 30000) * 30000;
+      const existing = buckets.get(bucket);
+      if (existing) {
+        existing.cpu += row.cpu;
+        existing.memory += row.memory;
+        existing.pid_count += row.pid_count;
+        existing.count++;
+      } else {
+        buckets.set(bucket, { cpu: row.cpu, memory: row.memory, pid_count: row.pid_count, count: 1 });
+      }
+    }
+
+    return Array.from(buckets.entries())
+      .map(([t, v]) => ({ collected_at: t, cpu: v.cpu, memory: v.memory, pid_count: v.pid_count }))
+      .sort((a, b) => a.collected_at - b.collected_at);
+  },
+});
+
+export const getConversationBySessionId = query({
+  args: {
+    claude_session_id: v.string(),
+    api_token: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const authUserId = await getAuthenticatedUserId(ctx, args.api_token);
+    if (!authUserId) {
+      throw new Error("Authentication required");
+    }
+
+    const conversation = await findConversationBySessionReference(
+      ctx as any,
+      args.claude_session_id,
+      authUserId
+    );
+
+    if (!conversation) {
+      return null;
+    }
+
+    return {
+      conversation_id: conversation._id,
+      session_id: conversation.session_id,
+    };
+  },
+});
+
+// Reap dead managed_sessions — rows whose daemon stopped heartbeating (a crash, a
+// kill, or a forked tmux that was never cleanly unregistered). This is pure
+// housekeeping, NOT correctness: clean shutdowns delete their own row, and every
+// reader already ignores stale rows by filtering on heartbeat age
+// (HEARTBEAT_ALIVE_MS), so a dead row never shows up as "live". The reaper just
+// stops the registry growing without bound — Convex won't drop the row on its own
+// (a dead session's final row is its newest version, not a superseded one).
+//
+// The one non-obvious bit: `last_heartbeat` is indexed and rewritten every ~45s per
+// live session, and Convex keeps ~10 days of old index versions, so the OLD end of
+// `by_heartbeat` is a multi-million-row tombstone graveyard. An unbounded
+// `lt(cutoff)` scan timed out fetching even one row. The fix is the LOWER bound:
+// gte(cutoff - WINDOW) lets the index seek straight to the recent sliver and skip
+// the graveyard. That range is also disjoint from live heartbeats (which land at
+// > cutoff), so the deletes never collide with heartbeat writes. Everything in range
+// is dead by definition. WINDOW only needs to exceed the gap between cron runs so a
+// death is always caught before it ages out — 6h gives the 10-min cron wide margin.
+const REAP_WINDOW_MS = 6 * 60 * 60 * 1000;
+export const reapStaleManagedSessions = internalMutation({
+  args: { cutoffMs: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    noteWriteCause(ctx, "cron:reapStaleManagedSessions");
+    const cutoff = Date.now() - (args.cutoffMs ?? 60 * 60 * 1000); // dead = no beat in 1h
+    const readStart = Date.now();
+    const dead = await ctx.db
+      .query("managed_sessions")
+      .withIndex("by_heartbeat", (q: any) =>
+        q.gte("last_heartbeat", cutoff - REAP_WINDOW_MS).lt("last_heartbeat", cutoff)
+      )
+      .collect();
+    const readMs = Date.now() - readStart;
+
+    // A parked pane and a hosted conversation's status row are not dead rows:
+    // the first is waiting to resume, and the second writes no heartbeat while
+    // it waits on an approval (see the hosted field in the schema).
+    const reapable = dead.filter(s => s.agent_status !== "hibernated" && isDaemonManagedRow(s));
+    for (const s of reapable) await ctx.db.delete(s._id);
+
+    if (reapable.length > 0) {
+      console.log(
+        `reapStaleManagedSessions: deleted ${reapable.length} dead session(s) (scan ${readMs}ms)`
+      );
+    }
+    return { deleted: reapable.length };
+  },
+});

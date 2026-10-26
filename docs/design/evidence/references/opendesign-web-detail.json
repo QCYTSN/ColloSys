@@ -1,0 +1,94 @@
+[
+  {
+    "sel": ".nav",
+    "matches": [
+      {
+        "text": "产品\n▾\nCoRouter\n竞技场\n价格\n资源\n▾\n社区\n▾\n104K+\n下载\n登录",
+        "w": 1440,
+        "h": 54,
+        "x": 0,
+        "y": 0,
+        "font": "16px / 24.8px \"Albert Sans\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+        "fontSize": "16px",
+        "spacing": "normal",
+        "padding": "6px 0px",
+        "gap": "normal",
+        "transition": "background 0.26s, border-color 0.26s, box-shadow 0.26s",
+        "display": "block"
+      }
+    ]
+  },
+  {
+    "sel": ".hero",
+    "matches": [
+      {
+        "text": "首个可协作的设计Agent空间\n\n一套设计系统，让品牌贯穿每一次创作。用你熟悉的 Agen",
+        "w": 1440,
+        "h": 977.5,
+        "x": 0,
+        "y": 0,
+        "font": "16px / 24.8px \"Albert Sans\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+        "fontSize": "16px",
+        "spacing": "normal",
+        "padding": "62px 8px 8px",
+        "gap": "normal",
+        "transition": "all",
+        "display": "flex"
+      }
+    ]
+  },
+  {
+    "sel": "h1",
+    "matches": [
+      {
+        "text": "首个可协作的设计Agent空间",
+        "w": 1424,
+        "h": 79.3125,
+        "x": 8,
+        "y": 98,
+        "font": "700 72px / 72px \"Albert Sans\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+        "fontSize": "72px",
+        "spacing": "normal",
+        "padding": "28px 0px 0px",
+        "gap": "14px",
+        "transition": "none",
+        "display": "flex"
+      }
+    ]
+  },
+  {
+    "sel": ".hero p",
+    "matches": [
+      {
+        "text": "一套设计系统，让品牌贯穿每一次创作。用你熟悉的 Agent，与团队一起创作超预期的作品",
+        "w": 1424,
+        "h": 20,
+        "x": 8,
+        "y": 193.3125,
+        "font": "16px / 20px \"Albert Sans\", \"PingFang SC\", \"Microsoft YaHei\", sans-serif",
+        "fontSize": "16px",
+        "spacing": "normal",
+        "padding": "0px 24px",
+        "gap": "normal",
+        "transition": "opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1), translate 0.9s cubic-bezier(0.22, 1, 0.36, 1), scale 0.9s cubic-bezier(0.22, 1, 0.36, 1)",
+        "display": "block"
+      }
+    ]
+  },
+  {
+    "sel": ".hero-cta",
+    "matches": []
+  },
+  {
+    "sel": ".hero-preview",
+    "matches": []
+  },
+  {
+    "sel": ".nav-dd",
+    "matches": []
+  },
+  {
+    "sel": ".nav-link",
+    "matches": []
+  }
+]

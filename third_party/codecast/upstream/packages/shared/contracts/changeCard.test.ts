@@ -1,0 +1,439 @@
+import { describe, expect, it, test } from "bun:test";
+import * as fs from "fs";
+import * as path from "path";
+import { fileURLToPath } from "url";
+import {
+  CARD_DECISION_OPTIONS,
+  cardVerdictIndexes,
+  assembleChangeCard,
+  BASE_CHECK,
+  baseCheck,
+  countSentences,
+  proofCountsIn,
+  proofSummary,
+  cardChecks,
+  cardFailing,
+  checksLabel,
+  reportsFailure,
+  PROOF_CHECK,
+  riskLabel,
+  SUITE_GATE_CHECK,
+  UNSCORED_DETAIL,
+  validateChangeCard,
+  type CardAssemblyInput,
+  type ChangeCard,
+  runVerify,
+} from "./changeCard";
+import { renderChangeCardHtml } from "../render/changeCardHtml";
+
+// Goldens: the sample cause (a prompt miss on the title surface) assembled
+// from its recorded inputs, and that card rendered. Regenerate deliberately
+// with UPDATE_GOLDEN=1 and read the diff in the same commit.
+
+const DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "__fixtures__", "changeCard");
+const read = (f: string) => JSON.parse(fs.readFileSync(path.join(DIR, f), "utf-8"));
+
+function sampleAssemblyInput(): CardAssemblyInput {
+  return {
+    task: read("task.json"),
+    evidence: read("evidence.json"),
+    evalResult: read("eval-result.json"),
+    proof: read("proof.json"),
+    ...read("inputs.json"),
+  };
+}
+
+function golden(file: string, actual: string) {
+  const p = path.join(DIR, file);
+  if (process.env.UPDATE_GOLDEN || !fs.existsSync(p)) fs.writeFileSync(p, actual);
+  expect(actual).toBe(fs.readFileSync(p, "utf-8"));
+}
+
+const sample = () => assembleChangeCard(sampleAssemblyInput());
+/** The sample with two suite gate scenarios failing, recommended for revision as a failing check requires. */
+function gateSample(): ChangeCard {
+  const input = sampleAssemblyInput();
+  input.evalResult = { ...input.evalResult!, ok: false, gatesFailed: ["handoff-keeps-owner", "dup-merge-keeps-newest"] };
+  input.recommend = { verdict: "revise", why: "Two suite scenarios fail on the branch, so the change needs another pass." };
+  return assembleChangeCard(input);
+}
+const clone = (c: ChangeCard): any => JSON.parse(JSON.stringify(c));
+const errorsOf = (c: unknown) => {
+  const v = validateChangeCard(c);
+  return v.ok ? [] : v.errors;
+};
+
+describe("change card golden", () => {
+  it("assembles the sample card from task, evidence, proof and eval result", () => {
+    golden("card.json", JSON.stringify(sample(), null, 2) + "\n");
+  });
+
+  it("renders the sample card", () => {
+    golden("card.html", renderChangeCardHtml(sample()));
+  });
+
+  it("renders a card whose suite gates failed, the failing scenarios in its checks", () => {
+    golden("card-gates.html", renderChangeCardHtml(gateSample()));
+  });
+
+  it("the sample card is valid", () => {
+    expect(validateChangeCard(sample())).toEqual({ ok: true, card: sample() });
+  });
+});
+
+describe("assembleChangeCard", () => {
+  it("a prompt or line change no eval judged says it is unscored; a code change says nothing about evals", () => {
+    const evalOf = (category: string) => assembleChangeCard({ task: { short_id: "ct-1", title: "T", category } }).checks.find((c) => c.name === "Eval");
+    expect(evalOf("line")?.detail).toBe(UNSCORED_DETAIL);
+    expect(evalOf("prompt")?.detail).toBe(UNSCORED_DETAIL);
+    expect(evalOf("code")).toBeUndefined();
+  });
+
+  it("takes the author's real cases when no eval flipped any, at most three; eval flips win", () => {
+    const ex = (n: number) => ({ input: `case ${n}`, before: "still waiting note", after: "no message; reminder moved", note: "" });
+    const authored = assembleChangeCard({ task: { short_id: "ct-1", title: "T", category: "prompt" }, examples: [ex(1), ex(2), ex(3), ex(4)] });
+    expect(authored.examples.map((e) => e.input)).toEqual(["case 1", "case 2", "case 3"]);
+    expect(sample().examples.length).toBeGreaterThan(0);
+    expect(assembleChangeCard({ ...sampleAssemblyInput(), examples: [ex(9)] }).examples.map((e) => e.input)).not.toContain("case 9");
+  });
+
+  it("merges the recorded proof ahead of the eval proof and adds eval cost to the run's", () => {
+    const card = sample();
+    expect(card.proof.before.map((x) => x.name)).toEqual([
+      "titlePrompt.test.ts · greeting is never the title",
+      "Real case 1",
+      "Real case 2",
+      "Real case 3",
+    ]);
+    expect(card.cost.usd).toBe(1.96);
+    expect(card.checks.map((c) => [c.name, c.ok])).toEqual([["Verify", true], ["Eval", true], ["Review", true]]);
+    expect(card.diff.pr).toBe("https://github.com/codecast-sh/codecast/pull/912");
+  });
+
+  it("a failed suite gate is its own red check naming the scenarios, and the Eval check answers for the replays alone", () => {
+    const card = gateSample();
+    expect(card.checks.map((c) => [c.name, c.ok])).toEqual([["Verify", true], ["Eval", true], [SUITE_GATE_CHECK, false], ["Review", true]]);
+    expect(card.checks[2]!.detail).toBe("2 scenarios failed: handoff-keeps-owner, dup-merge-keeps-newest");
+    expect(errorsOf(card)).toEqual([]);
+    const ship = clone(card);
+    ship.recommend.verdict = "ship";
+    expect(errorsOf(ship)).toEqual([`recommend.verdict: ship over failing checks (${SUITE_GATE_CHECK}); recommend revise or drop`]);
+  });
+
+  it("no suite gate check when no gate failed", () => {
+    expect(sample().checks.some((c) => c.name === SUITE_GATE_CHECK)).toBe(false);
+  });
+
+  it("lists broken flips after fixed ones and caps examples at three", () => {
+    const input = sampleAssemblyInput();
+    const s = input.evalResult!.surfaces[0]!;
+    s.flips.unshift({ ...s.flips[0]!, freeze: "fz-x", name: "short opener", direction: "broke", note: "Too generic." });
+    const card = assembleChangeCard(input);
+    expect(card.examples).toHaveLength(3);
+    expect(card.examples.every((e) => !e.note.startsWith("Regressed"))).toBe(true);
+    s.flips = [s.flips[0]!];
+    expect(assembleChangeCard(input).examples[0]!.note).toBe("Regressed. Too generic.");
+  });
+
+  it("a proven freeze that already passed on the base shows green before, and the card refuses it", () => {
+    const input = sampleAssemblyInput();
+    input.proof = null;
+    input.evalResult!.surfaces[0]!.proven = input.evalResult!.surfaces[0]!.proven.map((p) => ({ ...p, basePasses: true }));
+    const card = assembleChangeCard(input);
+    expect(card.proof.before.every((x) => x.ok && x.detail === "already passes before the change")).toBe(true);
+    expect(errorsOf(card)).toContain("proof.before: no failing check; proof starts red (LE8)");
+  });
+
+  it("an ungrounded task gets goal none, review risk, and an empty recommendation the validator names", () => {
+    const card = assembleChangeCard({ task: { short_id: "ct-9", title: "Something broke" } });
+    expect(card.goal).toEqual({ ref: "none", name: "", why: "" });
+    expect(card.risk.class).toBe("review");
+    expect(card.diff).toEqual({ files: 0, added: 0, removed: 0 });
+    expect(errorsOf(card)).toEqual([
+      "recommend.verdict: expected one of ship | revise | drop, got \"\"",
+      "recommend.why: is empty",
+    ]);
+  });
+});
+
+describe("validateChangeCard", () => {
+  it("rejects a non-object", () => {
+    expect(errorsOf(null)).toEqual(["card: expected an object, got null"]);
+  });
+
+  it("names every structural problem by path", () => {
+    const c = clone(sample());
+    c.cause.task = "56301";
+    c.cause.first_seen = "yesterday";
+    c.proof.after[1].ok = "yes";
+    c.examples[0].after = 4;
+    c.diff.added = -3;
+    c.diff.pr = "github pr";
+    c.risk.class = "medium";
+    c.cost = undefined;
+    expect(errorsOf(c)).toEqual([
+      "cause.task: expected a task short id (ct-N), got \"56301\"",
+      "cause.first_seen: expected epoch milliseconds or null, got \"yesterday\"",
+      "proof.after[1].ok: expected a boolean, got \"yes\"",
+      "proof.after: no check named \"Real case 1\"; every red check needs its after",
+      "examples[0].after: expected a string, got 4",
+      "diff.added: expected a non-negative number, got -3",
+      "diff.pr: expected a url, got \"github pr\"",
+      "risk.class: expected one of low | review | plan, got \"medium\"",
+      "cost: expected an object, got nothing",
+    ]);
+  });
+
+  it("holds the line's rules: proof starts red, three examples, two sentences, no ship over a failing check", () => {
+    const c = clone(sample());
+    c.proof.before = c.proof.before.map((x: any) => ({ ...x, ok: true }));
+    c.examples.push(c.examples[0]);
+    c.wrong = "One. Two. Three.";
+    c.checks[1].ok = false;
+    expect(errorsOf(c)).toEqual([
+      "wrong: 3 sentences; the card takes one or two",
+      "proof.before: no failing check; proof starts red (LE8)",
+      "examples: 4 examples; at most 3",
+      "recommend.verdict: ship over failing checks (Eval); recommend revise or drop",
+    ]);
+  });
+
+  it("takes a card with no words of its own, whose session's decision presents it", () => {
+    const c = clone(sample());
+    delete c.headline;
+    delete c.context;
+    delete c.wrong;
+    delete c.change;
+    c.recommend.why = "It answers what both people asked for, and nobody else hears anything new. The one case it misses is a different complaint.";
+    expect(errorsOf(c)).toEqual([]);
+    c.recommend.why = "";
+    expect(errorsOf(c)).toEqual(["recommend.why: is empty"]);
+  });
+
+  it("refuses ship while a proof check is still red or the change broke one", () => {
+    const c = clone(sample());
+    c.proof.after[0].ok = false;
+    c.proof.after.push({ name: "new guard", ok: false, detail: "" });
+    expect(errorsOf(c)).toEqual([
+      `recommend.verdict: ship over a red proof (${c.proof.before[0].name} still red, new guard broke); recommend revise or drop`,
+    ]);
+    c.recommend.verdict = "revise";
+    expect(errorsOf(c)).toEqual([]);
+  });
+
+  it("requires a goal name only when a goal is named", () => {
+    const c = clone(sample());
+    c.goal = { ref: "none", name: "", why: "" };
+    expect(errorsOf(c)).toEqual([]);
+    c.goal.ref = "in-3";
+    expect(errorsOf(c)).toEqual(["goal.name: is empty"]);
+  });
+
+  it("an escalation with no proof at all is allowed", () => {
+    const c = clone(sample());
+    c.proof = { before: [], after: [] };
+    c.examples = [];
+    expect(errorsOf(c)).toEqual([]);
+  });
+});
+
+describe("helpers", () => {
+  it("counts sentences without splitting on abbreviations", () => {
+    expect(countSentences("Titles copy the opener, e.g. greetings. They now name the work.")).toBe(2);
+    expect(countSentences("No stop at the end")).toBe(1);
+    expect(countSentences("")).toBe(0);
+  });
+
+  it("summarizes the proof honestly", () => {
+    expect(proofSummary(sample().proof).evidence).toBe("4 of 4 cases fixed");
+    const p = {
+      before: [{ name: "a", ok: false, detail: "" }, { name: "b", ok: false, detail: "" }],
+      after: [{ name: "a", ok: true, detail: "" }, { name: "b", ok: false, detail: "" }, { name: "c", ok: false, detail: "" }],
+    };
+    expect(proofSummary(p)).toEqual({ red: 2, fixed: 1, stillRed: ["b"], broke: ["c"], evidence: "1 of 2 cases fixed, 1 new failure" });
+    expect(proofSummary(sample().proof).evidence).toBe("4 of 4 cases fixed");
+  });
+
+  it("counts every failure from one list: the proof as a check, and a check whose words report a failure", () => {
+    const c = sample();
+    expect(cardChecks(c).map((x) => x.name)).toEqual([PROOF_CHECK, ...c.checks.map((x) => x.name)]);
+    expect(cardFailing(c)).toBe(0);
+    expect(checksLabel(cardChecks(c))).toBe(`${c.checks.length + 1} checks pass`);
+    const red = { ...c, proof: { before: c.proof.before, after: c.proof.after.map((x, i) => (i === 0 ? { ...x, ok: false } : x)) }, checks: [{ name: "Verify", ok: true, detail: "bun test: 11 pass, 1 fail." }, { name: "Review", ok: true, detail: "0 errors" }] };
+    expect(cardChecks(red).filter((x) => !x.ok).map((x) => x.name)).toEqual([PROOF_CHECK, "Verify"]);
+    expect(cardFailing(red)).toBe(2);
+    expect(checksLabel(cardChecks(red))).toBe("2 of 3 checks fail");
+    expect(checksLabel(cardChecks(red), true)).toBe("2 of 3 fail");
+    expect(reportsFailure("cast check: 0 errors. 12 pass.")).toBe(false);
+    expect(reportsFailure("2 errors")).toBe(true);
+    expect(proofSummary({ before: [], after: [] }).evidence).toBe("No proof recorded");
+  });
+
+  it("refuses a reason whose proof count is not the proof's", () => {
+    expect(proofCountsIn("All three proven misses now pass, and 2 red checks.")).toEqual([3, 2]);
+    expect(proofCountsIn("Both misses pass now.")).toEqual([2]);
+    expect(proofCountsIn("Three checks pass.")).toEqual([]);
+    // The card's own checks are not the proof: counting them is not a contradiction.
+    expect(proofCountsIn("Revise: 2 failing checks, typecheck and review.")).toEqual([]);
+    expect(proofCountsIn("Both checks ran clean and one review note is open.")).toEqual([]);
+    expect(proofCountsIn("It touches two files and three prompts.")).toEqual([]);
+    const ok = clone(sample());
+    ok.recommend = { verdict: "revise", why: "All four proven misses pass, but 2 failing checks remain: typecheck and review." };
+    const v2 = validateChangeCard(ok);
+    expect(v2.ok ? [] : v2.errors).toEqual([]);
+    const c = clone(sample());
+    c.recommend.why = "All three proven misses now pass, nothing regressed.";
+    const v = validateChangeCard(c);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.errors).toContain("recommend.why: says 3 proven misses, but the proof shows 4");
+  });
+
+  it("renders a neutral label for a card with no recommendation yet", () => {
+    const c = clone(sample());
+    c.recommend = { verdict: "", why: "" };
+    const html = renderChangeCardHtml(c);
+    expect(html).toContain('<span class="verdict">No recommendation</span>');
+    expect(html).toContain("--tone:var(--neutral)");
+    expect(html).not.toContain("Recommends");
+  });
+
+  it("labels risk", () => {
+    expect(riskLabel({ class: "low", reason: "" })).toBe("Low risk");
+    expect(riskLabel({ class: "review", reason: "" })).toBe("Medium risk");
+    expect(riskLabel({ class: "plan", reason: "" })).toBe("High risk: needs its own plan");
+    expect(riskLabel({ class: "plan", reason: "" }, true)).toBe("High risk");
+  });
+});
+
+describe("cardVerdictIndexes", () => {
+  test("maps Ship, Revise and Drop by label, keys and case ignored", () => {
+    expect(cardVerdictIndexes(CARD_DECISION_OPTIONS)).toEqual({ ship: 0, revise: 1, drop: 2 });
+    expect(cardVerdictIndexes([{ label: "[D] drop it" }, { label: "[S] Ship" }, { label: "Revise with a note" }])).toEqual({ ship: 1, revise: 2, drop: 0 });
+  });
+  test("null when any verdict has no option", () => {
+    expect(cardVerdictIndexes([{ label: "Ship" }, { label: "Wait" }])).toBeNull();
+  });
+});
+
+
+describe("headline and context", () => {
+  test("a cold-reader headline and one-sentence context validate; overlong or multi-sentence ones are refused", () => {
+    const base = JSON.parse(fs.readFileSync(path.join(DIR, "card.json"), "utf-8"));
+    expect(validateChangeCard({ ...base, headline: "Work summaries stop calling unfinished steps done", context: "Codecast writes a short summary of each agent session so a person can catch up fast." }).ok).toBe(true);
+    const long = validateChangeCard({ ...base, headline: "x".repeat(81) });
+    expect(long.ok).toBe(false);
+    const two = validateChangeCard({ ...base, context: "It is a summary. People read it." });
+    expect(two.ok ? [] : two.errors.join(" ")).toContain("context");
+  });
+});
+
+// LW5: a new attempt's card shows the cause's earlier shipped fix beside its own change.
+describe("earlier shipped fixes", () => {
+  const earlier = [{ attempt: 2, ref: "sd-9", change: "Pin the persona on the thread's first send", live: "Deployed to backend Oct 13", held: null, back: "Came back 2 times after the deploy of Oct 13." }];
+
+  test("assembly carries them, validation accepts them, and a card with none has no field", () => {
+    const c = assembleChangeCard({ ...sampleAssemblyInput(), earlier });
+    expect(c.earlier).toEqual(earlier);
+    expect(validateChangeCard(c).ok).toBe(true);
+    expect("earlier" in sample()).toBe(false);
+    expect("earlier" in assembleChangeCard({ ...sampleAssemblyInput(), earlier: [] })).toBe(false);
+  });
+
+  test("a malformed entry is named by its path", () => {
+    const c = clone(assembleChangeCard({ ...sampleAssemblyInput(), earlier }));
+    c.earlier[0].change = "";
+    c.earlier[0].back = 3;
+    expect(errorsOf(c)).toEqual(["earlier[0].change: is empty", "earlier[0].back: expected a string or null, got 3"]);
+  });
+
+  test("the page shows the earlier fix and that it came back, before the proof", () => {
+    const html = renderChangeCardHtml(assembleChangeCard({ ...sampleAssemblyInput(), earlier }));
+    expect(html).toContain("Shipped before");
+    expect(html).toContain("Pin the persona on the thread&#39;s first send");
+    expect(html).toContain('<li class="back">');
+    expect(html.indexOf("Shipped before")).toBeLessThan(html.indexOf("<h2>Proof"));
+    expect(renderChangeCardHtml(sample())).not.toContain("Shipped before");
+  });
+});
+
+describe("the Up to date check", () => {
+  test("a conflict or a touched file main changed fails and names the rebuild; behind on other files passes", () => {
+    expect(baseCheck({ behind: 382, changedOnMain: ["a/x.njk"], conflicts: ["f/one.jsonl", "f/two.jsonl"] }))
+      .toEqual({ name: BASE_CHECK, ok: false, detail: "Rebuild on main: 382 commits behind, 2 files conflict; one.jsonl, two.jsonl" });
+    expect(baseCheck({ behind: 1, changedOnMain: ["a/x.njk"], conflicts: [] }).detail).toBe("Rebuild on main: 1 commit behind, 1 file changed there; the proof ran on old x.njk");
+    expect(baseCheck({ behind: 12, changedOnMain: [], conflicts: [] })).toMatchObject({ ok: true, detail: "12 commits behind main, none of its files changed there" });
+    expect(baseCheck({ behind: 0, changedOnMain: [], conflicts: [] })).toMatchObject({ ok: true, detail: "Built on current main" });
+  });
+  test("a stale branch's card cannot recommend Ship, and the refusal names the rebuild", () => {
+    const card = assembleChangeCard({ ...sampleAssemblyInput(), base: { behind: 382, changedOnMain: [], conflicts: ["x.jsonl"] }, recommend: { verdict: "ship", why: "It works." } });
+    expect(card.checks.at(-1)?.name).toBe(BASE_CHECK);
+    const v = validateChangeCard(card);
+    expect(v.ok).toBe(false);
+    if (!v.ok) expect(v.errors.join("\n")).toContain('recommend revise with the ask "Rebuild on main"');
+    expect(assembleChangeCard({ ...sampleAssemblyInput(), base: null }).checks.some((c) => c.name === BASE_CHECK)).toBe(false);
+  });
+});
+
+describe("the Verify check speaks for the current run", () => {
+  test("a run whose verify passed outranks an earlier run's blocked handoff", () => {
+    const verify = runVerify([{ node_id: "build", status: "completed" }, { node_id: "verify", status: "completed", outcome: "success" }]);
+    expect(verify).toEqual({ name: "Verify", ok: true, detail: "Typecheck and tests passed on this run" });
+    const card = assembleChangeCard({ task: { short_id: "ct-1", title: "t" } as any, evidence: { execution_status: "blocked", verification_evidence: "Build hit its visit cap.", files_changed: [] } as any, verify });
+    expect(card.checks.find((c) => c.name === "Verify")).toEqual(verify!);
+  });
+  test("a verify that has not run leaves the handoff to speak", () => {
+    expect(runVerify([{ node_id: "verify", status: "pending" }])).toBeNull();
+    expect(runVerify([{ node_id: "verify", status: "failed", error: "3 tests failed.\nmore" }])).toMatchObject({ ok: false, detail: "3 tests failed." });
+  });
+  test("the checks the step printed are counted as the run's Verify row counts them (ct-59561 run 5: 4/4 pass)", () => {
+    const printed = `{"ok":true,"steps":[{"name":"typecheck","ok":true},{"name":"tripwires","ok":true},{"name":"touched tests (970)","ok":true},{"name":"prompt fidelity (call-summary)","ok":true}]}\ncheck: typecheck`;
+    expect(runVerify([{ node_id: "verify", status: "completed", outcome: "success", result_preview: printed }])).toEqual({ name: "Verify", ok: true, detail: "4/4 pass" });
+    const red = printed.replace(`"tripwires","ok":true`, `"tripwires","ok":false`);
+    expect(runVerify([{ node_id: "verify", status: "completed", outcome: "success", result_preview: red }])).toEqual({ name: "Verify", ok: false, detail: "3/4 pass, 1 red: tripwires" });
+  });
+});
+
+describe("the author's risk and picked conversations", () => {
+  test("an author's risk outranks the ground rating, and picked conversations ride on the card", () => {
+    const card = assembleChangeCard({
+      ...sampleAssemblyInput(),
+      risk: { class: "low", reason: "Booking replies only, a few a week" },
+      seen: [{ signal: "sg-1545", asked: "the 1:45pm slot Union offered", quote: "I can't arrange a Zoom invitation for 1:45pm today at this notice." }],
+    });
+    expect(card.risk).toEqual({ class: "low", reason: "Booking replies only, a few a week" });
+    expect(card.seen?.[0]?.signal).toBe("sg-1545");
+    expect(validateChangeCard(card).ok).toBe(true);
+  });
+
+  test("a picked conversation names a finding and keeps its ask to a few words", () => {
+    const card = { ...sample(), seen: [{ signal: "mo-1", asked: "x".repeat(120), quote: "" }] };
+    const v = validateChangeCard(card);
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.errors.some((e) => e.startsWith("seen[0].signal"))).toBe(true);
+      expect(v.errors.some((e) => e.startsWith("seen[0].asked"))).toBe(true);
+    }
+  });
+});
+
+describe("coverage and what a change stops", () => {
+  test("a card carries how many conversations it reaches and what it stops; the validator names a malformed one", () => {
+    const ok = { ...sample(), reach: { conversations: 2, of: 17 }, stops: { per_week: 35, what: "emails", next: "the introduction or an honest close, when one exists" } };
+    expect(validateChangeCard(ok).ok).toBe(true);
+    const bad = validateChangeCard({ ...sample(), reach: { conversations: 18, of: 17 }, stops: { per_week: -1, what: "emails closing out a missed call", next: "" } });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) {
+      for (const p of ["reach.conversations", "stops.per_week", "stops.what", "stops.next"]) expect(bad.errors.some((e) => e.startsWith(p))).toBe(true);
+    }
+  });
+});
+
+describe("an earlier call the change reverses", () => {
+  test("is carried as a decision or task id, who made it and what it settled", () => {
+    const ok = validateChangeCard({ ...sample(), overturns: { ref: "ct-53874", by: "Cameron", what: "close notes carry no question or ask" } });
+    expect(ok.ok).toBe(true);
+    const bad = validateChangeCard({ ...sample(), overturns: { ref: "Cameron's ruling", by: "", what: "x" } });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors.join("\n")).toContain("overturns.ref");
+  });
+});

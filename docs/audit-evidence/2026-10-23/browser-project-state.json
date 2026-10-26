@@ -1,0 +1,18 @@
+{
+  "activeProject": "project-b",
+  "policyBeforeOldResponse": "200",
+  "policyAfterOldResponse": "2",
+  "saves": [
+    {
+      "port": "31992",
+      "body": {
+        "policy": {
+          "maxCheckpoints": 2,
+          "maxAgeDays": 30,
+          "maxDiskMiB": 2048
+        },
+        "confirmed": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,642 @@
+// Cross-window replication wiring: election, transport, and the store hookup
+// for the sync-host design (docs/architecture/sync-host.md).
+//
+// Exactly one window per origin is the elected sync host — it mounts the
+// global feeders (gated on `syncRole` in the store), owns IndexedDB
+// write-through, and broadcasts every write to the replicated slice. Every
+// other window is a follower: feeders skipped, no state write-through, shared
+// slice applied from the host's broadcasts, its own optimistic writes offered
+// back as muts.
+//
+// Roles are safety-first: every window BOOTS as host (today's behavior) and
+// demotes to follower only on evidence — a snapshot from a living host. A
+// follower that loses its host falls back to host behavior ("solo") until a
+// host answers again, so no window can be starved by a dead or absent host.
+// Election uses the Web Locks API: the lock holder is the one elected host;
+// the lock releasing (window closed, crashed) promotes the next eligible
+// window automatically.
+
+import {
+  createReplicationFollower,
+  createReplicationHost,
+  extractReplicationUpdates,
+  type ActionTeeMeta,
+  type ReplicationChannel,
+  type ReplicationFollower,
+  type ReplicationHost,
+  type ReplicationUpdate,
+} from "@platform/engine";
+import { useInboxStore, hasSyncRegistryEntry, syncLogScopeMetaKey, SESSIONS_PRESERVE_FIELDS } from "./inboxStore";
+import { INBOX_FACT_FIELDS } from "@codecast/shared/contracts";
+import { writePatchesToIDB } from "./idbCache";
+import { followerPersistencePatches } from "./followerPersistence";
+import { syncTransaction } from "./syncTransaction";
+import type { GestureMessage } from "./gestureBridge";
+import {
+  isMutRowKey,
+  isReplicatedCollectionKey,
+  REPLICATED_STORE_KEYS,
+} from "./clientSyncRegistry";
+
+// Election and transport are scoped to the account the window acts for: a
+// host and its followers share one principal by construction, so a window
+// that just signed in as someone else can never take a snapshot, an update or
+// a mut from the previous account's host, and needs no per-message check.
+const LOCK_NAME = "codecast-sync-host";
+const CHANNEL_NAME = "codecast-replication-v1";
+export function replicationLockName(principalId: string): string {
+  return `${LOCK_NAME}:${principalId}`;
+}
+export function replicationChannelName(principalId: string): string {
+  return `${CHANNEL_NAME}:${principalId}`;
+}
+
+/**
+ * The replication channel over BroadcastChannel. A message addressed to one
+ * window (a snapshot, `to`) travels on that window's own channel, so only
+ * the window that asked decodes it. On the shared channel every window
+ * structured-cloned every other window's snapshot: ~100 MB each, 0.5 to 1 s
+ * of main thread per copy, and a dev reload that brings back F windows at
+ * once cost F² of them (2026-10-09). The follower inbox orders by seq and
+ * buffers until its snapshot lands, so the two channels need no shared order.
+ */
+export function replicationTransport(name: string, selfId: string): { channel: ReplicationChannel; close: () => void } {
+  const addressed = (to: string) => `${name}:to:${to}`;
+  const shared = new BroadcastChannel(name);
+  const own = new BroadcastChannel(addressed(selfId));
+  const outboxes = new Map<string, BroadcastChannel>();
+  const outbox = (to: string) => {
+    let bc = outboxes.get(to);
+    if (!bc) outboxes.set(to, (bc = new BroadcastChannel(addressed(to))));
+    return bc;
+  };
+  const channel: ReplicationChannel = {
+    post: (msg) => {
+      try {
+        ("to" in msg ? outbox(msg.to) : shared).postMessage(msg);
+        // A snapshot answers one request; its outbox is not needed after it.
+        if ("to" in msg && (msg.type === "snapshot" || msg.done)) {
+          outboxes.get(msg.to)?.close();
+          outboxes.delete(msg.to);
+        }
+      } catch (error) {
+        // A non-cloneable value in a row is a bug upstream; replication must
+        // never take the write path down with it.
+        console.error("[replication] failed to post", error);
+      }
+    },
+    onMessage: (cb) => {
+      const handler = (e: MessageEvent) => cb(e.data);
+      shared.addEventListener("message", handler);
+      own.addEventListener("message", handler);
+      return () => {
+        shared.removeEventListener("message", handler);
+        own.removeEventListener("message", handler);
+      };
+    },
+  };
+  return {
+    channel,
+    close: () => {
+      shared.close();
+      own.close();
+      for (const bc of outboxes.values()) bc.close();
+      outboxes.clear();
+    },
+  };
+}
+// A follower with no synced stream for this long acts as its own host (solo)
+// until a snapshot arrives. Covers: no other window, a wedged host, a palette
+// or people window running with the app closed.
+const SOLO_FALLBACK_MS = 8000;
+
+export type SyncReplicationStatus = {
+  principalId: string | null;
+  role: "host" | "follower";
+  elected: boolean;
+  /** The Web Lock is held right now (elected AND not yet stopped). */
+  holdsLock: boolean;
+  synced: boolean;
+  selfId: string;
+};
+
+let running: { stop: () => void; status: () => SyncReplicationStatus } | null = null;
+
+/** Stop this window's replication now, whatever role it held: channel closed,
+ *  lock released, write-through restored. The account boundary calls this
+ *  synchronously so no further message is sent or accepted for the old account. */
+export function stopSyncReplication(): void {
+  running?.stop();
+}
+
+function transportAvailable(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    typeof BroadcastChannel !== "undefined" &&
+    typeof navigator !== "undefined" &&
+    !!(navigator as any).locks?.request
+  );
+}
+
+const SYNCLOG_META_PREFIX = syncLogScopeMetaKey("");
+
+// A follower's mut: its action's writes as the host should apply them. A
+// row the action only EDITED ships as the fields it wrote (`fields`), never
+// as the whole row — the follower's copy of every other field is a moment
+// behind the host's, and a whole-row overlay would put the host's fresher
+// server state back a step (a stash the log just delivered, for one) until
+// something re-delivers it. A row the action created or replaced outright
+// ships whole, as before. Built from the action's own patches, so the field
+// set is exact.
+export type MutUpdate = ReplicationUpdate & {
+  fields?: Record<string, Record<string, unknown>>;
+  /** The action's time on the follower: the mirrored lock's `ts`, so the write's later acknowledgement (sent after the action) matches it. */
+  ts?: number;
+  /** Rows the follower put back whole (an undo of a hide that forgot them): the host lifts the excludes its own forget planted. */
+  readds?: string[];
+  /** A refused write rolled back on the follower: per row and field, the value the server refused. The host releases the lock it mirrored on that value and takes `fields` without locking them. */
+  release?: Record<string, Record<string, unknown>>;
+};
+
+export function buildMutUpdates(patches: readonly any[], state: any): MutUpdate[] {
+  const updates: MutUpdate[] = extractReplicationUpdates(patches, state, isReplicated, isMutRowKey);
+  const ts = Date.now();
+  const edited = new Map<string, Map<string, Record<string, unknown>>>();
+  const whole = new Map<string, Set<string>>();
+  const readded = new Map<string, Set<string>>();
+  for (const patch of patches) {
+    const path = patch.path as (string | number)[];
+    if (path.length < 2) continue;
+    const key = String(path[0]);
+    if (!isReplicated(key) || !isMutRowKey(key)) continue;
+    const id = String(path[1]);
+    if (path.length === 2) {
+      // The row itself was set or removed: whole-row semantics for this id.
+      let w = whole.get(key);
+      if (!w) whole.set(key, (w = new Set()));
+      w.add(id);
+      if (patch.op === "add" && (key === "sessions" || key === "conversations")) {
+        let r = readded.get(key);
+        if (!r) readded.set(key, (r = new Set()));
+        r.add(id);
+      }
+      continue;
+    }
+    if (path.length !== 3) continue; // a nested edit: the row ships whole
+    let rows = edited.get(key);
+    if (!rows) edited.set(key, (rows = new Map()));
+    let f = rows.get(id);
+    if (!f) rows.set(id, (f = {}));
+    const field = String(path[2]);
+    f[field] = state?.[key]?.[id]?.[field];
+  }
+  for (const u of updates) {
+    const back = readded.get(u.key);
+    if (back && u.upserts?.some((row: any) => back.has(String(row._id)))) {
+      u.readds = [...back];
+      u.ts ??= ts;
+    }
+    const rows = edited.get(u.key);
+    if (!rows || !u.upserts) continue;
+    const w = whole.get(u.key);
+    const fields: Record<string, Record<string, unknown>> = {};
+    const upserts: any[] = [];
+    for (const row of u.upserts) {
+      const id = String(row._id);
+      const f = rows.get(id);
+      if (f && !w?.has(id) && Object.keys(f).length > 0) fields[id] = f;
+      else upserts.push(row);
+    }
+    if (Object.keys(fields).length > 0) {
+      u.fields = fields;
+      u.ts = ts;
+    }
+    if (upserts.length > 0) u.upserts = upserts; else delete u.upserts;
+  }
+  return updates;
+}
+
+const isReplicated = (key: string) => REPLICATED_STORE_KEYS.includes(key);
+
+// A follower mounts no liveness overlay, so the host's replicated row is its
+// only writer of the overlay facts: they land verbatim, a null included. The
+// fact preserve list exists for base channels that ship null for facts they
+// do not own, and applied here it kept a fact the host had already cleared.
+const REPLICA_SESSIONS_OPTS = {
+  preserveFields: SESSIONS_PRESERVE_FIELDS.filter((f) => !(INBOX_FACT_FIELDS as readonly string[]).includes(f)),
+};
+
+/**
+ * A synced follower's action tee (wire to `_setActionTee`): its own
+ * optimistic writes, offered to the host as field-level muts. The engine's
+ * own mutTee ships whole rows; buildMutUpdates keeps an edited row from
+ * overlaying the host's fresher copy.
+ */
+export function followerActionTee(channel: ReplicationChannel, selfId: string) {
+  return (_name: string, patches: any[], state: any, meta?: ActionTeeMeta): void => {
+    const updates = buildMutUpdates(patches, state);
+    if (meta?.refused) {
+      for (const u of updates) {
+        if (!u.fields) continue;
+        const release: Record<string, Record<string, unknown>> = {};
+        for (const l of meta.refused) {
+          if (l.storeKey !== u.key || !u.fields[l.recordId]) continue;
+          (release[l.recordId] ??= {})[l.field] = l.value;
+        }
+        if (Object.keys(release).length > 0) u.release = release;
+      }
+    }
+    if (updates.length > 0) channel.post({ type: "mut", from: selfId, updates });
+  };
+}
+
+type FollowerTee = ReturnType<typeof followerActionTee>;
+
+// The tee each store offers its writes through while its window follows a
+// host, keyed by the store's own tee setter (one per store).
+const followerTees = new WeakMap<object, FollowerTee>();
+
+/** Wire `state`'s store to offer its writes through `tee`, or stop with null. */
+export function setFollowerTee(state: any, tee: FollowerTee | null): void {
+  if (tee) followerTees.set(state._setActionTee, tee);
+  else followerTees.delete(state._setActionTee);
+  state._setActionTee(tee);
+}
+
+const setActionTee = (tee: FollowerTee | null) => setFollowerTee(useInboxStore.getState(), tee);
+
+/**
+ * A refused write this window rolled back by hand: a sync() undo of a field
+ * no lock protects, which the engine's refused-lock tee never sees. Offer it
+ * to the host the same way, naming the value the server refused per row
+ * (`before`, the collection as it stood before the rollback), so the host
+ * releases the lock it mirrored on that value. A no-op unless this window
+ * follows a host; a host's own rollback reaches IDB and its followers
+ * through its write-through.
+ */
+export function offerRollbackToHost(actionName: string, key: string, field: string, before: Record<string, any>): void {
+  const state = useInboxStore.getState() as any;
+  const followerTee = followerTees.get(state._setActionTee);
+  if (!followerTee) return;
+  const after = state[key] ?? {};
+  const patches: any[] = [];
+  const refused: NonNullable<ActionTeeMeta["refused"]> = [];
+  for (const id in before) {
+    const row = after[id];
+    const value = before[id]?.[field];
+    if (!row || row[field] === value) continue;
+    patches.push({ op: "replace", path: [key, id, field], value: row[field] });
+    refused.push({ key: `${key}:${id}:${field}`, storeKey: key, recordId: id, field, ts: Date.now(), value, prior: row[field], hadPrior: true });
+  }
+  if (patches.length > 0) followerTee(actionName, patches, state, { refused });
+}
+
+/** The host runtime an elected window runs. A follower's mut lands as its optimistic rows, held under the same locks. */
+export function replicationHostFor(hostId: string, channel: ReplicationChannel, getState: () => any): ReplicationHost {
+  return createReplicationHost({
+    hostId,
+    channel,
+    getState,
+    replicatedKeys: REPLICATED_STORE_KEYS,
+    isCollectionKey: isReplicatedCollectionKey,
+    applyUpdates: (updates) => applyUpdatesToStore(updates, { optimistic: true }),
+  });
+}
+
+/**
+ * The host's echo of this follower's own write. A lock records the host rows
+ * that reached it while it held (its `seen`), and its acknowledgement lands
+ * the newest of them (retireAckedLockInDraft). Rows the host sent before it
+ * applied this window's write predate that write: they can carry this
+ * window's own previous step (an undo just before a redo), and nothing sends
+ * the row again at the acknowledged position, because the server's echo
+ * changes nothing on a host that already holds the write. From the echo on,
+ * the host holds the cell and tells this window anything newer, so what the
+ * lock recorded before is forgotten.
+ */
+export function forgetSeenBeforeOwnEcho(updates: MutUpdate[]): void {
+  const keys: string[] = [];
+  const rowPrefixes: string[] = [];
+  for (const u of updates) {
+    for (const [id, fields] of Object.entries(u.fields ?? {})) {
+      for (const field of Object.keys(fields ?? {})) keys.push(`${u.key}:${id}:${field}`);
+    }
+    for (const row of u.upserts ?? []) if (row?._id != null) rowPrefixes.push(`${u.key}:${String(row._id)}:`);
+  }
+  if (keys.length > 0 || rowPrefixes.length > 0) useInboxStore.getState().forgetLockSeen(keys, rowPrefixes);
+}
+
+/** The follower runtime. The host's rows land through applyUpdatesToStore, authoritative for this window. */
+export function replicationFollowerFor(selfId: string, channel: ReplicationChannel, onSynced: (synced: boolean) => void): ReplicationFollower {
+  return createReplicationFollower({
+    selfId,
+    channel,
+    replicatedKeys: REPLICATED_STORE_KEYS,
+    isCollectionKey: isReplicatedCollectionKey,
+    applyUpdates: (updates) => applyUpdatesToStore(updates),
+    onOwnEcho: forgetSeenBeforeOwnEcho,
+    onSynced,
+  });
+}
+
+/**
+ * A follower taking the host role, in order: it stops following, takes the
+ * host role, drops the follower's action tee, and starts the host runtime.
+ * Run inside the promoted window.
+ */
+export function promoteToHost(follower: ReplicationFollower | null, startHost: () => ReplicationHost): ReplicationHost {
+  follower?.stop();
+  setRole("host");
+  setActionTee(null);
+  return startHost();
+}
+
+/**
+ * A sibling window's gesture, landed in this window. Follow state is
+ * ephemeral window state, not a row: it never enters the draft, so it takes
+ * its own path to the setter.
+ */
+export function applyBridgedGesture(msg: GestureMessage): void {
+  if (msg.kind === "follow") {
+    useInboxStore.getState().setFollowLeader(msg.leaderId, { fromBridge: true });
+    return;
+  }
+  useInboxStore.getState().applyGestureBridge(msg);
+}
+
+// Land one batch of replicated updates through the store's own sync actions,
+// so pending protection, merge policies, and the no-op bails all behave as if
+// the rows came from a live query.
+//
+// `optimistic` marks a follower's mut applied on the host: the rows are a
+// sibling window's local writes, not server truth, so a lock this window
+// already holds on them (the gesture bridge's, planted a moment earlier for
+// the same gesture) survives the merge. Without that the value echo of the
+// mut itself retires the bridge lock, and any stale push in flight (a live
+// window result, a crawl page) undoes the gesture on the host — the
+// 2026-09-02 desktop resurrection. Only held locks are carried: a follower's
+// row also ships every field it did NOT write, so a diff against this
+// window's copy would lock stale values the server never echoes.
+//
+// Authoritative rows arriving on a follower release that window's SETTLED
+// locks first (same bound as the host's heal, releaseSettledFieldLocks): a
+// lock whose echo never comes — the write was superseded elsewhere — would
+// otherwise re-assert the follower's stale value over every host row forever.
+export function applyUpdatesToStore(updates: MutUpdate[], opts?: { optimistic?: boolean }): void {
+  // One replayed page is one logical change, but it writes a key at a time —
+  // and every one of those writes used to visit every subscriber. Replicated
+  // applies ride the same transaction as a feeder's, so the page costs one
+  // visit (ct-49548).
+  syncTransaction(() => applyUpdatesToStoreInner(updates, opts));
+}
+
+function applyUpdatesToStoreInner(updates: MutUpdate[], opts?: { optimistic?: boolean }): void {
+  const state = useInboxStore.getState();
+  for (const u of updates) {
+    if (u.fields && opts?.optimistic) {
+      // The sibling's field writes land as the gesture bridge lands a triage
+      // gesture: the value, and a lock on it until the server echoes it.
+      useInboxStore.getState().applyReplicatedFields(u.key, u.fields, u.ts, u.release);
+    }
+    if (u.hasValue) {
+      if (u.value == null) continue;
+      if (u.key === "sessionsProjection") {
+        state.applyReplicatedProjection(u.value as any);
+        continue;
+      }
+
+      // Twin keys: the persisted value has an in-memory Set companion the
+      // ordinary sync path derives elsewhere — use their dedicated setters.
+      if (u.key === "liveInboxIdList") {
+        if (Array.isArray(u.value) && u.value.length > 0) state.setLiveInboxIds(u.value);
+        continue;
+      }
+      if (u.key === "teamInboxIdSnapshot") {
+        const snap = u.value as { team_id?: string | null; ids?: string[] };
+        if (Array.isArray(snap.ids)) state.setTeamInboxIds(snap.ids, snap.team_id ?? null);
+        continue;
+      }
+      // Keys with a SYNC_REGISTRY entry apply under their registered kind;
+      // for the rest, derive the kind from the value's shape so a map or an
+      // array is never mistaken for collection rows.
+      state.syncTable(
+        u.key,
+        u.value,
+        hasSyncRegistryEntry(u.key)
+          ? undefined
+          : {
+              kind: Array.isArray(u.value)
+                ? "list"
+                : typeof u.value === "object"
+                  ? "singleton"
+                  : "scalar",
+            },
+      );
+      if (u.key === "syncMeta") {
+        // The host's scope cursors: rows through each position have already
+        // arrived (the host tees in commit order, and it stamps the cursor
+        // after the page's rows), so every lock acked at or below it retires
+        // now — the follower's own log applier event. Those rows landed under
+        // the locks, so each retired lock hands its row the value it hid.
+        const meta = u.value as Record<string, { cursor?: number } | undefined>;
+        for (const key in meta) {
+          if (!key.startsWith(SYNCLOG_META_PREFIX)) continue;
+          const cursor = meta[key]?.cursor;
+          if (typeof cursor === "number") useInboxStore.getState().retireAckedPending(key.slice(SYNCLOG_META_PREFIX.length), cursor, { restore: true });
+        }
+      }
+      continue;
+    }
+    if (u.upserts?.length) {
+      if (opts?.optimistic) {
+        if (u.readds?.length && (u.key === "sessions" || u.key === "conversations")) {
+          // The delta merge below skips an excluded id, so a row the follower
+          // put back after this window forgot it lands the way the gesture
+          // bridge lands it: excludes lifted, row put, include lock held.
+          const coll = u.key;
+          const back = new Set(u.readds);
+          const rows = u.upserts
+            .filter((row: any) => back.has(String(row._id)))
+            .map((row: any) => ({ id: String(row._id), [coll]: row }));
+          useInboxStore.getState().applyGestureBridge({ kind: "unforget", rows, ts: u.ts ?? Date.now() });
+        }
+        const current = useInboxStore.getState();
+        // Every lock this window holds on the sibling's rows, which the merge
+        // below would read as a value echo and retire.
+        const entries: Array<{ id: string; field: string; value: unknown; ts?: number; ack?: unknown }> = [];
+        const pendingEntries = Object.entries(current.pending);
+        for (const row of u.upserts) {
+          const prefix = `${u.key}:${String(row._id)}:`;
+          for (const [k, entry] of pendingEntries) {
+            if (!k.startsWith(prefix) || (entry as any)?.type !== "field") continue;
+            entries.push({ id: String(row._id), field: k.slice(prefix.length), value: (entry as any).value, ts: (entry as any).ts, ack: (entry as any).ack });
+          }
+        }
+        current.syncTable(u.key, u.upserts, { isDelta: true });
+        if (entries.length) useInboxStore.getState().protectReplicatedWrite(u.key, entries);
+      } else {
+        state.releaseSettledFieldLocks(u.upserts.map((row: any) => String(row._id)));
+        state.syncTable(u.key, u.upserts, { isDelta: true, ...(u.key === "sessions" ? REPLICA_SESSIONS_OPTS : {}) });
+      }
+    }
+    if (u.removes?.length) state._applyReplicatedRemovals(u.key, u.removes);
+  }
+}
+
+function setRole(role: "host" | "follower"): void {
+  if (useInboxStore.getState().syncRole === role) return;
+  useInboxStore.setState({ syncRole: role });
+}
+
+/**
+ * Start replication for this window. Idempotent per window; `eligible` says
+ * whether this window may be ELECTED host (it mounts the full shell and its
+ * feeders). Ineligible windows (palette, people) are followers when a host
+ * lives and solo hosts otherwise. `principalId` is the account the window
+ * acts for; with none (signed out) there is nothing to replicate and the
+ * window stays a self-sufficient host. Returns a stop for unmount/HMR.
+ */
+export function startSyncReplication(opts: { eligible: boolean; principalId: string | null }): () => void {
+  if (running) return running.stop;
+  if (!transportAvailable() || !opts.principalId) {
+    // No transport (React Native, SSR, ancient browser) or no account: stay
+    // host, changed nothing. Share pages and tests land here too.
+    return () => {};
+  }
+  const lockName = replicationLockName(opts.principalId);
+
+  const selfId =
+    typeof crypto !== "undefined" && (crypto as any).randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+  const transport = replicationTransport(replicationChannelName(opts.principalId), selfId);
+  const channel = transport.channel;
+
+  let stopped = false;
+  let elected = false;
+  let follower: ReplicationFollower | null = null;
+  let host: ReplicationHost | null = null;
+  let soloTimer: ReturnType<typeof setTimeout> | null = null;
+  let releaseLock: (() => void) | null = null;
+  let holdsLock = false;
+  const lockAbort = new AbortController();
+
+  const armSoloFallback = () => {
+    if (soloTimer) clearTimeout(soloTimer);
+    soloTimer = setTimeout(() => {
+      if (!stopped && !elected && !follower?.synced()) {
+        // No living host answered — behave as our own (feeders on, own
+        // write-through, no mut tee). The follower runtime stays up: a later
+        // snapshot demotes us again.
+        const internals = useInboxStore.getState() as any;
+        setActionTee(null);
+        internals._setIDBWrite(writePatchesToIDB);
+        setRole("host");
+      }
+    }, SOLO_FALLBACK_MS);
+  };
+
+  const startFollower = () => {
+    follower = replicationFollowerFor(selfId, channel, (synced) => {
+      if (stopped || elected) return;
+      if (synced) {
+        if (soloTimer) clearTimeout(soloTimer);
+        setRole("follower");
+        (useInboxStore.getState() as any)._setIDBWrite((patches: any[], state: any) => {
+          const local = followerPersistencePatches(patches);
+          if (local.length) return writePatchesToIDB(local, state);
+        });
+        setActionTee(followerActionTee(channel, selfId));
+      } else {
+        armSoloFallback();
+      }
+    });
+    armSoloFallback();
+  };
+
+  const becomeElectedHost = () => {
+    if (stopped) return;
+    elected = true;
+    if (soloTimer) clearTimeout(soloTimer);
+    host = promoteToHost(follower, () => replicationHostFor(selfId, channel, () => useInboxStore.getState()));
+    follower = null;
+    const internals = useInboxStore.getState() as any;
+    // The write-through tee: persist first, then broadcast the same patches.
+    internals._setIDBWrite((patches: any[], state: any) => {
+      const persisted = writePatchesToIDB(patches, state);
+      host?.tee(patches, state);
+      return persisted;
+    });
+  };
+
+  startFollower();
+
+  if (opts.eligible) {
+    (navigator as any).locks
+      .request(
+        lockName,
+        { mode: "exclusive", signal: lockAbort.signal },
+        () => {
+          // A grant that lands after stop() (the abort raced it: React's dev
+          // double mount stops and restarts within one tick) must not be
+          // held — returning releases it at once. Holding it here left a dead
+          // instance as the origin's permanent lock holder, so every later
+          // window fell back to solo host and never replicated.
+          if (stopped) return;
+          // Hold the lock until stop(). The holder promise is created BEFORE
+          // any host work runs and never rejects: a throw inside the promise
+          // executor would settle it and release the lock while this window
+          // still believed it was host — two "elected" hosts on one origin.
+          const held = new Promise<void>((resolve) => {
+            releaseLock = resolve;
+          });
+          holdsLock = true;
+          try {
+            becomeElectedHost();
+          } catch (error) {
+            console.error("[replication] failed to become host", error);
+          }
+          return held;
+        },
+      )
+      .catch(() => {
+        /* aborted on stop — never an error path */
+      });
+  }
+
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    if (soloTimer) clearTimeout(soloTimer);
+    follower?.stop();
+    host?.stop();
+    lockAbort.abort();
+    releaseLock?.();
+    holdsLock = false;
+    transport.close();
+    const internals = useInboxStore.getState() as any;
+    setActionTee(null);
+    // Whatever role we were in, leave the window as a self-sufficient host
+    // (today's behavior): write-through restored, feeders gate open.
+    internals._setIDBWrite(writePatchesToIDB);
+    setRole("host");
+    running = null;
+  };
+
+  running = {
+    stop,
+    status: () => ({
+      principalId: opts.principalId,
+      role: useInboxStore.getState().syncRole,
+      elected,
+      holdsLock,
+      synced: follower?.synced() ?? false,
+      selfId,
+    }),
+  };
+  if (typeof window !== "undefined") {
+    (window as any).__syncReplication = running.status;
+  }
+  return stop;
+}

@@ -1,0 +1,3717 @@
+const { app, BrowserWindow, WebContentsView, webContents, Menu, Tray, globalShortcut, ipcMain, nativeImage, shell, screen, Notification, session, powerMonitor, desktopCapturer, systemPreferences, dialog } = require("electron");
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+const { spawn, execFile } = require("child_process");
+
+app.name = "Codecast";
+
+// Isolated profile for dev/test runs so a from-source instance can run beside
+// the installed app: its own singleton lock, service-worker cache, IndexedDB,
+// and localStorage. Must be set before anything reads userData paths.
+if (process.env.CODECAST_USER_DATA) {
+  app.setPath("userData", process.env.CODECAST_USER_DATA);
+}
+
+// Disable Chromium's trackpad/overscroll swipe-to-navigate (back/forward).
+// We push a history entry per viewed conversation, so an accidental two-finger
+// horizontal swipe would walk backward through that stack and "randomly" jump
+// conversations. Deliberate back/forward (Cmd+[ / Cmd+], app menu) uses
+// webContents.goBack()/goForward() and is unaffected. The CSS overscroll-behavior
+// rule covers this too; this is the belt-and-suspenders native guard.
+app.commandLine.appendSwitch("disable-features", "OverscrollHistoryNavigation");
+
+// System audio for the meeting recorder. The display-media handler below
+// answers `audio: "loopback"`; on Windows Chromium honors that natively, on
+// macOS 13+ only behind these two hidden feature flags (ScreenCaptureKit
+// loopback — Chromium ships the code but leaves it off until Electron 39).
+// The capture itself rides screen capture, so it is gated by the Screen
+// Recording permission, same as screen share.
+if (process.platform === "darwin") {
+  app.commandLine.appendSwitch("enable-features", "MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride");
+}
+
+// Chrome DevTools Protocol port so agents can drive the desktop app the way
+// `cast browser` drives Chrome (`cast app` targets it, and so does the perf
+// harness). Loopback only. On by default when running from source
+// (`electron .`), because that process already has the tree it is verifying;
+// a packaged build opens it only when CODECAST_CDP_PORT is set explicitly,
+// since the port hands the signed-in session to any local process.
+const CDP_PORT = process.env.CODECAST_CDP_PORT || (app.isPackaged ? "" : "9333");
+if (CDP_PORT) {
+  app.commandLine.appendSwitch("remote-debugging-port", CDP_PORT);
+  app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+}
+
+// Pin Chromium's download path to our userData dir so macOS TCC never
+// probes ~/Documents or ~/Downloads and triggers the permission dialog.
+const _ud = app.getPath("userData");
+for (const dir of ["downloads", "temp"]) {
+  const p = path.join(_ud, dir);
+  fs.mkdirSync(p, { recursive: true });
+  app.setPath(dir, p);
+}
+
+const { pickWindow, chooseLeader, BannerGate, notificationRoute } = require("./notificationRouter");
+const { createPaletteFace } = require("./paletteFace");
+// The desktop's apps (Chat, Work): which routes live in a window of their own.
+// An ES module the web bundle imports too, so both sides read one table.
+const { appForRoute, placeRoute, isDesktopApp, DESKTOP_APPS } = require("./appWindows.mjs");
+const {
+  shouldHandBackCall,
+  shouldHideCallWindow,
+  callWindowChrome,
+  callWindowPlacementKey,
+  floatAnchorOf,
+  floatCornerFor,
+  floatPositionFor,
+  isCallSize,
+  normalizeCallWindowSize,
+  callWindowTitle,
+} = require("./callWindowPolicy");
+const {
+  mergeMeetingDetect,
+  meetingAppList,
+  meetingAppName,
+  detectMeetingApps,
+  startedApps,
+  decideOffer,
+} = require("./meetingDetector");
+const { mergeAgentDock, placeAgentDock } = require("./agentDock");
+const { createOsPermissions, loadNotificationsAddon } = require("./osPermissions");
+const { createComputerPermissions } = require("./computerPermissions");
+const { createDaemonSetup } = require("./daemonSetup");
+const { createShellAuthority, originOf, trustedShellUrl, installShellCapabilities } = require("./shellAuthority");
+const { createEditUndo } = require("./editUndo");
+const { createMenuKeys } = require("./menuKeys");
+const { createBrowserPanes, defaultRegistryPath: defaultPaneRegistryPath } = require("./browserPanes");
+const { createShareCursors } = require("./shareCursors");
+const { attachSpellMenu } = require("./spellMenu");
+
+let notificationRefs = [];
+
+// Set once osPermissions exists (below): the modern-API path. macOS refuses
+// Electron's legacy `Notification` from any process that has spoken to
+// UNUserNotificationCenter — this one does, at boot, to read its permission —
+// and it refuses silently, so the legacy class is only a fallback for a
+// process that never touched the modern API.
+let modernNotify = null;
+// `target` is a banner's click target ({ route, kind }), carried on the banner
+// itself so a click still lands after a relaunch (osPermissions.notify).
+function showNativeNotification(title, body, onClick, target) {
+  if (modernNotify && modernNotify(title, body, onClick, target ? JSON.stringify(target) : undefined)) return;
+  if (!Notification.isSupported()) return;
+  const notif = new Notification({ title, body, silent: false, urgency: "critical" });
+  if (onClick) notif.on("click", onClick);
+  notif.on("close", () => { notificationRefs = notificationRefs.filter(n => n !== notif); });
+  notificationRefs.push(notif);
+  notif.show();
+}
+
+const PROD_URL = "https://codecast.sh";
+// Dev mode. Must be https: the http origin 301-redirects to https (nginx
+// single-auth-origin fix), and http/https are separate localStorage origins
+// so the Convex auth token only lives on https. Loading http here would
+// redirect anyway — point straight at https to skip the round-trip.
+const LOCAL_URL = "https://local.codecast.sh";
+// Env is sticky across restarts: the last toggled choice is persisted in
+// settings.json (see toggleEnvironment). An explicit CODECAST_URL still wins.
+const BASE_URL =
+  process.env.CODECAST_URL || (loadFullSettings().env === "local" ? LOCAL_URL : PROD_URL);
+
+// local.codecast.sh resolves to 127.0.0.1 and is served with a locally
+// generated mkcert dev certificate. mkcert's CA is in the macOS keychain so
+// Safari/Chrome trust it, but Electron's bundled Chromium rejects it
+// (ERR_CERT_AUTHORITY_INVALID), which makes dev mode fail to load entirely.
+// We trust the cert for this one loopback host only (see the verify proc in
+// app.whenReady) — production validation is left fully intact.
+const LOCAL_DEV_HOST = "local.codecast.sh";
+
+const { DEFAULT_SHORTCUTS, mergeShortcuts, diffOverrides } = require("./shortcutSettings");
+
+let mainWindow = null;
+let paletteWindow = null;
+// Whether Codecast's own window was frontmost when the palette was summoned.
+// Decides where Enter's fire-and-forget hand-back lands (see compose-submit).
+let paletteSummonedOverSelf = false;
+let tray = null;
+let deepLinkUrl = null;
+let currentBaseUrl = BASE_URL;
+const shellAuthority = createShellAuthority({
+  ipcMain,
+  origins: () => [PROD_URL, LOCAL_URL, originOf(BASE_URL)].filter(Boolean),
+  openExternal: (url) => shell.openExternal(url),
+});
+const shellIpc = shellAuthority.ipc;
+// Edit > Undo/Redo: text undo in a focused field, the web app's undo
+// everywhere else (editUndo.js says why the stock roles cannot do this).
+const menuKeys = createMenuKeys();
+shellIpc.on("set-menu-keys", (_e, keys) => { if (menuKeys.set(keys)) buildAppMenu(); });
+const editUndo = createEditUndo({
+  keyRunsApp: (command) => menuKeys.chordRuns(command === "undo" ? "ui.undo" : "ui.redo", command === "undo" ? "CmdOrCtrl+Z" : "Shift+CmdOrCtrl+Z"),
+  focusedContents: () => webContents.getFocusedWebContents() ?? BrowserWindow.getFocusedWindow()?.webContents,
+  isShell: (contents) => trustedShellUrl(contents.getURL(), [PROD_URL, LOCAL_URL, originOf(BASE_URL)].filter(Boolean)),
+});
+// Every Codecast window is built here. A see-through one (the palette, the
+// rings, the dock) says so to its page, which then paints nothing while it
+// loads: a boot screen or a loader there is an opaque card over somebody's work.
+function createShellWindow(options) {
+  if (options.transparent) {
+    // Extends the caller's preferences (built from preloadPrefs()) rather than
+    // building a window's own.
+    const prefs = options.webPreferences ?? {};
+    const webPreferences = { ...prefs, additionalArguments: [...(prefs.additionalArguments ?? []), "--transparent-window"] };
+    options = { ...options, webPreferences };
+  }
+  return shellAuthority.register(new BrowserWindow(options));
+}
+
+function getSettingsPath() {
+  return path.join(app.getPath("userData"), "settings.json");
+}
+
+function loadFullSettings() {
+  try {
+    return JSON.parse(fs.readFileSync(getSettingsPath(), "utf8"));
+  } catch {
+    return {};
+  }
+}
+
+function loadSettings() {
+  return mergeShortcuts(loadFullSettings().shortcuts);
+}
+
+function updateSettings(patch) {
+  const existing = loadFullSettings();
+  fs.writeFileSync(getSettingsPath(), JSON.stringify({ ...existing, ...patch }, null, 2));
+}
+
+function saveSettings(shortcuts) {
+  updateSettings({ shortcuts: diffOverrides(shortcuts) });
+}
+
+
+// Single instance lock — clear stale locks from crashed/updated processes
+let gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  const userDataPath = app.getPath("userData");
+  const lockPath = path.join(userDataPath, "SingletonLock");
+  try {
+    const target = fs.readlinkSync(lockPath);
+    const pid = parseInt(target.split("-").pop(), 10);
+    let alive = false;
+    try { process.kill(pid, 0); alive = true; } catch {}
+    if (!alive) {
+      for (const f of ["SingletonLock", "SingletonSocket", "SingletonCookie"]) {
+        try { fs.unlinkSync(path.join(userDataPath, f)); } catch {}
+      }
+      gotLock = app.requestSingleInstanceLock();
+    }
+  } catch {}
+  if (!gotLock) app.quit();
+}
+if (gotLock) {
+  app.on("second-instance", (_e, argv) => {
+    const url = argv.find((a) => a.startsWith("codecast://"));
+    if (url) handleDeepLink(url);
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
+
+// Deep link protocol. Packaged builds only: a from-source run must NOT claim
+// the scheme — on macOS every node_modules Electron.app shares the bundle id
+// com.github.Electron, so a dev run registering codecast:// rebinds the
+// user's links to whichever bare Electron shell Launch Services finds first
+// (observed: links opening footage-app's Electron welcome screen). Set
+// CODECAST_CLAIM_PROTOCOL=1 to opt a dev run in deliberately.
+if (app.isPackaged) {
+  app.setAsDefaultProtocolClient("codecast");
+} else if (process.env.CODECAST_CLAIM_PROTOCOL) {
+  app.setAsDefaultProtocolClient("codecast", process.execPath, [app.getAppPath()]);
+}
+
+app.on("open-url", (e, url) => {
+  e.preventDefault();
+  // handleDeepLink holds the link itself when no window can take it; gating
+  // on the main window here would drop a link the Chat window could show.
+  handleDeepLink(url);
+});
+
+// The window a deep link lands in: the Chat or Work window when the link's
+// path is theirs and the window exists, else the main window. An app window
+// gets the link straight (its preload buffers until the page subscribes); the
+// main window keeps the load-aware hold below.
+function deepLinkTarget(url) {
+  let route = null;
+  try {
+    const u = new URL(url);
+    route = u.hostname === "open" ? u.pathname : `/${u.hostname}${u.pathname}`;
+  } catch {}
+  const place = route ? placeRoute(route, null, openAppWindows()) : "here";
+  const win = isDesktopApp(place) ? appWindowFor.get(place) : null;
+  return win && !win.isDestroyed() ? win : null;
+}
+
+function handleDeepLink(url) {
+  const appWin = deepLinkTarget(url);
+  if (appWin) {
+    appWin.show();
+    appWin.focus();
+    appWin.webContents.send("deep-link", url);
+    return;
+  }
+  if (!mainWindow) { deepLinkUrl = url; return; }
+  mainWindow.show();
+  mainWindow.focus();
+  // While the main frame is still loading, the renderer (and the preload buffer
+  // that catches early sends) is about to be torn down and rebuilt — sending
+  // now would land in a soon-to-be-replaced context. Hold it for the page's
+  // did-finish-load, which fires once the new renderer (and its buffer) is live.
+  if (mainWindow.webContents.isLoadingMainFrame()) {
+    deepLinkUrl = url;
+  } else {
+    mainWindow.webContents.send("deep-link", url);
+  }
+}
+
+function getAutoZoomFactor() {
+  return 1.0;
+}
+
+// EVERY WINDOW LOADS THE SAME PRELOAD, AND THE PRELOAD IS A NODE MODULE.
+//
+// preload.js composes @platform/desktop's bridge with Codecast's own half,
+// which means a `require` of a package at load time. A sandboxed renderer —
+// Electron's default since 20 whenever nodeIntegration is off — only
+// polyfills `require` for electron, events, timers and url, so the preload
+// died on its second line ("module not found: @platform/desktop"), nothing
+// reached window.__CODECAST_ELECTRON__, and every page ran as if in a plain
+// browser: no titlebar inset past the traffic lights, no back/forward, no
+// deep links, no in-process updater (desktop 1.1.100).
+//
+// Page JS still never sees Node: contextIsolation keeps the preload's world
+// apart from the page's. What changes is that the renderer runs outside
+// Chromium's OS sandbox. preload.sandbox.test.js loads the real preload
+// under exactly these preferences, so the bridge cannot silently vanish again.
+function preloadPrefs() {
+  return {
+    preload: path.join(__dirname, "preload.js"),
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: false,
+  };
+}
+
+function createWindow() {
+  const zoom = getAutoZoomFactor();
+  mainWindow = createShellWindow({
+    width: 1200,
+    height: 800,
+    minWidth: 800,
+    minHeight: 600,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 12 },
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`],
+      // Keep the Convex live-query WebSocket alive when the window is
+      // hidden or unfocused. Default-on throttling can pause subscription
+      // delivery in the renderer, leaving the inbox stale until refocus.
+      backgroundThrottling: false,
+    },
+    icon: path.join(__dirname, "assets", "icon.png"),
+    show: false,
+    backgroundColor: "#002b36",
+  });
+
+  // Retry/watchdog for cold-start hangs: if the initial nav fails or the
+  // page stalls before reaching the app shell, reload automatically instead
+  // of leaving the user on a frozen splash that only cmd-r recovers.
+  let stallTimer = null;
+  let loadAttempts = 0;
+  const MAX_LOAD_ATTEMPTS = 5;
+  const STALL_MS = 10_000;
+
+  function armStallTimer() {
+    clearTimeout(stallTimer);
+    stallTimer = setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (loadAttempts >= MAX_LOAD_ATTEMPTS) return;
+      loadAttempts++;
+      mainWindow.webContents.reloadIgnoringCache();
+      armStallTimer();
+    }, STALL_MS);
+  }
+
+  function startLoad() {
+    loadAttempts++;
+    armStallTimer();
+    // Straight to the app: the site root is the marketing page, and the web
+    // only routes a desktop shell away from it as a courtesy to older builds.
+    mainWindow.loadURL(`${currentBaseUrl}/inbox`);
+  }
+
+  mainWindow.webContents.on("did-fail-load", (_e, errorCode, _desc, _url, isMainFrame) => {
+    if (!isMainFrame) return;
+    // -3 is ABORTED (intentional nav cancel) — don't retry on that.
+    if (errorCode === -3) return;
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (loadAttempts >= MAX_LOAD_ATTEMPTS) return;
+    setTimeout(() => {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      startLoad();
+    }, 500);
+  });
+
+  startLoad();
+
+  mainWindow.once("ready-to-show", () => {
+    mainWindow.show();
+  });
+
+  mainWindow.webContents.on("did-finish-load", () => {
+    clearTimeout(stallTimer);
+    stallTimer = null;
+    loadAttempts = 0;
+    mainWindow.webContents.setZoomFactor(getAutoZoomFactor());
+    mainWindow.webContents.executeJavaScript(
+      "document.documentElement.classList.add('electron-desktop')"
+    );
+    // The first breakout window boots in the background once the main window
+    // is up, so "open in new window" is a navigation rather than a cold load.
+    warmSpareTabWindow();
+    // Sticky env can boot us into local mode — mark the title the same way
+    // toggleEnvironment does so it's never mistaken for prod.
+    if (currentBaseUrl === LOCAL_URL) {
+      mainWindow.webContents.executeJavaScript(
+        "document.title = '[LOCAL] ' + document.title"
+      );
+    }
+    // The page is fully loaded, so the preload's deep-link listener and replay
+    // buffer are live — deliver any link that arrived during boot or a reload.
+    // did-finish-load only fires on a COMPLETE load, so if the first attempt
+    // failed/stalled the link stays pending and rides the retry's load instead.
+    if (deepLinkUrl) {
+      const url = deepLinkUrl;
+      deepLinkUrl = null;
+      mainWindow.webContents.send("deep-link", url);
+    }
+    // Replay the latest update status so a freshly-loaded (or reloaded) renderer
+    // doesn't miss a download that progressed/finished before it mounted.
+    if (lastUpdateStatus) {
+      mainWindow.webContents.send("update-status", lastUpdateStatus);
+    }
+    // Tabs handed back by detached windows while the main window was closed
+    // or still loading — adopt them now that the renderer can hear us.
+    if (pendingAdoptPaths.length) {
+      const paths = pendingAdoptPaths;
+      pendingAdoptPaths = [];
+      for (const p of paths) mainWindow.webContents.send("adopt-tab", p);
+    }
+  });
+
+
+  // Every window.open/target=_blank goes to the default browser — the app is a
+  // single window that navigates in place, so a same-origin link here (e.g. a
+  // published artifact at codecast.sh/a/…) still means "open outside the app".
+  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  // Closing the main window hides it, the way the voice window does: the app
+  // keeps running in the dock and tray with its session warm, and the dock
+  // icon brings it straight back. Only a quit destroys it.
+  mainWindow.on("close", (e) => {
+    if (appIsQuitting) return;
+    e.preventDefault();
+    mainWindow.hide();
+  });
+
+  mainWindow.on("closed", () => {
+    clearTimeout(stallTimer);
+    mainWindow = null;
+    broadcastWindowRole();
+  });
+  broadcastWindowRole();
+}
+
+// ---------------------------------------------------------------------------
+// Detached tab windows: a dashboard tab broken out into its own OS window.
+// The window loads the tab's path directly and its preload carries a
+// --tab-window flag, which the renderer reads to disable its tab shell and
+// any writes to shared tab/layout state. "Attach" reverses it: the sender
+// window closes and the main window adopts the path back as a tab.
+// ---------------------------------------------------------------------------
+
+const tabWindows = new Set();
+let pendingAdoptPaths = [];
+
+// Only app-internal paths may ride the detach/attach IPC — a stray absolute
+// URL would otherwise turn a tab window into a browser for arbitrary sites.
+function sanitizeTabPath(navPath) {
+  if (typeof navPath !== "string") return null;
+  if (!navPath.startsWith("/") || navPath.startsWith("//")) return null;
+  return navPath;
+}
+
+// The window itself, hidden and unpositioned. Both the cold path and the warm
+// spare build one of these; only what gets loaded into it differs.
+function buildTabWindow(extraArgs = []) {
+  const zoom = getAutoZoomFactor();
+  const win = createShellWindow({
+    width: 1100,
+    height: 760,
+    minWidth: 700,
+    minHeight: 500,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 12 },
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--tab-window", ...extraArgs],
+      // Same as the main window: keep live-query WebSockets delivering while
+      // the window sits unfocused behind others.
+      backgroundThrottling: false,
+    },
+    icon: path.join(__dirname, "assets", "icon.png"),
+    show: false,
+    backgroundColor: "#002b36",
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (win.isDestroyed()) return;
+    win.webContents.setZoomFactor(getAutoZoomFactor());
+    win.webContents.executeJavaScript(
+      "document.documentElement.classList.add('electron-desktop')"
+    );
+    // A reload threw the preload's copy of the role away, and a window that
+    // was a claimed spare has nothing else saying it is the Chat window.
+    if (appOf(win)) broadcastWindowRole();
+  });
+  // Same rule as every window: new-window links open in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.on("closed", () => {
+    tabWindows.delete(win);
+    if (spareTabWindow === win) spareTabWindow = null;
+    broadcastWindowRole();
+  });
+  return win;
+}
+
+// ---------------------------------------------------------------------------
+// The warm spare. A detached window used to boot the whole web app from a cold
+// loadURL — bundle, store hydration, Convex reconnect — so "open in new window"
+// took seconds. Now one hidden tab window sits booted at /inbox, and a detach
+// hands it the route through the same in-app navigation the tray and
+// notifications use (a pushState, not a load), then shows it. A fresh spare
+// warms up behind it. The spare is NOT in `tabWindows` until it is claimed, so
+// it never counts as an app window for focus, leadership or banner routing.
+// ---------------------------------------------------------------------------
+
+const SPARE_WARM_DELAY_MS = 6000;
+let spareTabWindow = null;
+let spareTabReady = false;
+let spareTabTimer = null;
+
+function warmSpareTabWindow(delayMs = SPARE_WARM_DELAY_MS) {
+  if (spareTabTimer) return;
+  spareTabTimer = setTimeout(() => {
+    spareTabTimer = null;
+    if (appIsQuitting) return;
+    if (spareTabWindow && !spareTabWindow.isDestroyed()) return;
+    const win = buildTabWindow();
+    spareTabWindow = win;
+    spareTabReady = false;
+    win.webContents.once("did-finish-load", () => {
+      if (spareTabWindow === win) spareTabReady = true;
+    });
+    win.loadURL(`${currentBaseUrl}/inbox`);
+  }, delayMs);
+}
+
+// Throw the spare away (environment switch: it is booted on the wrong origin).
+function dropSpareTabWindow() {
+  if (spareTabTimer) {
+    clearTimeout(spareTabTimer);
+    spareTabTimer = null;
+  }
+  if (spareTabWindow && !spareTabWindow.isDestroyed()) spareTabWindow.destroy();
+  spareTabWindow = null;
+  spareTabReady = false;
+}
+
+function claimSpareTabWindow() {
+  const win = spareTabWindow;
+  if (win && !win.isDestroyed() && (win.webContents.isDestroyed() || win.webContents.isCrashed())) {
+    dropSpareTabWindow();
+    return null;
+  }
+  if (!win || win.isDestroyed() || !spareTabReady) return null;
+  spareTabWindow = null;
+  spareTabReady = false;
+  return win;
+}
+
+// A window for `navPath`, instantly when the warm spare is ready: the spare is
+// claimed and told to navigate, and shows once the route has painted; with no
+// spare a fresh window loads the path cold. `place` positions the window and
+// registers it (as a tab window, or as the Chat or Work window) BEFORE it is
+// told anything, so the role it reads on its way up already says what it is.
+// A fresh window may carry `coldArgs` for its preload; a spare cannot (its
+// arguments were fixed when it was built), which is why a window's identity
+// also rides the role.
+function openWarmWindow(navPath, place, coldArgs = []) {
+  const spare = claimSpareTabWindow();
+  const win = spare || buildTabWindow(coldArgs);
+  place(win);
+
+  if (spare) {
+    // The role first, not on the broadcast's timer: a claimed spare learns it
+    // is the Chat window before it navigates, so it never paints the
+    // dashboard's chrome around the page it is about to show.
+    flushWindowRole();
+    // Navigate first, show once the new route has painted, so the window never
+    // flashes the inbox it was parked on. The URL flips before React commits
+    // the route; the title flips with the commit, so wait for that (capped, in
+    // case the route keeps the title) and then for a frame to paint.
+    sendNavigate(win, navPath);
+    win.webContents
+      .executeJavaScript(
+        "new Promise((done) => { const t0 = document.title, start = Date.now();" +
+          "  const tick = () => (document.title !== t0 || Date.now() - start > 400)" +
+          "    ? requestAnimationFrame(() => requestAnimationFrame(done)) : setTimeout(tick, 16);" +
+          "  tick(); })"
+      )
+      .catch(() => {})
+      .then(() => {
+        if (!win.isDestroyed()) win.show();
+      });
+  } else {
+    win.loadURL(`${currentBaseUrl}${navPath}`);
+    win.once("ready-to-show", () => win.show());
+  }
+  broadcastWindowRole();
+  // The next breakout should be instant too.
+  warmSpareTabWindow();
+  return win;
+}
+
+function createTabWindow(navPath) {
+  return openWarmWindow(navPath, (win) => {
+    // Cascade from the main window so a breakout never opens exactly on top.
+    const base = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
+    if (base) win.setPosition(base.x + 40 + tabWindows.size * 24, base.y + 40 + tabWindows.size * 24);
+    tabWindows.add(win);
+  });
+}
+
+shellIpc.handle("detach-tab", (_e, navPath) => {
+  const clean = sanitizeTabPath(navPath);
+  if (!clean) return;
+  // A chat or work path broken out is that app's window, not a plain window:
+  // one Chat window, one Work window, so a second breakout raises the first.
+  const app = appForRoute(clean);
+  if (app) createAppWindow(app, clean);
+  else createTabWindow(clean);
+});
+
+shellIpc.handle("attach-tab", (e, navPath) => {
+  const clean = sanitizeTabPath(navPath);
+  if (!clean) return;
+  const sender = BrowserWindow.fromWebContents(e.sender);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("adopt-tab", clean);
+    mainWindow.show();
+    mainWindow.focus();
+  } else {
+    // Main window is gone (macOS keeps the app alive) — recreate it and let
+    // its did-finish-load flush deliver the adoption.
+    pendingAdoptPaths.push(clean);
+    createWindow();
+  }
+  // A plain breakout or the Chat or Work window: the page moved, so the
+  // window it came from goes away.
+  if (sender && (tabWindows.has(sender) || appOf(sender))) sender.close();
+});
+
+// ---------------------------------------------------------------------------
+// App windows: Chat and Work, each a singleton window of its own.
+//
+// The person keeps them beside the main window the way they keep Slack beside
+// an editor. Each is a detached tab window (buildTabWindow, so every rule
+// about a borrowed tab shell applies) flagged with --app-window=<app>, which
+// the renderer reads to draw the app's own compact header instead of the
+// dashboard chrome. Which routes belong to which app is appWindows.mjs, the
+// one table the shell and the web share; routeToWindow below applies it to
+// every path the shell is asked to land, so chat stays in the Chat window and
+// a session always lands in the main window, whatever the entry point.
+// ---------------------------------------------------------------------------
+
+const APP_WINDOW_SIZE = { width: 1100, height: 760, minWidth: 700, minHeight: 500 };
+const appWindowFor = new Map(); // app → BrowserWindow
+
+function loadAppWindowState(app) {
+  const all = loadFullSettings().appWindows;
+  const saved = all && typeof all === "object" ? all[app] : null;
+  return saved && typeof saved === "object" ? saved : {};
+}
+
+function saveAppWindowBounds(app, win) {
+  if (!win || win.isDestroyed() || win.isMinimized()) return;
+  const all = loadFullSettings().appWindows;
+  updateSettings({ appWindows: { ...(all && typeof all === "object" ? all : {}), [app]: { bounds: win.getBounds() } } });
+}
+
+// Dragging and resizing fire continuously; save once the gesture settles, and
+// once more on close so the last move is never lost.
+function persistBounds(win, save) {
+  let timer = null;
+  const later = () => {
+    clearTimeout(timer);
+    timer = setTimeout(save, 400);
+  };
+  win.on("move", later);
+  win.on("resize", later);
+  win.on("close", () => {
+    clearTimeout(timer);
+    save();
+  });
+}
+
+/** The app a window is, or null for the main window and plain breakouts. */
+function appOf(win) {
+  for (const [app, w] of appWindowFor) if (w === win) return app;
+  return null;
+}
+
+/** Which app windows exist right now, as the role broadcast and the router see them. */
+function openAppWindows() {
+  const out = {};
+  for (const [app, win] of appWindowFor) if (!win.isDestroyed()) out[app] = true;
+  return out;
+}
+
+// Where a window opens the first time: to the right of the main window when
+// the display has room for it, the way a person keeps Slack beside an
+// editor; else a cascade off the main window's corner, never exactly on top.
+function besideMainWindow(size) {
+  const base = mainWindow.getBounds();
+  const area = screen.getDisplayMatching(base).workArea;
+  const right = base.x + base.width + 12;
+  if (right + size.width <= area.x + area.width) return [right, base.y];
+  return [base.x + 60, base.y + 60];
+}
+
+function createAppWindow(app, navPath = null) {
+  const existing = appWindowFor.get(app);
+  if (existing && !existing.isDestroyed()) {
+    if (navPath) sendNavigate(existing, navPath);
+    existing.show();
+    existing.focus();
+    return existing;
+  }
+  const win = openWarmWindow(
+    navPath || DESKTOP_APPS[app].home,
+    (w) => {
+      const bounds = clampToVisibleDisplay(loadAppWindowState(app).bounds, APP_WINDOW_SIZE);
+      if (bounds) w.setBounds(bounds);
+      else if (mainWindow && !mainWindow.isDestroyed()) w.setPosition(...besideMainWindow(w.getBounds()));
+      appWindowFor.set(app, w);
+    },
+    // A cold window knows what it is from its first frame; a claimed spare
+    // reads the same fact off its role (`app`).
+    [`--app-window=${app}`],
+  );
+  persistBounds(win, () => saveAppWindowBounds(app, win));
+  win.on("closed", () => {
+    if (appWindowFor.get(app) === win) appWindowFor.delete(app);
+    broadcastWindowRole();
+  });
+  return win;
+}
+
+// Land a path in the window that owns it: the app window when the path
+// belongs to an app that has one, else the main window (booted if it is
+// gone), else the asking window itself. `from` is the renderer asking, so a
+// Chat window asking for a session hands it to the main window.
+function routeToWindow(navPath, from = null) {
+  const here = from ? appOf(from) : null;
+  // A plain breakout never shows an app's routes (the web asks the same
+  // way): the app's window opens, or comes forward, with the path.
+  const app = appForRoute(navPath);
+  if (app && from && from !== mainWindow && !here) {
+    createAppWindow(app, navPath);
+    return true;
+  }
+  const place = placeRoute(navPath, here, openAppWindows());
+  let win = null;
+  if (place === "here" && from && !from.isDestroyed()) win = from;
+  else if (place === "here" || place === "main") win = mainWindow;
+  else win = appWindowFor.get(place);
+  if (!win || win.isDestroyed()) {
+    // No main window (macOS keeps the app alive with every window closed):
+    // boot one and let the deep-link buffer deliver the path on load.
+    deepLinkUrl = `codecast://open${navPath}`;
+    createWindow();
+    return true;
+  }
+  win.show();
+  win.focus();
+  sendNavigate(win, navPath);
+  return true;
+}
+
+shellIpc.handle("open-app-window", (_e, app, navPath) => {
+  if (!isDesktopApp(app)) return false;
+  const clean = navPath == null ? null : sanitizeTabPath(navPath);
+  createAppWindow(app, clean);
+  return true;
+});
+
+shellIpc.handle("close-app-window", (_e, app) => {
+  const win = isDesktopApp(app) ? appWindowFor.get(app) : null;
+  if (win && !win.isDestroyed()) win.close();
+});
+
+shellIpc.handle("route-navigate", (e, navPath) => {
+  const clean = sanitizeTabPath(navPath);
+  if (!clean) return false;
+  return routeToWindow(clean, BrowserWindow.fromWebContents(e.sender));
+});
+
+// Bring another app (the Chrome an "open tab" click just focused a tab in) in
+// front of this one. macOS 14+ honors an activation only from the app that is
+// active, so the daemon's own raise leaves Chrome behind the app the human
+// clicked in; this repeats it from here. Same pid-addressed Apple event as
+// packages/cli/src/browser/raiseApp.ts. Resolves whether the event was sent.
+shellIpc.handle("raise-app", (_e, pid) => {
+  if (process.platform !== "darwin" || !Number.isInteger(pid) || pid <= 1) return false;
+  const jxa =
+    'ObjC.import("Foundation");' +
+    `const target = $.NSAppleEventDescriptor.descriptorWithProcessIdentifier(${pid});` +
+    "const evt = $.NSAppleEventDescriptor.appleEventWithEventClassEventIDTargetDescriptorReturnIDTransactionID(0x6d697363, 0x61637476, target, -1, 0);" +
+    "const err = Ref(); evt.sendEventWithOptionsTimeoutError(1, 10, err); !err[0] || err[0].isNil() ? 'ok' : 'failed';";
+  return new Promise((resolve) => {
+    execFile("/usr/bin/osascript", ["-l", "JavaScript", "-e", jxa], { timeout: 5_000 }, (err, stdout) => {
+      resolve(!err && `${stdout}`.trim() === "ok");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The people window: a compact floating buddy list (route /people) carrying the
+// roster, status and calling. Singleton — one per app, focused rather than
+// duplicated. It is the phone: while it exists it is the notification leader
+// for sounds and every call/walkie banner lands in it (notificationRouter.js).
+// Its size, position and always-on-top pin persist across launches; the pin is
+// the only window control the renderer may drive, and only from this window.
+// ---------------------------------------------------------------------------
+
+const PEOPLE_PATH = "/people";
+// The minimums are a STRIP: one row of faces beside the traffic lights (see
+// components/people/peopleDensity.ts — the renderer picks its shape from the
+// box it is given). A buddy list pinned above other apps earns its place by
+// costing almost none of the screen.
+const PEOPLE_SIZE = { width: 320, height: 640, minWidth: 240, minHeight: 56 };
+
+let peopleWindow = null;
+
+function loadPeopleState() {
+  const saved = loadFullSettings().peopleWindow;
+  return saved && typeof saved === "object" ? saved : {};
+}
+
+function updatePeopleState(patch) {
+  updateSettings({ peopleWindow: { ...loadPeopleState(), ...patch } });
+}
+
+// A saved rectangle only helps if it is still on screen: displays get unplugged
+// and resolutions change. getDisplayMatching gives us the display it overlaps
+// most (the nearest one when it overlaps none), and we clamp into that display's
+// work area — so a window saved on a monitor that is gone reopens on a real one.
+function clampToVisibleDisplay(saved, size = PEOPLE_SIZE) {
+  if (!saved || typeof saved.x !== "number" || typeof saved.y !== "number") return null;
+  const area = screen.getDisplayMatching({
+    x: saved.x,
+    y: saved.y,
+    width: Math.round(saved.width) || size.width,
+    height: Math.round(saved.height) || size.height,
+  }).workArea;
+  const width = Math.min(Math.max(size.minWidth, Math.round(saved.width) || size.width), area.width);
+  const height = Math.min(Math.max(size.minHeight, Math.round(saved.height) || size.height), area.height);
+  return {
+    width,
+    height,
+    x: Math.min(Math.max(Math.round(saved.x), area.x), area.x + area.width - width),
+    y: Math.min(Math.max(Math.round(saved.y), area.y), area.y + area.height - height),
+  };
+}
+
+function savePeopleBounds(win) {
+  if (!win || win.isDestroyed() || win.isMinimized()) return;
+  updatePeopleState({ bounds: win.getBounds() });
+}
+
+// Every window names itself for window switchers (Mission Control, the Window
+// menu, AltTab). A single purpose window keeps the name the shell gives it: its
+// page is the web app, whose document title is the site's marketing line until
+// something rewrites it, and a switcher full of identical marketing lines names
+// nothing. Tab windows are named by the web app from what they show.
+function pinWindowTitle(win, title) {
+  win.setTitle(title);
+  win.on("page-title-updated", (e) => e.preventDefault());
+}
+
+function createPeopleWindow() {
+  if (peopleWindow && !peopleWindow.isDestroyed()) {
+    peopleWindow.show();
+    peopleWindow.focus();
+    return peopleWindow;
+  }
+  const state = loadPeopleState();
+  const bounds = clampToVisibleDisplay(state.bounds);
+  const zoom = getAutoZoomFactor();
+  const win = createShellWindow({
+    width: PEOPLE_SIZE.width,
+    height: PEOPLE_SIZE.height,
+    ...(bounds || {}),
+    minWidth: PEOPLE_SIZE.minWidth,
+    minHeight: PEOPLE_SIZE.minHeight,
+    // Same inset lights as every other window. The panel DECLARES the inset
+    // (desktopHeaderClass / --titlebar-inset) rather than measuring it — its
+    // top row is at the window's corner by construction — and draws its own
+    // drag region from the same class.
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 16, y: 12 },
+    // Restored from the last session: a pinned buddy list stays pinned.
+    alwaysOnTop: state.alwaysOnTop === true,
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--people-window"],
+      // It is the phone: rings, presence and walkie audio must keep arriving
+      // while it sits unfocused beside another app.
+      backgroundThrottling: false,
+    },
+    icon: path.join(__dirname, "assets", "icon.png"),
+    show: false,
+    backgroundColor: "#002b36",
+  });
+  peopleWindow = win;
+  pinWindowTitle(win, "Codecast People");
+
+  win.loadURL(`${currentBaseUrl}${PEOPLE_PATH}`);
+  win.once("ready-to-show", () => win.show());
+  win.webContents.on("did-finish-load", () => {
+    if (win.isDestroyed()) return;
+    win.webContents.setZoomFactor(getAutoZoomFactor());
+    win.webContents.executeJavaScript(
+      "document.documentElement.classList.add('electron-desktop')"
+    );
+  });
+  // Same rule as every window: new-window links open in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  persistBounds(win, () => savePeopleBounds(win));
+  win.on("closed", () => {
+    if (peopleWindow === win) peopleWindow = null;
+    broadcastWindowRole();
+  });
+  broadcastWindowRole();
+  return win;
+}
+
+// With a voice host the buddy list is a SHAPE of that window (the wall), and
+// asking for it is a standing arrangement the host takes up. On a shell whose
+// host has not declared itself — an older web build, or the first second
+// after boot — the people window is still a window of its own.
+shellIpc.handle("open-people-window", () => {
+  if (hasVoiceHost()) {
+    wallFocusPending = true;
+    setWallWanted(true);
+    if (callWindowSize === "wall") revealCallWindow(callWindow, "wall");
+    return;
+  }
+  createPeopleWindow();
+});
+
+shellIpc.handle("close-people-window", () => {
+  setWallWanted(false);
+  if (peopleWindow && !peopleWindow.isDestroyed()) peopleWindow.close();
+});
+
+// The pin. Only the buddy list may float above other apps — the people window
+// of its own, or the voice window while the wall is its shape. Any other
+// renderer asking is answered with what it actually is (false), never granted.
+shellIpc.handle("set-always-on-top", (e, on) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || win.isDestroyed()) return false;
+  const pinned = on === true;
+  if (win === peopleWindow) {
+    win.setAlwaysOnTop(pinned);
+    updatePeopleState({ alwaysOnTop: pinned });
+    return pinned;
+  }
+  if (win === callWindow) {
+    updatePeopleState({ alwaysOnTop: pinned });
+    // Only the wall wears the pin. Every other shape's float is its own.
+    if (callWindowSize === "wall") {
+      win.setAlwaysOnTop(pinned, "floating");
+      win.setVisibleOnAllWorkspaces(pinned, WORKSPACES_OPTS);
+    }
+    return pinned;
+  }
+  return false;
+});
+
+shellIpc.handle("get-always-on-top", (e) => {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  if (!win || win.isDestroyed()) return false;
+  // The voice window floats in most of its shapes for reasons of their own;
+  // the pin is the wall's, and the wall's alone.
+  if (win === callWindow) return wallPinned();
+  return win.isAlwaysOnTop();
+});
+
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The voice window: ONE persistent see-through window (route /call-panel) that
+// holds everything with a microphone or a face in it: the walkie's ear, the
+// face row floating over the work, the buddy list as a wall, and the call's
+// stage.
+//
+// A REAL window. The founder's screenshot was a call stage living in a Chrome
+// popup: no app chrome, the OS treating it as a browser, and a microphone
+// permission attached to a window nobody recognizes. This is the window that
+// makes that outcome impossible, and the web side refuses to fall back to
+// window.open for a call at all.
+//
+// ── Why it is ONE window, and why it never goes away ──────────────────────
+// Media is per renderer: the LiveKit room and the microphone publication are
+// module singletons in the renderer that joined. Moving a call to another
+// window therefore means joining the room again from a fresh renderer, and
+// LiveKit evicts the old participant when the new one lands — an audible drop
+// and a visual jump. That drop used to happen at the walkie's biggest moment:
+// a burst opened its room in the main window, and the burst becoming a call
+// opened THIS window, which joined and evicted it.
+//
+// So the window that holds the microphone is always this one. It is created at
+// boot, hidden, and it hosts the walkie's ear from then on: a teammate's burst
+// is heard here, this person's burst is spoken here, and the call that grows
+// out of either is a RESIZE of this window. Every other window is a remote —
+// it sends press, join and hang-up as commands (`voice-command`) and draws the
+// state this window mirrors back (`voice-mirror`).
+//
+// Hang-up hides it. Quitting the app is the only thing that destroys it.
+//
+// ── Why it is born see-through, whatever shape it is in ───────────────────
+// `transparent` and `frame` are BrowserWindow CONSTRUCTION options; Electron
+// has no runtime switch for either. The float needs both, so the window is
+// born with both and the STAGE paints its own card inside the glass.
+//
+// It also means this window has no title bar and no traffic lights. The stage's
+// own header row is the drag surface, and its own button hides the window.
+//
+// ── The shapes ────────────────────────────────────────────────────────────
+// Decided by the renderer from what is happening (callWindowPolicy.js lists
+// them): `float` for the face row, `panel` for the stage, `wall` for the
+// buddy list, and `idle` for nothing at all. The shell applies each as a
+// placement, a size and a kind of window, and shows or hides the window to
+// match; the renderer never has to know how.
+//
+// ── The float never moves ─────────────────────────────────────────────────
+// A ring, a burst and a call are the same row in different states, so they
+// are ONE shape at ONE remembered anchor: the corner the person tucked the
+// row into. The row grows and shrinks away from that corner as faces and the
+// card come and go, and a state change never moves the window. The old
+// arrangement gave every state a spot of its own (the ring top right, the
+// strip bottom right, the circles wherever they were dragged), and the
+// window jumped between them as a burst became a call.
+//
+// ── What a see-through shape needs from the shell ─────────────────────────
+// Three things an ordinary window never asks for, all runtime-settable:
+//
+//   ignore mouse events  The window is a rectangle, the product is a few
+//                        faces. It ignores the mouse so a click lands in
+//                        whatever is underneath, and the renderer, the only
+//                        side that knows where the faces and the card are,
+//                        turns that off while the pointer is over one.
+//   content size         It is sized to its row and its card, which change
+//                        with who is on the row and what is happening.
+//   drag                 Held on a face, the window follows the cursor. Not a
+//                        `-webkit-app-region: drag` region: over one of those
+//                        the window manager takes the mouse events, so the
+//                        renderer would never learn the pointer had left and
+//                        the window would stay stuck taking clicks that belong
+//                        to the application underneath. (The STAGE does use a
+//                        drag region, because it is not click-through, so
+//                        nothing is fighting for those events there.)
+// ---------------------------------------------------------------------------
+
+const CALL_PANEL_PATH = "/call-panel";
+// Born large: a screen share is drawn into this box, and every css pixel it
+// lacks is a pixel of the sharer's text the viewer never sees (at 960x640 a
+// 1440p share shrank about 3.5x on a 1x monitor). Fit to the work area.
+const CALL_PANEL_SIZE = { width: 1280, height: 800, minWidth: 520, minHeight: 380 };
+// What the float is born as: about one face plus the room its ring needs.
+// The renderer reports the true size a frame later
+// (set-call-window-content-size); this only keeps the first frame from being a
+// full-screen sheet of invisible glass.
+const CALL_FLOAT_SEED = { width: 80, height: 80 };
+// The float's home the first time: the top right of the work area, out of
+// the way of most windows' content, indented enough to clear a menu bar.
+const CALL_FLOAT_INSET = 28;
+// Every floating window follows the person between desktops with these
+// options, and NEVER with `visibleOnFullScreen`. On macOS that flag makes
+// Electron call app.dock.hide() on every application — it turns the whole
+// process into a background helper (LSUIElement), which deactivates the app:
+// the main window lost focus and the dock icon vanished each time the faces
+// or the strip appeared over the work. What the flag buys is showing over
+// ANOTHER app's full-screen space, and that is not worth the app losing the
+// keyboard to its own overlay. `skipTransformProcessType` is the documented
+// way to keep the process what it is.
+const WORKSPACES_OPTS = { visibleOnFullScreen: false, skipTransformProcessType: true };
+
+let callWindow = null;
+let callPlaceTimer = null;
+// What the renderer says it is hosting: { room, mic, camera, scribe }. `room`
+// is what tells every other window the call lives here.
+let callWindowState = null;
+// The renderer declared itself the voice host (a web build that knows this
+// window is persistent and takes joins as commands). Until it has, the window
+// is driven the older way: a room in its URL, and a hang-up that destroys it.
+let callWindowHost = false;
+// The renderer declared the call OVER (its hang-up button). Only an older
+// renderer's close reads this; a host's hang-up is a hide.
+let callWindowEnded = false;
+// Which shape the window is in right now. The CALL shape the person last
+// chose is remembered per machine (settings), so the next huddle comes back
+// the shape they left it; the wall and idle are never remembered, because
+// they are decided by what is happening.
+let callWindowSize = "idle";
+// The last state the host mirrored to the other windows, replayed to a window
+// that opens later so it does not start from a blank.
+let lastVoiceMirror = null;
+// The app is going away. Every window gets `close` during a quit, including
+// this one, and hiding it then would keep the process alive.
+let appIsQuitting = false;
+app.on("before-quit", () => {
+  appIsQuitting = true;
+  // A staged update installs on the way out. Quitting is the human's own
+  // restart; a staged bundle left behind would wait for a click nobody makes.
+  applyStagedUpdateOnQuit();
+});
+
+function loadCallPanelState() {
+  const saved = loadFullSettings().callPanelWindow;
+  return saved && typeof saved === "object" ? saved : {};
+}
+
+// The stage's bounds, the float's anchor and the wall's rectangle are
+// remembered SEPARATELY. They are the same window, but they are not the same
+// place: the stage is a card you put in the middle of the screen, the float
+// is a row you tuck in a corner and the wall is the buddy list's own
+// rectangle, and saving one over another would drag each to where the other
+// was last left.
+function saveCallPanelBounds(win) {
+  if (!win || win.isDestroyed() || win.isMinimized()) return;
+  const key = callWindowPlacementKey(callWindowSize);
+  if (key === "bounds") {
+    updateSettings({ callPanelWindow: { ...loadCallPanelState(), bounds: win.getBounds() } });
+  } else if (key === "wall") {
+    // The people window's own slot, so a wall that used to be a window of its
+    // own comes back exactly where the person kept it.
+    updatePeopleState({ bounds: win.getBounds() });
+  }
+}
+
+// The float's anchor: the corner the row hangs from, as a screen point, and
+// which corner it is. Written after a drag lands, so the row comes back
+// exactly where it was left, and read by every resize so growth goes away
+// from it. The corner is chosen from where the window sits on its display
+// (callWindowPolicy floatCornerFor): a row dragged into the bottom right
+// starts growing up and to the left from there.
+function saveFloatAnchor(win) {
+  if (!win || win.isDestroyed() || win.isMinimized()) return;
+  if (callWindowPlacementKey(callWindowSize) !== "float") return;
+  const bounds = win.getBounds();
+  const area = screen.getDisplayMatching(bounds).workArea;
+  updateSettings({
+    callPanelWindow: { ...loadCallPanelState(), float: floatAnchorOf(bounds, floatCornerFor(bounds, area)) },
+  });
+}
+
+function rememberCallWindowPlace(win) {
+  saveCallPanelBounds(win);
+  saveFloatAnchor(win);
+}
+
+/** The call shape the person last left a huddle in. Always one of the call's
+ *  own sizes: the wall and idle are never written, and a name that is not
+ *  a call size lands on the stage. */
+function savedCallWindowSize() {
+  const size = normalizeCallWindowSize(loadCallPanelState().size);
+  return isCallSize(size) ? size : "panel";
+}
+
+function rememberCallSize(size) {
+  if (!isCallSize(size)) return;
+  updateSettings({ callPanelWindow: { ...loadCallPanelState(), size } });
+}
+
+function callPanelUrl(roomKey, opts) {
+  const q = new URLSearchParams();
+  if (roomKey) q.set("room", String(roomKey));
+  if (opts && opts.mic) q.set("mic", "1");
+  if (opts && opts.camera) q.set("cam", "1");
+  if (opts && opts.scribe) q.set("scribe", "1");
+  // Opened by an answered ring: the accept follows on its own channel.
+  if (opts && opts.ring) q.set("ring", "1");
+  // The size the window is opening in, so the renderer's first paint is the
+  // right shape rather than a stage that snaps to the float a frame later.
+  if (roomKey && isCallSize(callWindowSize) && callWindowSize !== "panel") q.set("size", callWindowSize);
+  const query = q.toString();
+  return `${currentBaseUrl}${CALL_PANEL_PATH}${query ? `?${query}` : ""}`;
+}
+
+// The float's anchor the first time: the top right of the work area, the
+// corner the row grows down and left from.
+function defaultFloatAnchor() {
+  const area = screen.getPrimaryDisplay().workArea;
+  return { x: area.x + area.width - CALL_FLOAT_INSET, y: area.y + CALL_FLOAT_INSET, corner: "top-right" };
+}
+
+const FLOAT_CORNERS = ["top-left", "top-right", "bottom-left", "bottom-right"];
+
+/** The remembered anchor, or the default when none was ever written. */
+function floatAnchor() {
+  const saved = loadCallPanelState().float;
+  if (!saved || typeof saved.x !== "number" || typeof saved.y !== "number" || !FLOAT_CORNERS.includes(saved.corner)) {
+    return defaultFloatAnchor();
+  }
+  return { x: saved.x, y: saved.y, corner: saved.corner };
+}
+
+// Where a float of `size` sits: hung from its anchor, then made safe for the
+// display it is about to be used on. A display that is gone (an unplugged
+// monitor) would otherwise put the window somewhere nobody can see, and the
+// float has no title bar and no taskbar entry to recover it from.
+function floatPosition(size) {
+  const pos = floatPositionFor(floatAnchor(), size);
+  const area = screen.getDisplayMatching({ ...pos, ...size }).workArea;
+  return {
+    x: Math.min(Math.max(pos.x, area.x), area.x + area.width - size.width),
+    y: Math.min(Math.max(pos.y, area.y), area.y + area.height - size.height),
+  };
+}
+
+// ── Attention ──────────────────────────────────────────────────────────────
+//
+// A ring is the one thing in this app that has to reach a person who is not
+// looking at it. The float shows the ring over every window, and beside it
+// the dock icon bounces until the app is activated (macOS) or the frame
+// flashes (Windows). Held by the host for as long as the ring is up
+// (`ring-attention`).
+let ringBounce = null;
+
+function setRingAttention(on) {
+  if (on) {
+    if (app.dock && typeof app.dock.bounce === "function" && ringBounce === null) {
+      ringBounce = app.dock.bounce("critical");
+    }
+    if (mainWindow && !mainWindow.isDestroyed() && typeof mainWindow.flashFrame === "function") {
+      mainWindow.flashFrame(true);
+    }
+    return;
+  }
+  if (app.dock && typeof app.dock.cancelBounce === "function" && ringBounce !== null) {
+    app.dock.cancelBounce(ringBounce);
+  }
+  ringBounce = null;
+  if (mainWindow && !mainWindow.isDestroyed() && typeof mainWindow.flashFrame === "function") {
+    mainWindow.flashFrame(false);
+  }
+}
+
+/**
+ * Put the window into a shape: where it sits, how big it is, and what kind of
+ * window it is while it is there.
+ *
+ * The kind comes from `callWindowChrome` rather than from an `if` here, because
+ * the three flags have to move together — an always-on-top window that still
+ * takes every click is a pane floating over somebody's work, and a
+ * click-through window that is NOT on top is a window you cannot reach at all.
+ *
+ * Visibility follows the shape. `idle` hides; every other shape reveals the
+ * window if it was hidden — the stage with focus when a call opens, the
+ * see-through shapes without it (a glance kept beside the work must not steal
+ * the keyboard).
+ */
+function applyCallWindowSize(win, size, { reveal = true } = {}) {
+  if (!win || win.isDestroyed()) return;
+  win.setTitle(callWindowTitle(size));
+  const chrome = callWindowChrome(size, { pinned: wallPinned() });
+  if (size === "idle") {
+    stopCallWindowDrag();
+    win.setIgnoreMouseEvents(true, { forward: true });
+    if (win.isVisible()) win.hide();
+    return;
+  }
+  // Resizable FIRST and restored last: Electron refuses setBounds/setSize on a
+  // window that is not resizable, so the moves below happen while the flag is
+  // up whatever the size asks for.
+  win.setResizable(true);
+  if (size === "panel") {
+    const bounds = clampToVisibleDisplay(loadCallPanelState().bounds, CALL_PANEL_SIZE);
+    win.setMinimumSize(CALL_PANEL_SIZE.minWidth, CALL_PANEL_SIZE.minHeight);
+    win.setBounds(bounds || defaultPanelBounds());
+  } else if (size === "wall") {
+    const bounds = clampToVisibleDisplay(loadPeopleState().bounds, PEOPLE_SIZE);
+    win.setMinimumSize(PEOPLE_SIZE.minWidth, PEOPLE_SIZE.minHeight);
+    win.setBounds(bounds || defaultWallBounds());
+  } else {
+    // The float. No minimum, or a 520px floor would stop the window ever
+    // being the size of one face. Hung from its anchor as a seed; the
+    // renderer's size report grows it away from that same corner.
+    win.setMinimumSize(1, 1);
+    win.setContentSize(CALL_FLOAT_SEED.width, CALL_FLOAT_SEED.height);
+    const [width, height] = win.getSize();
+    const pos = floatPosition({ width, height });
+    win.setPosition(pos.x, pos.y);
+  }
+  win.setResizable(chrome.resizable);
+  win.setAlwaysOnTop(chrome.alwaysOnTop, chrome.level || "floating");
+  // Follow the person between desktops.
+  win.setVisibleOnAllWorkspaces(chrome.visibleOnAllWorkspaces, WORKSPACES_OPTS);
+  // `forward: true` is what keeps the renderer receiving mouse MOVES while it
+  // ignores clicks — without it the window would go deaf the moment the pointer
+  // left a circle and could never learn that it came back.
+  win.setIgnoreMouseEvents(chrome.clickThrough, { forward: true });
+  if (!chrome.clickThrough) stopCallWindowDrag();
+  if (reveal && !win.isVisible()) revealCallWindow(win, size);
+}
+
+// The stage takes focus: it is a place you are about to talk in. Every other
+// shape is a glance you keep beside your work, and one that stole the keyboard
+// every time it appeared would be worse than no circle at all.
+function revealCallWindow(win, size) {
+  if (size === "panel" || (size === "wall" && wallFocusPending)) {
+    wallFocusPending = false;
+    win.show();
+    win.focus();
+  } else {
+    win.showInactive();
+  }
+}
+
+function defaultPanelBounds() {
+  const area = screen.getPrimaryDisplay().workArea;
+  const width = Math.min(CALL_PANEL_SIZE.width, area.width);
+  const height = Math.min(CALL_PANEL_SIZE.height, area.height);
+  return {
+    x: Math.round(area.x + (area.width - width) / 2),
+    y: Math.round(area.y + (area.height - height) / 2),
+    width,
+    height,
+  };
+}
+
+/**
+ * Change the window's shape from the shell's side — a request from a renderer
+ * (its own size buttons, or an opener asking for the float) or from the shell's
+ * own bookkeeping. Remembers the place the shape being LEFT was in, writes the
+ * call size down if it is one, and applies the new shape.
+ */
+function setCallWindowShape(win, size, opts) {
+  const next = normalizeCallWindowSize(size);
+  if (next === callWindowSize) {
+    // Same shape, asked to show itself again: a hidden window, or a stage
+    // that is up but behind the app. Expanding a stage that is already open
+    // is a request to see it, and only the shell can bring it to the front.
+    if (opts && opts.reveal && next !== "idle" && (!win.isVisible() || next === "panel")) revealCallWindow(win, next);
+    return next;
+  }
+  rememberCallWindowPlace(win);
+  callWindowSize = next;
+  rememberCallSize(next);
+  applyCallWindowSize(win, next, opts);
+  broadcastWindowRole();
+  return next;
+}
+
+/**
+ * The window, made if it does not exist. `roomKey` and `opts` are the older
+ * way in — a room in the URL that the renderer takes over on load — and are
+ * only used when the window has to be BUILT here. The persistent window is
+ * built at boot with no room, and rooms reach it as commands afterwards.
+ */
+function ensureCallWindow(roomKey, opts) {
+  if (callWindow && !callWindow.isDestroyed()) return callWindow;
+  callWindowEnded = false;
+  callWindowHost = false;
+  // The shape the window is born in. A room in hand opens the call in the
+  // size the person last left it (or the one the opener asked for); no room
+  // is the idle host, hidden until something happens.
+  callWindowSize = roomKey
+    ? opts && opts.size
+      ? normalizeCallWindowSize(opts.size)
+      : savedCallWindowSize()
+    : "idle";
+  if (roomKey) rememberCallSize(callWindowSize);
+  const bounds = clampToVisibleDisplay(loadCallPanelState().bounds, CALL_PANEL_SIZE);
+  const zoom = getAutoZoomFactor();
+  const win = createShellWindow({
+    ...(bounds || defaultPanelBounds()),
+    minWidth: CALL_PANEL_SIZE.minWidth,
+    minHeight: CALL_PANEL_SIZE.minHeight,
+    // No chrome, in any shape. The circle shapes need a see-through frameless
+    // window and neither option can be changed after construction, so the
+    // stage is a card the renderer paints inside the same glass: rounded
+    // corners of its own, its header row as the drag surface, its own close
+    // button.
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    // The OS shadow is a rectangle around the whole window. Around a rounded
+    // card it is a visible seam, and around a circle it is a grey box floating
+    // over somebody's work.
+    hasShadow: false,
+    // No taskbar entry: in its small shapes it has no title bar to recover it
+    // from, and the elsewhere pill in the app is what brings it back.
+    skipTaskbar: true,
+    // The float sits over another app's work, so a press on it is usually
+    // the first this window has had since that app took the front. macOS
+    // spends a first press on an inactive window activating it and never
+    // delivers it: a face held to drag the row did nothing, and only the
+    // next press (the grip, by then) moved it.
+    acceptFirstMouse: true,
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--call-panel-window"],
+      // It holds the microphone. Throttling this window would throttle the
+      // media — and it is usually hidden or behind another window, since
+      // being out of the way is what its small shapes are for.
+      backgroundThrottling: false,
+      // Face tracking needs the Shape Detection API's FaceDetector, and
+      // Chromium does not expose it by default any more — measured on Chrome
+      // 151: absent without a flag, present with `--enable-blink-features=
+      // FaceDetector` (the name is the interface's, not "ShapeDetection",
+      // which does nothing). Enabled HERE rather than app-wide, because this is
+      // the one window that draws face circles: a process-wide switch, or the
+      // experimental-web-platform-features flag that also turns it on, would
+      // hand every window in the app a pile of unfinished APIs.
+      //
+      // Without it nothing breaks — the circles show a center crop, which is a
+      // fine picture of somebody at their desk; it just does not follow them.
+      enableBlinkFeatures: "FaceDetector",
+    },
+    icon: path.join(__dirname, "assets", "icon.png"),
+    show: false,
+  });
+  callWindow = win;
+  callWindowState = roomKey
+    ? {
+        room: roomKey,
+        mic: !!(opts && opts.mic),
+        camera: !!(opts && opts.camera),
+        scribe: !!(opts && opts.scribe),
+      }
+    : null;
+
+  applyCallWindowSize(win, callWindowSize, { reveal: false });
+  pinWindowTitle(win, callWindowTitle(callWindowSize));
+  win.loadURL(callPanelUrl(roomKey, opts));
+  win.once("ready-to-show", () => {
+    if (win.isDestroyed() || callWindowSize === "idle") return;
+    revealCallWindow(win, callWindowSize);
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (win.isDestroyed()) return;
+    win.webContents.setZoomFactor(getAutoZoomFactor());
+    win.webContents.executeJavaScript(
+      "document.documentElement.classList.add('electron-desktop')"
+    );
+  });
+  // Same rule as every window: new-window links open in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  // Debounced: a drag moves this window at the cursor's rate, and writing the
+  // settings file on every one of those would be sixty disk writes a second.
+  // Each saver ignores the shapes it does not own, so the shape the window is
+  // actually in is the one that gets written.
+  const remember = () => {
+    clearTimeout(callPlaceTimer);
+    callPlaceTimer = setTimeout(() => rememberCallWindowPlace(win), 400);
+  };
+  win.on("move", remember);
+  win.on("resize", remember);
+  win.on("close", (e) => {
+    clearTimeout(callPlaceTimer);
+    stopCallWindowDrag();
+    rememberCallWindowPlace(win);
+    // The window is the walkie's ear and the call's home: closing it HIDES,
+    // like the palette. Quitting is what destroys it — and, for an older
+    // renderer that never declared itself the host, its own hang-up.
+    if (
+      shouldHideCallWindow({
+        ended: callWindowEnded,
+        quitting: appIsQuitting,
+        host: callWindowHost,
+      })
+    ) {
+      e.preventDefault();
+      // Closing the wall is putting the buddy list away, the way closing the
+      // people window was: the host goes idle and the next ask brings it back.
+      if (callWindowSize === "wall") setWallWanted(false);
+      win.hide();
+      broadcastWindowRole();
+      return;
+    }
+  });
+  win.on("closed", () => {
+    if (callWindow === win) {
+      callWindow = null;
+      callWindowState = null;
+      callWindowEnded = false;
+      callWindowHost = false;
+      lastVoiceMirror = null;
+    }
+    broadcastWindowRole();
+  });
+  broadcastWindowRole();
+  return win;
+}
+
+/**
+ * Open the window onto a room.
+ *
+ * A HOST renderer takes the room as a command — the window is already up,
+ * already holds the walkie's ear and possibly a burst in this very room, and
+ * loading a URL into it would tear all of that down. Anything else (the window
+ * being built right now, or an older renderer) gets the room in its URL, which
+ * both kinds of renderer understand.
+ */
+function openCallWindow(roomKey, opts) {
+  if (!roomKey || typeof roomKey !== "string") return null;
+  const o = opts && typeof opts === "object" ? opts : {};
+  const existed = !!callWindow && !callWindow.isDestroyed();
+  const win = ensureCallWindow(existed ? null : roomKey, o);
+  if (!win) return null;
+  callWindowEnded = false;
+  if (existed) {
+    if (callWindowHost) {
+      win.webContents.send("call-panel-open", {
+        room: roomKey,
+        mic: !!o.mic,
+        camera: !!o.camera,
+        scribe: !!o.scribe,
+        ring: !!o.ring,
+        size: o.size ? normalizeCallWindowSize(o.size) : null,
+      });
+    } else if (!callWindowState || callWindowState.room !== roomKey) {
+      // Already open, older renderer, on a DIFFERENT room: point it at the new
+      // one — one call at a time means one window, and the person asked for
+      // this room.
+      win.loadURL(callPanelUrl(roomKey, o));
+    }
+    // An asked-for size reshapes the window that exists, the same way the
+    // renderer's own size buttons do. A host reshapes itself off the command
+    // above once it has the room, so the window is not moved under it here.
+    if (!callWindowHost) {
+      if (o.size) setCallWindowShape(win, o.size);
+      else if (!isCallSize(callWindowSize)) setCallWindowShape(win, savedCallWindowSize());
+      if (!win.isVisible()) revealCallWindow(win, callWindowSize);
+    }
+  }
+  return win;
+}
+
+/** The voice window, built at boot: hidden, no room, waiting to hear. */
+function createVoiceWindow() {
+  return ensureCallWindow(null, {});
+}
+
+// Only the call window may drive its own size, click-through and drag, and only
+// while it exists — verified by sender identity, never by the claim.
+function senderIsCallWindow(e) {
+  const win = BrowserWindow.fromWebContents(e.sender);
+  return win && !win.isDestroyed() && win === callWindow ? win : null;
+}
+
+function callWindowHostsRoom() {
+  return !!callWindow && !callWindow.isDestroyed() && !!(callWindowState && callWindowState.room);
+}
+
+function hasVoiceHost() {
+  return !!callWindow && !callWindow.isDestroyed() && callWindowHost;
+}
+
+// The three runtime switches a see-through window asks of its shell: lift
+// click-through while the pointer is over a face or the card, stay the size
+// of its contents, follow a held cursor. One implementation, registered per
+// window, so a second see-through window could never drift into one that
+// feels different for no reason.
+function registerSeeThroughIpc(prefix, resolveSender, opts = {}) {
+  const mayInteract = opts.mayInteract || (() => true);
+  const mayResize = opts.mayResize || (() => true);
+  const anchor = opts.anchor || (() => "top-left");
+  const getWindow = opts.getWindow;
+  const onContentSize = opts.onContentSize || (() => {});
+  // Older windows speak on `set-<prefix>-<verb>` through their own preload
+  // methods; a newer one reaches the same three switches through the bridge's
+  // generic `call`, which lands on `app:<prefix>.<verb>` and needs no preload.
+  const listen = opts.appChannel
+    ? (verb, fn) => shellIpc.handle(`app:${prefix}.${verb}`, (e, arg) => { fn(e, arg); })
+    : (verb, fn) => shellIpc.on(`set-${prefix}-${verb}`, fn);
+  let dragTimer = null;
+  // The renderer's pin, last time it gave one: the point (window pixels from
+  // the top) that holds still on screen across a resize. The float's faces.
+  let lastPinY = null;
+  const stopDrag = () => {
+    if (dragTimer) clearInterval(dragTimer);
+    dragTimer = null;
+  };
+
+  // Click-through, lifted while the renderer says the pointer is over a
+  // circle. Only the click-through states have anything to lift: the call
+  // stage takes every click by construction, and letting a renderer turn that
+  // off would make the panel unclickable with no way back.
+  listen("interactive", (e, on) => {
+    const win = resolveSender(e);
+    if (!win || !mayInteract()) return;
+    win.setIgnoreMouseEvents(on !== true, { forward: true });
+  });
+
+  // The float is sized to its contents: the renderer measures the row and
+  // the card and says how big the window has to be.
+  listen("content-size", (e, size) => {
+    const win = resolveSender(e);
+    if (!win || !mayResize()) return;
+    if (!size || typeof size !== "object") return;
+    const width = Math.round(Number(size.width));
+    const height = Math.round(Number(size.height));
+    if (!(width > 0) || !(height > 0) || width > 4000 || height > 4000) return;
+    onContentSize(win);
+    // The renderer measures in CSS pixels and the window is sized in device-
+    // independent ones, and the two come apart the moment somebody zooms the
+    // page: at 1.5x a 112px row of faces needs a 168px window, and a window
+    // sized to 112 would clip its own faces.
+    const zoom = win.webContents.getZoomFactor();
+    const [w, h] = [Math.round(width * zoom), Math.round(height * zoom)];
+    const pin = Number.isFinite(Number(size.pinY)) ? Math.round(Number(size.pinY) * zoom) : null;
+    const [curW, curH] = win.getContentSize();
+    const pinMoved = pin !== null && lastPinY !== null && pin !== lastPinY;
+    if (curW === w && curH === h && !pinMoved) {
+      if (pin !== null) lastPinY = pin;
+      return;
+    }
+    // Growth goes AWAY from the anchored corner, and that corner stays put:
+    // a row anchored top right grows down and to the left, one anchored
+    // bottom right grows up and to the left. The faces nearest the anchor
+    // never move, whatever a state change adds at the far end, and a grow
+    // and shrink cancel exactly, so the window never walks.
+    //
+    // Then the display clamp. The window was placed while it was a small
+    // seed; a row that grew wider than the space to the screen edge would
+    // hang off it, card and all, with no title bar to recover it by.
+    // Position wins over size when the display is smaller than the row: the
+    // near edge stays reachable and the far side overflows, same rule as
+    // clampCorner on the web side.
+    //
+    // A renderer that names a pin overrides the vertical corner rule: the
+    // pinned point (its faces) holds still, and the window grows or moves
+    // around it. That is what keeps the faces put when the float's card
+    // switches from below them to above them where a drag lands.
+    const [x, y] = win.getPosition();
+    const [av, ah] = anchor().split("-");
+    const cx = ah === "right" ? x + (curW - w) : x;
+    const cy = pin !== null && lastPinY !== null ? y + (lastPinY - pin) : av === "bottom" ? y + (curH - h) : y;
+    if (pin !== null) lastPinY = pin;
+    const area = screen.getDisplayMatching({ x: cx, y: cy, width: w, height: h }).workArea;
+    const nx = Math.max(area.x, Math.min(cx, area.x + area.width - w));
+    const ny = Math.max(area.y, Math.min(cy, area.y + area.height - h));
+    // One setBounds, not a resize and then a move: between the two the old
+    // frame was drawn at the new size's origin, and a row hung from a bottom
+    // corner flashed a window's height away for a frame. A non-resizable
+    // window refuses a new size; lift the flag for the call and put it
+    // straight back, so the person still cannot drag an edge.
+    win.setResizable(true);
+    win.setBounds({ x: nx, y: ny, width: w, height: h });
+    win.setResizable(false);
+  });
+
+  // Held on a circle, the window follows the cursor. Not a
+  // `-webkit-app-region: drag` region: over one of those the window manager
+  // takes the mouse events, so the renderer would never learn the pointer had
+  // left and the window would stay stuck taking clicks that belong to the
+  // application underneath.
+  listen("dragging", (e, on) => {
+    const win = resolveSender(e);
+    if (!win) return;
+    stopDrag();
+    if (!on || !mayInteract()) return;
+    const cursor = screen.getCursorScreenPoint();
+    const [x, y] = win.getPosition();
+    const offset = { x: x - cursor.x, y: y - cursor.y };
+    // The shell follows the cursor rather than the renderer sending a message
+    // per mouse move: one timer instead of a hundred IPC hops a second, and it
+    // keeps moving smoothly even while the renderer is busy drawing video.
+    // The renderer ends the drag on pointer up. A renderer that died mid-drag
+    // never will, and a window silently following the cursor around the screen
+    // has no way out short of closing it — so the drag also expires on its
+    // own. Nobody holds a window for half a minute.
+    const until = Date.now() + 30_000;
+    dragTimer = setInterval(() => {
+      const live = getWindow ? getWindow() : win;
+      if (!live || live.isDestroyed() || live !== win || Date.now() > until) return stopDrag();
+      const p = screen.getCursorScreenPoint();
+      live.setPosition(p.x + offset.x, p.y + offset.y);
+    }, 16);
+  });
+
+  return { stopDrag };
+}
+
+const { stopDrag: stopCallWindowDrag } = registerSeeThroughIpc("call-window", senderIsCallWindow, {
+  // Only the float has anything to lift or drag; the stage drags by its own
+  // header row and takes every click by construction.
+  mayInteract: () => callWindowChrome(callWindowSize, { pinned: wallPinned() }).clickThrough,
+  // Resizing is refused in the panel and the wall, where the person's own
+  // bounds are the answer and a renderer resizing the window under them
+  // would be the window fighting the hand on its edge.
+  mayResize: () => callWindowSize === "float",
+  // The float grows away from the corner it is anchored to.
+  anchor: () => floatAnchor().corner,
+  getWindow: () => callWindow,
+});
+
+shellIpc.handle("open-call-panel", (_e, roomKey, opts) => {
+  openCallWindow(roomKey, opts && typeof opts === "object" ? opts : {});
+});
+
+// Only the panel may close the panel, and only it can say whether the call
+// ended — verified by sender identity, never by the renderer's claim.
+shellIpc.handle("close-call-panel", (e, opts) => {
+  const win = senderIsCallWindow(e);
+  if (!win) return false;
+  callWindowEnded = !!(opts && opts.ended);
+  win.close();
+  return true;
+});
+
+// Any window may raise the huddle: the elsewhere pill, a second huddle
+// click. The call already lives here; this only makes the window visible.
+shellIpc.handle("show-call-panel", () => {
+  if (!callWindowHostsRoom()) {
+    const owner = routedWindows().find((win) => windowStates.get(win.webContents.id)?.inCall);
+    if (!owner) return false;
+    if (owner.isMinimized()) owner.restore();
+    owner.show();
+    owner.focus();
+    return true;
+  }
+  // A host decides its own shape: told, it stops hiding the call and asks for
+  // the call's shape itself. An older renderer is moved by the shell.
+  if (callWindowHost) {
+    callWindow.webContents.send("call-panel-show");
+    if (isCallSize(callWindowSize)) revealCallWindow(callWindow, callWindowSize);
+    return true;
+  }
+  // A hidden window in a shape that shows nothing has nothing to raise; the
+  // call's own shape does.
+  if (!isCallSize(callWindowSize)) setCallWindowShape(callWindow, savedCallWindowSize(), { reveal: true });
+  else revealCallWindow(callWindow, callWindowSize);
+  return true;
+});
+
+shellIpc.on("report-call-panel-state", (e, state) => {
+  if (!senderIsCallWindow(e)) return;
+  if (!state || typeof state !== "object") return;
+  const before = callWindowHostsRoom();
+  callWindowState = {
+    room: typeof state.room === "string" ? state.room : null,
+    mic: state.mic === true,
+    camera: state.camera === true,
+    scribe: state.scribe === true,
+  };
+  // Every other window reads "the call lives there" off this; a room arriving
+  // or leaving is a change of role for all of them.
+  if (before !== callWindowHostsRoom()) broadcastWindowRole();
+});
+
+// The renderer says it is the voice host: it holds the walkie's ear, takes
+// rooms as commands, and treats a hang-up as going idle rather than as the
+// window going away. Every other window learns through the role broadcast
+// that a host exists, and starts sending its gestures here.
+shellIpc.on("voice-host-ready", (e) => {
+  if (!senderIsCallWindow(e)) return;
+  if (callWindowHost) return;
+  callWindowHost = true;
+  broadcastWindowRole();
+});
+
+// The shape change. The window keeps its media across it — that is the whole
+// point of one window with many shapes — so this only moves and reshapes it.
+shellIpc.handle("set-call-window-size", (e, size) => {
+  const win = senderIsCallWindow(e);
+  if (!win) return null;
+  return setCallWindowShape(win, size, { reveal: true });
+});
+
+shellIpc.handle("get-call-window-size", (e) => (senderIsCallWindow(e) ? callWindowSize : null));
+
+// The two facts a host needs to decide its own shape: what it is in now, and
+// which call shape the person last chose — the one a call should open in.
+shellIpc.handle("get-voice-window-state", (e) =>
+  senderIsCallWindow(e) ? { size: callWindowSize, callSize: savedCallWindowSize() } : null,
+);
+
+// ── Remotes ────────────────────────────────────────────────────────────────
+//
+// Every other window is a remote for the host: a press on a talk key, a join,
+// an answered ring or a hang-up is a command sent here and delivered to the
+// host, which holds the only microphone. The answer says whether a host took
+// it, so a renderer on a shell (or a moment) without one can act locally
+// instead of doing nothing.
+shellIpc.handle("voice-command", (_e, cmd, args) => {
+  if (!hasVoiceHost()) return false;
+  if (typeof cmd !== "string" || !cmd) return false;
+  callWindow.webContents.send("voice-command", { cmd, args: Array.isArray(args) ? args : [] });
+  return true;
+});
+
+// The host mirrors its walkie and call facts to every other window, so a talk
+// key in the main window lights for a burst the host is speaking. Relayed
+// through here because the host cannot address the other windows itself; the
+// latest one is replayed to a window that opens later.
+shellIpc.on("voice-mirror", (e, payload) => {
+  if (!senderIsCallWindow(e)) return;
+  if (!payload || typeof payload !== "object") return;
+  lastVoiceMirror = payload;
+  for (const win of toldWindows()) {
+    if (win === callWindow || win.webContents.isDestroyed()) continue;
+    win.webContents.send("voice-mirror", payload);
+  }
+});
+
+
+// ── The float, popped out ──────────────────────────────────────────────────
+//
+// The face row lives in the app's header until the person pops it out; then
+// the host keeps the float up over their work whatever is happening, and the
+// header shows one chip that brings it back. Opening is a declaration, "keep
+// the faces over my work", so it persists across launches; closing is its
+// withdrawal. Any app window may ask. The host reads the flag off its role
+// and takes the shape itself; without the flag it shows the float only for
+// as long as something is happening while the app is behind another window.
+
+function facesOverlayWanted() {
+  const saved = loadFullSettings().facesWindow;
+  return !!saved && typeof saved === "object" && saved.open === true;
+}
+
+function setFacesOverlayWanted(open) {
+  const saved = loadFullSettings().facesWindow;
+  updateSettings({
+    facesWindow: { ...(saved && typeof saved === "object" ? saved : {}), open: open === true },
+  });
+  // The faces and the wall are two sizes of one glance at the team: asking for
+  // one is putting the other away.
+  if (open === true) updatePeopleState({ open: false });
+  broadcastWindowRole();
+}
+
+// ── The wall ───────────────────────────────────────────────────────────────
+//
+// The buddy list, as a shape of the voice window: the same card the people
+// window drew, in the same remembered rectangle, with the same pin — and the
+// same microphone as the strip and the call, which is the point. Wanted is a
+// standing arrangement like the faces', persisted across launches.
+
+function wallWanted() {
+  return loadPeopleState().open === true;
+}
+
+function wallPinned() {
+  return loadPeopleState().alwaysOnTop === true;
+}
+
+function setWallWanted(open) {
+  updatePeopleState({ open: open === true });
+  if (open === true) {
+    const saved = loadFullSettings().facesWindow;
+    updateSettings({ facesWindow: { ...(saved && typeof saved === "object" ? saved : {}), open: false } });
+  }
+  broadcastWindowRole();
+}
+
+// The person asked for the wall: it should come up WITH focus, the way the
+// people window did. A wall that returns on its own (a call ending) does not.
+let wallFocusPending = false;
+
+// Where the wall sits the first time: the right edge of the work area, clear
+// of the menu bar — beside the work, where a buddy list lives.
+function defaultWallBounds() {
+  const area = screen.getPrimaryDisplay().workArea;
+  return {
+    x: Math.round(area.x + area.width - PEOPLE_SIZE.width - 28),
+    y: Math.round(area.y + 28),
+    width: PEOPLE_SIZE.width,
+    height: PEOPLE_SIZE.height,
+  };
+}
+
+shellIpc.handle("open-faces-window", () => {
+  setFacesOverlayWanted(true);
+  createVoiceWindow();
+});
+
+shellIpc.handle("close-faces-window", () => {
+  setFacesOverlayWanted(false);
+});
+// ---------------------------------------------------------------------------
+// Multi-window notification routing. Every window runs the same web app and
+// would otherwise fire its own banner and sound for the same event. Main is
+// the one process that sees all windows, so it (a) collapses duplicates,
+// (b) suppresses banners while ANY app window is focused, (c) elects ONE
+// leader window that may play notification sounds, and (d) lands a banner
+// click in the window best placed to show the target. Policy lives in
+// notificationRouter.js; this block only feeds it window facts.
+// ---------------------------------------------------------------------------
+
+// webContents.id → what that renderer shows: { active, open: [{id,path}], inCall }
+const windowStates = new Map();
+// BrowserWindow.id → last time it held focus (tie-breaker for routing/leader)
+const lastFocusedAt = new Map();
+// Whether a banner goes up at all: duplicate collapse, the focused-and-on-screen
+// rule, the per-conversation burst cooldown and the completion grace. Policy is
+// in notificationRouter.js; this only says how a banner is actually shown.
+const bannerGate = new BannerGate({
+  deliver: (p) => showNativeNotification(
+    p.title,
+    p.body,
+    () => openNotificationTarget(p.data),
+    { route: notificationRoute(p.data), kind: p.data?.kind || null },
+  ),
+});
+
+// The windows that count for routing: main + detached tab windows + the Chat
+// and Work windows + the people window. The palette is a floating summon,
+// never a place a banner should land or sound.
+function routedWindows() {
+  const out = [];
+  if (mainWindow && !mainWindow.isDestroyed()) out.push(mainWindow);
+  for (const w of tabWindows) if (!w.isDestroyed()) out.push(w);
+  for (const w of appWindowFor.values()) if (!w.isDestroyed()) out.push(w);
+  if (peopleWindow && !peopleWindow.isDestroyed()) out.push(peopleWindow);
+  // The call panel counts: `anyInCall` is computed from these windows' reports,
+  // and it is what makes every OTHER window show "in a huddle in another
+  // window" instead of drawing a second dock for a call it does not hold.
+  if (callWindow && !callWindow.isDestroyed()) out.push(callWindow);
+  return out;
+}
+
+// The windows told what the app is doing — the role and the host's mirror.
+// The app windows, plus the ring window: it leads nothing and hosts nothing,
+// so it is not an app window, but it stands down from drawing a ring the
+// voice host is drawing, and the role (`voiceWindow`, `anyInCall`) and a
+// current mirror are how it knows. A mirror replayed once and never updated
+// would have it deciding off a call that ended.
+function toldWindows() {
+  const out = routedWindows();
+  if (callRingWindow && !callRingWindow.isDestroyed()) out.push(callRingWindow);
+  return out;
+}
+
+function describeWindows() {
+  return routedWindows().map((win) => {
+    const st = windowStates.get(win.webContents.id) || {};
+    return {
+      id: win.id,
+      isMain: win === mainWindow,
+      isPeople: win === peopleWindow,
+      // The call panel bypasses the dashboard layout, same as the buddy list.
+      // Routing that wants a dashboard surface needs to tell it apart from an
+      // ordinary detached tab window.
+      isCallPanel: win === callWindow,
+      // The Chat or Work window: banners for its routes land in it.
+      app: appOf(win),
+      focused: win.isFocused(),
+      lastFocusedAt: lastFocusedAt.get(win.id) || 0,
+      active: st.active || null,
+      open: Array.isArray(st.open) ? st.open : [],
+      inCall: st.inCall === true,
+    };
+  });
+}
+
+// Tell every window its role. Coalesced to a tick: focus flips, reports and
+// window churn arrive in bursts.
+let roleBroadcastTimer = null;
+function broadcastWindowRole() {
+  if (roleBroadcastTimer) return;
+  roleBroadcastTimer = setTimeout(flushWindowRole, 30);
+}
+
+// The broadcast itself, for the one caller that cannot wait out the tick: a
+// spare claimed as an app window must know what it is before it navigates.
+function flushWindowRole() {
+  clearTimeout(roleBroadcastTimer);
+  roleBroadcastTimer = null;
+  {
+    const windows = describeWindows();
+    const leader = chooseLeader(windows);
+    const anyInCall = windows.some((w) => w.inCall);
+    // Whether the person is IN the app: a window they work in has focus. The
+    // voice window is not one of those. Its float is glass over somebody
+    // else's work, and a click on a face there must not read as "the app
+    // has their attention", or the host would hide the float under the
+    // pointer that just reached for it.
+    const appFocused = windows.some((w) => w.focused && !w.isCallPanel);
+    // Whether a people window exists at all — every window needs it: the one
+    // that IS it renders the panel, the others stand down from the pumps and
+    // surfaces it owns.
+    const hasPeople = !!peopleWindow && !peopleWindow.isDestroyed();
+    // Whether the call lives in the voice window right now — whichever shape
+    // it is in. No other window draws a dock for it then; they show the
+    // elsewhere pill.
+    const hasCallPanel = callWindowHostsRoom();
+    // Whether a voice host exists at all: a persistent window holding the
+    // walkie's ear that takes joins and presses as commands. Every other
+    // window sends its gestures there instead of opening a microphone of its
+    // own — and on a shell without one, they keep doing what they always did.
+    const voiceWindow = hasVoiceHost();
+    // Whether the person wants the idle team floating over their work, or
+    // the buddy list as a wall. The host takes its idle shape off these; the
+    // toggles that ask for them draw them.
+    const facesOverlay = facesOverlayWanted();
+    const peopleWall = wallWanted();
+    for (const win of toldWindows()) {
+      // A window can be past its render frame's disposal and not yet report
+      // isDestroyed(), and sending into that gap throws "Render frame was
+      // disposed before WebFrameMain could be accessed". The broadcast is
+      // deferred by a tick precisely because windows churn, so the gap is not
+      // rare. Observed in a from-source run.
+      if (win.webContents.isDestroyed()) continue;
+      win.webContents.send("window-role", {
+        leader: !!leader && leader.id === win.id,
+        appFocused,
+        anyInCall,
+        peopleWindow: hasPeople,
+        callPanel: hasCallPanel,
+        voiceWindow,
+        facesOverlay,
+        peopleWall,
+        // Which of the Chat and Work windows exist: the sidebar marks their
+        // sections as popped out, and every window routes their paths there.
+        apps: openAppWindows(),
+        // The app THIS window is. A cold app window also says so in its
+        // preload arguments; a claimed warm spare only learns it here.
+        app: appOf(win),
+      });
+    }
+  }
+}
+
+app.on("browser-window-focus", (_e, win) => {
+  lastFocusedAt.set(win.id, Date.now());
+  broadcastWindowRole();
+});
+app.on("browser-window-blur", () => broadcastWindowRole());
+
+shellIpc.on("report-window-state", (e, state) => {
+  if (!state || typeof state !== "object") return;
+  // A window reporting for the first time has not seen the host's mirror yet;
+  // without this its talk keys would start blank until the host next moved.
+  if (!windowStates.has(e.sender.id)) {
+    if (lastVoiceMirror && !(callWindow && e.sender === callWindow.webContents)) {
+      e.sender.send("voice-mirror", lastVoiceMirror);
+    }
+    const id = e.sender.id;
+    e.sender.once("destroyed", () => windowStates.delete(id));
+  }
+  windowStates.set(e.sender.id, {
+    active: typeof state.active === "string" ? state.active : null,
+    open: Array.isArray(state.open)
+      ? state.open.filter((t) => t && typeof t.path === "string").map((t) => ({ id: t.id ?? null, path: t.path }))
+      : [],
+    inCall: state.inCall === true,
+  });
+  broadcastWindowRole();
+});
+
+// `placed` tells the renderer the shell already chose this window, so it must
+// show the path itself rather than route it back here (the renderer applies
+// the same table before every navigation of its own).
+function sendNavigate(win, navPath, tabId) {
+  const detail = { path: navPath, tabId: tabId || null, placed: true };
+  win.webContents.executeJavaScript(
+    `window.dispatchEvent(new CustomEvent('codecast-navigate', { detail: ${JSON.stringify(detail)} }))`
+  );
+}
+
+// A banner was clicked: land in the best window for its target. With no
+// window at all (macOS keeps the app alive with every window closed), boot the
+// main window and let the deep-link buffer deliver the path on load.
+function openNotificationTarget(data) {
+  const route = notificationRoute(data);
+  const pick = pickWindow(describeWindows(), { route, kind: data?.kind || null });
+  if (!pick) {
+    if (route) deepLinkUrl = `codecast://open${route}`;
+    createWindow();
+    return;
+  }
+  const win = BrowserWindow.fromId(pick.window.id);
+  if (!win || win.isDestroyed()) return;
+  win.show();
+  win.focus();
+  if (route) sendNavigate(win, route, pick.tabId);
+}
+
+function createPaletteWindow() {
+  const { width: screenWidth, height: screenHeight } = screen.getPrimaryDisplay().workAreaSize;
+  // The compose card fills this window (94vw × 88vh), so the window IS the box's
+  // size. ~30% wider than the old 740×580, only modestly taller — a proportional
+  // bump made the empty new-session state a cavern, so we grow width more.
+  const winWidth = 1000;
+  const winHeight = 680;
+
+  paletteWindow = createShellWindow({
+    width: winWidth,
+    height: winHeight,
+    x: Math.round((screenWidth - winWidth) / 2),
+    y: Math.round(screenHeight * 0.18),
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    webPreferences: {
+      ...preloadPrefs(),
+    },
+  });
+
+  const win = paletteWindow;
+
+  pinWindowTitle(win, "Codecast Palette");
+  win.loadURL(`${currentBaseUrl}/palette`);
+
+  // Same rule as the main window: new-window links open in the default browser.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+
+  win.webContents.on("did-finish-load", () => {
+    if (!win.isDestroyed()) {
+      win.webContents.executeJavaScript(
+        "document.documentElement.classList.add('electron-desktop')"
+      );
+    }
+  });
+
+  // A reload (deploy, stale chunk) boots the page on search; the face it had
+  // is restored if the palette is open or opening.
+  win.webContents.on("did-navigate", () => {
+    if (paletteWindow === win) paletteFace.newDocument();
+  });
+
+  win.on("blur", () => {
+    hidePalette();
+  });
+
+  win.on("closed", () => {
+    if (paletteWindow === win) paletteWindow = null;
+  });
+}
+
+function togglePalette() {
+  if (!paletteWindow) {
+    createPaletteWindow();
+    paletteWindow.once("ready-to-show", () => {
+      showPalette();
+    });
+    return;
+  }
+
+  if (paletteWindow.isVisible()) {
+    hidePalette();
+  } else {
+    showPalette();
+  }
+}
+
+// Place the palette window (position only). Does NOT show/focus — that's
+// revealPaletteWindow, run AFTER the renderer reports the right face is painted,
+// so we never flash the previous face during the swap.
+function placePaletteWindow() {
+  if (!paletteWindow) return;
+  // Capture BEFORE the palette takes focus: was Codecast's own window the one
+  // being summoned over? Enter's fire-and-forget hand-back (compose-submit)
+  // must step back into the main window in that case, not app.hide() past it
+  // to whatever app sits behind.
+  paletteSummonedOverSelf = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+  // Reposition to center of current display
+  const cursor = screen.getCursorScreenPoint();
+  const display = screen.getDisplayNearestPoint(cursor);
+  const { width: sw, height: sh } = display.workAreaSize;
+  const { x: dx, y: dy } = display.workArea;
+  const [winWidth, winHeight] = paletteWindow.getSize();
+  paletteWindow.setPosition(
+    Math.round(dx + (sw - winWidth) / 2),
+    Math.round(dy + sh * 0.18)
+  );
+}
+
+function revealPaletteWindow() {
+  if (!paletteWindow) return;
+  paletteWindow.show();
+  // When summoned over another app (Chrome, etc.), show()+focus() alone do NOT
+  // make this a background app's window the OS "key window" on macOS — so the
+  // web autofocus lands on a non-key window and keystrokes go nowhere. Steal
+  // app activation (Spotlight-style) so the palette becomes key and its input
+  // actually receives focus. Enter's fire-and-forget app.hide() steps back out.
+  if (process.platform === "darwin") app.focus({ steal: true });
+  paletteWindow.focus();
+}
+
+// The face the palette paints, and when the window may show it: see paletteFace.js.
+const paletteFace = createPaletteFace({
+  send: (channel) => paletteWindow?.webContents.send(channel),
+  reveal: () => revealPaletteWindow(),
+  isVisible: () => !!paletteWindow && paletteWindow.isVisible(),
+});
+
+function showPaletteFace(face) {
+  if (!paletteWindow) return;
+  placePaletteWindow();
+  paletteFace.show(face);
+}
+
+function showPalette() {
+  if (!paletteWindow) return;
+  showPaletteFace("search");
+}
+
+// Summon the same palette window into new-session compose mode. Used by the
+// global "New Session" shortcut and the tray/dock/app menus.
+function showCompose() {
+  if (!paletteWindow) {
+    createPaletteWindow();
+    paletteWindow.once("ready-to-show", () => {
+      showPaletteFace("compose");
+    });
+    return;
+  }
+  showPaletteFace("compose");
+}
+
+function hidePalette() {
+  // Always cancel a pending reveal first — a late ack (or the fallback) must not
+  // pop a window the user has already dismissed.
+  paletteFace.hide();
+  if (!paletteWindow || !paletteWindow.isVisible()) return;
+  paletteWindow.hide();
+}
+
+// ---------------------------------------------------------------------------
+// The meeting-offer window: the record-this-meeting card as a small chromeless
+// window in the top-right corner (route /meeting-offer). The palette's polite
+// sibling — same glass, opposite manners: summoned by the meeting poller
+// rather than a keystroke, revealed with showInactive and NEVER focused. The
+// person it appears to is joining a meeting; a card taking their keystrokes is
+// worse than no card at all.
+//
+// The renderer owns the content AND the recording it starts, so the shell's
+// whole job is shape and place: the page reports its content size
+// (meeting-offer-size), the shell reshapes the window around it anchored to
+// the corner, and the first report is the reveal signal — so an offer landing
+// in a still-booting window shows exactly when there is something to see.
+// ---------------------------------------------------------------------------
+let meetingOfferWindow = null;
+const MEETING_OFFER_MARGIN = 16;
+
+function createMeetingOfferWindow() {
+  const zoom = getAutoZoomFactor();
+  const win = createShellWindow({
+    width: 360,
+    height: 64,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    focusable: true,
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--meeting-offer-window"],
+      // It records. While it does, it is by definition behind the meeting —
+      // throttled timers would starve the transcript's heartbeat and the
+      // orphan sweep would end a recording that is still running.
+      backgroundThrottling: false,
+    },
+  });
+  meetingOfferWindow = win;
+  pinWindowTitle(win, "Codecast Meeting");
+  // Over a fullscreen meeting app — which is exactly where the person is when
+  // this card matters.
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, WORKSPACES_OPTS);
+  win.loadURL(`${currentBaseUrl}/meeting-offer`);
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (!win.isDestroyed()) {
+      win.webContents.executeJavaScript(
+        "document.documentElement.classList.add('electron-desktop')"
+      );
+    }
+  });
+  win.on("closed", () => {
+    if (meetingOfferWindow === win) meetingOfferWindow = null;
+  });
+}
+
+// Top-right of the display the cursor is on, growing downward and leftward so
+// the corner anchor holds while the card expands.
+function placeMeetingOfferWindow(width, height) {
+  const win = meetingOfferWindow;
+  if (!win || win.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  win.setBounds({
+    x: Math.round(area.x + area.width - width - MEETING_OFFER_MARGIN),
+    y: Math.round(area.y + MEETING_OFFER_MARGIN),
+    width: Math.round(width),
+    height: Math.round(height),
+  });
+}
+
+shellIpc.on("meeting-offer-size", (e, size) => {
+  const win = meetingOfferWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  const width = Math.max(60, Math.min(560, Math.round(Number(size?.width) || 360)));
+  const height = Math.max(26, Math.min(480, Math.round(Number(size?.height) || 64)));
+  placeMeetingOfferWindow(width, height);
+  if (!win.isVisible()) win.showInactive();
+});
+
+shellIpc.on("meeting-offer-hide", (e) => {
+  const win = meetingOfferWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  win.hide();
+});
+
+// ---------------------------------------------------------------------------
+// The share cursors glass: teammates' pointers drawn on the sharer's own
+// screen, over the display or window being captured (shareCursors.js, route
+// /share-cursors). Pure glass: never focused, never hit by the mouse, and
+// content protected so the capture it sits over leaves it out; otherwise
+// every viewer would get the sharer's copy of their arrow back in the video.
+// Built on the first cursor, not at launch.
+// ---------------------------------------------------------------------------
+function createShareCursorsWindow() {
+  const win = createShellWindow({
+    width: 400,
+    height: 300,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: true,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    focusable: false,
+    // It covers a whole display, menu bar included: macOS would otherwise
+    // push the frame below the menu bar and every arrow would land low.
+    enableLargerThanScreen: true,
+    webPreferences: {
+      ...preloadPrefs(),
+      // One CSS pixel per point, so a normalized point is plain arithmetic.
+      zoomFactor: 1,
+      additionalArguments: ["--share-cursors-window"],
+      backgroundThrottling: false,
+    },
+  });
+  pinWindowTitle(win, "Codecast Cursors");
+  win.setContentProtection(true);
+  win.setIgnoreMouseEvents(true);
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, WORKSPACES_OPTS);
+  win.loadURL(`${currentBaseUrl}/share-cursors`);
+  win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  return win;
+}
+
+const shareCursors = createShareCursors({
+  createGlass: createShareCursorsWindow,
+  screen,
+  addon: loadNotificationsAddon(),
+});
+
+// ---------------------------------------------------------------------------
+// The ring window: an incoming huddle as a small chromeless corner card
+// (route /call-ring).
+//
+// A ring is the one huddle surface that arrives UNANNOUNCED, which is why it
+// was the last one still drawn inside an app window: a toast in whichever
+// window happened to be open, clipped to that window's edges and invisible to
+// somebody working in another app. A ringing phone you have to go and find is
+// not a ringing phone.
+//
+// Same manners as the meeting offer, for the same reason: revealed with
+// showInactive and NEVER focused. A card that steals the keyboard from
+// somebody mid-sentence is worse than a ring they answer a second later.
+//
+// ANSWERING DOES NOT HAPPEN IN IT. The media plane is per-renderer, so a card
+// that joined would put the huddle in a 340px corner window with no stage and
+// no controls. `call-ring-answer` opens the call window on that room, which
+// joins by the ordinary route — and the ring window goes back to being glass.
+// ---------------------------------------------------------------------------
+let callRingWindow = null;
+const CALL_RING_MARGIN = 16;
+
+function createCallRingWindow() {
+  const zoom = getAutoZoomFactor();
+  const win = createShellWindow({
+    width: 340,
+    height: 96,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--call-ring-window"],
+      // It rings on a timer. Throttled timers in a background window would
+      // stretch the ring period out past the invite's own TTL — a phone that
+      // rings once and then thinks about it.
+      backgroundThrottling: false,
+    },
+  });
+  callRingWindow = win;
+  pinWindowTitle(win, "Codecast Ring");
+  // Over a fullscreen app — which is exactly where somebody is when a ring
+  // they cannot see arrives.
+  win.setAlwaysOnTop(true, "screen-saver");
+  win.setVisibleOnAllWorkspaces(true, WORKSPACES_OPTS);
+  win.loadURL(`${currentBaseUrl}/call-ring`);
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (!win.isDestroyed()) {
+      win.webContents.executeJavaScript(
+        "document.documentElement.classList.add('electron-desktop')"
+      );
+    }
+  });
+  win.on("closed", () => {
+    if (callRingWindow === win) callRingWindow = null;
+  });
+  return win;
+}
+
+// Top-right of the display the cursor is on, under the meeting offer's spot so
+// the two never cover each other when a meeting starts mid-ring.
+function placeCallRingWindow(width, height) {
+  const win = callRingWindow;
+  if (!win || win.isDestroyed()) return;
+  const cursor = screen.getCursorScreenPoint();
+  const area = screen.getDisplayNearestPoint(cursor).workArea;
+  // Electron refuses setBounds on a window that is not resizable, so the flag
+  // comes up for the call and goes straight back — the person still cannot
+  // drag an edge, and the card is still exactly as big as its content.
+  win.setResizable(true);
+  win.setBounds({
+    x: Math.round(area.x + area.width - width - CALL_RING_MARGIN),
+    y: Math.round(area.y + CALL_RING_MARGIN),
+    width: Math.round(width),
+    height: Math.round(height),
+  });
+  win.setResizable(false);
+}
+
+// Built on the first ring, not at launch: an always-on-top transparent window
+// with a Convex subscription behind it is real cost, and most launches never
+// see a ring. It stays alive afterwards, so every later ring is free.
+//
+// The shell cannot see invites — they arrive on a subscription inside a
+// renderer — so an app window asks for this window when one lands, and the
+// window then watches for itself.
+function ensureCallRingWindow() {
+  if (!callRingWindow || callRingWindow.isDestroyed()) createCallRingWindow();
+  return callRingWindow;
+}
+
+shellIpc.handle("open-call-ring-window", () => {
+  const win = ensureCallRingWindow();
+  return !!win && !win.isDestroyed();
+});
+
+// The host holds the ring shape up; the shell only bounces the dock beside it.
+shellIpc.on("ring-attention", (e, on) => {
+  if (!senderIsCallWindow(e)) return;
+  setRingAttention(on === true);
+});
+
+shellIpc.on("call-ring-size", (e, size) => {
+  const win = callRingWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  // Wide enough for the card and the glow it is measured with (ringCard.css
+  // .ring-card-glow): the window is the halo's box, so a cap at the card's
+  // size cut the shadow off square.
+  const width = Math.max(120, Math.min(560, Math.round(Number(size?.width) || 340)));
+  const height = Math.max(48, Math.min(480, Math.round(Number(size?.height) || 96)));
+  placeCallRingWindow(width, height);
+  // The reveal, and it never takes focus: the person is mid-sentence in
+  // another app and a ring is not worth their keystrokes.
+  if (!win.isVisible()) win.showInactive();
+});
+
+shellIpc.on("call-ring-hide", (e) => {
+  const win = callRingWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  win.hide();
+});
+
+// Answer: the huddle goes to the CALL window, never to this card. The invite
+// is accepted by the window that will actually hold the media, so there is no
+// moment where a seat exists in a renderer with no stage behind it.
+shellIpc.on("call-ring-answer", (e, inviteId, roomKey) => {
+  const win = callRingWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  if (typeof roomKey !== "string" || !roomKey) return;
+  win.hide();
+  // `ring=1` tells the call window an accept is on its way, so its URL
+  // takeover stands down: the ACCEPT is what takes the seat here, and a
+  // takeover racing it would join a room this person has not been admitted to
+  // yet and leave the invite ringing.
+  const call = openCallWindow(roomKey, { mic: true, ring: true });
+  if (!call || call.webContents.isDestroyed()) return;
+  const accept = () => {
+    if (!call.isDestroyed() && !call.webContents.isDestroyed()) {
+      call.webContents.send("call-ring-accept", { inviteId: String(inviteId ?? ""), roomKey });
+    }
+  };
+  // A window that is still loading has no listener yet; the preload buffers
+  // this channel, so sending once the page exists is enough.
+  // Sent straight away, even though the window is usually being BUILT by this
+  // very answer and its page has no listener yet: `call-ring-accept` is a
+  // buffered channel in the preload, which runs before any page JS and replays
+  // what landed early. That is the whole reason it is buffered — a dropped
+  // accept is somebody pressing Join on a huddle nobody joins.
+  accept();
+});
+
+// ---------------------------------------------------------------------------
+// The agent dock: a pill on the screen's edge with one dot per live agent,
+// and beside it a card for whichever one needs you (route /agent-dock). It is
+// off by default and turned on per machine (settings.json `agentDock`,
+// agentDock.js); off, there is no window at all.
+//
+// The window shows only once the dock page reports its size. Any other page
+// that lands in it (a web build without the route falls through to the
+// public profile catch-all; a sign-in page; an error) would otherwise sit
+// pinned to the screen's edge, squeezed into the pill's strip, click-through.
+//
+// One see-through window, sized to its content through the shared
+// see-through switches (registerSeeThroughIpc, on the bridge's app channel):
+// click-through everywhere except over the pill and the card, so the desktop
+// behind it keeps its clicks.
+//
+// It is an NSPanel (`type: "panel"`): it can take the keyboard for the card's
+// keys without activating Codecast, so answering an agent from the dock never
+// drags the main window in front of whatever the person was doing.
+// ---------------------------------------------------------------------------
+let agentDockWindow = null;
+
+function loadAgentDock() {
+  return mergeAgentDock(loadFullSettings().agentDock);
+}
+
+function createAgentDockWindow() {
+  const zoom = getAutoZoomFactor();
+  const setting = loadAgentDock();
+  const area = screen.getPrimaryDisplay().workArea;
+  const win = createShellWindow({
+    ...placeAgentDock(area, { width: 56, height: 320 }, setting),
+    type: process.platform === "darwin" ? "panel" : undefined,
+    frame: false,
+    transparent: true,
+    backgroundColor: "#00000000",
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    show: false,
+    hasShadow: false,
+    acceptFirstMouse: true,
+    webPreferences: {
+      ...preloadPrefs(),
+      zoomFactor: zoom,
+      additionalArguments: [`--zoom-factor=${zoom}`, "--agent-dock-window"],
+      // The dots are live: a throttled background window would show an agent
+      // still working a minute after it asked for you.
+      backgroundThrottling: false,
+    },
+  });
+  agentDockWindow = win;
+  pinWindowTitle(win, "Codecast Dock");
+  win.setAlwaysOnTop(true, "floating");
+  win.setVisibleOnAllWorkspaces(true, WORKSPACES_OPTS);
+  win.setIgnoreMouseEvents(true, { forward: true });
+  win.loadURL(`${currentBaseUrl}/agent-dock`);
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:\/\//i.test(url)) shell.openExternal(url);
+    return { action: "deny" };
+  });
+  win.webContents.on("did-finish-load", () => {
+    if (!win.isDestroyed()) {
+      win.webContents.executeJavaScript("document.documentElement.classList.add('electron-desktop')");
+    }
+  });
+  win.on("closed", () => {
+    if (agentDockWindow === win) agentDockWindow = null;
+  });
+  return win;
+}
+
+// Build or tear down the window to match the setting. Off costs nothing: no
+// window, no subscription.
+function syncAgentDock() {
+  const on = loadAgentDock().enabled;
+  const live = !!agentDockWindow && !agentDockWindow.isDestroyed();
+  if (on && !live) createAgentDockWindow();
+  if (!on && live) agentDockWindow.destroy();
+}
+
+const senderIsAgentDock = (e) =>
+  agentDockWindow && !agentDockWindow.isDestroyed() && e.sender === agentDockWindow.webContents ? agentDockWindow : null;
+
+registerSeeThroughIpc("agentDock", senderIsAgentDock, {
+  appChannel: true,
+  anchor: () => (loadAgentDock().edge === "left" ? "top-left" : "top-right"),
+  getWindow: () => agentDockWindow,
+  onContentSize: (win) => {
+    if (!win.isVisible()) win.showInactive();
+  },
+});
+
+shellIpc.handle("app:agentDock.get", () => ({ ...loadAgentDock(), supported: true }));
+// Every change to the setting comes through here: Settings → Desktop, the
+// tray's toggle, and the dock's own minimize. The window, the shortcut, the
+// tray's checkmark and the page's layout all follow from the one write.
+function saveAgentDock(patch) {
+  const next = mergeAgentDock({ ...loadAgentDock(), ...(patch && typeof patch === "object" ? patch : {}) });
+  updateSettings({ agentDock: next });
+  syncAgentDock();
+  registerShortcuts();
+  setTrayMenu();
+  if (agentDockWindow && !agentDockWindow.isDestroyed()) {
+    const [w, h] = agentDockWindow.getSize();
+    const area = screen.getDisplayMatching(agentDockWindow.getBounds()).workArea;
+    agentDockWindow.setResizable(true);
+    agentDockWindow.setBounds(placeAgentDock(area, { width: w, height: h }, next));
+    agentDockWindow.setResizable(false);
+    // The page lays the card out on the side away from the edge; a window
+    // moved to the other edge with the page still on the old side opens its
+    // card off the screen.
+    agentDockWindow.webContents.send("app:agentDock.config", next);
+  }
+  return next;
+}
+
+shellIpc.handle("app:agentDock.set", (_e, patch) => saveAgentDock(patch));
+
+// The card takes the keyboard while it is open (a panel, so Codecast is not
+// activated) and gives it back when it closes.
+shellIpc.handle("app:agentDock.focus", (e, on) => {
+  const win = senderIsAgentDock(e);
+  if (!win) return;
+  if (on === true) win.focus();
+  else win.blur();
+});
+
+// "Open agent": the conversation lands in the main window, which this time
+// does come forward, because the person asked to go there.
+shellIpc.handle("app:agentDock.open", (e, navPath) => {
+  if (!senderIsAgentDock(e)) return false;
+  const clean = sanitizeTabPath(navPath);
+  if (!clean) return false;
+  routeToWindow(clean, null);
+  app.focus({ steal: true });
+  return true;
+});
+
+// "+": the floating quick compose, the same popup the newSession shortcut
+// opens, so a new agent from the dock is the new agent from anywhere else.
+//
+// The dock lets go of the keyboard first and the popup opens a beat later:
+// the press that asked for it would otherwise hand focus straight back to the
+// dock, and the popup hides itself the moment it loses focus.
+shellIpc.handle("app:agentDock.compose", (e) => {
+  const win = senderIsAgentDock(e);
+  if (!win) return false;
+  win.blur();
+  setTimeout(showCompose, 120);
+  return true;
+});
+
+// Frame a region of the screen: the system's own picker (`screencapture -i`),
+// so there is no capture code of ours to hold Screen Recording rights badly.
+// Resolves a PNG data URL, or null when the person pressed Esc.
+shellIpc.handle("app:agentDock.capture", async (e) => {
+  if (!senderIsAgentDock(e) || process.platform !== "darwin") return null;
+  const file = path.join(app.getPath("temp"), `codecast-dock-${crypto.randomUUID()}.png`);
+  try {
+    await execFileP("/usr/sbin/screencapture", ["-i", "-x", file]);
+    if (!fs.existsSync(file)) return null;
+    return `data:image/png;base64,${fs.readFileSync(file).toString("base64")}`;
+  } finally {
+    fs.rm(file, { force: true }, () => {});
+  }
+});
+
+function summonAgentDock() {
+  if (!loadAgentDock().enabled) return;
+  if (!agentDockWindow || agentDockWindow.isDestroyed()) createAgentDockWindow();
+  const win = agentDockWindow;
+  win.webContents.send("app:agentDock.summon", { at: Date.now() });
+  // Not drawn yet: the page shows itself when it reports its size.
+  if (win.isVisible()) win.focus();
+}
+
+// "Open the transcript" from the recording face: the card is not a place to
+// read, so the transcript lands in the main window.
+shellIpc.on("meeting-offer-open-call", (e, id) => {
+  const win = meetingOfferWindow;
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return;
+  const clean = String(id ?? "").replace(/[^A-Za-z0-9_-]/g, "");
+  if (clean) navigateMain(`/calls/${clean}`);
+});
+
+// Open a FULL new session in the main window (Ctrl+N model): bring the app
+// forward and let the web shell start the deferred session inline (it renders
+// NewSessionView for the empty conversation). This is the primary "New Session"
+// affordance — distinct from the Ctrl+Shift+N palette (showCompose), which is the
+// quick floating summon. The compose palette's "open full" hand-off also lands here.
+function openFullSessionInMain() {
+  hidePalette();
+  if (!mainWindow) return;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.executeJavaScript(
+    "window.__CODECAST_NEW_SESSION && window.__CODECAST_NEW_SESSION()"
+  );
+}
+
+// Cmd+N: the focused window pops its current view out into a window of its
+// own — the same move as the tab strip's "Open in new window". The renderer
+// owns the answer to "what is the current view" (the active tab, or the page
+// of a detached window), so the shell only asks; the detach itself comes back
+// over the detach-tab IPC.
+function detachFocusedView(win) {
+  const target = win && !win.isDestroyed() ? win : BrowserWindow.getFocusedWindow();
+  if (!target || target.isDestroyed()) return;
+  if (target !== mainWindow && !tabWindows.has(target) && !appOf(target)) return;
+  target.webContents.executeJavaScript(
+    "window.__CODECAST_DETACH_VIEW && window.__CODECAST_DETACH_VIEW()"
+  );
+}
+
+// Back/Forward walk the history of the window that has focus — a detached tab
+// window or a popup owns its own stack; stepping the main window from there
+// moved a view the user was not looking at.
+function focusedWindowHistory(step) {
+  const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+  if (!win || win.isDestroyed()) return;
+  if (step < 0) win.webContents.goBack();
+  else win.webContents.goForward();
+}
+
+function navigateMain(navPath) {
+  if (!mainWindow) return;
+  mainWindow.show();
+  mainWindow.focus();
+  mainWindow.webContents.executeJavaScript(
+    `window.dispatchEvent(new CustomEvent('codecast-navigate', { detail: ${JSON.stringify(navPath)} }))`
+  );
+}
+
+function toggleEnvironment() {
+  if (!mainWindow) return;
+  currentBaseUrl = currentBaseUrl === PROD_URL ? LOCAL_URL : PROD_URL;
+  const env = currentBaseUrl === PROD_URL ? "prod" : "local";
+  updateSettings({ env });
+  mainWindow.loadURL(currentBaseUrl);
+  mainWindow.webContents.once("did-finish-load", () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.executeJavaScript(
+      "document.documentElement.classList.add('electron-desktop')"
+    );
+    mainWindow.webContents.executeJavaScript(
+      `document.title = '[${env.toUpperCase()}] ' + document.title`
+    );
+  });
+  if (paletteWindow) {
+    paletteWindow.destroy();
+    paletteWindow = null;
+  }
+  createPaletteWindow();
+  dropSpareTabWindow();
+  warmSpareTabWindow();
+  // The people window shows the same environment's roster; leaving it on the
+  // old origin would have it watching a different world than the main window.
+  if (peopleWindow && !peopleWindow.isDestroyed()) {
+    peopleWindow.loadURL(`${currentBaseUrl}${PEOPLE_PATH}`);
+  }
+  // Same rule for the voice window. A reload drops the host declaration: the
+  // page coming up on the other origin declares itself again.
+  if (callWindow && !callWindow.isDestroyed()) {
+    callWindowHost = false;
+    callWindowState = null;
+    lastVoiceMirror = null;
+    callWindowSize = "idle";
+    applyCallWindowSize(callWindow, "idle");
+    callWindow.loadURL(callPanelUrl(null, {}));
+    broadcastWindowRole();
+  }
+}
+
+const { trayIconState } = require("./trayIcon");
+
+let trayNeedsInput = 0;
+let trayIconFile = null;
+
+function applyTrayState() {
+  if (!tray || tray.isDestroyed()) return;
+  const state = trayIconState(trayNeedsInput);
+  if (state.file !== trayIconFile) {
+    const icon = nativeImage.createFromPath(path.join(__dirname, "assets", state.file));
+    icon.setTemplateImage(state.template);
+    tray.setImage(icon);
+    trayIconFile = state.file;
+  }
+  tray.setToolTip(state.tooltip);
+}
+
+function createTray() {
+  const initial = trayIconState(trayNeedsInput);
+  const icon = nativeImage.createFromPath(path.join(__dirname, "assets", initial.file));
+  icon.setTemplateImage(initial.template);
+  trayIconFile = initial.file;
+  tray = new Tray(icon);
+  setTrayMenu();
+  tray.setToolTip(initial.tooltip);
+}
+
+// Rebuilt whenever a checkmark in it changes (the agent dock's).
+function setTrayMenu() {
+  if (!tray) return;
+  const dock = loadAgentDock();
+  const menu = Menu.buildFromTemplate([
+    { label: "Show Codecast", click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    { type: "separator" },
+    { label: "New Session", click: () => openFullSessionInMain() },
+    { label: "New Quick Session", click: () => showCompose() },
+    { label: "Command Palette", click: () => togglePalette() },
+    { type: "separator" },
+    { label: "Dashboard", click: () => navigateMain("/dashboard") },
+    { label: "Inbox", click: () => navigateMain("/inbox") },
+    { label: "Chat", click: () => routeToWindow("/chat") },
+    { label: "Tasks", click: () => routeToWindow("/tasks") },
+    { type: "separator" },
+    // Unreleased: offered only on a machine that turned it on.
+    ...(dock.enabled
+      ? [
+          { label: "Agent Dock", type: "checkbox", checked: true, click: () => saveAgentDock({ enabled: false }) },
+          { label: "Minimize Agent Dock", type: "checkbox", checked: dock.minimized, click: () => saveAgentDock({ minimized: !dock.minimized }) },
+          { type: "separator" },
+        ]
+      : []),
+    { label: "Check for Updates…", click: () => checkForDesktopUpdate({ manual: true }) },
+    { label: `Version ${app.getVersion()}`, enabled: false },
+    { type: "separator" },
+    { label: "Quit Codecast", click: () => confirmQuit() },
+  ]);
+  tray.setContextMenu(menu);
+}
+
+// ⌘Q and the tray's Quit ask first, like Chrome's "Warn Before Quitting":
+// one stray keystroke otherwise drops every live window and call. The dock's
+// Quit, an update restart and a logout go straight through before-quit.
+function warnBeforeQuit() {
+  return loadFullSettings().warnBeforeQuit !== false;
+}
+
+let quitPromptOpen = false;
+async function confirmQuit() {
+  if (!warnBeforeQuit()) return app.quit();
+  if (quitPromptOpen) return;
+  quitPromptOpen = true;
+  try {
+    const { response, checkboxChecked } = await dialog.showMessageBox({
+      type: "question",
+      message: "Quit Codecast?",
+      detail: "Open windows and any call in progress will close.",
+      buttons: ["Quit", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      checkboxLabel: "Don't ask again",
+    });
+    if (response !== 0) return;
+    if (checkboxChecked) {
+      updateSettings({ warnBeforeQuit: false });
+      buildAppMenu();
+    }
+    app.quit();
+  } finally {
+    quitPromptOpen = false;
+  }
+}
+
+function buildAppMenu() {
+  const template = [
+    {
+      label: "Codecast",
+      submenu: [
+        { role: "about" },
+        { type: "separator" },
+        { label: "Check for Updates…", click: () => checkForDesktopUpdate({ manual: true }) },
+        { type: "separator" },
+        { label: "Settings…", accelerator: menuKeys.accelerator("ui.openSettings", "CommandOrControl+,"), click: () => navigateMain("/settings") },
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        {
+          label: "Warn Before Quitting",
+          type: "checkbox",
+          checked: warnBeforeQuit(),
+          click: (item) => updateSettings({ warnBeforeQuit: item.checked }),
+        },
+        { label: "Quit Codecast", accelerator: "CommandOrControl+Q", click: () => confirmQuit() },
+      ],
+    },
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Window",
+          accelerator: "CommandOrControl+N",
+          click: (_item, win) => detachFocusedView(win),
+        },
+        {
+          label: "New Session",
+          accelerator: menuKeys.accelerator("session.create", "CommandOrControl+Shift+N"),
+          click: () => openFullSessionInMain(),
+        },
+        // No accelerators here: these mirror native windows the global
+        // shortcuts already open (newSession / togglePalette), and binding the
+        // same keys in the menu would hijack them from the web app (the native
+        // menu intercepts before the renderer sees the keystroke).
+        { label: "New Quick Session", click: () => showCompose() },
+        { label: "Command Palette", click: () => togglePalette() },
+        { type: "separator" },
+        // The apps: each a window of its own, raised if it already exists.
+        { label: "Chat Window", click: () => createAppWindow("chat") },
+        { label: "Work Window", click: () => createAppWindow("work") },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        ...editUndo.menuItems(),
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "pasteAndMatchStyle" },
+        { role: "delete" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "Go",
+      submenu: [
+        { label: "Dashboard", click: () => navigateMain("/dashboard") },
+        { label: "Inbox", click: () => navigateMain("/inbox") },
+        { type: "separator" },
+        // Chat and Work paths land in their window when it exists.
+        { label: "Chat", click: () => routeToWindow("/chat") },
+        { label: "Calls", click: () => routeToWindow("/calls") },
+        { type: "separator" },
+        { label: "Projects", click: () => routeToWindow("/projects") },
+        { label: "Tasks", click: () => routeToWindow("/tasks") },
+        { label: "Docs", click: () => routeToWindow("/docs") },
+        { label: "Plans", click: () => routeToWindow("/plans") },
+        { type: "separator" },
+        // Same chords as the renderer's nav.back/nav.forward, following the
+        // person's rebinding (menuKeys.js): the page handles the key first and
+        // swallows it, so the menu fires only for a window without that
+        // handler, or from a click.
+        { label: "Back", accelerator: menuKeys.accelerator("nav.back", process.platform === "darwin" ? "Command+[" : "Alt+Left"), click: () => focusedWindowHistory(-1) },
+        { label: "Forward", accelerator: menuKeys.accelerator("nav.forward", process.platform === "darwin" ? "Command+]" : "Alt+Right"), click: () => focusedWindowHistory(1) },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { type: "separator" },
+        // Native page zoom, never CSS zoom on <html>: under CSS zoom Radix and
+        // floating-ui read rects in zoomed px and place popups in layout px,
+        // so every menu and popover landed off screen past 100%. The role's own
+        // accelerator is Cmd+Plus (Shift+=); the hidden twin takes bare Cmd+=.
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomIn", accelerator: "CommandOrControl+=", visible: false, acceleratorWorksWhenHidden: true },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+        { type: "separator" },
+        { role: "toggleDevTools" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [
+        { role: "minimize" },
+        { role: "zoom" },
+        { type: "separator" },
+        { label: "Command Palette", click: () => togglePalette() },
+        { label: "Chat Window", click: () => createAppWindow("chat") },
+        { label: "Work Window", click: () => createAppWindow("work") },
+        { label: "Switch Environment", click: () => toggleEnvironment() },
+        { type: "separator" },
+        { role: "front" },
+        { type: "separator" },
+        { role: "close" },
+      ],
+    },
+    {
+      role: "help",
+      submenu: [
+        { label: "Documentation", click: () => shell.openExternal("https://codecast.sh/documentation") },
+        { label: "What's New", click: () => shell.openExternal("https://codecast.sh/changelog") },
+        { label: "Keyboard Shortcuts", click: () => navigateMain("/settings") },
+        { type: "separator" },
+        { label: "Check for Updates…", click: () => checkForDesktopUpdate({ manual: true }) },
+        { label: "Codecast Website", click: () => shell.openExternal("https://codecast.sh") },
+      ],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
+// ---------------------------------------------------------------------------
+// Self-contained desktop updater.
+//
+// Squirrel.Mac (electron-updater's install step) is dead on macOS 26: launchd
+// accepts the ShipIt job but never runs it, so quitAndInstall() quits the app
+// and nothing ever swaps the bundle. So we don't touch Squirrel at all. Instead
+// we mirror the daemon's proven update channel in-process: read the published
+// electron-builder feed, stream-download the zip (with real progress), verify
+// its sha512 and that it's signed by OUR team, stage the verified bundle, and —
+// on a deliberate "Restart now" — hand a detached helper the job of swapping
+// the running bundle and relaunching us in the FOREGROUND once we exit.
+//
+// This needs no launchd, no Squirrel, no daemon, and reports real download
+// progress to the renderer over the existing `update-status` IPC.
+// ---------------------------------------------------------------------------
+const DESKTOP_FEED = "https://dl.codecast.sh/desktop/latest-mac.yml";
+const DESKTOP_BASE = "https://dl.codecast.sh/desktop";
+// Our Apple Developer Team ID — the swapped bundle MUST be signed by us.
+const EXPECTED_TEAM_ID = "WRG9THCK9Q";
+
+// Most recent {status,version,percent}, replayed to any window that loads after
+// it was emitted (boot/reload) so the banner never misses the download.
+let lastUpdateStatus = null;
+// { version, incomingPath, bundlePath } once a verified bundle is staged.
+let stagedUpdate = null;
+// The in-flight update run and its abort handle. A promise (not a boolean
+// flag) so a user-initiated retry can abort a wedged download, WAIT for it to
+// settle, and start fresh — the old boolean made "Try again" a silent no-op
+// while a stalled stream held it forever (v1.1.84 rollout).
+let updateRun = null;
+let updateAbort = null;
+
+function emitUpdateStatus(status) {
+  lastUpdateStatus = status;
+  // Every window draws the update banner and any of them can start the update
+  // (the Chat window hits the floor as readily as the main one); a status sent
+  // to the main window alone left the asking window to call a staged update
+  // stalled after 90s (2026-09-24).
+  for (const w of routedWindows()) w.webContents.send("update-status", status);
+}
+
+// The .app bundle we're actually running from (NOT hardcoded to /Applications —
+// respect wherever the user installed it). exe is <bundle>/Contents/MacOS/Codecast.
+function installedBundlePath() {
+  const bundle = path.dirname(path.dirname(path.dirname(app.getPath("exe"))));
+  return bundle.endsWith(".app") ? bundle : null;
+}
+
+function cmpVersions(a, b) {
+  const pa = String(a).split(".").map(Number);
+  const pb = String(b).split(".").map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0, nb = pb[i] || 0;
+    if (na > nb) return 1;
+    if (na < nb) return -1;
+  }
+  return 0;
+}
+
+// Parse only the fields we need from latest-mac.yml (no YAML dependency).
+function parseFeed(text) {
+  const version = text.match(/^version:\s*(.+)$/m)?.[1]?.trim();
+  let zip, sha512;
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/url:\s*(\S+-mac\.zip)\s*$/);
+    if (m) {
+      zip = m[1].trim();
+      const sm = lines[i + 1]?.match(/sha512:\s*(\S+)\s*$/);
+      if (sm) sha512 = sm[1].trim();
+      break;
+    }
+  }
+  return { version, zip, sha512 };
+}
+
+// Network layer (redirect-following GET, feed fetch, resumable download with
+// inactivity timeouts and abort support) lives in updaterNet.js — pure Node,
+// so its stall/resume/abort behavior is testable outside a packaged app.
+const { fetchText, downloadResumable } = require("./updaterNet");
+
+function execFileP(cmd, args) {
+  return new Promise((resolve) => {
+    execFile(cmd, args, { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: stdout || "", stderr: stderr || "" });
+    });
+  });
+}
+
+// The extracted bundle must be a valid, untampered signature from our team.
+async function verifyBundleSignature(appPath) {
+  const verify = await execFileP("/usr/bin/codesign", ["--verify", "--strict", "--deep", appPath]);
+  if (!verify.ok) return false;
+  const info = await execFileP("/usr/bin/codesign", ["-dvv", appPath]);
+  return `${info.stdout}${info.stderr}`.includes(`TeamIdentifier=${EXPECTED_TEAM_ID}`);
+}
+
+function rmrf(p) {
+  try { fs.rmSync(p, { recursive: true, force: true }); } catch {}
+}
+
+// Check the feed and, if newer (or forced), download → verify → stage a bundle
+// ready to swap in on the next "Restart now". Fire-and-forget; never throws.
+// opts.userInitiated (any renderer "Try again" / menu check): a check that
+// arrives while a run is already in flight ABORTS that run and starts fresh —
+// the in-flight one may be a download wedged on a dead socket, and returning
+// silently here is what made the retry button do nothing.
+async function checkForDesktopUpdate(opts = {}) {
+  if (process.platform !== "darwin" || !app.isPackaged) {
+    if (opts.manual) showNativeNotification("Updates unavailable", "Auto-update only runs in the installed desktop app.");
+    return;
+  }
+  if (updateRun) {
+    if (!opts.userInitiated && !opts.manual) return; // background tick — one run at a time
+    updateAbort?.abort();
+    await updateRun.catch(() => {});
+  }
+  // Already downloaded and waiting — just re-surface it for a manual check.
+  if (stagedUpdate) {
+    emitUpdateStatus({ status: "ready", version: stagedUpdate.version });
+    if (opts.manual) showNativeNotification(`Codecast ${stagedUpdate.version} is ready`, "Click to restart and install.", () => installUpdateAndRestart());
+    return;
+  }
+  const run = runDesktopUpdateCheck(opts);
+  updateRun = run;
+  try {
+    await run;
+  } finally {
+    if (updateRun === run) { updateRun = null; updateAbort = null; }
+  }
+}
+
+async function runDesktopUpdateCheck(opts) {
+  const bundle = installedBundlePath();
+  if (!bundle) return;
+
+  const abort = new AbortController();
+  updateAbort = abort;
+  const work = path.join(app.getPath("userData"), "update-stage");
+  try {
+    const { version, zip, sha512 } = parseFeed(await fetchText(DESKTOP_FEED));
+    if (!version || !zip || !sha512) throw new Error("could not parse feed");
+    if (cmpVersions(version, app.getVersion()) <= 0 && !opts.force) {
+      if (opts.manual) showNativeNotification("Codecast is up to date", `You're on the latest version (${app.getVersion()}).`);
+      return;
+    }
+
+    emitUpdateStatus({ status: "available", version });
+    rmrf(work);
+    fs.mkdirSync(work, { recursive: true });
+    const zipPath = path.join(work, zip);
+
+    emitUpdateStatus({ status: "downloading", version, percent: 0 });
+    const got = await downloadResumable(`${DESKTOP_BASE}/${zip}`, zipPath, {
+      signal: abort.signal,
+      onProgress: (percent) => emitUpdateStatus({ status: "downloading", version, percent }),
+    });
+    if (got !== sha512) throw new Error("sha512 mismatch");
+
+    const extractDir = path.join(work, "extract");
+    fs.mkdirSync(extractDir, { recursive: true });
+    const ex = await execFileP("/usr/bin/ditto", ["-x", "-k", zipPath, extractDir]);
+    if (!ex.ok) throw new Error("extract failed");
+    const newApp = path.join(extractDir, "Codecast.app");
+    if (!fs.existsSync(newApp)) throw new Error("Codecast.app missing from archive");
+    if (!(await verifyBundleSignature(newApp))) throw new Error("signature/team verification failed");
+
+    // Pre-stage a sibling copy on the SAME volume as the running bundle so the
+    // post-quit swap is just two atomic renames (minimal downtime, no half-state).
+    const incoming = path.join(path.dirname(bundle), ".Codecast.app.incoming");
+    rmrf(incoming);
+    const cp = await execFileP("/usr/bin/ditto", [newApp, incoming]);
+    if (!cp.ok) throw new Error("stage copy failed");
+    rmrf(work);
+
+    stagedUpdate = { version, incomingPath: incoming, bundlePath: bundle };
+    emitUpdateStatus({ status: "ready", version });
+    showNativeNotification(
+      `Codecast ${version} is ready`,
+      "Click to restart and install now; otherwise it installs when you next quit.",
+      () => installUpdateAndRestart(),
+    );
+  } catch (e) {
+    console.error("desktop update:", e?.message || e);
+    rmrf(work);
+    // An aborted run was superseded by a user retry — the fresh run emits its
+    // own statuses immediately, so don't flash a spurious error over them.
+    if (!e?.aborted) {
+      emitUpdateStatus({ status: "error", version: lastUpdateStatus?.version });
+      if (opts.manual) showNativeNotification("Update check failed", "Couldn't reach the update server. Try again later.");
+    }
+  }
+}
+
+// Apply the staged update: a detached helper waits for THIS process to exit,
+// swaps the bundle via two atomic renames, clears quarantine, then (when asked)
+// relaunches us in the FOREGROUND. Our own exit is what lets the rename succeed.
+let updateInstallTriggered = false;
+function spawnUpdateSwap({ relaunch }) {
+  const { incomingPath, bundlePath } = stagedUpdate;
+  const oldPath = path.join(path.dirname(bundlePath), ".Codecast.app.old");
+  const pid = process.pid;
+  const sh = (p) => `'${String(p).replace(/'/g, `'\\''`)}'`; // single-quote for /bin/sh
+  const script = [
+    `while kill -0 ${pid} 2>/dev/null; do sleep 0.2; done`,
+    `rm -rf ${sh(oldPath)}`,
+    `mv ${sh(bundlePath)} ${sh(oldPath)} && mv ${sh(incomingPath)} ${sh(bundlePath)} || { mv ${sh(oldPath)} ${sh(bundlePath)} 2>/dev/null; exit 1; }`,
+    `/usr/bin/xattr -dr com.apple.quarantine ${sh(bundlePath)} 2>/dev/null`,
+    `rm -rf ${sh(oldPath)}`,
+    ...(relaunch ? [`/usr/bin/open ${sh(bundlePath)}`] : []),
+  ].join("\n");
+  try {
+    spawn("/bin/sh", ["-c", script], { detached: true, stdio: "ignore" }).unref();
+  } catch (e) {
+    console.error("update swap helper failed to spawn:", e?.message);
+  }
+}
+
+// "Restart now": swap and come straight back.
+function installUpdateAndRestart() {
+  if (updateInstallTriggered || !stagedUpdate) return;
+  updateInstallTriggered = true;
+  spawnUpdateSwap({ relaunch: true });
+  app.quit();
+}
+
+// The human quit on their own: swap on the way out and stay quit. The next
+// launch, whenever they choose it, is the new version.
+function applyStagedUpdateOnQuit() {
+  if (updateInstallTriggered || !stagedUpdate) return;
+  updateInstallTriggered = true;
+  spawnUpdateSwap({ relaunch: false });
+}
+
+// IPC handlers
+shellIpc.handle("get-app-version", () => app.getVersion());
+shellIpc.handle("set-badge-count", (_e, count) => {
+  app.setBadgeCount(count);
+  trayNeedsInput = count;
+  applyTrayState();
+});
+shellIpc.handle("get-env", () => (currentBaseUrl === PROD_URL ? "prod" : "local"));
+// OS-wide seconds since last user input — feeds the web layer's presence
+// heartbeat so the server knows a human is at this machine even while
+// Codecast itself is unfocused. powerMonitor is only usable after app ready,
+// which holds whenever this handler runs: renderers exist only post-ready.
+shellIpc.handle("get-system-idle-seconds", () => powerMonitor.getSystemIdleTime());
+shellIpc.handle("restart-for-update", () => installUpdateAndRestart());
+// Any renderer-invoked check is user-initiated ("Try again" / "Update now"),
+// which lets it supersede a wedged in-flight download (see checkForDesktopUpdate).
+// The asking window hears the outcome directly, whatever list it is on: a
+// window that asked and heard nothing calls a staged update stalled.
+shellIpc.handle("check-for-update", async (e, opts) => {
+  await checkForDesktopUpdate({ manual: opts?.manual === true, userInitiated: true });
+  if (lastUpdateStatus && !e.sender.isDestroyed()) e.sender.send("update-status", lastUpdateStatus);
+});
+// Returns { shown } so the renderer knows whether IT announced the event —
+// a promise while a banner waits out the completion grace. Every window reports
+// the same server row, so the first report wins the banner and the rest collapse
+// into it. The gate holds the rest of the policy (notificationRouter.js): a
+// banner is silent only when a FOCUSED window already shows the conversation it
+// is about, and a burst for one conversation fires once.
+shellIpc.handle("show-notification", (_e, payload) => bannerGate.admit(describeWindows(), payload));
+
+// OS-level permissions (notifications, microphone, camera, screen) read from
+// the OS itself — see osPermissions.js. Unpackaged dev runs register with
+// macOS under Electron's own bundle id, so System Settings opens that one.
+const osPermissions = createOsPermissions({
+  electron: { systemPreferences, desktopCapturer, shell },
+  bundleId: app.isPackaged ? "sh.codecast.desktop" : "com.github.Electron",
+});
+modernNotify = osPermissions.notify;
+// Clicks are heard from boot, not from this run's first banner: a banner
+// posted before a relaunch carries its own target and lands through here.
+osPermissions.listenForClicks((payload) => {
+  let target = null;
+  try { target = JSON.parse(payload); } catch {}
+  const route = target && sanitizeTabPath(target.route);
+  if (route) app.whenReady().then(() => openNotificationTarget({ route, kind: target.kind || null }));
+});
+shellIpc.handle("get-os-permissions", () => osPermissions.getAll());
+shellIpc.handle("request-os-permission", (_e, kind) => osPermissions.request(String(kind)));
+
+// The two grants that belong to the codecast computer helper, not to this app
+// — see computerPermissions.js. They travel through the cast CLI, so nothing
+// here touches an accessibility or a screen API, and the one gesture that may
+// take the screen is the helper's own settings window behind a human's click.
+const computerPermissions = createComputerPermissions({});
+shellIpc.handle("get-computer-permissions", () => computerPermissions.getAll());
+
+// The CLI and daemon on this machine, set up from the app (daemonSetup.js):
+// whether they are here, and the installer run behind the person's click.
+const daemonSetup = createDaemonSetup({});
+shellIpc.handle("get-daemon-setup", () => daemonSetup.state());
+shellIpc.handle("run-daemon-setup", (_e, token) => daemonSetup.setup(token));
+shellIpc.handle("open-os-permission-settings", (_e, kind) => {
+  const k = String(kind);
+  return computerPermissions.owns(k) ? computerPermissions.openSettings(k) : osPermissions.openSettings(k);
+});
+
+// Hands a URL to the person's real browser. Sign-in sends its OAuth flow
+// here (the embedded window has no Google/GitHub sessions), and the browser
+// pane sends the page it shows, which is often a plain-http localhost dev
+// server. Web origins only: anything else has no business being launched
+// from here.
+shellIpc.handle("open-external", (_e, url) => {
+  if (typeof url === "string" && /^https?:\/\//i.test(url)) shell.openExternal(url);
+});
+
+// Palette IPC
+// The palette renderer has painted a face (compose/search) — reveal the window
+// if it's the one we asked for.
+shellIpc.on("palette-ready", (_e, mode) => {
+  paletteFace.ready(mode);
+});
+
+// The palette picked a place: a task lands in the Work window when there is
+// one, a channel in the Chat window, everything else in the main window.
+shellIpc.on("palette-navigate", (_e, navPath) => {
+  hidePalette();
+  const clean = sanitizeTabPath(navPath);
+  if (clean) routeToWindow(clean);
+});
+
+shellIpc.on("palette-hide", () => {
+  hidePalette();
+});
+
+shellIpc.on("palette-new-session", () => {
+  openFullSessionInMain();
+});
+
+// The compose popup reports back after the user sends the first message. The
+// session was already created + the message sent from the popup's renderer; all
+// we do here is manage focus:
+//   navigate → bring Codecast forward on the new conversation (Cmd+Enter)
+//   else     → fire-and-forget: hide the popup and step out of the app (Enter)
+shellIpc.on("compose-submit", (_e, data) => {
+  hidePalette();
+  if (data?.navigate && data?.conversationId && mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    mainWindow.webContents.executeJavaScript(
+      `window.dispatchEvent(new CustomEvent('codecast-navigate', { detail: ${JSON.stringify("/conversation/" + data.conversationId)} }))`
+    );
+  } else if (!data?.navigate) {
+    if (paletteSummonedOverSelf && mainWindow && !mainWindow.isDestroyed()) {
+      // Summoned while Codecast was frontmost — "stepping back out" means
+      // returning to the main window, not hiding the whole app.
+      mainWindow.show();
+      mainWindow.focus();
+    } else if (process.platform === "darwin") {
+      app.hide();
+    }
+  }
+});
+
+// Settings IPC
+shellIpc.handle("get-shortcuts", () => loadSettings());
+// Richer readout for the settings UI: current bindings, the defaults (so the
+// web can offer "reset to default" without hardcoding them), and which
+// bindings failed to register (owned by another app / malformed).
+shellIpc.handle("get-shortcut-config", () => ({
+  shortcuts: loadSettings(),
+  defaults: DEFAULT_SHORTCUTS,
+  issues: shortcutIssues,
+}));
+shellIpc.handle("set-shortcut", (_e, key, accelerator) => {
+  const shortcuts = loadSettings();
+  shortcuts[key] = accelerator;
+  saveSettings(shortcuts);
+  registerShortcuts();
+  return loadSettings();
+});
+
+// ---------------------------------------------------------------------------
+// Meeting detection. The shell notices a meeting app starting and offers to
+// record it; the answer, and the recording itself, belong to the web layer.
+//
+// WHAT IT READS: the names of running programs, once every 20 seconds, and
+// nothing else. No window titles, no window contents, no calendar. The
+// setting's copy says exactly that, and meetingDetector.js is what makes the
+// sentence true.
+//
+// WHAT IT COSTS WHEN OFF: nothing. No timer, no `ps`, no memory of what is
+// running. The poller exists only while the setting asks for it.
+// ---------------------------------------------------------------------------
+
+function loadMeetingDetect() {
+  return mergeMeetingDetect(loadFullSettings().meetingDetect);
+}
+
+function saveMeetingDetect(patch) {
+  const next = mergeMeetingDetect({ ...loadMeetingDetect(), ...patch });
+  updateSettings({ meetingDetect: next });
+  syncMeetingWatch();
+  return next;
+}
+
+// macOS only: the table is mac app bundles and `ps -Ao comm=` is a mac
+// invocation. Elsewhere the setting is not offered rather than offered and
+// quietly dead.
+function canDetectMeetings() {
+  return process.platform === "darwin";
+}
+
+const MEETING_POLL_MS = 20_000;
+let meetingTimer = null;
+// The meeting apps seen on the last tick. `null` means nothing has been
+// observed yet, which startedApps reads as a baseline — whatever is already
+// open when the timer starts is the status quo, not a meeting beginning.
+let meetingRunning = null;
+let meetingPsInFlight = false;
+
+async function meetingTick() {
+  // One `ps` at a time, and one per tick. A loaded machine can take longer to
+  // answer than the interval, and stacking spawns is exactly how a poller
+  // becomes a bigger problem than the thing it watches for.
+  if (meetingPsInFlight) return;
+  meetingPsInFlight = true;
+  let out = "";
+  try {
+    const res = await execFileP("/bin/ps", ["-Ao", "comm="]);
+    if (!res.ok) return;
+    out = res.stdout;
+  } finally {
+    meetingPsInFlight = false;
+  }
+  const observed = detectMeetingApps(out);
+  const started = startedApps(meetingRunning, observed);
+  meetingRunning = observed;
+  if (!started.length) return;
+  const settings = loadMeetingDetect();
+  for (const id of started) {
+    const decision = decideOffer(settings, id);
+    if (decision !== "skip") offerToRecord(id, decision);
+  }
+}
+
+// The offer goes to the dedicated meeting-offer window and TAKES NO FOCUS —
+// nothing is raised or sounded here. The window reveals itself (inactive, in
+// the corner) when its renderer reports content, and the chime is the
+// renderer's. A card that jumps in front of somebody joining a meeting is
+// worse than a recording they had to start by hand.
+function offerToRecord(appId, decision) {
+  if (!meetingOfferWindow) createMeetingOfferWindow();
+  const win = meetingOfferWindow;
+  if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return;
+  win.webContents.send("meeting-detected", {
+    app: appId,
+    name: meetingAppName(appId),
+    decision,
+    at: Date.now(),
+  });
+}
+
+// Start or stop the poller to match the setting. Idempotent, so a change from
+// ask to auto leaves the timer — and the running set — exactly as they were:
+// restarting would re-baseline, and re-baselining is silent, not noisy.
+function syncMeetingWatch() {
+  const on = canDetectMeetings() && loadMeetingDetect().mode !== "off";
+  if (on === !!meetingTimer) return;
+  if (!on) {
+    clearInterval(meetingTimer);
+    meetingTimer = null;
+    meetingRunning = null;
+    return;
+  }
+  meetingRunning = null;
+  meetingTimer = setInterval(() => { meetingTick(); }, MEETING_POLL_MS);
+  meetingTick();
+}
+
+shellIpc.handle("get-meeting-detect", () => ({
+  ...loadMeetingDetect(),
+  apps: meetingAppList(),
+  supported: canDetectMeetings(),
+}));
+shellIpc.handle("set-meeting-detect", (_e, patch) => saveMeetingDetect(patch || {}));
+
+const SHORTCUT_HANDLERS = {
+  toggleWindow: () => {
+    if (!mainWindow) return;
+    if (mainWindow.isVisible() && mainWindow.isFocused()) {
+      mainWindow.hide();
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  },
+  togglePalette: () => togglePalette(),
+  newSession: () => showCompose(),
+  toggleEnv: () => toggleEnvironment(),
+  toggleAgentDock: () => summonAgentDock(),
+};
+
+// Bindings that failed their last registration attempt, keyed by shortcut key
+// with the offending accelerator as value. Surfaced to the settings UI so a
+// dead shortcut is diagnosable instead of silent.
+let shortcutIssues = {};
+
+function registerShortcuts() {
+  globalShortcut.unregisterAll();
+  const shortcuts = loadSettings();
+  shortcutIssues = {};
+
+  for (const [key, handler] of Object.entries(SHORTCUT_HANDLERS)) {
+    const acc = shortcuts[key];
+    if (!acc) continue; // "" = binding removed by the user
+    // A feature's key is held only while the feature is on: a dock that was
+    // turned off must not take a chord away from every other app.
+    if (key === "toggleAgentDock" && !loadAgentDock().enabled) continue;
+    let ok = false;
+    // register() returns false when another app already holds the accelerator
+    // and throws on a malformed one — both must land in issues, not crash.
+    try {
+      ok = globalShortcut.register(acc, handler);
+    } catch {
+      ok = false;
+    }
+    if (!ok) shortcutIssues[key] = acc;
+  }
+}
+
+// Every window and pane gets the edit menu with spelling suggestions. DevTools
+// ("remote") draws its own.
+app.on("web-contents-created", (_event, contents) => {
+  if (contents.getType() !== "remote") attachSpellMenu(contents, Menu);
+  editUndo.observe(contents);
+});
+
+app.whenReady().then(() => {
+  // Electron's notification presenter makes itself the notification center's
+  // delegate the moment it is created, which happens lazily: the first web
+  // page that calls `new Notification` (a site in a browser pane) would take
+  // every later banner click away from ours. Create it now, then claim the
+  // delegate in front of it so its banners are handed back to it. Its
+  // constructor asks for authorization, so an undecided app waits for the
+  // first banner's own prompt (claimed again on every post).
+  if (osPermissions.readNotificationState() !== "ask") {
+    try { Notification.isSupported(); } catch {}
+    osPermissions.listenForClicks();
+  }
+
+  // Trust the local mkcert dev cert at the network-service layer. This runs
+  // before any cert check, so unlike the "certificate-error" event it also
+  // covers the Vite HMR WebSocket — not just the page load. callback(0) =
+  // trust; callback(-3) = defer to Chromium's normal verification, so every
+  // other host (production included) stays strict.
+  session.defaultSession.setCertificateVerifyProc((request, callback) => {
+    callback(request.hostname === LOCAL_DEV_HOST ? 0 : -3);
+  });
+
+  // ── Capability policy ────────────────────────────────────────────────────
+  // The shell is a HOST, not a feature: it grants its own trusted origins the
+  // browser capabilities a first-party web app expects, and exposes generic
+  // primitives (below, `desktop-sources`) that the web layer composes into
+  // features. Adding a media feature, a picker, or a permission-gated API on
+  // the web side must never require a shell release — that is the whole
+  // reason this list is a policy table and not per-feature branches.
+  const isTrustedOrigin = shellAuthority.isShell;
+  // Capabilities a trusted first-party page may hold. Anything not listed is
+  // denied for everyone (a navigated-to third-party frame gets nothing).
+  // The BASELINE ships with the shell; the web layer may EXTEND it at runtime
+  // (`host-policy` below), persisted in settings.json, so a new permission-
+  // gated web feature never waits on a desktop release. Extension is
+  // additive only and gated on the caller being a trusted origin — the web
+  // cannot open the door for anyone but itself.
+  const BASELINE_PERMISSIONS = [
+    "media", "audioCapture", "videoCapture", // huddles: mic + camera
+    "display-capture",                       // screen share
+    "notifications",
+    "clipboard-read", "clipboard-sanitized-write",
+    "fullscreen",
+    "speaker-selection",                     // audio output picker
+  ];
+  const trustedPermissions = () =>
+    new Set([...BASELINE_PERMISSIONS, ...(loadFullSettings().hostPolicy?.permissions ?? [])]);
+  installShellCapabilities({
+    authority: shellAuthority, session: session.defaultSession, desktopCapturer, permissions: trustedPermissions,
+    onDisplaySource: shareCursors.setSource,
+  });
+  shareCursors.install(shellIpc);
+  // Browser panes: the native half of the web app's /browser route
+  // (browserPanes.js). It manages its own views, its own session and its own
+  // lifecycle — the shell hands it the pieces of Electron it needs and the
+  // origin policy above, so only a first-party page can ask for a view.
+  // The CDP port lets `cast browser` drive a pane's view directly; the panes
+  // registry (browserPanes.js, desktop-panes.json) tells it which target is
+  // which pane. No port, no registry.
+  createBrowserPanes({
+    WebContentsView, session, ipcMain: shellIpc, BrowserWindow, isTrusted: isTrustedOrigin,
+    cdpPort: CDP_PORT, registryPath: defaultPaneRegistryPath(),
+  }).install();
+
+  // The web layer extends host policy: {permissions?: string[]}.
+  // Reads back the effective policy so the web can gate on what the shell
+  // will actually grant.
+  shellIpc.handle("host-policy", (e, patch) => {
+    if (!isTrustedOrigin(e.sender)) return null;
+    if (patch && typeof patch === "object") {
+      const cur = loadFullSettings().hostPolicy ?? {};
+      const permissions = new Set([...(cur.permissions ?? []), ...(Array.isArray(patch.permissions) ? patch.permissions.filter((x) => typeof x === "string") : [])]);
+      updateSettings({ hostPolicy: { permissions: [...permissions], hosts: [] } });
+    }
+    return { permissions: [...trustedPermissions()], hosts: [], version: app.getVersion() };
+  });
+
+  app.setAboutPanelOptions({
+    applicationName: "Codecast",
+    copyright: "Codecast",
+    website: "https://codecast.sh",
+  });
+  createWindow();
+  createTray();
+  buildAppMenu();
+  createPaletteWindow();
+  // The voice window: hidden, no room, listening. Built now so a teammate's
+  // burst has a renderer to land in before anybody presses anything.
+  createVoiceWindow();
+  if (app.dock) {
+    app.dock.setMenu(Menu.buildFromTemplate([
+      { label: "New Session", click: () => openFullSessionInMain() },
+      { label: "Dashboard", click: () => navigateMain("/dashboard") },
+      { label: "Inbox", click: () => navigateMain("/inbox") },
+      { label: "Chat", click: () => routeToWindow("/chat") },
+      { label: "Tasks", click: () => routeToWindow("/tasks") },
+    ]));
+  }
+  registerShortcuts();
+  // Starts the meeting poller only if the setting asks for it; off is free.
+  syncMeetingWatch();
+  // The agent dock, if this machine asked for one.
+  syncAgentDock();
+
+  // No startup notification needed -- macOS registers the app when
+  // Notification.show() is first called from any code path (idle, error, etc.).
+
+  // Auto-update: download in the background shortly after launch (so it's
+  // usually already staged + "ready" by the time the user notices the banner),
+  // then re-check hourly. The actual install only happens on a deliberate
+  // "Restart now" — see checkForDesktopUpdate / installUpdateAndRestart.
+  setTimeout(() => { checkForDesktopUpdate(); }, 8000);
+  setInterval(() => { checkForDesktopUpdate(); }, 60 * 60 * 1000);
+});
+
+app.on("activate", () => {
+  if (!mainWindow) createWindow();
+  else mainWindow.show();
+});
+
+app.on("window-all-closed", () => {
+  // Don't quit on macOS -- keep in dock/tray
+});
+
+app.on("will-quit", () => {
+  globalShortcut.unregisterAll();
+});

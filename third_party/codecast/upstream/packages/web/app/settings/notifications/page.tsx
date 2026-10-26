@@ -1,0 +1,250 @@
+import { useSettingsData } from "../../../hooks/useSyncSettings";
+import { useCurrentUser } from "../../../hooks/useCurrentUser";
+import { useInboxStore } from "../../../store/inboxStore";
+import { useCallback } from "react";
+import { AvatarImg } from "../../../lib/avatarCache";
+import { Switch } from "../../../components/ui/switch";
+import type { Id } from "@codecast/convex/convex/_generated/dataModel";
+import {
+  Bell, BellOff, Users, MessageSquare, Laptop, CheckCircle, Terminal, Mail, MessagesSquare,
+} from "lucide-react";
+import { SettingsOptionGroup, SettingsPanel, SettingsRow, SettingsSection } from "../../../components/settings/ui";
+import { useOsPermission } from "../../../hooks/useOsPermissions";
+import { PermissionRow } from "../../../components/permissions/PermissionRow";
+import { peopleOf } from "@codecast/shared/team/memberKind";
+
+/* This device's OS-level permission (System Settings / browser site
+ * permission) — a separate axis from the in-app prefs below: with it off,
+ * every banner silently vanishes no matter what the switches say. */
+function DevicePermissionRow() {
+  const { readiness, refresh } = useOsPermission("notifications");
+  return <PermissionRow kind="notifications" readiness={readiness} onChange={refresh} />;
+}
+
+type NotifType = "team_session_start" | "mention" | "permission_request" | "session_idle" | "session_idle_digest" | "session_error" | "task_activity" | "doc_activity" | "plan_activity" | "artifact_activity" | "chat_activity" | "email_notifications" | "task_status_changes";
+
+const NOTIF_SECTIONS = [
+  {
+    title: "Sessions",
+    icon: Terminal,
+    items: [
+      { key: "team_session_start" as NotifType, label: "Team sessions", desc: "When a team member starts a session" },
+      { key: "session_idle" as NotifType, label: "Session idle", desc: "When your session is waiting for input" },
+      { key: "session_idle_digest" as NotifType, label: "Hourly digest", desc: "Fold sessions waiting for input into one alert an hour instead of one each" },
+      { key: "session_error" as NotifType, label: "Session errors", desc: "When a session encounters an error" },
+      { key: "permission_request" as NotifType, label: "Permission requests", desc: "When a session needs your approval" },
+    ],
+  },
+  {
+    title: "Social",
+    icon: MessageSquare,
+    items: [
+      { key: "mention" as NotifType, label: "Mentions", desc: "When someone @mentions you" },
+      { key: "artifact_activity" as NotifType, label: "Published pages", desc: "When someone comments on a page you published" },
+      { key: "chat_activity" as NotifType, label: "Team chat", desc: "Thread replies, @here, and every post in channels you set to All new posts (a direct @you rides Mentions)" },
+    ],
+  },
+  {
+    title: "Work Items",
+    icon: CheckCircle,
+    items: [
+      { key: "task_activity" as NotifType, label: "Task activity", desc: "Assignments, comments from people, and agent comments that need you" },
+      { key: "task_status_changes" as NotifType, label: "Task done or dropped", desc: "When a task you take part in is closed. Other status moves stay on the board" },
+      { key: "doc_activity" as NotifType, label: "Doc activity", desc: "Updates on docs you're watching" },
+      { key: "plan_activity" as NotifType, label: "Plan activity", desc: "Updates on plans you're watching" },
+    ],
+  },
+] as const;
+
+/* Which agent comments on tasks reach the Threads inbox. The server's rule
+ * (convex threadReads.ts taskCommentIsNews): a person's comment and an
+ * @mention always do; the level decides the rest of an agent's. */
+const AGENT_COMMENT_LEVELS = [
+  { value: "needs_person", label: "When they need you", description: "Blockers, handoffs and verdicts, and comments that @mention you. Progress notes stay on the task." },
+  { value: "all", label: "Everything", description: "Every agent comment on a task you follow, progress notes included." },
+  { value: "none", label: "Never", description: "Only people and @mentions reach you. The task page keeps the agent's record." },
+];
+
+const DEFAULT_PREFS = {
+  team_session_start: true,
+  mention: true,
+  permission_request: true,
+  session_idle: true,
+  session_idle_digest: true,
+  session_error: true,
+  task_activity: true,
+  doc_activity: true,
+  plan_activity: true,
+  artifact_activity: true,
+  chat_activity: true,
+  email_notifications: true,
+  task_status_changes: false,
+};
+
+export default function NotificationsSettingsPage() {
+  const { user } = useCurrentUser();
+  const { data: teamMembers } = useSettingsData("teamMembers");
+
+  const prefs = user?.notification_preferences;
+  const enabled = user?.notifications_enabled ?? false;
+  const mutedMembers: Id<"users">[] = (user as any)?.muted_members ?? [];
+  const machineWidePresence = (user as any)?.machine_wide_presence ?? true;
+
+  const getPref = useCallback((key: NotifType) => {
+    return (prefs as any)?.[key] ?? DEFAULT_PREFS[key];
+  }, [prefs]);
+
+  // Every switch goes through the store (updateNotificationSettings): it
+  // flips now, holds over pushes, and a refusal puts it back with a toast.
+  const updatePrefs = useInboxStore((s) => s.updateNotificationSettings);
+
+  const handleGlobalToggle = useCallback((value: boolean) => {
+    updatePrefs({ notifications_enabled: value });
+  }, [updatePrefs]);
+
+  const handleToggleMachinePresence = useCallback((value: boolean) => {
+    updatePrefs({ machine_wide_presence: value });
+  }, [updatePrefs]);
+
+  const handleToggleType = useCallback((type: NotifType) => {
+    const current = { ...DEFAULT_PREFS, ...prefs };
+    updatePrefs({ notification_preferences: { ...current, [type]: !((current as any)[type] ?? true) } });
+  }, [prefs, updatePrefs]);
+
+  const handleToggleMute = useCallback((memberId: Id<"users">) => {
+    const isMuted = mutedMembers.includes(memberId);
+    updatePrefs({ muted_members: isMuted ? mutedMembers.filter(id => id !== memberId) : [...mutedMembers, memberId] });
+  }, [mutedMembers, updatePrefs]);
+
+  const agentCommentLevel = (prefs as any)?.task_agent_comments ?? "needs_person";
+  const setAgentCommentLevel = useCallback((level: string) => {
+    updatePrefs({ notification_preferences: { ...DEFAULT_PREFS, ...prefs, task_agent_comments: level } });
+  }, [prefs, updatePrefs]);
+
+  if (!user) return null;
+
+  type TeamMember = { _id: Id<"users">; name?: string | null; email?: string | null; github_avatar_url?: string | null; title?: string | null };
+  const otherMembers = peopleOf(teamMembers as any[]).filter((m) => m._id !== user._id) as TeamMember[];
+
+  return (
+    <SettingsPanel>
+      <SettingsSection
+        title="Delivery"
+        icon={enabled ? Bell : BellOff}
+        description={enabled ? "Push notifications are on." : "All push notifications are off. Email keeps its own switch below."}
+        actions={<Switch checked={enabled} onCheckedChange={handleGlobalToggle} aria-label="Push notifications" />}
+      >
+        <DevicePermissionRow />
+        {/* Email digest — its own channel, deliberately not gated behind the
+            push toggle: the unsubscribe link in every digest lands here. */}
+        <SettingsRow
+          icon={Mail}
+          label="Email me what I miss"
+          description="When you're away, one email batches unseen mentions, comments, chat, and decisions your agents are waiting on. Never session idle/error noise, and never while you're at the keyboard."
+          alignTop
+        >
+          <Switch
+            checked={getPref("email_notifications")}
+            onCheckedChange={() => handleToggleType("email_notifications")}
+            aria-label="Email me what I miss"
+          />
+        </SettingsRow>
+        {/* Presence source for phone-push routing */}
+        {enabled && (
+          <SettingsRow
+            icon={Laptop}
+            label="Wait until I'm away from my computer"
+            description="Hold phone pushes while your computer sees any keyboard or mouse activity, not just activity in Codecast (machine-wide detection currently works on macOS only). Pushes arrive a few minutes after you step away, and always within an hour."
+            alignTop
+          >
+            <Switch
+              checked={machineWidePresence}
+              onCheckedChange={handleToggleMachinePresence}
+              aria-label="Wait until I'm away from my computer"
+            />
+          </SettingsRow>
+        )}
+      </SettingsSection>
+
+      {enabled && (
+        <>
+          {NOTIF_SECTIONS.map((section) => (
+            <SettingsSection key={section.title} title={section.title} icon={section.icon}>
+              {section.items.map((item) => (
+                <SettingsRow key={item.key} label={item.label} description={item.desc}>
+                  <Switch
+                    checked={getPref(item.key)}
+                    onCheckedChange={() => handleToggleType(item.key)}
+                    aria-label={item.label}
+                  />
+                </SettingsRow>
+              ))}
+            </SettingsSection>
+          ))}
+
+          {/* The Threads inbox is its own channel: not a push, a list you
+              read. What an agent writes on a task mostly belongs to the
+              board; this picks how much of it reaches the list. */}
+          <SettingsSection
+            title="Threads"
+            icon={MessagesSquare}
+            description="Which agent comments on tasks you follow land in your Threads inbox. Comments from people, and any comment that @mentions you, always do."
+            padded
+          >
+            <SettingsOptionGroup
+              label="Agent comments in Threads"
+              value={agentCommentLevel}
+              onChange={setAgentCommentLevel}
+              options={AGENT_COMMENT_LEVELS}
+            />
+          </SettingsSection>
+
+          {/* Per-member muting */}
+          {otherMembers && otherMembers.length > 0 && (
+            <SettingsSection
+              title="Team Members"
+              icon={Users}
+              description="Mute notifications from specific team members."
+            >
+              {otherMembers.map((member) => {
+                const isMuted = mutedMembers.includes(member._id);
+                return (
+                  <SettingsRow
+                    key={member._id}
+                    label={
+                      <span className="flex items-center gap-3">
+                        <AvatarImg
+                          src={member.github_avatar_url}
+                          alt=""
+                          className="h-7 w-7 rounded-full"
+                          fallback={
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-sol-bg-highlight">
+                              <span className="text-xs font-medium text-sol-text">
+                                {member.name?.[0]?.toUpperCase() || "?"}
+                              </span>
+                            </span>
+                          }
+                        />
+                        <span className="min-w-0">
+                          <span className="block truncate">{member.name || member.email}</span>
+                          {member.title && <span className="block text-xs text-sol-text-muted">{member.title}</span>}
+                        </span>
+                      </span>
+                    }
+                  >
+                    {isMuted && <span className="text-xs text-sol-orange">Muted</span>}
+                    <Switch
+                      checked={!isMuted}
+                      onCheckedChange={() => handleToggleMute(member._id)}
+                      aria-label={`Notifications from ${member.name || member.email}`}
+                    />
+                  </SettingsRow>
+                );
+              })}
+            </SettingsSection>
+          )}
+        </>
+      )}
+    </SettingsPanel>
+  );
+}

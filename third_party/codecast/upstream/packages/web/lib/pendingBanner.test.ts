@@ -1,0 +1,284 @@
+import { test, expect, describe } from "bun:test";
+import { pendingBannerState, sessionMessageQueueLabel, pendingRetryClientId, pendingCancelRef, pendingMessageCanRetry, pendingMessageReachedSession, pendingMessageHoldReason, pendingMessageHoldScreen, serverPendingBubbles, isActiveAgentStatus, isBootingAgentStatus, isAliveIdleStatus, type LiveAgentStatus } from "./pendingBanner";
+
+describe("session message queue labels", () => {
+  test.each([undefined, "idle", "waiting", "dormant", "done", "connected", "starting", "resuming"])("does not call a %s recipient busy", status => {
+    expect(sessionMessageQueueLabel("pending", undefined, status)).toBe("queued · awaiting delivery");
+  });
+  test.each(["working", "thinking", "compacting"])("reports observed %s activity", status => {
+    expect(sessionMessageQueueLabel("pending", undefined, status)).toBe("queued · recipient busy");
+  });
+  test("distinguishes a missing receipt, a stopped recipient, and a prompt hold", () => {
+    expect(sessionMessageQueueLabel("injected", undefined, "dormant")).toBe("queued · awaiting confirmation");
+    expect(sessionMessageQueueLabel("pending", undefined, "stopped")).toBe("queued · recipient offline");
+    expect(sessionMessageQueueLabel("pending", undefined, "permission_blocked")).toBe("queued · waiting for an answer");
+    expect(sessionMessageQueueLabel("injected", "waiting for terminal input confirmation", "thinking")).toBe("queued · waiting for terminal input confirmation");
+    expect(sessionMessageQueueLabel("failed", undefined, "dormant")).toBe("queued · retrying");
+    expect(sessionMessageQueueLabel(undefined, undefined, "thinking")).toBeNull();
+  });
+});
+
+const opts = (o: Partial<{ retryEligible: boolean; restartInFlight: boolean; idleGraceElapsed: boolean; bootGraceElapsed: boolean; messageReachedSession: boolean }> = {}) => ({
+  retryEligible: true,
+  restartInFlight: false,
+  idleGraceElapsed: true,
+  bootGraceElapsed: true,
+  messageReachedSession: false,
+  ...o,
+});
+
+describe("pending retry identity", () => {
+  test("interruption controls cannot become a new user message through retry", () => {
+    for (const content of [
+      "[Request interrupted by user]",
+      "  [Request interrupted by user for tool use]",
+      "[Request cancelled by user]",
+      "\n<turn_aborted>\nThe user interrupted the previous turn.",
+    ]) expect(pendingMessageCanRetry(content)).toBe(false);
+    expect(pendingMessageCanRetry("Please continue the interrupted work")).toBe(true);
+    expect(pendingMessageCanRetry("make sure things are added in an elegant and beautiful way")).toBe(true);
+  });
+  test("delivery proof belongs to the exact bubble", () => {
+    const row = { message_id: "server-id", client_id: "client-id", status: "injected" };
+    expect(pendingMessageReachedSession("client-id", row)).toBe(true);
+    expect(pendingMessageReachedSession("serverpending_server-id", row)).toBe(true);
+    expect(pendingMessageReachedSession("other-client-id", row)).toBe(false);
+    expect(pendingMessageReachedSession("serverpending_other-id", row)).toBe(false);
+    expect(pendingMessageReachedSession("client-id", { ...row, status: "pending" })).toBe(false);
+  });
+  test("replays a local send under its original idempotency key", () => {
+    expect(pendingRetryClientId("local-message-123")).toBe("local-message-123");
+  });
+
+  test("never submits an existing server message under a synthetic display id", () => {
+    expect(pendingRetryClientId("serverpending_conversation-123")).toBeUndefined();
+  });
+});
+
+describe("pending cancel identity", () => {
+  test("a local optimistic bubble cancels under its client id", () => {
+    expect(pendingCancelRef("local-message-123")).toEqual({ clientId: "local-message-123" });
+  });
+
+  test("a server-backed bubble cancels under the queue id, never the display prefix", () => {
+    expect(pendingCancelRef("serverpending_msg-1")).toEqual({ messageId: "msg-1" });
+  });
+
+  test("a local bubble that matches the conversation pending row passes both identities", () => {
+    expect(pendingCancelRef("client-id", { message_id: "msg-1", client_id: "client-id" })).toEqual({
+      messageId: "msg-1",
+      clientId: "client-id",
+    });
+  });
+});
+
+describe("isActiveAgentStatus", () => {
+  test("working / thinking / compacting / permission_blocked are active", () => {
+    for (const s of ["working", "thinking", "compacting", "permission_blocked"] as LiveAgentStatus[]) {
+      expect(isActiveAgentStatus(s)).toBe(true);
+    }
+  });
+  test("idle / connected / starting / resuming / undefined are NOT active", () => {
+    for (const s of ["idle", "connected", "starting", "resuming", undefined] as (LiveAgentStatus | undefined)[]) {
+      expect(isActiveAgentStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe("isBootingAgentStatus", () => {
+  test("starting / resuming / connected are booting", () => {
+    for (const s of ["starting", "resuming", "connected"] as LiveAgentStatus[]) {
+      expect(isBootingAgentStatus(s)).toBe(true);
+    }
+  });
+  test("working / idle / undefined are NOT booting", () => {
+    for (const s of ["working", "thinking", "idle", undefined] as (LiveAgentStatus | undefined)[]) {
+      expect(isBootingAgentStatus(s)).toBe(false);
+    }
+  });
+});
+
+describe("isAliveIdleStatus", () => {
+  test("dormant / waiting / done prove a live, parked pane", () => {
+    for (const s of ["dormant", "waiting", "done"] as LiveAgentStatus[]) {
+      expect(isAliveIdleStatus(s)).toBe(true);
+      expect(isActiveAgentStatus(s)).toBe(false);
+      expect(isBootingAgentStatus(s)).toBe(false);
+    }
+  });
+  test("idle / undefined are NOT alive-idle (no liveness verdict behind them)", () => {
+    expect(isAliveIdleStatus("idle")).toBe(false);
+    expect(isAliveIdleStatus(undefined)).toBe(false);
+  });
+});
+
+describe("pendingBannerState", () => {
+  test("delivery proof clears a retry banner even before the retry timer settles", () => {
+    for (const status of [undefined, "idle", "connected", "thinking"] as const) {
+      expect(pendingBannerState(status, opts({ restartInFlight: true, messageReachedSession: true }))).toBe("none");
+    }
+  });
+  test("agent busy (long turn) → 'none': message is already in the agent's native queue, so no nag and no kill & restart", () => {
+    // The daemon pastes a mid-turn message straight into Claude Code's type-ahead box
+    // (ensureTmuxReady busy path); it submits when the turn ends. Nothing to show, and
+    // certainly no offer to kill the agent.
+    expect(pendingBannerState("thinking", opts())).toBe("none");
+    expect(pendingBannerState("working", opts())).toBe("none");
+    expect(pendingBannerState("compacting", opts())).toBe("none");
+    expect(pendingBannerState("permission_blocked", opts())).toBe("none");
+  });
+
+  test("within the initial send grace (not yet eligible) → nothing, even if idle", () => {
+    expect(pendingBannerState("idle", opts({ retryEligible: false }))).toBe("none");
+    expect(pendingBannerState(undefined, opts({ retryEligible: false }))).toBe("none");
+  });
+
+  test("agent idle but still within the busy→idle grace → calm 'queued', never the alarm", () => {
+    // An idle pane is the ordinary state a message is delivered into, so the grace
+    // reassures instead of alarming. The alarm at ~20s after send read as aggressive.
+    expect(pendingBannerState("idle", opts({ idleGraceElapsed: false }))).toBe("queued");
+    expect(pendingBannerState(undefined, opts({ idleGraceElapsed: false }))).toBe("queued");
+  });
+
+  test("agent genuinely idle/gone past the grace and still hasn't taken it → escalate to stuck", () => {
+    expect(pendingBannerState("idle", opts())).toBe("stuck");
+    expect(pendingBannerState(undefined, opts())).toBe("stuck"); // disconnected session has no status
+  });
+
+  test("durable delivery proof suppresses the alarm even when agent_status is unknown (the 'no crash, old version' false alarm)", () => {
+    // The incident: a delivered message whose conversation reports no live agent_status
+    // (disconnected / non-active / old CLI) flashed "Message hasn't reached the agent" +
+    // kill & restart. pending_messages already proves it landed — never alarm.
+    expect(pendingBannerState(undefined, opts({ messageReachedSession: true }))).toBe("none");
+    expect(pendingBannerState("idle", opts({ messageReachedSession: true }))).toBe("none");
+  });
+
+  test("a booting/resuming/connecting session reassures instead of alarming during the boot budget", () => {
+    // The false-alarm incident: a normal cold start / resume flashed "hasn't reached
+    // the agent" + kill & restart at ~20s while the session was still coming up.
+    for (const s of ["starting", "resuming", "connected"] as LiveAgentStatus[]) {
+      expect(pendingBannerState(s, opts({ bootGraceElapsed: false }))).toBe("queued");
+    }
+  });
+
+  test("a session still not processing past the generous boot budget → escalate to stuck", () => {
+    for (const s of ["starting", "resuming", "connected"] as LiveAgentStatus[]) {
+      expect(pendingBannerState(s, opts({ bootGraceElapsed: true }))).toBe("stuck");
+    }
+  });
+
+  test("an alive-but-parked session (dormant/waiting/done) reassures on the boot budget, never the 8s idle grace", () => {
+    // 2026-08-20: a message sent to a dormant-but-live session fell through to
+    // the idle branch, went "stuck" ~20s after send, and the web auto-fired a
+    // resume that interrupted the delivery already in flight — the false
+    // "Message hasn't reached the agent" loop. A parked pane heartbeats; the
+    // daemon delivers on its next pass; only the generous budget may escalate.
+    for (const s of ["dormant", "waiting", "done"] as LiveAgentStatus[]) {
+      expect(pendingBannerState(s, opts({ bootGraceElapsed: false }))).toBe("queued");
+      expect(pendingBannerState(s, opts({ bootGraceElapsed: true }))).toBe("stuck");
+      expect(pendingBannerState(s, opts({ messageReachedSession: true }))).toBe("none");
+    }
+  });
+
+  test("a restart already in flight always shows the stuck bar (so its progress keeps rendering)", () => {
+    // Even if the agent flips back to working mid-restart, keep showing progress.
+    expect(pendingBannerState("working", opts({ restartInFlight: true }))).toBe("stuck");
+    expect(pendingBannerState("idle", opts({ restartInFlight: true, retryEligible: false }))).toBe("stuck");
+  });
+});
+
+// 2026-08-16: the daemon restarted twice and then froze 5–48s at a time under
+// machine load. Every sent message sat unechoed and the bubble said "Message
+// hasn't reached the agent" with a kill & restart button — the message HAD
+// reached the agent, and the restart would have gone through the frozen daemon.
+import { withDaemonHealth } from "./pendingBanner";
+
+test("a degraded daemon replaces the session verdict with a daemon note", () => {
+  expect(withDaemonHealth("stuck", { daemonDegraded: true, restartInFlight: false })).toBe("daemon");
+  expect(withDaemonHealth("queued", { daemonDegraded: true, restartInFlight: false })).toBe("daemon");
+});
+
+test("a healthy daemon leaves the session verdict alone", () => {
+  expect(withDaemonHealth("stuck", { daemonDegraded: false, restartInFlight: false })).toBe("stuck");
+  expect(withDaemonHealth("queued", { daemonDegraded: false, restartInFlight: false })).toBe("queued");
+});
+
+test("nothing to say stays nothing, and a restart in flight keeps its progress UI", () => {
+  expect(withDaemonHealth("none", { daemonDegraded: true, restartInFlight: false })).toBe("none");
+  expect(withDaemonHealth("stuck", { daemonDegraded: true, restartInFlight: true })).toBe("stuck");
+});
+
+describe("serverPendingBubbles", () => {
+  const row = (id: string, content: string, over: Record<string, unknown> = {}) =>
+    ({ message_id: id, client_id: `c_${id}`, created_at: 10, status: "pending", content, ...over });
+  const timeline = (over: Partial<Parameters<typeof serverPendingBubbles>[1]> = {}) => ({
+    seen: new Set<string>(), seenContent: new Map<string, number>(), local: [], newestServerTs: 5, atLiveTail: true,
+    normalize: (s: string) => s.trim(), ...over,
+  });
+
+  // 2026-09-30: a session stayed down for 33 hours with seven sends queued;
+  // only the oldest had a bubble and the person's own messages never showed.
+  test("every queued send renders, whichever device sent it", () => {
+    const task = row("task", "<scheduled-task>", { status: "failed", created_at: 1 });
+    const pending = { ...task, inflight: [task, row("photo", "use this photo"), row("buy", "buy it"), row("buy2", "buy it")] };
+    expect(serverPendingBubbles(pending, timeline()).map((b) => b._id))
+      .toEqual(["serverpending_task", "serverpending_photo", "serverpending_buy", "serverpending_buy2"]);
+  });
+
+  test("a row already on screen, synced or local, adds nothing", () => {
+    const pending = { ...row("a", "one"), inflight: [row("a", "one"), row("b", "two"), row("c", "three")] };
+    const bubbles = serverPendingBubbles(pending, timeline({ seen: new Set(["c_a"]), local: [{ _id: "c_b" }] }));
+    expect(bubbles.map((b) => b._id)).toEqual(["serverpending_c"]);
+    expect(serverPendingBubbles(pending, timeline({ seenContent: new Map([["three", 10]]) })).map((b) => b._id))
+      .toEqual(["serverpending_a", "serverpending_b"]);
+  });
+
+  // Saying "continue" again must not hide behind the "continue" said an hour ago.
+  test("only an echo sent around or after the row hides it by its words", () => {
+    const pending = { ...row("a", "continue"), inflight: [row("a", "continue", { created_at: 10 * 60_000 })] };
+    expect(serverPendingBubbles(pending, timeline({ seenContent: new Map([["continue", 1_000]]) })).map((b) => b._id)).toEqual(["serverpending_a"]);
+    expect(serverPendingBubbles(pending, timeline({ seenContent: new Map([["continue", 10 * 60_000 + 3_000]]) }))).toEqual([]);
+  });
+
+  // Two sends delivered together, or one delivered while another waits: each
+  // stays until its own echo lands.
+  test("every delivered row whose echo is not on screen renders, beside rows in flight", () => {
+    const waiting = row("w", "third", { created_at: 30 });
+    const pending = {
+      ...waiting,
+      inflight: [waiting],
+      delivered: [row("d1", "first", { status: "delivered", created_at: 10, delivered_at: 20 }), row("d2", "second", { status: "delivered", created_at: 11, delivered_at: 21 })],
+    };
+    expect(serverPendingBubbles(pending, timeline()).map((b) => b._id)).toEqual(["serverpending_w", "serverpending_d1", "serverpending_d2"]);
+    expect(serverPendingBubbles(pending, timeline({ seen: new Set(["c_d1"]) })).map((b) => b._id)).toEqual(["serverpending_w", "serverpending_d2"]);
+  });
+
+  test("an older server without the list still renders its one row", () => {
+    expect(serverPendingBubbles(row("a", "one"), timeline()).map((b) => b._id)).toEqual(["serverpending_a"]);
+  });
+
+  test("each bubble finds its own row for delivery proof and hold reasons", () => {
+    const pending = { ...row("a", "one"), inflight: [row("a", "one"), row("b", "two", { status: "injected" }), row("c", "three", { hold_reason: "answer the dialog" })] };
+    expect(pendingMessageReachedSession("c_b", pending)).toBe(true);
+    expect(pendingMessageReachedSession("serverpending_a", pending)).toBe(false);
+    expect(pendingMessageHoldReason("serverpending_c", pending)).toBe("answer the dialog");
+    expect(pendingCancelRef("c_c", pending)).toEqual({ messageId: "c", clientId: "c_c" });
+  });
+
+  test("a held row carries the terminal screen it was held on to its bubble", () => {
+    const held = row("c", "three", { hold_reason: "answer the dialog", hold_screen: "❯ 1. Yes\n  2. No" });
+    const pending = { ...held, inflight: [held] };
+    expect(pendingMessageHoldScreen("serverpending_c", pending)).toBe("❯ 1. Yes\n  2. No");
+    expect(serverPendingBubbles(pending, timeline())[0]).toMatchObject({ _serverPendingReason: "answer the dialog", _serverPendingScreen: "❯ 1. Yes\n  2. No" });
+    // The screen belongs to the hold: once the row is in the pane it says nothing.
+    expect(pendingMessageHoldScreen("serverpending_c", { ...held, status: "injected" })).toBeUndefined();
+  });
+});
+
+test("a message waiting on a cloud placement never offers kill and restart: there is no agent yet", () => {
+  const late = { retryEligible: true, restartInFlight: false, idleGraceElapsed: true, bootGraceElapsed: true, messageReachedSession: false };
+  expect(pendingBannerState(undefined, late)).toBe("stuck");
+  expect(pendingBannerState(undefined, { ...late, cloudPlacing: true })).toBe("none");
+  // A restart the person already pressed keeps its progress.
+  expect(pendingBannerState(undefined, { ...late, cloudPlacing: true, restartInFlight: true })).toBe("stuck");
+});

@@ -1,0 +1,179 @@
+// View-motion intent + audit trail.
+//
+// "Which conversation is the user looking at" (inboxStore.currentSessionId,
+// and its async twin pendingNavigateId) may only change through a write that
+// FIRST declares why — a ViewNavSource. mutativeMiddleware enforces this for
+// every action()/sync() (via patches) and for raw setState (via a wrapper):
+// an undeclared change to another conversation is reverted and logged instead
+// of applied. This is the structural fix for the recurring "desktop randomly
+// jumps to another session" bug class (ct-36620 → ct-36951 → ct-37102): each
+// earlier round gated specific writers; this makes an ungated writer
+// impossible rather than merely unlikely.
+//
+// Every attempt — allowed or blocked — lands in a ring buffer persisted to
+// localStorage, so one console call after a jump names the culprit:
+//   __navLog()           // in any build, dev or prod
+export type ViewNavSource =
+  | "gesture" // a click/keypress in this window — always allowed
+  | "boot-restore" // hydration putting the client back on its own last position
+  | "adopt" // machine picking a view because there is none (boot-only)
+  | "rekey" // same logical conversation under a new id (stub→server, ghost→twin)
+  | "undo" // user-invoked undo restoring a snapshot
+  | "deeplink" // codecast:// arrival (manual link or policy-cleared handoff)
+  | "follow" // mirroring a teammate's view: the person opted in (hooks/useFollowMode)
+  | "sync"; // server-driven (must never move the view directly — toast instead)
+
+export type NavEvent = {
+  ts: number;
+  field: "currentSessionId" | "pendingNavigateId";
+  from: string | null;
+  to: string | null;
+  source: string;
+  /** Present when the change was rejected; names the reason. */
+  blocked?: string;
+  /** Window flavor — the palette popup shares localStorage with the app. */
+  win: string;
+  stack?: string;
+};
+
+let pendingSource: ViewNavSource | null = null;
+// Count of applied view changes this window lifetime. "adopt" is only legal
+// while this is 0: a machine may give an empty boot a view, never replace one.
+let appliedNavCount = 0;
+
+const LOG_KEY = "codecast.navLog";
+const LOG_CAP = 200;
+
+/** Declare intent for the view write that immediately follows (same task). */
+export function declareViewNav(source: ViewNavSource): void {
+  pendingSource = source;
+}
+
+/** One-shot read: the middleware consumes the token on every store write. */
+export function consumeViewNav(): ViewNavSource | null {
+  const s = pendingSource;
+  pendingSource = null;
+  return s;
+}
+
+export function hasViewNavigated(): boolean {
+  return appliedNavCount > 0;
+}
+
+export function noteViewNavApplied(): void {
+  appliedNavCount++;
+}
+
+// A fresh open of the app (a launch, a typed address or a new tab; not a
+// reload or back/forward) onto its home, with no conversation in the URL,
+// lands on the new-session page instead of the last conversation. Read once
+// at load, before any boot navigation rewrites the address. Pending until
+// DashboardLayout opens the page (or the boot settles elsewhere); meanwhile
+// hydration skips its restore and the adopt paths hold off, so nothing
+// flashes first.
+function readFreshHomeLaunch(): boolean {
+  if (typeof window === "undefined" || !window.location || typeof performance === "undefined") return false;
+  if (windowFlavor() !== "main") return false;
+  const nav = performance.getEntriesByType?.("navigation")?.[0] as PerformanceNavigationTiming | undefined;
+  if (nav?.type !== "navigate") return false;
+  const page = window.location.pathname.replace(/\/+$/, "") || "/";
+  if (page !== "/" && page !== "/inbox") return false;
+  return !new URLSearchParams(window.location.search).has("s");
+}
+let freshHomeLaunch: boolean | null = null;
+export function freshHomeLaunchPending(): boolean {
+  if (freshHomeLaunch === null) freshHomeLaunch = readFreshHomeLaunch();
+  return freshHomeLaunch;
+}
+export function settleFreshHomeLaunch(): void {
+  freshHomeLaunch = false;
+}
+
+export function windowFlavor(): string {
+  if (typeof window === "undefined") return "ssr";
+  return window.location?.pathname?.startsWith("/palette") ? "palette" : "main";
+}
+
+function loadLog(): NavEvent[] {
+  try {
+    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(LOG_KEY) : null;
+    return raw ? (JSON.parse(raw) as NavEvent[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+let navLog: NavEvent[] | null = null;
+
+// Live listeners on the audit trail. Follow mode ends itself the moment the
+// follower makes a move of their own, and the trail already names every move.
+const navListeners = new Set<(e: NavEvent) => void>();
+export function subscribeNavEvents(fn: (e: NavEvent) => void): () => void {
+  navListeners.add(fn);
+  return () => {
+    navListeners.delete(fn);
+  };
+}
+
+export function recordNavEvent(e: Omit<NavEvent, "ts" | "win" | "stack">): void {
+  if (navLog === null) navLog = loadLog();
+  // Stacks only for problem events (blocked / untracked writers) — they're what
+  // the log exists to name, and stacks on every allowed click would bloat the
+  // persisted ring.
+  const needsStack = !!e.blocked || e.source.startsWith("untracked");
+  const event: NavEvent = {
+    ts: Date.now(),
+    win: windowFlavor(),
+    stack: needsStack ? new Error().stack?.split("\n").slice(2, 8).join("\n") : undefined,
+    ...e,
+  };
+  navLog.push(event);
+  for (const l of navListeners) l(event);
+  if (navLog.length > LOG_CAP) navLog.splice(0, navLog.length - LOG_CAP);
+  try {
+    localStorage.setItem(LOG_KEY, JSON.stringify(navLog));
+  } catch {
+    // Quota/private mode: keep the in-memory log.
+  }
+  if (e.blocked) {
+    // Loud on purpose, in every build: a blocked write is a bug being contained.
+    console.error(
+      `[viewNav] BLOCKED ${e.field} ${e.from} → ${e.to} (source=${e.source}, reason=${e.blocked})`,
+      event.stack,
+    );
+  }
+}
+
+export function getNavLog(): NavEvent[] {
+  if (navLog === null) navLog = loadLog();
+  return navLog;
+}
+
+// Always exposed (prod desktop is where this gets debugged).
+if (typeof window !== "undefined") {
+  (window as any).__navLog = getNavLog;
+  // Pin the fresh-launch read to the address the window opened on.
+  freshHomeLaunchPending();
+}
+
+/** Test-only: clear the one-shot token, lifetime counter, and in-memory log. */
+export function _resetViewNavForTests(): void {
+  pendingSource = null;
+  freshHomeLaunch = false;
+  appliedNavCount = 0;
+  navLog = [];
+}
+
+/** Sim seam: the intent token and lifetime counter belong to one window. */
+export function __viewNavSimSlots() {
+  type Slots = { pendingSource: ViewNavSource | null; appliedNavCount: number; freshHomeLaunch: boolean | null };
+  return {
+    fresh: (): Slots => ({ pendingSource: null, appliedNavCount: 0, freshHomeLaunch: null }),
+    get: (): Slots => ({ pendingSource, appliedNavCount, freshHomeLaunch }),
+    set: (s: Slots): void => {
+      pendingSource = s.pendingSource;
+      appliedNavCount = s.appliedNavCount;
+      freshHomeLaunch = s.freshHomeLaunch;
+    },
+  };
+}
