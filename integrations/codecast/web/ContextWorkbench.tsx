@@ -30,7 +30,9 @@ import {
   PaperPlaneTilt,
   FolderOpen,
   LinkSimple,
+  IconContext,
 } from '@phosphor-icons/react';
+import { WorkButton, MemberAvatar } from './ContextControls';
 import { FilePatchDiff, type DiffSelection } from '../components/DiffView';
 import { ConversationView } from '../components/ConversationView';
 import { ThemeContext } from '../components/ThemeProvider';
@@ -64,9 +66,9 @@ function IconButton({
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <button className="cw-icon" aria-label={label} {...props}>
+        <WorkButton className="cw-icon" aria-label={label} {...props}>
           {children}
-        </button>
+        </WorkButton>
       </Tooltip.Trigger>
       <Tooltip.Portal>
         <Tooltip.Content className="cw-tooltip" sideOffset={6}>
@@ -168,23 +170,29 @@ function ActivityIndex({
         <span>{activities.length}</span>
         <Menu.Root>
           <Menu.Trigger asChild>
-            <button className="cw-member-filter">
+            <WorkButton className="cw-member-filter">
               {member === 'all' ? '所有成员' : members.find((m) => m.id === member)?.name}
               <CaretDown size={13} />
-            </button>
+            </WorkButton>
           </Menu.Trigger>
           <Menu.Portal>
             <Menu.Content className="cw-menu" sideOffset={5}>
               <Menu.RadioGroup value={member} onValueChange={setMember}>
                 <Menu.RadioItem value="all">
-                  所有成员
+                  <span className="cw-menu-person">
+                    <UsersThree aria-hidden="true" />
+                    所有成员
+                  </span>
                   <Menu.ItemIndicator>
                     <Check size={14} />
                   </Menu.ItemIndicator>
                 </Menu.RadioItem>
                 {members.slice(0, dense ? 10 : 3).map((m) => (
                   <Menu.RadioItem value={m.id} key={m.id}>
-                    {m.name}
+                    <span className="cw-menu-person">
+                      <MemberAvatar member={m} small />
+                      {m.name}
+                    </span>
                     <Menu.ItemIndicator>
                       <Check size={14} />
                     </Menu.ItemIndicator>
@@ -204,9 +212,9 @@ function ActivityIndex({
           aria-label="查找活动"
         />
         {query && (
-          <button onClick={() => setQuery('')} aria-label="清除搜索">
+          <WorkButton onClick={() => setQuery('')} aria-label="清除搜索">
             <X size={14} />
-          </button>
+          </WorkButton>
         )}
       </label>
       <div className="cw-index-caption">
@@ -214,7 +222,7 @@ function ActivityIndex({
       </div>
       <div className="cw-activity-list" ref={list} aria-label="项目活动" role="list">
         {visible.map((a, i) => (
-          <button
+          <WorkButton
             role="listitem"
             className={`cw-activity ${a.id === selected ? 'selected' : ''}`}
             key={a.id}
@@ -223,9 +231,7 @@ function ActivityIndex({
             onClick={() => select(a.id)}
           >
             <span className="cw-activity-person">
-              <span className={`cw-avatar tone-${Number(a.id.split('-')[1]) % 4}`}>
-                {a.member.name.slice(0, 1)}
-              </span>
+              <MemberAvatar member={a.member} small />
               <span>
                 {a.member.name}
                 <span className="cw-source-kind">{a.session ? 'Codex 日志' : '文件保存'}</span>
@@ -251,30 +257,30 @@ function ActivityIndex({
               )}
               <span>{a.checkpoint?.files.length} 个文件</span>
             </span>
-          </button>
+          </WorkButton>
         ))}
         {!visible.length && (
           <div className="cw-empty">
             <MagnifyingGlass size={26} />
             <p>没有匹配的活动</p>
-            <button
+            <WorkButton
               onClick={() => {
                 setQuery('');
                 setMember('all');
               }}
             >
               清除筛选
-            </button>
+            </WorkButton>
           </div>
         )}
       </div>
-      <button className="cw-history-entry" onClick={history}>
+      <WorkButton className="cw-history-entry" onClick={history}>
         <ClockCounterClockwise size={18} />
         <span>
           我的目录历史<small>包含未关联任务的检查点</small>
         </span>
         <CaretRight size={15} />
-      </button>
+      </WorkButton>
     </div>
   );
 }
@@ -287,7 +293,9 @@ const previewTheme = {
 export default function ContextPreview() {
   return (
     <ThemeContext.Provider value={previewTheme}>
-      <ContextWorkbench />
+      <IconContext.Provider value={{ size: 16, weight: 'regular' }}>
+        <ContextWorkbench />
+      </IconContext.Provider>
     </ThemeContext.Provider>
   );
 }
@@ -338,9 +346,6 @@ function ContextWorkbench() {
   const composer = useRef<HTMLTextAreaElement>(null);
   const sourceTrigger = useRef<HTMLButtonElement>(null);
   const priorFocus = useRef<HTMLElement | null>(null);
-  const workSurface = useRef<HTMLDivElement>(null);
-  const switching = useRef<Animation | null>(null);
-  const switchVersion = useRef(0);
   const files = selected.checkpoint?.files ?? [];
   const file = files.find((f) => f.path === fileMap[selected.id]) ?? files[0];
   const fileKey = `${selected.id}:${file?.path}`;
@@ -357,35 +362,11 @@ function ContextWorkbench() {
     if (modal === 'navigation') setModal(null);
   };
   const select = (id: string) => {
-    // Selecting the currently displayed item must also cancel an in-flight
-    // selection of a different item. The latest gesture owns the destination.
-    if (id === selected.id && switching.current?.playState !== 'running') return;
-    const version = ++switchVersion.current;
-    const surface = workSurface.current;
-    const opacity = surface ? getComputedStyle(surface).opacity : '1';
-    switching.current?.cancel();
-    if (!surface || matchMedia('(prefers-reduced-motion: reduce)').matches)
-      return commitSelection(id);
-    switching.current = surface.animate([{ opacity }, { opacity: 0.65 }], {
-      duration: 80,
-      fill: 'forwards',
-      easing: 'ease-out',
-    });
-    switching.current.finished
-      .then(() => {
-        if (version !== switchVersion.current) return;
-        commitSelection(id);
-        requestAnimationFrame(() => {
-          switching.current?.cancel();
-          switching.current = surface.animate([{ opacity: 0.65 }, { opacity: 1 }], {
-            duration: 130,
-            easing: 'ease-out',
-          });
-        });
-      })
-      .catch(() => {});
+    // Selection is synchronous. Only the changed title and selected row receive
+    // a brief local treatment; the transcript never fades or waits for motion.
+    if (id !== selected.id) commitSelection(id);
+    else if (modal === 'navigation') setModal(null);
   };
-  useEffect(() => () => switching.current?.cancel(), []);
   const changeMode = (nextMode: string) =>
     setParams((old) => {
       const next = new URLSearchParams(old);
@@ -468,8 +449,6 @@ function ContextWorkbench() {
     setModal('restore');
   };
   const invalidate = () => {
-    ++switchVersion.current;
-    switching.current?.cancel();
     setDenied(true);
     setModal(null);
     setEvidenceOpen(false);
@@ -500,7 +479,7 @@ function ContextWorkbench() {
     return (
       <div className="cw-reference">
         <div className="cw-reference-bar">
-          <button
+          <WorkButton
             onClick={() =>
               setParams((old) => {
                 const next = new URLSearchParams(old);
@@ -511,7 +490,7 @@ function ContextWorkbench() {
           >
             <ArrowLeft size={16} />
             返回候选
-          </button>
+          </WorkButton>
           <span>
             固定版 Codecast 原生 ConversationView · 同一批 30 条消息 · fixture，非真实会话
           </span>
@@ -541,14 +520,14 @@ function ContextWorkbench() {
           <span className="cw-project-divider" />
           <Menu.Root>
             <Menu.Trigger asChild>
-              <button className="cw-project-picker">
+              <WorkButton className="cw-project-picker">
                 <span>核心产品</span>
                 <CaretDown size={14} />
-              </button>
+              </WorkButton>
             </Menu.Trigger>
             <Menu.Portal>
               <Menu.Content className="cw-menu" sideOffset={8}>
-                <Menu.Label>演示项目</Menu.Label>
+                <Menu.Label className="cw-menu-label">演示项目</Menu.Label>
                 <Menu.Item
                   onSelect={() => {
                     setQuery('');
@@ -566,23 +545,21 @@ function ContextWorkbench() {
           <span className="cw-demo-tag">交互样板 · 未连接业务数据</span>
           <div className="cw-project-right">
             <div className="cw-roster" aria-label={`${dense ? 10 : 3} 位演示成员`}>
-              {members.slice(0, 3).map((m, i) => (
-                <span className={`cw-avatar tone-${i}`} key={m.id} title={m.name}>
-                  {m.name.slice(0, 1)}
-                </span>
+              {members.slice(0, 3).map((m) => (
+                <MemberAvatar member={m} key={m.id} />
               ))}
               {dense && <span>+7</span>}
             </div>
             <Menu.Root>
               <Menu.Trigger asChild>
-                <button className="cw-scenario">
+                <WorkButton className="cw-scenario">
                   预览场景
                   <CaretDown size={13} />
-                </button>
+                </WorkButton>
               </Menu.Trigger>
               <Menu.Portal>
                 <Menu.Content className="cw-menu" align="end" sideOffset={8}>
-                  <Menu.Label>仅改变演示数据</Menu.Label>
+                  <Menu.Label className="cw-menu-label">仅改变演示数据</Menu.Label>
                   <Menu.Item
                     onSelect={() => {
                       setDense(false);
@@ -633,14 +610,15 @@ function ContextWorkbench() {
             <WarningCircle size={32} />
             <h1>项目访问已失效</h1>
             <p>活动、阅读缓存、评论和交接草稿已从这个预览清理。</p>
-            <button className="cw-primary" onClick={() => setDenied(false)}>
+            <WorkButton kind="primary" className="cw-primary" onClick={() => setDenied(false)}>
               重新载入演示数据
-            </button>
+            </WorkButton>
             <p>正式产品仍需重新向服务端验证权限。</p>
           </div>
         ) : (
           <Group
             className="cw-group"
+            style={{ width: 'auto' }}
             onPointerDown={(e) => {
               if ((e.target as HTMLElement).closest('[role="separator"]')) setDragging(true);
             }}
@@ -679,89 +657,93 @@ function ContextWorkbench() {
               className="cw-workspace-panel"
             >
               <main className="cw-workspace">
-                <header className="cw-context-heading">
-                  <IconButton
-                    label={indexOpen ? '收起活动索引' : '打开活动索引'}
-                    onClick={toggleIndex}
-                  >
-                    <SidebarSimple size={20} />
-                  </IconButton>
-                  <div className="cw-heading-copy">
-                    <h1>{selected.title}</h1>
-                    <div>
-                      <span>{selected.member.name}</span>
-                      <span>·</span>
-                      <span>{selected.session ? 'Codex 捕获会话' : '已保存文件'}</span>
-                      {selected.task && (
-                        <>
-                          <span>·</span>
-                          <span>{selected.task.id}</span>
-                          <span>{state.progress}</span>
-                        </>
-                      )}
-                      {!selected.receipt && (
-                        <span className="cw-warning">
-                          <WifiSlash size={13} />
-                          {state.delivery}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <button
-                    className="cw-handoff-button"
-                    aria-label={draft?.work === selected.id ? '查看交接草稿' : '准备交接'}
-                    onClick={() => openModal(draft?.work === selected.id ? 'draft' : 'handoff')}
-                  >
-                    <ArrowUpRight size={16} />
-                    <span>{draft?.work === selected.id ? '查看交接草稿' : '准备交接'}</span>
-                  </button>
-                </header>
-                <Tabs.Root value={mode} onValueChange={changeMode} className="cw-mode">
-                  <div className="cw-mode-row">
-                    <Tabs.List aria-label="工作模式">
-                      <Tabs.Trigger value="context">
-                        <ChatCircleText size={16} />
-                        上下文
-                      </Tabs.Trigger>
-                      <Tabs.Trigger value="changes">
-                        <GitDiff size={16} />
-                        文件变化<span>{files.length}</span>
-                      </Tabs.Trigger>
-                    </Tabs.List>
-                    <div className="cw-mode-actions">
-                      {mode === 'context' && selected.session && (
-                        <button aria-label="到最新" onClick={() => reader.current?.latest()}>
-                          <ArrowDown size={14} />
-                          <span>到最新</span>
-                        </button>
-                      )}
-                      <button
-                        ref={sourceTrigger}
-                        aria-label="来源与保存"
-                        aria-expanded={evidenceOpen || modal === 'source'}
-                        onClick={() => {
-                          if (width < 1400) openModal('source');
-                          else {
-                            setEvidenceOpen(!evidenceOpen);
-                            if (evidenceOpen) sourceTrigger.current?.focus();
-                          }
-                        }}
-                      >
-                        <Info size={16} />
-                        <span>来源与保存</span>
-                      </button>
-                      {selected.workspace.own && (
-                        <button aria-label="目录历史" onClick={() => openModal('history')}>
-                          <ClockCounterClockwise size={16} />
-                          <span>目录历史</span>
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </Tabs.Root>
                 <div className="cw-working-row">
-                  <div className="cw-primary-space">
-                    <div className="cw-reading-surface" ref={workSurface}>
+                  <div className="cw-primary-space" data-mode={mode}>
+                    <header className="cw-context-heading">
+                      <IconButton
+                        label={indexOpen ? '收起活动索引' : '打开活动索引'}
+                        onClick={toggleIndex}
+                      >
+                        <SidebarSimple size={20} />
+                      </IconButton>
+                      <div className="cw-heading-copy" key={selected.id}>
+                        <h1>{selected.title}</h1>
+                        <div>
+                          <span>{selected.member.name}</span>
+                          <span>·</span>
+                          <span>{selected.session ? 'Codex 捕获会话' : '已保存文件'}</span>
+                          {selected.task && (
+                            <>
+                              <span>·</span>
+                              <span>{selected.task.id}</span>
+                              <span>{state.progress}</span>
+                            </>
+                          )}
+                          {!selected.receipt && (
+                            <span className="cw-warning">
+                              <WifiSlash size={13} />
+                              {state.delivery}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <WorkButton
+                        kind="secondary"
+                        className="cw-handoff-button"
+                        aria-label={draft?.work === selected.id ? '查看交接草稿' : '准备交接'}
+                        onClick={() => openModal(draft?.work === selected.id ? 'draft' : 'handoff')}
+                      >
+                        <ArrowUpRight size={16} />
+                        <span>{draft?.work === selected.id ? '查看交接草稿' : '准备交接'}</span>
+                      </WorkButton>
+                    </header>
+                    <Tabs.Root value={mode} onValueChange={changeMode} className="cw-mode">
+                      <div className="cw-mode-row">
+                        <Tabs.List aria-label="工作模式">
+                          <Tabs.Trigger value="context">
+                            <ChatCircleText size={16} />
+                            上下文
+                          </Tabs.Trigger>
+                          <Tabs.Trigger value="changes">
+                            <GitDiff size={16} />
+                            文件变化<span>{files.length}</span>
+                          </Tabs.Trigger>
+                        </Tabs.List>
+                        <div className="cw-mode-actions">
+                          {mode === 'context' && selected.session && (
+                            <WorkButton
+                              aria-label="到最新"
+                              onClick={() => reader.current?.latest()}
+                            >
+                              <ArrowDown size={14} />
+                              <span>到最新</span>
+                            </WorkButton>
+                          )}
+                          <WorkButton
+                            ref={sourceTrigger}
+                            aria-label="来源与保存"
+                            aria-expanded={evidenceOpen || modal === 'source'}
+                            onClick={() => {
+                              if (width < 1400) openModal('source');
+                              else {
+                                setEvidenceOpen(!evidenceOpen);
+                                if (evidenceOpen) sourceTrigger.current?.focus();
+                              }
+                            }}
+                          >
+                            <Info size={16} />
+                            <span>来源与保存</span>
+                          </WorkButton>
+                          {selected.workspace.own && (
+                            <WorkButton aria-label="目录历史" onClick={() => openModal('history')}>
+                              <ClockCounterClockwise size={16} />
+                              <span>目录历史</span>
+                            </WorkButton>
+                          )}
+                        </div>
+                      </div>
+                    </Tabs.Root>
+                    <div className="cw-reading-surface">
                       <div
                         className={`cw-mode-pane ${mode === 'context' ? 'active' : ''}`}
                         inert={mode !== 'context'}
@@ -802,7 +784,7 @@ function ContextWorkbench() {
                             {files
                               .filter((f) => f.path.toLowerCase().includes(fileQuery.toLowerCase()))
                               .map((f) => (
-                                <button
+                                <WorkButton
                                   key={f.path}
                                   className={file?.path === f.path ? 'selected' : ''}
                                   onClick={() => openFile(f.path)}
@@ -822,7 +804,7 @@ function ContextWorkbench() {
                                           ? '—'
                                           : 'M'}
                                   </b>
-                                </button>
+                                </WorkButton>
                               ))}
                           </div>
                         </div>
@@ -902,10 +884,10 @@ function ContextWorkbench() {
                                     ? `–${selection.range.end}`
                                     : ''}{' '}
                                   行
-                                  <button onClick={() => composer.current?.focus()}>
+                                  <WorkButton onClick={() => composer.current?.focus()}>
                                     对此处评论
                                     <ChatCircleText size={14} />
-                                  </button>
+                                  </WorkButton>
                                 </div>
                               )}
                             </>
@@ -914,24 +896,27 @@ function ContextWorkbench() {
                       </div>
                     </div>
                     <div className="cw-composer">
-                      <span className="cw-avatar tone-0">你</span>
-                      <div>
-                        <textarea
-                          ref={composer}
-                          value={comment}
-                          onChange={(e) => setComment(e.target.value)}
-                          placeholder={
-                            selection
-                              ? `评论 ${file.path} 的选中行…`
-                              : '补充上下文，或给协作者留一条评论…'
-                          }
-                          aria-label="写协作评论"
-                          rows={1}
-                        />
+                      <div className="cw-composer-box">
+                        <div className="cw-composer-input">
+                          <MemberAvatar member={members[0]} small />
+                          <textarea
+                            ref={composer}
+                            value={comment}
+                            onChange={(e) => setComment(e.target.value)}
+                            placeholder={
+                              selection
+                                ? `评论 ${file.path} 的选中行…`
+                                : '补充上下文，或给协作者留一条评论…'
+                            }
+                            aria-label="写协作评论"
+                            rows={1}
+                          />
+                        </div>
                         <div className="cw-composer-bottom">
                           <span>{state.action ?? '评论留在本页，刷新后清除'}</span>
-                          <button
+                          <WorkButton
                             disabled={!comment.trim()}
+                            kind="primary"
                             className="cw-primary"
                             onClick={() => {
                               const item: LocalComment = {
@@ -953,7 +938,7 @@ function ContextWorkbench() {
                           >
                             <PaperPlaneTilt size={14} />
                             添加评论
-                          </button>
+                          </WorkButton>
                         </div>
                         {!!comments[selected.id]?.length && (
                           <small className="cw-comment-count">
@@ -1028,9 +1013,9 @@ function ContextWorkbench() {
                         : '展示可核实的事实，不把缺失数据补成完成状态。'}
               </Dialog.Description>
               <Dialog.Close asChild>
-                <button className="cw-dialog-close" aria-label="关闭对话框">
+                <WorkButton className="cw-dialog-close" aria-label="关闭对话框">
                   <X size={19} />
-                </button>
+                </WorkButton>
               </Dialog.Close>
               {modal === 'navigation' && (
                 <ActivityIndex
@@ -1080,23 +1065,23 @@ function ContextWorkbench() {
                         </small>
                         <code>{cp.id}</code>
                       </span>
-                      <button
+                      <WorkButton
                         disabled={!cp.complete}
                         onClick={() => startRestore(cp.id, cp.title, cp.complete)}
                       >
                         预览恢复
-                      </button>
+                      </WorkButton>
                     </div>
                   ))}
                   {selected.workspace.own && selected.checkpoint && (
-                    <button
+                    <WorkButton
                       disabled={!canPreview(selected)}
                       onClick={() =>
                         startRestore(selected.checkpoint!.id, selected.title, canPreview(selected))
                       }
                     >
                       预览当前活动的本机检查点
-                    </button>
+                    </WorkButton>
                   )}
                 </div>
               )}
@@ -1137,15 +1122,16 @@ function ContextWorkbench() {
                     我已核对范围，理解确认前必须备份当前状态
                   </label>
                   <div className="cw-dialog-actions">
-                    <button
+                    <WorkButton
                       onClick={() =>
                         setRestore((old) => ({ ...old, revision: old.revision + 1, result: '' }))
                       }
                     >
                       模拟目录变化
-                    </button>
+                    </WorkButton>
                     {restore.revision !== restore.capturedRevision ? (
-                      <button
+                      <WorkButton
+                        kind="primary"
                         className="cw-primary"
                         onClick={() => {
                           setRestore((old) => ({
@@ -1157,9 +1143,10 @@ function ContextWorkbench() {
                         }}
                       >
                         重新生成预览
-                      </button>
+                      </WorkButton>
                     ) : (
-                      <button
+                      <WorkButton
+                        kind="primary"
                         className="cw-primary"
                         disabled={!ack || !restore.complete || restore.confirmed}
                         onClick={() => {
@@ -1178,7 +1165,7 @@ function ContextWorkbench() {
                         }}
                       >
                         确认演练
-                      </button>
+                      </WorkButton>
                     )}
                   </div>
                 </div>
@@ -1206,14 +1193,17 @@ function ContextWorkbench() {
                 >
                   <label>
                     接收者
-                    <select value={recipient} onChange={(e) => setRecipient(e.target.value)}>
-                      {members
-                        .filter((m) => m.id !== 'me')
-                        .slice(0, dense ? 9 : 2)
-                        .map((m) => (
-                          <option key={m.id}>{m.name}</option>
-                        ))}
-                    </select>
+                    <span className="cw-select-field">
+                      <select value={recipient} onChange={(e) => setRecipient(e.target.value)}>
+                        {members
+                          .filter((m) => m.id !== 'me')
+                          .slice(0, dense ? 9 : 2)
+                          .map((m) => (
+                            <option key={m.id}>{m.name}</option>
+                          ))}
+                      </select>
+                      <CaretDown aria-hidden="true" />
+                    </span>
                   </label>
                   <div className="cw-handoff-context">
                     <span>当前上下文</span>
@@ -1236,12 +1226,17 @@ function ContextWorkbench() {
                     />
                   </label>
                   <div className="cw-dialog-actions">
-                    <button type="button" onClick={() => setModal(null)}>
+                    <WorkButton type="button" onClick={() => setModal(null)}>
                       取消
-                    </button>
-                    <button type="submit" className="cw-primary" disabled={!request.trim()}>
+                    </WorkButton>
+                    <WorkButton
+                      type="submit"
+                      kind="primary"
+                      className="cw-primary"
+                      disabled={!request.trim()}
+                    >
                       保留交接草稿
-                    </button>
+                    </WorkButton>
                   </div>
                 </form>
               )}
@@ -1271,10 +1266,14 @@ function ContextWorkbench() {
                     草稿仅存在于本页，尚未发送。对方不会收到消息或文件。
                   </p>
                   <div className="cw-dialog-actions">
-                    <button onClick={() => setModal('handoff')}>编辑草稿</button>
-                    <button className="cw-primary" onClick={() => setModal(null)}>
+                    <WorkButton onClick={() => setModal('handoff')}>编辑草稿</WorkButton>
+                    <WorkButton
+                      kind="primary"
+                      className="cw-primary"
+                      onClick={() => setModal(null)}
+                    >
                       完成
-                    </button>
+                    </WorkButton>
                   </div>
                 </div>
               )}

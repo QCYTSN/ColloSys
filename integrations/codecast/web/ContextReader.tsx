@@ -5,12 +5,23 @@ import {
   useEffect,
   forwardRef,
   useImperativeHandle,
+  isValidElement,
+  type ReactNode,
 } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
-import { CaretDown, ArrowDown, ArrowClockwise, FileText, CheckCircle } from '@phosphor-icons/react';
+import {
+  CaretDown,
+  ArrowDown,
+  ArrowClockwise,
+  FileText,
+  CheckCircle,
+  TerminalWindow,
+  Code,
+} from '@phosphor-icons/react';
+import { WorkButton, MemberAvatar } from './ContextControls';
 import { shouldFollowStreaming } from '../components/conversationScroll';
 import type { Activity, SourceMessage } from './ContextModel';
 
@@ -23,25 +34,48 @@ export type ReaderHandle = {
 export type LocalComment = { id: string; text: string; anchor?: string };
 const markdownPlugins = [remarkGfm];
 const highlightPlugins = [rehypeHighlight];
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const language = isValidElement<{ className?: string }>(children)
+    ? children.props.className?.match(/language-([\w-]+)/)?.[1]
+    : undefined;
+  return (
+    <div className="cw-code-block">
+      <div className="cw-code-label">
+        <Code size={14} />
+        <span>{language ?? '代码'}</span>
+      </div>
+      <pre>{children}</pre>
+    </div>
+  );
+}
+const markdownComponents = { pre: CodeBlock };
 export function QuotedMessage({ message }: { message: SourceMessage }) {
   const [expanded, setExpanded] = useState(false);
   const isOutput = message.text.startsWith('原始消息中引用的检查输出');
   return isOutput ? (
     <div className="cw-output">
-      <button aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+      <WorkButton aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
         <CaretDown size={15} className={expanded ? 'turned' : ''} />
         原始消息引用的检查输出<span>文本记录</span>
-      </button>
+      </WorkButton>
       <div className={`cw-disclosure ${expanded ? 'open' : ''}`} inert={!expanded}>
         <div>
-          <ReactMarkdown remarkPlugins={markdownPlugins} rehypePlugins={highlightPlugins}>
+          <ReactMarkdown
+            remarkPlugins={markdownPlugins}
+            rehypePlugins={highlightPlugins}
+            components={markdownComponents}
+          >
             {message.text}
           </ReactMarkdown>
         </div>
       </div>
     </div>
   ) : (
-    <ReactMarkdown remarkPlugins={markdownPlugins} rehypePlugins={highlightPlugins}>
+    <ReactMarkdown
+      remarkPlugins={markdownPlugins}
+      rehypePlugins={highlightPlugins}
+      components={markdownComponents}
+    >
       {message.text}
     </ReactMarkdown>
   );
@@ -189,13 +223,13 @@ export const ContextReader = forwardRef<
                     }}
                   >
                     <div className="cw-message-meta">
-                      <span className={`cw-mini-avatar ${message.role}`}>
-                        {message.role === 'user' ? (
-                          activity.member.name.slice(0, 1)
-                        ) : (
-                          <span aria-hidden="true">C</span>
-                        )}
-                      </span>
+                      {message.role === 'user' ? (
+                        <MemberAvatar member={activity.member} small />
+                      ) : (
+                        <span className="cw-agent-mark">
+                          <TerminalWindow size={15} />
+                        </span>
+                      )}
                       <strong>{message.role === 'user' ? activity.member.name : 'Codex'}</strong>
                       <span>{message.role === 'user' ? '原始请求' : '捕获回复'}</span>
                       <time>
@@ -219,10 +253,10 @@ export const ContextReader = forwardRef<
                 已载入 {Math.min(loaded, messages.length)} / {messages.length} 条原始消息
               </span>
               {loaded < messages.length && (
-                <button onClick={loadMore} disabled={loading}>
+                <WorkButton onClick={loadMore} disabled={loading}>
                   <ArrowClockwise size={14} />
                   {loading ? '正在读取…' : '加载后续 30 条'}
-                </button>
+                </WorkButton>
               )}
             </div>
           </>
@@ -237,11 +271,11 @@ export const ContextReader = forwardRef<
             <p>没有可验证的会话关联。你仍可以查看差异、留下评论，或从自己的目录历史预览恢复。</p>
             <div className="cw-saved-files">
               {activity.checkpoint?.files.slice(0, 5).map((file) => (
-                <button key={file.path} onClick={() => openFile(file.path)}>
+                <WorkButton key={file.path} onClick={() => openFile(file.path)}>
                   <FileText size={17} />
                   <span>{file.path}</span>
                   <span>{file.status === 'deleted' ? '删除' : '改动'}</span>
-                </button>
+                </WorkButton>
               ))}
             </div>
           </div>
@@ -260,10 +294,10 @@ export const ContextReader = forwardRef<
         )}
       </div>
       {!!pending.length && (
-        <button className="cw-new-messages" onClick={latest}>
+        <WorkButton className="cw-new-messages" onClick={latest}>
           <ArrowDown size={15} />
           {pending.length} 条新记录 · 阅读位置已保留
-        </button>
+        </WorkButton>
       )}
     </div>
   );

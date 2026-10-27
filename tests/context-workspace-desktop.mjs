@@ -4,7 +4,10 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { _electron as electron, expect } from '@playwright/test';
 
-const out = path.resolve('docs/workbench-revision/evidence');
+const out = path.resolve(
+  process.env.COLLOSYS_VISUAL_EVIDENCE_DIR ?? 'docs/workbench-revision/evidence',
+);
+await fs.mkdir(out, { recursive: true });
 const results = [];
 let failed;
 for (const scale of [1, 1.25, 1.5]) {
@@ -64,6 +67,9 @@ for (const scale of [1, 1.25, 1.5]) {
         firstText: p.top,
         overflow: document.documentElement.scrollWidth,
         font: document.fonts.check('14px ColloWorkspace'),
+        titleX: document.querySelector('.cw-heading-copy').getBoundingClientRect().x,
+        transcriptX: document.querySelector('.cw-transcript').getBoundingClientRect().x,
+        composerX: document.querySelector('.cw-composer-box').getBoundingClientRect().x,
       };
     });
     assert.ok(Math.abs(layout.dpr - scale) < 0.01);
@@ -71,6 +77,14 @@ for (const scale of [1, 1.25, 1.5]) {
     assert.ok(layout.firstText <= 185);
     assert.ok(layout.readerHeight >= 520);
     assert.equal(layout.font, true);
+    assert.ok(
+      Math.abs(layout.titleX - layout.transcriptX) <= 1,
+      'native title and reader stay aligned with system scrollbars',
+    );
+    assert.ok(
+      Math.abs(layout.composerX - layout.transcriptX) <= 1,
+      'native composer and reader share their axis',
+    );
     await page.screenshot({ path: path.join(out, `desktop-${scale}.png`), animations: 'allow' });
     await page.getByRole('tab', { name: /文件变化/ }).click();
     await page.locator('diffs-container').first().waitFor();

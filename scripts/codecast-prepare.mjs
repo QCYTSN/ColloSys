@@ -91,6 +91,7 @@ const additions = [
     'DesignScenario.ts',
     'design-lab.css',
     'ContextWorkbench.tsx',
+    'ContextControls.tsx',
     'ContextScenario.ts',
     'ContextModel.ts',
     'ContextReader.tsx',

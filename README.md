@@ -24,7 +24,7 @@ npm start
 
 桌面窗口自动完成本机配对，Browse 打开系统文件夹选择器；选好目录后仍需明确确认共享。每位成员保留独立目录，活动同步不会覆盖其他人的文件。用于联调的浏览器入口为 `npm run codecast:app -- --built`，地址 `http://127.0.0.1:3407`；直接访问普通地址只能登录查看活动，管理本机文件还需要配对。桌面附着到已经运行的调试服务时，退出窗口不会替调试进程关闭服务。
 
-## 新核心工作区预览（2026-10-26，等待视觉选择）
+## 新核心工作区预览（2026-10-27 视觉修订，等待视觉选择）
 
 此前 DesignLab 与 A/B 均未获得视觉批准。当前候选使用独立滚动的团队活动索引、一个主阅读/代码工作面，以及按需展开的来源与保存信息；支持长会话、真实 Diff、评论、交接草稿和自己的目录历史。正式工作台尚未迁移。
 
@@ -38,7 +38,7 @@ npm run workbench:preview
 
 预览明确使用演示数据，评论和交接草稿保留在本次页面内，恢复流程不写入文件。原生组件对照同样是 fixture，不是真实捕获会话。当前正式产品仍由 `npm start` 打开；`npm run design` 和 `design-explorations/workbench-20261026` 保留历史比较材料。
 
-本轮修改、源码依据、实际截图、交互录像、原生窗口缩放结果和未完成范围统一记录在 [工作记录](docs/workbench-revision/WORKLOG.md)。既有 [参考研究](docs/design/reference-research.md) 及 [旧 A/B 验证](docs/design/preview-validation.md) 保留，不代表当前候选获得批准。
+最新视觉修改、同内容前后截图、交互录像和验证限制见 [视觉重做记录](docs/workbench-revision/VISUAL_REDO.md)。前轮功能修订见 [工作记录](docs/workbench-revision/WORKLOG.md)；既有 [参考研究](docs/design/reference-research.md) 及 [旧 A/B 验证](docs/design/preview-validation.md) 保留，不代表当前候选获得批准。
 
 ## 源码与原版
 

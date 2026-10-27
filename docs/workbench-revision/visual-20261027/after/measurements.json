@@ -1,0 +1,116 @@
+{
+  "phase": "after",
+  "measurements": [
+    {
+      "width": 1280,
+      "height": 800,
+      "reader": {
+        "x": 315,
+        "y": 157,
+        "width": 952,
+        "height": 526
+      },
+      "heading": {
+        "x": 366,
+        "y": 59,
+        "width": 731,
+        "height": 48
+      },
+      "transcript": {
+        "x": 366,
+        "y": 157,
+        "width": 850,
+        "height": 5722.4375
+      },
+      "composer": {
+        "x": 315,
+        "y": 683,
+        "width": 952,
+        "height": 104
+      },
+      "firstText": {
+        "x": 450,
+        "y": 183,
+        "width": 750,
+        "height": 50.375
+      },
+      "scrollTop": 0,
+      "firstMessage": "activity-1-message-1"
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "reader": {
+        "x": 315,
+        "y": 157,
+        "width": 1112,
+        "height": 626
+      },
+      "heading": {
+        "x": 446,
+        "y": 59,
+        "width": 731,
+        "height": 48
+      },
+      "transcript": {
+        "x": 446,
+        "y": 157,
+        "width": 850,
+        "height": 5722.4375
+      },
+      "composer": {
+        "x": 315,
+        "y": 783,
+        "width": 1112,
+        "height": 104
+      },
+      "firstText": {
+        "x": 530,
+        "y": 183,
+        "width": 750,
+        "height": 50.375
+      },
+      "scrollTop": 0,
+      "firstMessage": "activity-1-message-1"
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "reader": {
+        "x": 314.984375,
+        "y": 157,
+        "width": 1592.015625,
+        "height": 806
+      },
+      "heading": {
+        "x": 685.984375,
+        "y": 59,
+        "width": 731.015625,
+        "height": 48
+      },
+      "transcript": {
+        "x": 685.984375,
+        "y": 157,
+        "width": 850,
+        "height": 5704.9375
+      },
+      "composer": {
+        "x": 314.984375,
+        "y": 963,
+        "width": 1592.015625,
+        "height": 104
+      },
+      "firstText": {
+        "x": 769.984375,
+        "y": 183,
+        "width": 750,
+        "height": 50.375
+      },
+      "scrollTop": 0,
+      "firstMessage": "activity-1-message-1"
+    }
+  ],
+  "errors": [],
+  "fixtureHash": "7a1eea5beaa8078050e26bb715f369521524bedc6af5ad25bc8beb6dc09acc21",
+  "capturedAt": "2026-10-27T06:26:42.732Z"
+}

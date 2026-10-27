@@ -4,7 +4,9 @@ import path from 'node:path';
 import { chromium, expect } from '@playwright/test';
 
 const origin = 'http://127.0.0.1:3407/workbench-preview';
-const out = path.resolve('docs/workbench-revision/evidence');
+const out = path.resolve(
+  process.env.COLLOSYS_VISUAL_EVIDENCE_DIR ?? 'docs/workbench-revision/evidence',
+);
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({
@@ -110,6 +112,10 @@ try {
         return {
           viewport: { width: innerWidth, height: innerHeight },
           reader: box('.cw-reader-scroll'),
+          workspace: box('.cw-workspace'),
+          heading: box('.cw-heading-copy'),
+          transcript: box('.cw-transcript'),
+          composerBox: box('.cw-composer-box'),
           firstText: box('.cw-prose p'),
           index: box('.cw-index-panel'),
           font: document.fonts.check('14px ColloWorkspace'),
@@ -132,6 +138,15 @@ try {
         assert.ok(m.platformFonts.some((font) => !font.isCustomFont && font.glyphCount > 0));
       }
       if (width >= 1280) {
+        assert.ok(m.workspace.x + m.workspace.width <= width - 10, 'workspace has its right inset');
+        assert.ok(
+          Math.abs(m.heading.x - m.transcript.x) <= 1,
+          'title and transcript share an axis',
+        );
+        assert.ok(
+          Math.abs(m.composerBox.x - m.transcript.x) <= 1,
+          'composer and transcript share an axis',
+        );
         assert.ok(m.firstText.y <= 184, `first text ${m.firstText.y}`);
         assert.ok(m.reader.height >= height - 280);
         assert.ok(m.index.width >= 260 && m.index.width <= 400);
@@ -428,10 +443,38 @@ try {
     await select(1);
     const work = await sampleMotion(
       '.cw-reading-surface',
-      () => page.locator('.cw-index-panel [data-activity="activity-2"]').click(),
+      async () => {
+        const immediate = await page.evaluate(async () => {
+          const start = performance.now();
+          document.querySelector('.cw-index-panel [data-activity="activity-2"]').click();
+          // Router navigation must happen in the event, without an animation wait.
+          // React may commit the DOM after the next frame callback, so measure
+          // the commit instead of treating the first callback as a paint.
+          const activity = new URL(location.href).searchParams.get('activity');
+          let selected;
+          do {
+            await new Promise(requestAnimationFrame);
+            selected = document
+              .querySelector('.cw-index-panel [data-activity="activity-2"]')
+              .getAttribute('aria-current');
+          } while (selected !== 'true' && performance.now() - start < 100);
+          return {
+            activity,
+            selected,
+            elapsed: performance.now() - start,
+          };
+        });
+        assert.equal(immediate.activity, 'activity-2');
+        assert.equal(immediate.selected, 'true');
+        assert.ok(immediate.elapsed < 75, `selection commit took ${immediate.elapsed}ms`);
+        motion.push({ label: 'selection-commit', ...immediate });
+      },
       'work-switch',
     );
-    assert.ok(work.some((f) => f.opacity > 0.6 && f.opacity < 0.95));
+    assert.ok(
+      work.length > 2 && work.every((f) => f.opacity === 1),
+      'activity switches never fade the reader',
+    );
     await select(1);
     const tabs = await sampleMotion(
       '[data-pane="context"]',
