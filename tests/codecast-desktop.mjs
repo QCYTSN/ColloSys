@@ -237,6 +237,7 @@ try {
         .first()
         .waitFor();
       await page.screenshot({ path: path.join(evidence, 'desktop-workbench.png') });
+      await page.getByRole('button', { name: 'Back to activity', exact: true }).click();
       await page.getByRole('button', { name: 'Local history', exact: true }).click();
       await page
         .getByRole('button')
@@ -282,6 +283,22 @@ try {
         (await local('/api/connectors')).connectors.find((item) => item.root === root)?.running,
         true,
       );
+    },
+  );
+  await check(
+    'A directory deep link selects its authorized directory after reopening',
+    async () => {
+      await page.goto(
+        `http://127.0.0.1:3407/projects/${credentials.projectId}?tab=workspaces&workspaceView=history&directory=${connector.workspaceId}`,
+      );
+      await eventually(async () => {
+        if (await page.locator('[data-foreign-switch]').isVisible())
+          await page.locator('[data-foreign-switch]').click();
+        assert.equal(
+          await page.getByLabel('Your local directory', { exact: true }).inputValue(),
+          connector.workspaceId,
+        );
+      });
     },
   );
   await check('Pending-change close prompt honors Keep open and explicit Close now', async () => {

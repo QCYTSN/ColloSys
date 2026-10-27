@@ -9,6 +9,7 @@ export async function buildFingerprint() {
     'third_party/codecast/collo/vite.config.ts',
     'third_party/codecast/SOURCE.json',
     'scripts/codecast-prepare.mjs',
+    'scripts/codecast-brand.mjs',
     'scripts/codecast-desktop-prepare.mjs',
   ];
   async function visit(directory) {

@@ -11,7 +11,12 @@ import {
   Play,
   MessageSquare,
   ArrowLeft,
-} from 'lucide-react';
+} from './ProductIcons';
+import { AgentBadge } from './AgentBadge';
+import { formatAgentType } from '../components/AgentTypeIcon';
+import { capturedHref } from './CapturedSessions';
+import { FileDiffLayout } from '../components/FileDiffLayout';
+import { MemberFace } from './MemberFace';
 import { Button } from '../components/ui/button';
 import {
   Dialog,
@@ -21,7 +26,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from '../components/ui/dialog';
-import { FilePatchDiff } from '../components/DiffView';
+import { parsePatch } from '../lib/patchParser';
 import { DetailSplitLayout } from '../components/DetailSplitLayout';
 import { SegmentedToggle } from '../components/SegmentedToggle';
 import { RailDay, RailRow } from '../components/timeline/Rail';
@@ -41,36 +46,55 @@ import { isPaired, localRequest, chooseDirectory, LOCAL_INSPECTION_INTERVAL_MS }
 const field =
   'w-full rounded-md border border-sol-border bg-sol-bg px-3 py-2 text-sm text-sol-text';
 function Files({ files }: { files: FileChange[] }) {
+  const projected = useMemo(
+    () =>
+      files.map((file) => {
+        const lines = parsePatch(file.patch || '').hunks.flatMap((hunk) => hunk.lines);
+        const additions = lines.filter((line) => line.type === 'addition').length;
+        const deletions = lines.filter((line) => line.type === 'deletion').length;
+        return {
+          filename: file.path,
+          status: file.status,
+          additions,
+          deletions,
+          changes: additions + deletions,
+          patch: file.status === 'excluded' || file.binary ? undefined : file.patch,
+        };
+      }),
+    [files],
+  );
   return (
-    <div className="space-y-3">
-      {files.map((file) => (
-        <section key={file.path} className="overflow-hidden rounded-md border border-sol-border">
-          <div className="flex items-center gap-3 border-b border-sol-border bg-sol-bg-alt px-3 py-2 text-xs">
-            <span className="font-medium break-all">{file.path}</span>
-            <span className="ml-auto text-sol-text-muted">
-              {file.status === 'excluded' ? 'No longer shared' : file.status}
-            </span>
-          </div>
-          {file.status === 'excluded' ? (
-            <p className="p-3 text-sm text-sol-text-muted">
-              Current content was not captured. This record does not contain a restorable copy.
-            </p>
-          ) : file.binary ? (
-            <p className="p-3 text-sm text-sol-text-muted">
-              Binary file · captured locally when this checkpoint was created
-            </p>
-          ) : file.patch ? (
-            <FilePatchDiff patch={file.patch} fileName={file.path} maxLines={80} />
-          ) : (
-            <p className="p-3 text-sm text-sol-text-muted">No text diff</p>
-          )}
-          {file.truncated && (
-            <p className="px-3 py-2 text-xs text-sol-text-muted">
-              Shared diff truncated · full captured content stays on the source device
-            </p>
-          )}
-        </section>
-      ))}
+    <div className="collo-checkpoint-diff">
+      <FileDiffLayout
+        files={projected}
+        title="Changed files"
+        renderFileExtra={(rendered) => {
+          const file = files.find(
+            (f) => f.path === (rendered.originalFilename ?? rendered.filename),
+          );
+          if (!file) return null;
+          return (
+            <>
+              {file.status === 'excluded' && (
+                <p className="collo-inline-notice">
+                  No longer shared. Current content was not captured and cannot be restored from
+                  this record.
+                </p>
+              )}
+              {file.binary && (
+                <p className="collo-inline-notice">
+                  Binary file · full content stays on the source device.
+                </p>
+              )}
+              {file.truncated && (
+                <p className="collo-inline-notice">
+                  Shared diff truncated · full captured content stays on the source device.
+                </p>
+              )}
+            </>
+          );
+        }}
+      />
     </div>
   );
 }
@@ -98,7 +122,9 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const setCurrent = (event: string | null) => router.push(link(event));
   const setPane = (nextPane: string) => router.push(link(null, nextPane));
   const [directories, setDirectories] = useState<LocalDirectory[]>([]);
-  const [selected, setSelected] = useState<string | null>(null);
+  const requestedDirectory = search.get('directory');
+  const [selected, setSelected] = useState<string | null>(requestedDirectory);
+  const [memberFilter, setMemberFilter] = useState('');
   const [details, setDetails] = useState<DirectoryStatus | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState('');
@@ -168,6 +194,9 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
     setLog('');
     setError('');
   }, [identity]);
+  useEffect(() => {
+    if (requestedDirectory) setSelected(requestedDirectory);
+  }, [requestedDirectory, identity]);
   useEffect(() => {
     setDetails(null);
     setCheckpoints([]);
@@ -246,12 +275,42 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
     });
   }, [events]);
   const days = groupByDay(
-    activities.map((event) => ({ ...event, ts: event.occurredAt })),
+    activities
+      .filter((event) => !memberFilter || event.actor.id === memberFilter)
+      .map((event) => ({ ...event, ts: event.occurredAt })),
     Date.now(),
   );
   return (
-    <div className="flex min-h-0 flex-1 flex-col text-sol-text" data-testid="local-workspaces">
-      <div className="flex flex-wrap items-center gap-3 border-b border-sol-border px-5 py-3">
+    <div
+      className="flex min-h-0 flex-1 flex-col text-sol-text"
+      data-testid="local-workspaces"
+      data-pane={pane}
+      data-has-detail={!!current}
+    >
+      {!current && (
+        <div className="collo-workspace-heading">
+          <div>
+            <h2>{pane === 'history' ? 'My directories' : 'Team activity'}</h2>
+            <p>
+              {pane === 'history'
+                ? 'Your saved work and local recovery.'
+                : 'Saved changes and captured conversations, in one place.'}
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={busy || !isPaired()}
+            onClick={() => setConnectOpen(true)}
+          >
+            <Plus />
+            Connect directory
+          </Button>
+        </div>
+      )}
+      <div
+        className={`collo-directory-toolbar flex flex-wrap items-center gap-3 border-b border-sol-border px-5 py-3 ${pane === 'activity' ? 'hidden' : ''}`}
+      >
         <FolderOpen className="h-4 w-4 text-sol-text-muted" />
         <select
           aria-label="Your local directory"
@@ -311,18 +370,9 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
               {directory.running ? 'Stop' : 'Start'}
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !isPaired()}
-            onClick={() => setConnectOpen(true)}
-          >
-            <Plus />
-            Connect directory
-          </Button>
         </div>
       </div>
-      {!isPaired() && (
+      {!isPaired() && pane === 'history' && (
         <p className="border-b border-sol-border px-5 py-3 text-sm text-sol-text-muted">
           Open this page from the local launcher to connect a directory. Shared activity remains
           available here.
@@ -345,7 +395,9 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           </Button>
         </div>
       )}
-      <div className="flex items-center gap-3 border-b border-sol-border/40 px-5 py-2">
+      <div
+        className={`collo-workspace-tabs flex items-center gap-3 border-b border-sol-border/40 px-5 py-2 ${current ? 'hidden' : ''}`}
+      >
         <SegmentedToggle
           value={pane}
           onChange={setPane}
@@ -354,6 +406,23 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
             { key: 'history', label: 'Local history', icon: History },
           ]}
         />
+        {pane === 'activity' && (
+          <select
+            className="collo-member-filter"
+            aria-label="Filter activity by member"
+            value={memberFilter}
+            onChange={(e) => setMemberFilter(e.target.value)}
+          >
+            <option value="">All members</option>
+            {[...new Map(activities.map((e) => [e.actor.id, e.actor.name])).entries()].map(
+              ([id, name]) => (
+                <option key={id} value={id}>
+                  {name}
+                </option>
+              ),
+            )}
+          </select>
+        )}
         <span className="ml-auto text-xs text-sol-text-dim">
           {workspaces.length} shared {workspaces.length === 1 ? 'workspace' : 'workspaces'}
         </span>
@@ -369,7 +438,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           </Button>
         </div>
       )}
-      {directory && (
+      {directory && pane === 'history' && (
         <details className="border-b border-sol-border/40 px-5 py-2 text-xs">
           <summary className="cursor-pointer text-sol-text-dim">
             This directory · {directory.label}
@@ -467,13 +536,19 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                               className="min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-sol-bg-alt focus-visible:outline focus-visible:outline-sol-cyan"
                             >
                               <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                                <span className="font-medium text-sol-text">
+                                <MemberFace id={event.actor.id} name={event.actor.name} />
+                                <span
+                                  className="collo-event-member font-medium text-sol-text"
+                                  title={event.actor.name}
+                                >
                                   {event.actor.name}
                                 </span>
                                 <span className="text-sol-text-muted">
-                                  {event.kind === 'checkpoint'
-                                    ? `${event.payload.totalFiles} files · ${event.payload.label}`
-                                    : `Codex · ${event.payload.role}`}
+                                  {event.kind === 'checkpoint' ? (
+                                    `${event.payload.totalFiles} files · ${event.payload.label}`
+                                  ) : (
+                                    <AgentBadge agent={event.payload.adapter} />
+                                  )}
                                 </span>
                               </div>
                               <div className="mt-1 truncate text-[11px] text-sol-text-dim">
@@ -585,7 +660,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                         <h3 className="text-base font-medium">
                           {selectedEvent.kind === 'checkpoint'
                             ? selectedEvent.payload.label
-                            : 'Codex message'}
+                            : `${formatAgentType(selectedEvent.payload.adapter)} message`}
                         </h3>
                         <p className="mt-2 text-xs text-sol-text-muted">
                           {selectedEvent.actor.name} ·{' '}
@@ -669,13 +744,30 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                       </>
                     ) : (
                       <>
-                        <p className="mb-4 text-xs text-sol-text-dim">
-                          From an authorized Codex log. A nearby checkpoint does not establish who
-                          changed a file.
-                        </p>
+                        <div className="collo-captured-action">
+                          <AgentBadge agent={selectedEvent.payload.adapter} />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              router.push(
+                                capturedHref(
+                                  projectId,
+                                  selectedEvent.workspaceId,
+                                  selectedEvent.payload.sessionId,
+                                ),
+                              )
+                            }
+                          >
+                            Open conversation
+                          </Button>
+                        </div>
                         <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                           {selectedEvent.payload.text}
                         </div>
+                        <p className="mt-5 text-xs text-sol-text-dim">
+                          Captured from an authorized log. File authorship is recorded separately.
+                        </p>
                       </>
                     )}
                   </>

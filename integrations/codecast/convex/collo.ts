@@ -45,9 +45,9 @@ export const projectByRef = query({
     return row && (await canAccessProject(ctx, viewer._id, row)) ? row : null;
   },
 });
-export const members = internalQuery({
+const membersQuery = {
   args: { projectId: v.id('projects') },
-  handler: async (ctx, args) => {
+  handler: async (ctx: import('./_generated/server').QueryCtx, args: { projectId: Id<'projects'> }) => {
     const viewer = await user(ctx);
     const p = await project(ctx, viewer._id, args.projectId);
     const ids = new Set<Id<'users'>>([p.user_id]);
@@ -69,7 +69,10 @@ export const members = internalQuery({
     }
     return { members };
   },
-});
+};
+export const members = internalQuery(membersQuery);
+// The UI uses the same membership-filtered roster as the connector API.
+export const projectMembers = query(membersQuery);
 export const issue = internalMutation({
   args: { projectId: v.id('projects'), workspaceId: v.string(), hash: v.string() },
   handler: async (ctx, args) => {

@@ -88,6 +88,12 @@ The public Delta Claude plugin was studied at `500bde479759fa0d62a7e525afda7b9cc
 
 Other dependencies retain their own licenses in the installed packages and lockfile.
 
+## October 27 complete ColloSys product UI
+
+The owned integration now adapts the actual application at MIT Codecast commit `5dfb04f516122fe4f59a61137219b5a4e2e1f9f8`: DashboardLayout/Sidebar/TabShell, CompanyDocument/projects, native tasks and TaskCommentStream, ConversationView, FileDiffLayout, SettingsModal, AgentTypeIcon/BrandIcons, AvatarImg and original UI primitives. `product-ui-patches.mjs` records exact anchored changes; additions live in `integrations/codecast/web`. Original source and desktop platform mirrors remain unchanged. Authentication, Convex persistence and existing stores remain authoritative.
+
+Shared functional icon adaptations use Phosphor React 2.1.10 under its existing MIT notice. Agent identity marks retain their original upstream definitions and identity; they do not represent product branding or newly supported capture adapters. Google Sans and its OFL remain unchanged. The supplied peanut source is cropped and proportionally rasterized into required PNG/ICO sizes by the deterministic owned `codecast-brand.mjs`; the original supplied image remains unmodified. Sharp 0.35.5 is a build-time dependency (Apache-2.0; its installed bundled library notices remain included), not a new runtime image service. No OpenDesign implementation, skill output, brand imagery or Delta proprietary code is included.
+
 ## Windows runtime distribution
 
 The Windows package includes the unmodified Node.js 24.15.0 runtime from the build machine. Its complete upstream license and bundled-component notices are retained in `third_party/node/LICENSE` and copied to `app/runtime/NODE-LICENSE.txt`. Source: https://raw.githubusercontent.com/nodejs/node/v24.15.0/LICENSE. The package also retains the installed npm packages' license files. Git for Windows is an external prerequisite and is not redistributed.

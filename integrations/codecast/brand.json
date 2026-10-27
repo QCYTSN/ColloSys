@@ -1,0 +1,10 @@
+{
+  "name": "ColloSys",
+  "description": "Your team's work, in context.",
+  "sourceMark": "assets/design/peanut-reference.png",
+  "markCrop": { "left": 470, "top": 440, "width": 245, "height": 160 },
+  "paper": "#f2eee4",
+  "desktopIcon": "collo-brand/app.ico",
+  "markUrl": "/collo-brand/mark-64.png",
+  "attribution": "Built on Codecast (MIT). Original licenses and notices are included with the source."
+}

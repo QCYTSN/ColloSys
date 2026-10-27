@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, copyFile, lstat, symlink, readdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, copyFile, lstat, symlink, readdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -6,6 +6,7 @@ import { patches } from '../integrations/codecast/patches.mjs';
 import { assertNotRunning } from './codecast-runtime-lock.mjs';
 import { buildFingerprint } from './codecast-build-inputs.mjs';
 import { prepareDesktop } from './codecast-desktop-prepare.mjs';
+import { prepareBrand } from './codecast-brand.mjs';
 await assertNotRunning();
 const inputFingerprint = await buildFingerprint();
 
@@ -80,6 +81,22 @@ const additions = [
   ].map((file) => [`convex/${file}`, `packages/convex/convex/${file}`]),
   ...[
     'LocalWorkspaces.tsx',
+    'ProductLogo.tsx',
+    'AgentIdentity.ts',
+    'AgentBadge.tsx',
+    'ProductHeader.tsx',
+    'ProductNav.tsx',
+    'ProductSettings.tsx',
+    'CapturedSessions.tsx',
+    'ProjectHandoffs.tsx',
+    'ProjectCreate.tsx',
+    'ProductIcons.tsx',
+    'ProductInbox.tsx',
+    'MemberFace.tsx',
+    'TaskContextLinks.tsx',
+    'colloApi.ts',
+    'productTheme.ts',
+    'product-ui.css',
     'LocalWelcome.tsx',
     'local.ts',
     'workspaceTypes.ts',
@@ -105,21 +122,19 @@ for (const [from, to] of additions) {
 // Product assets only. The full source remains available for reference, but
 // upstream marketing, install scripts and domain verification are not shipped.
 const publicPrefix = 'packages/web/public/';
+const publicDir = path.resolve(root, '.local/codecast-app/product-public');
+if (publicDir !== path.join(root, '.local', 'codecast-app', 'product-public')) throw new Error('Unexpected asset output');
+try { if ((await lstat(publicDir)).isSymbolicLink()) throw new Error('Linked asset output is not allowed'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+// This exact directory contains generated public assets only, never user data.
+await rm(publicDir, { recursive: true, force: true });
+await mkdir(publicDir, { recursive: true });
 const productAssets = new Set([
   'agents',
-  'brand',
-  'favicon.ico',
-  'favicon-16x16.png',
-  'favicon-32x32.png',
-  'apple-touch-icon.png',
-  'android-chrome-192x192.png',
-  'android-chrome-512x512.png',
-  'logo-final.png',
-  'logo.png',
-  'logo.svg',
   'mod-host.html',
   'mod-host.js',
 ]);
+await prepareBrand(root, publicDir, destination);
+await writeFile(path.join(destination, 'packages/web/components/Logo.tsx'), 'export { Logo, LogoMark, LogoIcon } from "../collo/ProductLogo";\n');
 for (const { file } of ordinary) {
   if (!file.startsWith(publicPrefix)) continue;
   const relative = file.slice(publicPrefix.length);
@@ -161,6 +176,7 @@ const touched = [
     ...additions.map((a) => a[1]),
     'packages/convex/convex/colloProtocol.ts',
     'packages/web/collo/protocol.ts',
+    'packages/web/collo/productBrand.ts',
   ]),
 ];
 const hashes = await Promise.all(

@@ -155,7 +155,8 @@ async function completeFiles(page) {
       /241 of 241 file changes.*Complete checkpoint/,
     );
   });
-  assert.equal(await detail.locator('section').count(), fileCount);
+  // The mature Diff viewer gives every rendered file its own stable path.
+  assert.equal(await detail.locator('[data-unified-file]').count(), fileCount);
   await detail.getByText('TEST-file-241.txt', { exact: true }).scrollIntoViewIfNeeded();
   assert.equal(await detail.getByText('TEST-file-241.txt', { exact: true }).isVisible(), true);
 }
@@ -235,6 +236,8 @@ try {
         await completeFiles(pageB);
         await pageB.screenshot({ path: path.join(evidence, 'multipart-detail.png') });
         await pageB.getByRole('button', { name: 'Back to activity', exact: true }).click();
+        await pageB.waitForURL((url) => !url.searchParams.has('event'));
+        await pageB.waitForLoadState('networkidle');
       },
     );
     await check(

@@ -6,6 +6,8 @@ import react from "../upstream/packages/web/node_modules/@vitejs/plugin-react/di
 import { sharedResolve } from "../upstream/packages/web/vite.shared";
 import { colorThemeBootPlugin } from "../upstream/packages/web/plugins/colorThemeBoot";
 import { laneBootPlugin } from "../upstream/packages/web/plugins/laneBoot";
+import { themeVarsByMode } from "../upstream/packages/web/lib/theme/themeVars";
+import { productTheme } from "../../../integrations/codecast/web/productTheme";
 
 // Run the actual upstream app. Keep adaptation outside the vendored source.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -29,8 +31,8 @@ const csp = [
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "font-src 'self' data:",
-  "img-src 'self' data: blob:",
-  `connect-src 'self' ${backend} ${backend.replace('http:', 'ws:')}${appMode ? ' http://127.0.0.1:*' : ''}`,
+  `img-src 'self' data: blob: ${backend} https://avatars.githubusercontent.com https://lh3.googleusercontent.com`,
+  `connect-src 'self' ${backend} ${backend.replace('http:', 'ws:')}${appMode ? ' http://127.0.0.1:* https://avatars.githubusercontent.com https://lh3.googleusercontent.com' : ''}`,
   "worker-src 'self' blob:",
   "frame-src 'self' blob:",
   "form-action 'self'",
@@ -51,7 +53,10 @@ export default defineConfig({
     __CODECAST_BUILD__: JSON.stringify({ sha: "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8", mode: "local-reference", builtAt: "2026-10-23" }),
   },
   plugins: [
-    react(), colorThemeBootPlugin(), laneBootPlugin(),
+    react(), appMode ? {
+      name: 'collosys-color-theme-boot',
+      transformIndexHtml: { order: 'pre', handler: () => [{ tag: 'script', children: `window.__ccDefaultColorTheme=${JSON.stringify(themeVarsByMode(productTheme))}`, injectTo: 'head-prepend' }] },
+    } : colorThemeBootPlugin(), laneBootPlugin(),
     {
       name: "collosys-local-boundary",
       resolveId(id) { if (id === "virtual:pwa-register") return "\0collosys-no-service-worker"; },

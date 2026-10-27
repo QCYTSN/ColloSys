@@ -2,6 +2,8 @@ const electron = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../../..');
+const brand = require('../brand.json');
+const productVersion = require('../../../package.json').version;
 const data = path.join(root, '.local/codecast-app');
 const origin = 'http://127.0.0.1:3407';
 const { app, BrowserWindow, Menu, ipcMain, dialog, session } = electron;
@@ -57,7 +59,7 @@ const guardedIpc = new Proxy(ipcMain, {
 function ProductWindow(options) {
   const window = new BrowserWindow({
     ...options,
-    title: 'ColloSys',
+    title: brand.name,
     titleBarStyle: 'default',
     frame: true,
     webPreferences: {
@@ -70,7 +72,7 @@ function ProductWindow(options) {
   });
   window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
-    window.setTitle('ColloSys');
+    window.setTitle(brand.name);
   });
   window.webContents.on('will-attach-webview', (event) => event.preventDefault());
   window.webContents.on('will-prevent-unload', (event) => {
@@ -135,9 +137,8 @@ function nativeMenu() {
           click: () =>
             dialog.showMessageBox(desktop.getMainWindow(), {
               title: 'ColloSys',
-              message: 'ColloSys',
-              detail:
-                'Local team collaboration. Built on Codecast (MIT). Checkpoint file contents are stored on the source device.',
+              message: `${brand.name} ${productVersion}`,
+              detail: `${brand.description}\n\n${brand.attribution}\nCheckpoint file contents are stored on the source device.`,
             }),
         },
       ],
@@ -177,8 +178,8 @@ desktop = createDesktopApp(
       newSession: '__CODECAST_NEW_SESSION',
       htmlClass: 'electron-desktop',
     },
-    assets: { icon: path.join(root, 'dist/codecast-app/android-chrome-512x512.png') },
-    window: { width: 1440, height: 960, minWidth: 900, minHeight: 640, backgroundColor: '#f5f5f2' },
+    assets: { icon: path.join(root, 'dist/codecast-app', brand.desktopIcon) },
+    window: { width: 1440, height: 960, minWidth: 900, minHeight: 640, backgroundColor: '#f4f5f7' },
     update: { enabled: false },
     web: { cache: false },
     palette: null,

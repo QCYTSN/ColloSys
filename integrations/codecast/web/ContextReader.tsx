@@ -18,12 +18,12 @@ import {
   ArrowClockwise,
   FileText,
   CheckCircle,
-  TerminalWindow,
   Code,
 } from '@phosphor-icons/react';
 import { WorkButton, MemberAvatar } from './ContextControls';
 import { shouldFollowStreaming } from '../components/conversationScroll';
 import type { Activity, SourceMessage } from './ContextModel';
+import { AgentTypeIcon, formatAgentType } from '../components/AgentTypeIcon';
 
 export type ReadingMemory = { offset: number; loaded: number; sizes: Record<string, number> };
 export type ReaderHandle = {
@@ -227,10 +227,17 @@ export const ContextReader = forwardRef<
                         <MemberAvatar member={activity.member} small />
                       ) : (
                         <span className="cw-agent-mark">
-                          <TerminalWindow size={15} />
+                          <AgentTypeIcon
+                            agentType={activity.session?.adapter ?? ''}
+                            className="collo-agent-icon"
+                          />
                         </span>
                       )}
-                      <strong>{message.role === 'user' ? activity.member.name : 'Codex'}</strong>
+                      <strong>
+                        {message.role === 'user'
+                          ? activity.member.name
+                          : formatAgentType(activity.session?.adapter)}
+                      </strong>
                       <span>{message.role === 'user' ? '原始请求' : '捕获回复'}</span>
                       <time>
                         {new Date(message.time).toLocaleTimeString('zh-CN', {

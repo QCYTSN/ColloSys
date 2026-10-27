@@ -87,7 +87,27 @@ export const list = query({
       .query('collo_heads')
       .withIndex('by_project', (q) => q.eq('projectId', args.projectId))
       .unique();
-    return { ...page, historyIndexed: !head || (head.sessionCursor ?? 0) >= head.seq };
+    // Identity comes from an actual captured event, including older indexes.
+    // At most 30 indexed point lookups; no unbounded event scan or schema rewrite.
+    const rows = await Promise.all(
+      page.page.map(async (session) => {
+        const first = await ctx.db
+          .query('collo_events')
+          .withIndex('by_project_seq', (q) =>
+            q.eq('projectId', args.projectId).eq('seq', session.firstSeq),
+          )
+          .unique();
+        const event = first?.event;
+        const adapter =
+          event?.kind === 'agent.message' &&
+          event.workspaceId === session.workspaceId &&
+          event.payload.sessionId === session.sessionId
+            ? event.payload.adapter
+            : undefined;
+        return { ...session, adapter };
+      }),
+    );
+    return { ...page, page: rows, historyIndexed: !head || (head.sessionCursor ?? 0) >= head.seq };
   },
 });
 export const messages = query({

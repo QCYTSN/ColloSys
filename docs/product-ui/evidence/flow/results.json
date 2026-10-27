@@ -1,0 +1,13 @@
+{
+  "native": false,
+  "checks": [
+    "Normal entry signs in to the actual project application",
+    "Captured messages are read through the mature ConversationView",
+    "Handoff persists, pins its source and reacts to recipient acceptance",
+    "Checkpoint uses the real file tree and Diff viewer",
+    "Core routes share the same shell and return to projects"
+  ],
+  "errors": [],
+  "capturedAt": "2026-10-27T08:16:09.117Z",
+  "data": "Existing persisted local acceptance account, real connector data and API mutations. No screenshot fixtures."
+}

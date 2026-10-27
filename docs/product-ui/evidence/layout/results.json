@@ -1,0 +1,73 @@
+{
+  "checks": [
+    {
+      "name": "activity-1440",
+      "width": 1440,
+      "scroll": 1440,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "settings-1440",
+      "width": 1440,
+      "scroll": 1440,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "activity-1120",
+      "width": 1120,
+      "scroll": 1120,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "settings-1120",
+      "width": 1120,
+      "scroll": 1120,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "activity-960",
+      "width": 960,
+      "scroll": 960,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "settings-960",
+      "width": 960,
+      "scroll": 960,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#ffffff",
+      "dark": false
+    },
+    {
+      "name": "settings-dark",
+      "width": 1440,
+      "scroll": 1440,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#202127",
+      "dark": true
+    },
+    {
+      "name": "activity-dark",
+      "width": 1440,
+      "scroll": 1440,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "palette": "#202127",
+      "dark": true
+    },
+    {
+      "name": "Reduced motion removes owned control transitions; Escape closes settings",
+      "duration": "1e-05s"
+    }
+  ],
+  "errors": []
+}
