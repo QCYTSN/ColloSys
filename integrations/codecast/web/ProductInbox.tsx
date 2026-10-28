@@ -37,7 +37,7 @@ export function ProductInbox() {
             </select>
           </label>
           <Button variant="ghost" size="sm" onClick={() => router.push('/inbox?view=native')}>
-            Native session inbox
+            Live conversations
           </Button>
         </div>
         <div className="min-h-0 flex-1">
@@ -49,7 +49,7 @@ export function ProductInbox() {
               </Button>
             </div>
           ) : selected ? (
-            <CapturedSessions projectId={selected._id} />
+            <CapturedSessions projectId={selected._id} global />
           ) : (
             <div className="collo-empty">
               <h2>{projects.data ? 'Start with a project' : 'Loading projects…'}</h2>

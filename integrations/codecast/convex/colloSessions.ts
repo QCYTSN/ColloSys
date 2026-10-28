@@ -104,7 +104,10 @@ export const list = query({
           event.payload.sessionId === session.sessionId
             ? event.payload.adapter
             : undefined;
-        return { ...session, adapter };
+        const preview = adapter && event?.kind === 'agent.message'
+          ? event.payload.text.replace(/\s+/g, ' ').trim().slice(0, 180)
+          : undefined;
+        return { ...session, adapter, preview };
       }),
     );
     return { ...page, page: rows, historyIndexed: !head || (head.sessionCursor ?? 0) >= head.seq };

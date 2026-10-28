@@ -7,7 +7,9 @@ import { promisify } from 'node:util';
 import { chromium, _electron as electron, expect } from '@playwright/test';
 import { ConvexHttpClient } from '../third_party/codecast/upstream/packages/convex/node_modules/convex/dist/esm/browser/index.js';
 const native = process.argv.includes('--native');
-const out = path.resolve('docs/product-ui/evidence', native ? 'native' : 'flow');
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR
+  ? path.resolve(process.env.COLLOSYS_UI_EVIDENCE_DIR)
+  : path.resolve('docs/product-ui/evidence', native ? 'native' : 'flow');
 await fs.mkdir(out, { recursive: true });
 const saved = JSON.parse(await fs.readFile('.local/product-ui-context.json', 'utf8'));
 const account = JSON.parse(
@@ -177,7 +179,10 @@ try {
       ],
       { timeout: 30000, windowsHide: true },
     );
-  await page.getByRole('link', { name: 'Conversations', exact: true }).click();
+  await page
+    .locator('.collo-project-tools')
+    .getByRole('button', { name: 'Conversations', exact: true })
+    .click();
   await page.locator(`[data-captured-session="${session.sessionId}"]`).click();
   await expect(page.getByTestId('captured-conversation')).toBeVisible();
   await expect(page.getByTestId('captured-conversation')).toContainText(

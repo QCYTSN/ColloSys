@@ -15,8 +15,9 @@ export function ProductHeader({
         <Logo />
       </Link>
       <div className="collo-topbar-nav">{nav}</div>
-      <div className="collo-topbar-workspace">{workspace}</div>
+      <span className="collo-header-label">Workspace</span>
       <div className="collo-topbar-search">{search}</div>
+      <div className="collo-topbar-workspace">{workspace}</div>
       <div className="collo-topbar-status">{status}</div>
       <div className="collo-topbar-actions">
         {actions}

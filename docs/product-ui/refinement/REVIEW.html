@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ColloSys 正式前端精修 · 前后对照</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      background: #f3f4f6;
+      color: #242630;
+      font:
+        15px/1.6 system-ui,
+        'Microsoft YaHei UI',
+        sans-serif;
+    }
+    main {
+      max-width: 1504px;
+      margin: auto;
+      padding: 32px;
+    }
+    h1 {
+      font-size: 25px;
+      letter-spacing: -0.5px;
+      margin: 0 0 8px;
+    }
+    p {
+      color: #646975;
+      margin: 8px 0 22px;
+    }
+    .tools {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin: 20px 0;
+    }
+    select,
+    button,
+    a {
+      font: inherit;
+    }
+    select,
+    button {
+      padding: 8px 12px;
+      border: 1px solid #d9dce2;
+      border-radius: 7px;
+      background: white;
+      color: inherit;
+    }
+    input {
+      accent-color: #6961b3;
+      width: 200px;
+    }
+    figure {
+      margin: 0;
+      background: white;
+      position: relative;
+      aspect-ratio: 1440/900;
+      overflow: hidden;
+      box-shadow: 0 2px 14px #2024330b;
+      border: 1px solid #d9dce2;
+      border-radius: 8px;
+    }
+    figure img {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      inset: 0;
+    }
+    .before {
+      clip-path: inset(0 50% 0 0);
+    }
+    .line {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: 50%;
+      width: 2px;
+      background: #6961b3;
+    }
+    .labels {
+      display: flex;
+      justify-content: space-between;
+      color: #666;
+      margin: 6px 0 22px;
+    }
+    a {
+      color: #514b91;
+    }
+    details {
+      margin: 24px 0;
+    }
+    video {
+      display: block;
+      width: 100%;
+      max-height: 900px;
+      background: #eceef1;
+      margin: 16px 0;
+      border-radius: 8px;
+    }
+    .extras {
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .hint {
+      font-size: 13px;
+    }
+    figure.masked::after { content:''; position:absolute; inset:0 auto auto 0; width:15%; height:6.5%; background:#dfe1e6; z-index:2; }
+    @media (max-width: 700px) {
+      main {
+        padding: 16px;
+      }
+      h1 {
+        font-size: 21px;
+      }
+    }
+  </style>
+  <main>
+    <h1>ColloSys · 正式前端精修</h1>
+    <p>
+      正式应用、相同本地项目与 1440 × 900
+      窗口。拖动分隔线查看改造前后；这里是验收资料，不是产品入口。
+    </p>
+    <div class="tools">
+      <label
+        >页面
+        <select id="page"></select></label
+      ><label>对照位置 <input id="split" type="range" min="0" max="100" value="50" /></label
+      ><button id="beforeButton">改造前</button><button id="afterButton">当前版本</button
+      ><a id="original" target="_blank">打开当前原图</a>
+      <label><input type="checkbox" id="mask" style="width:auto">遮住品牌，比较构图</label>
+    </div>
+    <figure>
+      <img id="after" alt="当前正式应用截图" /><img
+        id="before"
+        class="before"
+        alt="本轮改造前正式应用截图"
+      />
+      <div class="line"></div>
+    </figure>
+    <div class="labels"><span>左：5f31557 基线</span><span>右：本轮未提交版本</span></div>
+    <p class="hint">
+      记录均来自真实本地验收账户，没有伪造响应。活动时间等动态字段会随时间变化；密集场景使用另建、明确标为
+      TEST 的真实目录和捕获会话。右侧原生会话栏保留原有开关与空间偏好。
+    </p>
+    <details open>
+      <summary>独立桌面窗口 · 核心操作录像</summary>
+      <video controls preload="metadata" src="native/continuity.webm"></video>
+    </details>
+    <details>
+      <summary>长内容、窄窗和深色</summary>
+      <div class="extras">
+        <a href="native/16-dense-reader.png">65 条捕获消息</a
+        ><a href="native/20-dense-diff.png">32 个真实文件</a
+        ><a href="native/activity-1280.png">1280 × 800</a
+        ><a href="native/activity-1920.png">1920 × 1080</a><a href="native/activity-960.png">窄窗</a
+        ><a href="native/activity-dark.png">深色活动</a
+        ><a href="native/settings-dark.png">深色设置</a
+        ><a href="native/18-handoff-draft.png">交接草稿</a
+        ><a href="access/permission-continuity.webm">权限变化录像</a>
+      </div>
+    </details>
+    <p>
+      <a href="RECORD.md">简短实施与验证记录</a> · <a href="native/results.json">桌面回归结果</a> ·
+      <a href="access/results.json">权限与账号边界结果</a>
+    </p>
+  </main>
+  <script>
+    const pages = [
+      ['项目', 'projects', '04-projects'],
+      ['活动', 'activity', '03-activity'],
+      ['会话列表', 'conversations', '09-conversations'],
+      ['会话阅读', 'reader', '10-reader'],
+      ['代码审查', 'code', '11-code'],
+      ['任务', 'tasks', '14-tasks'],
+      ['交接', 'handoffs', '12-handoffs'],
+      ['目录历史', 'history', '13-history'],
+      ['设置', 'settings', '06-settings'],
+      ['连接', 'connections', '15-connections'],
+    ];
+    const pick = document.querySelector('#page'),
+      range = document.querySelector('#split'),
+      before = document.querySelector('#before'),
+      after = document.querySelector('#after');
+    pages.forEach((p, i) => pick.add(new Option(p[0], i)));
+    function update() {
+      const p = pages[+pick.value];
+      before.src = `before/${p[1]}.png`;
+      after.src = `after/${p[2]}.png`;
+      document.querySelector('#original').href = after.src;
+    }
+    function split(n) {
+      range.value = n;
+      before.style.clipPath = `inset(0 ${100 - n}% 0 0)`;
+      document.querySelector('.line').style.left = n + '%';
+    }
+    document.querySelector('#mask').onchange=e=>document.querySelector('figure').classList.toggle('masked',e.target.checked);
+    pick.onchange = update;
+    range.oninput = () => split(range.value);
+    document.querySelector('#beforeButton').onclick = () => split(100);
+    document.querySelector('#afterButton').onclick = () => split(0);
+    update();
+  </script>
+</html>

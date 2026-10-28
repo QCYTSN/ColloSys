@@ -6,6 +6,7 @@ import { useCollectionRows } from '../hooks/useCollectionRows';
 import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { useServerAuthState } from '../hooks/useServerAuthSettled';
 import { authPrincipal, useAuthPrincipal } from '../lib/authPrincipal';
+import { clearProjectViews } from './productViewState';
 import {
   assembleCheckpoint,
   bridgeHead,
@@ -31,6 +32,7 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 // IDs are explicitly client keys, so the original durable-delete policy removes
 // these rows from IDB as well as memory. A paginated omission never calls this.
 function purgeProject(projectId: string) {
+  clearProjectViews(projectId);
   const store = useInboxStore.getState();
   for (const key of ['colloEvents', 'colloWorkspaces'] as const) {
     const rows = store[key] as Record<string, { projectId: string }>;

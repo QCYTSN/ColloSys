@@ -18,6 +18,7 @@ import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { useAuthPrincipal } from '../lib/authPrincipal';
 import { useInboxStore } from '../store/inboxStore';
 import { capturedHref } from './CapturedSessions';
+import { readView, writeView, viewKey, clearProjectViews } from './productViewState';
 
 type Draft = {
   recipient: string;
@@ -25,17 +26,17 @@ type Draft = {
   context: string;
   nextSteps: string;
   taskId: string;
+  source?: { workspaceId: string; sessionId: string };
 };
 const emptyDraft: Draft = { recipient: '', title: '', context: '', nextSteps: '', taskId: '' };
 // Unsaved form drafts only. Records and status always come from Convex.
-const drafts = new Map<string, Draft>();
 export function ProjectHandoffs({ projectId }: { projectId: string }) {
   const principal = useAuthPrincipal();
   return (
     <Handoffs
       key={`${principal.epoch}:${projectId}`}
       projectId={projectId}
-      scope={`${principal.epoch}:${projectId}`}
+      scope={viewKey(projectId, 'handoff-draft')}
     />
   );
 }
@@ -43,23 +44,33 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   const router = useRouter(),
     search = useSearchParams();
   const selected = search.get('handoff');
-  const source =
+  const incomingSource =
     search.get('fromWorkspace') && search.get('fromSession')
       ? { workspaceId: search.get('fromWorkspace')!, sessionId: search.get('fromSession')! }
       : undefined;
-  const [open, setOpen] = useState(!!source || !!search.get('fromTask'));
-  const [draft, setDraft] = useState<Draft>(
-    () => drafts.get(scope) ?? { ...emptyDraft, taskId: search.get('fromTask') ?? '' },
-  );
+  const [open, setOpen] = useState(!!incomingSource || !!search.get('fromTask'));
+  const [draft, setDraft] = useState<Draft>(() => ({
+    ...(readView<Draft>(scope) ?? emptyDraft),
+    ...(incomingSource ? { source: incomingSource } : {}),
+    ...(search.get('fromTask') ? { taskId: search.get('fromTask')! } : {}),
+  }));
+  const source = draft.source;
   const sourceWorkspace = search.get('fromWorkspace'),
     sourceSession = search.get('fromSession'),
     sourceTask = search.get('fromTask');
   useEffect(() => {
     if ((sourceWorkspace && sourceSession) || sourceTask) {
       setOpen(true);
-      if (sourceTask) setDraft((previous) => ({ ...previous, taskId: sourceTask }));
+      setDraft((previous) => ({
+        ...previous,
+        ...(sourceTask ? { taskId: sourceTask } : {}),
+        source:
+          sourceWorkspace && sourceSession
+            ? { workspaceId: sourceWorkspace, sessionId: sourceSession }
+            : undefined,
+      }));
     }
-  }, [sourceWorkspace, sourceSession, sourceTask]);
+  }, [sourceWorkspace, sourceSession, sourceTask, projectId, router]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
@@ -80,11 +91,23 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   const send = useMutation(api.colloHandoffs.send),
     respond = useMutation(api.colloHandoffs.respond);
   const closeHref = `/projects/${projectId}?tab=handoffs`;
+  function changeOpen(value: boolean) {
+    if (busy) return;
+    setOpen(value);
+    // Consume after the project route has canonicalized. An effect competing
+    // with that route replacement can restore the stale open-intent parameters.
+    if (!value && (sourceWorkspace || sourceSession || sourceTask)) router.replace(closeHref);
+  }
   useEffect(() => {
-    for (const key of drafts.keys())
-      if (!key.startsWith(scope.split(':')[0] + ':')) drafts.delete(key);
-    drafts.set(scope, draft);
-  }, [scope, draft]);
+    if (!members.error && !page.error) writeView(scope, draft);
+  }, [scope, draft, members.error, page.error, projectId]);
+  useEffect(() => {
+    if (members.error || page.error) {
+      clearProjectViews(projectId);
+      setOpen(false);
+      setDraft({ ...emptyDraft });
+    }
+  }, [members.error, page.error, projectId]);
   const edit = (key: keyof Draft, value: string) =>
     setDraft((previous) => ({ ...previous, [key]: value }));
   const name = (id: string) =>
@@ -109,7 +132,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
         ...(draft.taskId ? { taskId: draft.taskId as Id<'tasks'> } : {}),
         ...(source ? { source } : {}),
       });
-      drafts.delete(scope);
+      writeView(scope, { ...emptyDraft });
       setDraft({ ...emptyDraft });
       setOpen(false);
       request.current = null;
@@ -136,6 +159,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
     <div className="h-full collo-handoffs" data-testid="project-handoffs">
       <DetailSplitLayout
         closeHref={closeHref}
+        accessValid={!page.error && !members.error && !detail.error}
         list={
           <div className="collo-session-list">
             <div className="collo-page-heading">
@@ -311,108 +335,107 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
           </div>
         ) : null}
       </DetailSplitLayout>
-      <Dialog
-        open={open}
-        onOpenChange={(value) => {
-          if (!busy) setOpen(value);
-        }}
-      >
-        <DialogContent className="collo-handoff-form">
-          <DialogHeader>
-            <DialogTitle>New handoff</DialogTitle>
-            <DialogDescription>A recipient, the context and a useful next step.</DialogDescription>
-          </DialogHeader>
-          <form onSubmit={submit}>
-            <label>
-              To
-              <select
-                required
-                aria-label="Handoff recipient"
-                value={draft.recipient}
-                onChange={(e) => edit('recipient', e.target.value)}
-              >
-                <option value="">Choose a project member</option>
-                {members.data?.members
-                  .filter((m: { id: string }) => m.id !== viewer)
-                  .map((m: { id: string; name: string }) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label>
-              Title
-              <input
-                required
-                maxLength={160}
-                value={draft.title}
-                onChange={(e) => edit('title', e.target.value)}
-                placeholder="What is ready to continue?"
-              />
-            </label>
-            <label>
-              Context
-              <textarea
-                required
-                rows={4}
-                maxLength={12000}
-                value={draft.context}
-                onChange={(e) => edit('context', e.target.value)}
-                placeholder="What has happened, and what should they know?"
-              />
-            </label>
-            <label>
-              Next steps
-              <textarea
-                rows={3}
-                maxLength={8000}
-                value={draft.nextSteps}
-                onChange={(e) => edit('nextSteps', e.target.value)}
-                placeholder="A clear next action"
-              />
-            </label>
-            <label>
-              Related task <span className="text-sol-text-dim">(optional)</span>
-              <select value={draft.taskId} onChange={(e) => edit('taskId', e.target.value)}>
-                <option value="">No related task</option>
-                {!members.error &&
-                  Object.values(
-                    tasks as Record<string, { _id: string; title: string; project_id?: string }>,
-                  )
-                    .filter((t) => t.project_id === projectId)
-                    .map((t) => (
-                      <option key={t._id} value={t._id}>
-                        {t.title}
+      <Dialog open={open} onOpenChange={changeOpen}>
+        {!members.error && !page.error && (
+          <DialogContent className="collo-handoff-form">
+            <DialogHeader>
+              <DialogTitle>New handoff</DialogTitle>
+              <DialogDescription>
+                A recipient, the context and a useful next step.
+              </DialogDescription>
+            </DialogHeader>
+            <form onSubmit={submit}>
+              <label>
+                To
+                <select
+                  required
+                  aria-label="Handoff recipient"
+                  value={draft.recipient}
+                  onChange={(e) => edit('recipient', e.target.value)}
+                >
+                  <option value="">Choose a project member</option>
+                  {members.data?.members
+                    .filter((m: { id: string }) => m.id !== viewer)
+                    .map((m: { id: string; name: string }) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
                       </option>
                     ))}
-              </select>
-            </label>
-            {source && (
-              <p className="collo-inline-notice">
-                The current captured conversation will be attached.
-              </p>
-            )}
-            {error && (
-              <p role="alert" className="collo-inline-notice">
-                {error}
-              </p>
-            )}
-            <div className="collo-handoff-actions">
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setOpen(false)}
-                disabled={busy}
-              >
-                Keep draft
-              </Button>
-              <Button type="submit" disabled={busy || !!members.error || !draft.recipient}>
-                {busy ? 'Sending…' : 'Send handoff'}
-              </Button>
-            </div>
-          </form>
-        </DialogContent>
+                </select>
+              </label>
+              <label>
+                Title
+                <input
+                  required
+                  maxLength={160}
+                  value={draft.title}
+                  onChange={(e) => edit('title', e.target.value)}
+                  placeholder="What is ready to continue?"
+                />
+              </label>
+              <label>
+                Context
+                <textarea
+                  required
+                  rows={4}
+                  maxLength={12000}
+                  value={draft.context}
+                  onChange={(e) => edit('context', e.target.value)}
+                  placeholder="What has happened, and what should they know?"
+                />
+              </label>
+              <label>
+                Next steps
+                <textarea
+                  rows={3}
+                  maxLength={8000}
+                  value={draft.nextSteps}
+                  onChange={(e) => edit('nextSteps', e.target.value)}
+                  placeholder="A clear next action"
+                />
+              </label>
+              <label>
+                Related task <span className="text-sol-text-dim">(optional)</span>
+                <select value={draft.taskId} onChange={(e) => edit('taskId', e.target.value)}>
+                  <option value="">No related task</option>
+                  {!members.error &&
+                    Object.values(
+                      tasks as Record<string, { _id: string; title: string; project_id?: string }>,
+                    )
+                      .filter((t) => t.project_id === projectId)
+                      .map((t) => (
+                        <option key={t._id} value={t._id}>
+                          {t.title}
+                        </option>
+                      ))}
+                </select>
+              </label>
+              {source && (
+                <p className="collo-inline-notice">
+                  The current captured conversation will be attached.
+                </p>
+              )}
+              {error && (
+                <p role="alert" className="collo-inline-notice">
+                  {error}
+                </p>
+              )}
+              <div className="collo-handoff-actions">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => changeOpen(false)}
+                  disabled={busy}
+                >
+                  Keep draft
+                </Button>
+                <Button type="submit" disabled={busy || !!members.error || !draft.recipient}>
+                  {busy ? 'Sending…' : 'Send handoff'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        )}
       </Dialog>
     </div>
   );

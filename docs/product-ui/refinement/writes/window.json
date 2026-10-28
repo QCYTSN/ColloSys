@@ -1,0 +1,11 @@
+{
+  "name": "ColloSys",
+  "title": "ColloSys",
+  "visible": true,
+  "native": true,
+  "sandbox": true,
+  "isolation": true,
+  "node": false,
+  "url": "http://127.0.0.1:3407/",
+  "profile": "D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\desktop-profiles\\test-c86d4d17-3c5f-44a3-a137-9e68d6877717"
+}

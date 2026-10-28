@@ -6,8 +6,14 @@ export type { LucideIcon } from 'lucide-react';
 // Agent and provider marks deliberately do not pass through this adapter.
 function icon(Component: P.Icon): LucideIcon {
   return forwardRef<SVGSVGElement, LucideProps>(
-    ({ absoluteStrokeWidth: _absolute, strokeWidth: _stroke, ...props }, ref) => (
-      <Component {...props} weight="regular" ref={ref} />
+    ({ absoluteStrokeWidth: _absolute, strokeWidth, ...props }, ref) => (
+      <Component
+        {...props}
+        weight={
+          Number(strokeWidth) >= 2.5 ? 'bold' : Number(strokeWidth) <= 1.5 ? 'light' : 'regular'
+        }
+        ref={ref}
+      />
     ),
   ) as LucideIcon;
 }
@@ -112,6 +118,9 @@ export const CircleDot = icon(P.Record),
   MoreHorizontal = icon(P.DotsThree),
   ImagePlus = icon(P.Image);
 export const MessageCircleQuestion = icon(P.ChatCircleDots),
+  ArrowRightToLine = icon(P.ArrowLineRight),
+  AppWindow = icon(P.AppWindow),
+  PanelsTopLeft = icon(P.Browsers),
   Eye = icon(P.Eye),
   Pin = icon(P.PushPin),
   GitBranch = icon(P.GitBranch),

@@ -1,0 +1,12 @@
+[
+  {
+    "text": "New project",
+    "classes": "cc-btn inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring/60 disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0 cc-btn-fill cc-btn-primary text-primary-foreground h-8 rounded-md px-3 text-xs",
+    "font": "13px / 19.5px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+    "fontSize": "13px",
+    "fontWeight": "400",
+    "lineHeight": "19.5px",
+    "height": "32px",
+    "transition": "background-color 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s"
+  }
+]

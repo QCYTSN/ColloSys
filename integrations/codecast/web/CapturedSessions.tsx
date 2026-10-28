@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation } from 'convex/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { colloApi as api } from './colloApi';
@@ -18,6 +18,7 @@ import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { useAuthPrincipal } from '../lib/authPrincipal';
 import { AgentBadge } from './AgentBadge';
 import { formatAgentType } from '../components/AgentTypeIcon';
+import { readView, writeView, viewKey, clearProjectViews } from './productViewState';
 
 export function capturedHref(
   projectId: string,
@@ -43,11 +44,13 @@ export function CapturedReader({
   workspaceId,
   sessionId,
   throughSeq,
+  backHref,
 }: {
   projectId: string;
   workspaceId: string;
   sessionId: string;
   throughSeq?: number;
+  backHref?: string;
 }) {
   const principal = useAuthPrincipal();
   return (
@@ -57,6 +60,7 @@ export function CapturedReader({
       workspaceId={workspaceId}
       sessionId={sessionId}
       throughSeq={throughSeq}
+      backHref={backHref}
     />
   );
 }
@@ -65,13 +69,19 @@ function Reader({
   workspaceId,
   sessionId,
   throughSeq,
+  backHref,
 }: {
   projectId: string;
   workspaceId: string;
   sessionId: string;
   throughSeq?: number;
+  backHref?: string;
 }) {
   const router = useRouter();
+  const key = viewKey(projectId, `conversation:${workspaceId}:${sessionId}:${throughSeq ?? ''}`);
+  const saved = useRef(readView<{ cursor: number; anchor?: string; offset?: number }>(key));
+  const restored = useRef(false);
+  const container = useRef<HTMLDivElement>(null);
   const [after, setAfter] = useState(0);
   const [pages, setPages] = useState<Record<number, CapturedMessage[]>>({});
   const page = useQueryNoThrow(api.colloSessions.messages, {
@@ -84,6 +94,42 @@ function Reader({
   const members = useQueryNoThrow(api.collo.projectMembers, {
     projectId: projectId as Id<'projects'>,
   });
+  const access = useRef(true);
+  access.current = !page.error && !members.error;
+  // Replay only previously requested pages through the existing authorized query.
+  // Reading hints contain no message text and are useless without fresh access.
+  useEffect(() => {
+    if (page.error || members.error) {
+      clearProjectViews(projectId);
+      saved.current = undefined;
+      return;
+    }
+    if (page.data?.hasMore && page.data.cursor <= (saved.current?.cursor ?? 0))
+      setAfter(page.data.cursor);
+  }, [page.data, page.error, members.error, projectId]);
+  useEffect(() => {
+    const root = container.current;
+    if (!root) return;
+    const remember = () => {
+      if (!access.current) return;
+      const sc = root.querySelector<HTMLElement>('[data-sv-feed]');
+      if (!sc || !sc.clientHeight) return;
+      const top = sc.getBoundingClientRect().top;
+      const anchors = [...sc.querySelectorAll<HTMLElement>('[data-reading-message]')];
+      const row = anchors.find((el) => el.getBoundingClientRect().bottom > top + 8);
+      const anchor = row?.dataset.readingMessage;
+      writeView(key, {
+        cursor: after,
+        anchor,
+        offset: row ? row.getBoundingClientRect().top - top : 0,
+      });
+    };
+    root.addEventListener('scroll', remember, true);
+    return () => {
+      remember();
+      root.removeEventListener('scroll', remember, true);
+    };
+  }, [key, after, !!page.data]);
   useEffect(() => {
     if (page.error) {
       setPages({});
@@ -143,20 +189,25 @@ function Reader({
     );
   if (!page.data && !rows.length)
     return (
-      <div className="collo-empty" role="status">
-        Loading conversation…
+      <div className="collo-reader-loading" role="status" aria-label="Loading conversation">
+        <div className="collo-reader-heading">Loading conversation…</div>
+        <div className="collo-skeleton-list">
+          <i />
+          <i />
+          <i />
+        </div>
       </div>
     );
   if (!first) return <div className="collo-empty">No captured messages in this conversation.</div>;
   return (
-    <div className="collo-captured-reader" data-testid="captured-conversation">
+    <div ref={container} className="collo-captured-reader" data-testid="captured-conversation">
       <div className="collo-reader-heading">
         <div>
           <Button
             variant="ghost"
             size="sm"
             aria-label="Back to conversations"
-            onClick={() => router.push(`/projects/${projectId}?tab=sessions`)}
+            onClick={() => router.push(backHref ?? `/projects/${projectId}?tab=sessions`)}
           >
             <ArrowLeft size={17} />
           </Button>
@@ -180,7 +231,26 @@ function Reader({
       <div className="min-h-0 flex-1">
         <ConversationView
           conversation={conversation}
-          backHref={`/projects/${projectId}?tab=sessions`}
+          backHref={backHref ?? `/projects/${projectId}?tab=sessions`}
+          targetMessageId={
+            rows.some((r) => r.eventId === saved.current?.anchor)
+              ? saved.current?.anchor
+              : undefined
+          }
+          onTargetSettled={() => {
+            if (restored.current || saved.current?.offset === undefined) return;
+            const sc = container.current?.querySelector<HTMLElement>('[data-sv-feed]');
+            const row = [
+              ...(sc?.querySelectorAll<HTMLElement>('[data-reading-message]') ?? []),
+            ].find((el) => el.dataset.readingMessage === saved.current?.anchor);
+            if (sc && row) {
+              restored.current = true;
+              sc.scrollTop +=
+                row.getBoundingClientRect().top -
+                sc.getBoundingClientRect().top -
+                saved.current.offset;
+            }
+          }}
           guest
           isOwner={false}
           showMessageInput={false}
@@ -213,15 +283,26 @@ function Reader({
   );
 }
 
-export function CapturedSessions({ projectId }: { projectId: string }) {
+export function CapturedSessions({
+  projectId,
+  global = false,
+}: {
+  projectId: string;
+  global?: boolean;
+}) {
   const principal = useAuthPrincipal();
-  return <SessionList key={`${principal.epoch}:${projectId}`} projectId={projectId} />;
+  return (
+    <SessionList key={`${principal.epoch}:${projectId}`} projectId={projectId} global={global} />
+  );
 }
-function SessionList({ projectId }: { projectId: string }) {
+function SessionList({ projectId, global }: { projectId: string; global: boolean }) {
   const router = useRouter(),
     search = useSearchParams();
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
-  const [filter, setFilter] = useState('');
+  const listKey = viewKey(projectId, global ? 'global-conversations' : 'project-conversations');
+  const [cursors, setCursors] = useState<(string | null)[]>(
+    () => readView<{ cursors: (string | null)[] }>(listKey)?.cursors ?? [null],
+  );
+  const [filter, setFilter] = useState(() => readView<{ filter: string }>(listKey)?.filter ?? '');
   const [indexing, setIndexing] = useState(false),
     [error, setError] = useState('');
   const indexHistory = useMutation(api.colloSessions.indexHistory);
@@ -234,18 +315,26 @@ function SessionList({ projectId }: { projectId: string }) {
   });
   const workspaceId = search.get('workspace'),
     sessionId = search.get('session');
+  useEffect(() => {
+    if (page.error || members.error) {
+      clearProjectViews(projectId);
+      return;
+    }
+    writeView(listKey, { cursors, filter });
+  }, [cursors, filter, listKey, page.error, members.error, projectId]);
   const through = search.get('through');
   const throughSeq =
     through && /^\d+$/.test(through) && Number.isSafeInteger(Number(through))
       ? Number(through)
       : undefined;
-  const closeHref = `/projects/${projectId}?tab=sessions`;
+  const closeHref = global ? `/inbox?project=${projectId}` : `/projects/${projectId}?tab=sessions`;
   const name = (id: string) =>
     members.data?.members.find((m: { id: string }) => m.id === id)?.name ?? 'Member';
   return (
     <div className="collo-sessions h-full" data-testid="captured-sessions">
       <DetailSplitLayout
         closeHref={closeHref}
+        accessValid={!page.error && !members.error}
         list={
           <div className="collo-session-list">
             <div className="collo-page-heading">
@@ -258,7 +347,7 @@ function SessionList({ projectId }: { projectId: string }) {
               <MagnifyingGlass size={17} />
               <input
                 aria-label="Filter captured conversations"
-                placeholder="Filter by member or session…"
+                placeholder="Find a conversation…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
@@ -279,7 +368,13 @@ function SessionList({ projectId }: { projectId: string }) {
                 </Button>
               </div>
             )}
-            {!page.data && !page.error && <p role="status">Loading conversations…</p>}
+            {!page.data && !page.error && (
+              <div className="collo-skeleton-list" role="status" aria-label="Loading conversations">
+                <i />
+                <i />
+                <i />
+              </div>
+            )}
             {page.data && !page.data.historyIndexed && (
               <div className="collo-inline-notice">
                 Older activity is available to index.{' '}
@@ -306,8 +401,10 @@ function SessionList({ projectId }: { projectId: string }) {
             {!page.error &&
               !members.error &&
               page.data?.page
-                .filter((s: { userId: string; sessionId: string }) =>
-                  `${name(s.userId)} ${s.sessionId}`.toLowerCase().includes(filter.toLowerCase()),
+                .filter((s: { userId: string; sessionId: string; preview?: string }) =>
+                  `${name(s.userId)} ${s.sessionId} ${s.preview ?? ''}`
+                    .toLowerCase()
+                    .includes(filter.toLowerCase()),
                 )
                 .map(
                   (s: {
@@ -318,22 +415,28 @@ function SessionList({ projectId }: { projectId: string }) {
                     updatedAt: number;
                     messageCount: number;
                     adapter?: string;
+                    preview?: string;
                   }) => (
                     <button
                       key={s._id}
                       data-captured-session={s.sessionId}
                       className={`collo-session-row ${sessionId === s.sessionId && workspaceId === s.workspaceId ? 'selected' : ''}`}
                       onClick={() =>
-                        router.push(capturedHref(projectId, s.workspaceId, s.sessionId))
+                        router.push(
+                          global
+                            ? `${closeHref}&workspace=${encodeURIComponent(s.workspaceId)}&session=${encodeURIComponent(s.sessionId)}`
+                            : capturedHref(projectId, s.workspaceId, s.sessionId),
+                        )
                       }
                     >
                       <span className="collo-session-glyph">
                         <AgentBadge agent={s.adapter} compact />
                       </span>
                       <span className="collo-session-summary">
-                        <strong>{name(s.userId)}</strong>
+                        <strong>{s.preview || `${formatAgentType(s.adapter)} conversation`}</strong>
                         <span>
-                          {formatAgentType(s.adapter)} · {s.messageCount} messages · {s.sessionId}
+                          {name(s.userId)} · {formatAgentType(s.adapter)} · {s.messageCount}{' '}
+                          messages
                         </span>
                       </span>
                       <time>
@@ -390,6 +493,7 @@ function SessionList({ projectId }: { projectId: string }) {
             workspaceId={workspaceId}
             sessionId={sessionId}
             throughSeq={throughSeq}
+            backHref={closeHref}
           />
         ) : null}
       </DetailSplitLayout>

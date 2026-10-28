@@ -17,6 +17,7 @@ import { formatAgentType } from '../components/AgentTypeIcon';
 import { capturedHref } from './CapturedSessions';
 import { FileDiffLayout } from '../components/FileDiffLayout';
 import { MemberFace } from './MemberFace';
+import { readView, writeView, viewKey } from './productViewState';
 import { Button } from '../components/ui/button';
 import {
   Dialog,
@@ -45,7 +46,8 @@ import { isPaired, localRequest, chooseDirectory, LOCAL_INSPECTION_INTERVAL_MS }
 
 const field =
   'w-full rounded-md border border-sol-border bg-sol-bg px-3 py-2 text-sm text-sol-text';
-function Files({ files }: { files: FileChange[] }) {
+function Files({ files, scope }: { files: FileChange[]; scope: string }) {
+  const saved = useRef(readView<{ file?: string; line?: number }>(scope));
   const projected = useMemo(
     () =>
       files.map((file) => {
@@ -68,6 +70,10 @@ function Files({ files }: { files: FileChange[] }) {
       <FileDiffLayout
         files={projected}
         title="Changed files"
+        focusFile={saved.current?.file}
+        focusLine={saved.current?.line}
+        onPositionChange={(position) => writeView(scope, position)}
+        onFileSelected={(file) => writeView(scope, { file })}
         renderFileExtra={(rendered) => {
           const file = files.find(
             (f) => f.path === (rendered.originalFilename ?? rendered.filename),
@@ -282,7 +288,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   );
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col text-sol-text"
+      className="collo-workspaces flex min-h-0 flex-1 flex-col text-sol-text"
       data-testid="local-workspaces"
       data-pane={pane}
       data-has-detail={!!current}
@@ -500,9 +506,10 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
       <div className="min-h-0 flex-1">
         <DetailSplitLayout
           closeHref={closeHref}
+          accessValid={!collaboration.error}
           list={
-            <div className="h-full overflow-y-auto" data-testid="collaboration-list">
-              <div className="mx-auto max-w-[60rem] px-4 py-5 sm:px-6">
+            <div className="collo-activity-list" data-testid="collaboration-list">
+              <div className="collo-activity-inner">
                 {pane === 'activity' ? (
                   <>
                     {activities.length === 0 && (
@@ -533,30 +540,35 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                             <button
                               onClick={() => setCurrent(event.id)}
                               data-event-id={event.id}
-                              className="min-w-0 flex-1 rounded px-2 py-1.5 text-left hover:bg-sol-bg-alt focus-visible:outline focus-visible:outline-sol-cyan"
+                              className="collo-activity-event min-w-0 flex-1 text-left hover:bg-sol-bg-alt focus-visible:outline focus-visible:outline-sol-cyan"
                             >
-                              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-                                <MemberFace id={event.actor.id} name={event.actor.name} />
-                                <span
-                                  className="collo-event-member font-medium text-sol-text"
-                                  title={event.actor.name}
-                                >
-                                  {event.actor.name}
-                                </span>
-                                <span className="text-sol-text-muted">
-                                  {event.kind === 'checkpoint' ? (
-                                    `${event.payload.totalFiles} files · ${event.payload.label}`
-                                  ) : (
-                                    <AgentBadge agent={event.payload.adapter} />
-                                  )}
-                                </span>
+                              <div className="collo-event-identity">
+                                <MemberFace id={event.actor.id} name={event.actor.name} size={30} />
+                                <div className="collo-event-copy">
+                                  <strong>
+                                    {event.kind === 'checkpoint'
+                                      ? event.payload.label
+                                      : event.payload.text.slice(0, 180)}
+                                  </strong>
+                                  <div className="collo-event-context">
+                                    <span className="collo-event-member" title={event.actor.name}>
+                                      {event.actor.name}
+                                    </span>
+                                    <span>·</span>
+                                    {event.kind === 'checkpoint' ? (
+                                      <span>
+                                        {event.payload.totalFiles}{' '}
+                                        {event.payload.totalFiles === 1 ? 'file' : 'files'}
+                                      </span>
+                                    ) : (
+                                      <AgentBadge agent={event.payload.adapter} />
+                                    )}
+                                  </div>
+                                </div>
                               </div>
-                              <div className="mt-1 truncate text-[11px] text-sol-text-dim">
+                              <div className="collo-event-directory">
                                 {workspaces.find((w) => w.workspaceId === event.workspaceId)
                                   ?.label ?? 'Workspace'}
-                                {event.kind === 'agent.message' && (
-                                  <> · {event.payload.text.slice(0, 100)}</>
-                                )}
                               </div>
                             </button>
                           </RailRow>
@@ -647,15 +659,15 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           }
         >
           {current ? (
-            <div className="h-full overflow-y-auto" data-testid="collaboration-detail">
-              <div className="mx-auto max-w-[60rem] px-4 py-4 sm:px-6">
+            <div className="collo-review" data-testid="collaboration-detail">
+              <div className="collo-review-content">
                 <Button variant="ghost" size="sm" onClick={() => setCurrent(null)}>
                   <ArrowLeft />
                   Back to activity
                 </Button>
                 {selectedEvent ? (
                   <>
-                    <div className="my-5 flex flex-wrap items-start justify-between gap-3">
+                    <div className="collo-review-heading">
                       <div>
                         <h3 className="text-base font-medium">
                           {selectedEvent.kind === 'checkpoint'
@@ -692,26 +704,26 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                     </div>
                     {selectedEvent.kind === 'checkpoint' ? (
                       <>
-                        <p className="mb-4 text-xs text-sol-text-dim">
-                          Full files stay on the source device. Restore is available while that
-                          checkpoint is retained; shared differences are not a file backup.
-                        </p>
-                        <p
-                          className="mb-4 text-xs text-sol-text-muted"
-                          data-testid="checkpoint-completeness"
-                        >
-                          {checkpoint.files.length} of {selectedEvent.payload.totalFiles} file
-                          changes
-                          {checkpoint.complete
-                            ? ' · Complete checkpoint'
-                            : checkpoint.integrity === 'invalid'
-                              ? ' · Inconsistent checkpoint'
-                              : checkpoint.loading
-                                ? ' · Loading checkpoint…'
-                                : checkpoint.integrity === 'legacy-unverified'
-                                  ? ' · Earlier checkpoint, server integrity not verified'
-                                  : ' · Checkpoint incomplete'}
-                        </p>
+                        <details className="collo-review-provenance">
+                          <summary data-testid="checkpoint-completeness">
+                            {checkpoint.files.length} of {selectedEvent.payload.totalFiles} file
+                            changes
+                            {checkpoint.complete
+                              ? ' · Complete checkpoint'
+                              : checkpoint.integrity === 'invalid'
+                                ? ' · Inconsistent checkpoint'
+                                : checkpoint.loading
+                                  ? ' · Loading checkpoint…'
+                                  : checkpoint.integrity === 'legacy-unverified'
+                                    ? ' · Earlier checkpoint, server integrity not verified'
+                                    : ' · Checkpoint incomplete'}
+                            <span>Source &amp; recovery details</span>
+                          </summary>
+                          <p>
+                            Full files stay on the source device. Restore is available while that
+                            checkpoint is retained; shared differences are not a file backup.
+                          </p>
+                        </details>
                         {checkpoint.error && (
                           <div role="alert" className="mb-4 text-xs text-sol-text-muted">
                             {checkpoint.error.message}
@@ -720,7 +732,11 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                             </Button>
                           </div>
                         )}
-                        <Files files={checkpoint.files} />
+                        <Files
+                          key={current}
+                          files={checkpoint.files}
+                          scope={viewKey(projectId, `checkpoint:${current}`)}
+                        />
                         {checkpoint.hasMore && (
                           <Button
                             className="mt-4"
@@ -898,7 +914,10 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                 {preview.files.length} files · preview expires{' '}
                 {new Date(preview.expiresAt).toLocaleTimeString()}
               </p>
-              <Files files={preview.files} />
+              <Files
+                files={preview.files}
+                scope={viewKey(projectId, `restore-preview:${preview.id}`)}
+              />
               {error && (
                 <p role="alert" className="text-sm text-red-400">
                   {error}

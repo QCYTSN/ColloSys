@@ -76,3 +76,10 @@ AgentIdentity 规范化 Codex/Claude/Gemini 等原 registry 别名；AgentBadge 
 完整原生演示见 [continuous-demo.webm](evidence/native/continuous-demo.webm)，截图索引见 [REVIEW.md](REVIEW.md)。后端、桌面及工作区的原始验收目录与失败后修复过程见根目录 PLAN.md；本地原始日志保留，不以旧失败截图作为最终交付画面。上述实施阶段没有提交、推送或部署。
 
 后续用户明确要求“首先推送github”，授权将本轮源码和验收证据提交并推送至公开仓库 `QCYTSN/ColloSys` 的 `codex/product-ui` 分支；不包含合并 main 或公开部署，也不代表用户已认可视觉质量。
+
+
+## 后续正式前端精修（2026-10-27）
+
+在已推送的 5f31557 上继续改造正式应用。当前精修记录及证据统一放在 [refinement/RECORD.md](refinement/RECORD.md) 和 [前后对比页](refinement/REVIEW.html)，保留本文件此前阶段的原始证据。本轮未提交推送；视觉认可仍由用户决定。
+
+2026-10-28 用户随后明确要求“先推送提交”，授权提交并推送本轮精修到现有 `codex/product-ui` 分支。上文未提交状态及 `version.json` 的 `committed: false` 指验收资料生成时的状态。

@@ -1,0 +1,12 @@
+{
+  "backdrop": {
+    "radius": "14px",
+    "shadow": "rgba(32, 35, 48, 0.024) 0px 2px 6px 0px, rgba(32, 35, 48, 0.055) 0px 12px 38px 0px",
+    "width": "1440px"
+  },
+  "surface": {
+    "width": "1080px",
+    "height": "846px",
+    "radius": "12px"
+  }
+}

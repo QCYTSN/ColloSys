@@ -1,0 +1,10 @@
+{
+  "baseline": "5f315571bb939c964c17cae88e0ead0619ec692a",
+  "branch": "codex/product-ui",
+  "inputFingerprint": "108a1bd2c0575fc0f3f784d76a2e3c1417c61a4d8a277b4a33245f5045db7a6a",
+  "upstream": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+  "changedFiles": 133,
+  "entry": "npm start",
+  "capturedAt": "2026-10-27T12:59:10.290Z",
+  "committed": false
+}

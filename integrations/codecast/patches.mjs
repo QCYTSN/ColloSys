@@ -6,6 +6,7 @@ import { nativeBackendPatches } from './native-backend-patches.mjs';
 import frontendPatches from './frontend-patches.mjs';
 import { designPatches } from './design-patches.mjs';
 import { productUiPatches } from './product-ui-patches.mjs';
+import { refinementPatches } from './refinement-patches.mjs';
 export const patches = [
   ...productPatches,
   ...backendPatches,
@@ -125,4 +126,5 @@ export const patches = [
       '  const redirectTo = returnTo?.startsWith("/") && !returnTo.startsWith("//") ? returnTo : "/projects";',
   },
   ...productUiPatches,
+  ...refinementPatches,
 ];
