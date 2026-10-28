@@ -1,0 +1,358 @@
+@import './product-boot.css';
+/* New sign-in surface uses the mature authentication hooks and return path. */
+.collo-auth-layout {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.05fr);
+  font-family: var(--font-sans);
+  color: var(--sol-text);
+  background: var(--sol-bg);
+}
+.collo-auth-brand {
+  background: var(--sol-bg-alt);
+  padding: 44px clamp(30px, 5vw, 80px);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+.collo-auth-brand > .collo-logo {
+  position: absolute;
+  top: 14px;
+  left: 20px;
+}
+.collo-auth-statement {
+  margin: auto 0;
+  padding: 70px 0 90px;
+}
+.collo-auth-statement .collo-mark {
+  margin-bottom: 36px;
+  box-shadow: 0 8px 32px #b8814114;
+}
+.collo-auth-statement h1 {
+  font-size: clamp(34px, 3.4vw, 54px);
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  font-weight: 500;
+  margin: 0 0 24px;
+}
+.collo-auth-statement p {
+  font-size: 15px;
+  color: var(--sol-text-muted);
+  line-height: 1.7;
+}
+.collo-auth-edition {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--sol-text-dim);
+}
+.collo-auth-work {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+  padding: 70px 48px;
+}
+.collo-auth-content {
+  width: 100%;
+  max-width: 370px;
+  margin: auto 0;
+}
+.collo-auth-step {
+  animation: collo-reveal 180ms ease-out;
+}
+.collo-auth-step h2 {
+  font-size: 30px;
+  line-height: 1.2;
+  margin: 10px 0 14px;
+  letter-spacing: -0.035em;
+}
+.collo-auth-step > p {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--sol-text-muted);
+}
+.collo-auth-step form {
+  margin-top: 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.collo-auth-step label {
+  font-size: 12px;
+  font-weight: 500;
+  margin-top: 12px;
+}
+.collo-auth-step label:first-child {
+  margin-top: 0;
+}
+.collo-auth-step input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--sol-border);
+  background: var(--sol-bg);
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 22px;
+  padding: 11px 13px;
+  color: var(--sol-text);
+}
+.collo-auth-step input:focus {
+  outline: 2px solid var(--collo-accent-soft);
+  outline-offset: 1px;
+  border-color: var(--sol-violet);
+}
+.collo-password {
+  position: relative;
+}
+.collo-password input {
+  padding-right: 48px;
+}
+.collo-password button {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+}
+.collo-auth-submit {
+  margin-top: 18px;
+  min-height: 44px;
+  justify-content: space-between;
+  padding: 0 15px;
+  font-size: 14px;
+}
+.collo-auth-error {
+  font-size: 13px;
+  color: var(--sol-red);
+  line-height: 1.5;
+  padding: 12px;
+  background: color-mix(in srgb, var(--sol-red) 7%, var(--sol-bg));
+  border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.collo-auth-switch {
+  margin-top: 28px;
+}
+.collo-auth-switch a {
+  color: var(--sol-text);
+  font-weight: 500;
+  margin-left: 4px;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.collo-auth-local {
+  font-size: 12px;
+  margin-top: 16px;
+}
+.collo-auth-work > footer {
+  margin-top: 60px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--sol-text-dim);
+  text-align: center;
+}
+@media (max-width: 760px) {
+  .collo-auth-layout {
+    grid-template-columns: 1fr;
+  }
+  .collo-auth-brand {
+    padding: 24px 28px;
+    gap: 20px;
+  }
+  .collo-auth-statement {
+    display: none;
+  }
+  .collo-auth-edition {
+    display: none;
+  }
+  .collo-auth-work {
+    padding: 40px 28px;
+  }
+  .collo-auth-content {
+    max-width: 410px;
+  }
+}
+/* Storage belongs to directory history, with explicit, scoped confirmations. */
+.collo-storage-dialog {
+  width: min(780px, calc(100vw - 40px));
+  max-width: none;
+  max-height: calc(100dvh - 40px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  overflow: hidden;
+}
+.collo-storage {
+  overflow: auto;
+  min-height: 0;
+  min-width: 0;
+  padding-right: 8px;
+  scrollbar-gutter: stable;
+  container: storage / inline-size;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.collo-storage-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: var(--collo-tool);
+  padding: 16px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+}
+.collo-storage-summary > div {
+  min-width: 0;
+  flex: 1;
+}
+.collo-storage-summary > svg {
+  flex: none;
+}
+.collo-storage-summary p {
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+.collo-storage section {
+  border-top: 1px solid var(--collo-rule);
+  padding: 22px 0;
+}
+.collo-storage header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.collo-storage h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+.collo-storage header span,
+.collo-storage p,
+.collo-storage small {
+  color: var(--sol-text-muted);
+}
+.collo-storage p {
+  margin: 7px 0;
+  overflow-wrap: anywhere;
+}
+.collo-policy-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.collo-storage label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 0;
+  font-size: 12px;
+}
+.collo-storage input:not([type='checkbox']),
+.collo-storage select {
+  padding: 9px 11px;
+  border: 1px solid var(--sol-border);
+  border-radius: 7px;
+  background: var(--sol-bg);
+  color: var(--sol-text);
+  width: 100%;
+  min-width: 0;
+  font-size: 13px;
+  line-height: 20px;
+}
+.collo-storage input:focus-visible,
+.collo-storage select:focus-visible {
+  outline: 2px solid var(--sol-violet);
+  outline-offset: 2px;
+}
+.collo-storage-checkpoint {
+  margin: 22px 0 12px;
+}
+.collo-storage-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--collo-rule);
+  min-width: 0;
+}
+.collo-storage-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+.collo-storage-row strong {
+  font-size: 13px;
+  font-weight: 500;
+}
+.collo-storage-row p {
+  font-size: 11px;
+}
+.collo-storage-row small {
+  font-size: 11px;
+}
+.collo-storage-confirm {
+  margin: 16px 0 6px;
+  padding: 20px;
+  border: 1px solid var(--sol-violet);
+  background: var(--collo-selected);
+  border-radius: 10px;
+  animation: collo-reveal 140ms ease-out;
+}
+.collo-storage-confirm label {
+  margin: 15px 0;
+}
+.collo-storage label.collo-confirm-check {
+  flex-direction: row;
+  align-items: flex-start;
+}
+.collo-confirm-check input {
+  flex: none;
+  margin-top: 4px;
+}
+@container storage (max-width:540px) {
+  .collo-storage-row {
+    flex-wrap: wrap;
+  }
+  .collo-storage-row > div:first-child {
+    flex-basis: 100%;
+  }
+  .collo-storage-summary {
+    flex-wrap: wrap;
+  }
+  .collo-policy-fields {
+    grid-template-columns: 1fr;
+  }
+  .collo-storage-summary > button {
+    margin-left: 38px;
+  }
+}
+@keyframes collo-reveal {
+  from {
+    opacity: 0.45;
+    transform: translateY(3px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collo-auth-step,
+  .collo-project-overview,
+  .collo-handoff-detail,
+  .collo-reading-header,
+  .collo-storage-confirm {
+    animation: none;
+  }
+  .collo-project-row {
+    transition: none;
+  }
+  [data-collo-floating] {
+    animation: none !important;
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "passed": true,
+  "checks": [
+    "Real logout cycle 1: both windows clear, reloading stays signed out",
+    "Real logout cycle 2: both windows clear, reloading stays signed out",
+    "Real logout cycle 3: both windows clear, reloading stays signed out"
+  ],
+  "at": "2026-10-28T08:23:07.071Z"
+}

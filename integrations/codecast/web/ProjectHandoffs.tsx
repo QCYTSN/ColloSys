@@ -14,7 +14,8 @@ import {
   DialogDescription,
 } from '../components/ui/dialog';
 import { DetailSplitLayout } from '../components/DetailSplitLayout';
-import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
+import { useProductQuery as useQueryNoThrow } from './useProductQuery';
+import { CheckpointSource, type CheckpointReference } from './CheckpointSource';
 import { useAuthPrincipal } from '../lib/authPrincipal';
 import { useInboxStore } from '../store/inboxStore';
 import { capturedHref } from './CapturedSessions';
@@ -27,6 +28,7 @@ type Draft = {
   nextSteps: string;
   taskId: string;
   source?: { workspaceId: string; sessionId: string };
+  checkpoint?: CheckpointReference;
 };
 const emptyDraft: Draft = { recipient: '', title: '', context: '', nextSteps: '', taskId: '' };
 // Unsaved form drafts only. Records and status always come from Convex.
@@ -48,29 +50,52 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
     search.get('fromWorkspace') && search.get('fromSession')
       ? { workspaceId: search.get('fromWorkspace')!, sessionId: search.get('fromSession')! }
       : undefined;
-  const [open, setOpen] = useState(!!incomingSource || !!search.get('fromTask'));
+  const incomingCheckpoint =
+    search.get('fromCheckpoint') && search.get('checkpointWorkspace')
+      ? {
+          workspaceId: search.get('checkpointWorkspace')!,
+          checkpointId: search.get('fromCheckpoint')!,
+        }
+      : undefined;
+  const [open, setOpen] = useState(
+    !!incomingSource || !!incomingCheckpoint || !!search.get('fromTask'),
+  );
   const [draft, setDraft] = useState<Draft>(() => ({
     ...(readView<Draft>(scope) ?? emptyDraft),
     ...(incomingSource ? { source: incomingSource } : {}),
+    ...(incomingCheckpoint ? { checkpoint: incomingCheckpoint } : {}),
     ...(search.get('fromTask') ? { taskId: search.get('fromTask')! } : {}),
   }));
   const source = draft.source;
   const sourceWorkspace = search.get('fromWorkspace'),
     sourceSession = search.get('fromSession'),
-    sourceTask = search.get('fromTask');
+    sourceTask = search.get('fromTask'),
+    checkpointId = search.get('fromCheckpoint'),
+    checkpointWorkspace = search.get('checkpointWorkspace');
   useEffect(() => {
-    if ((sourceWorkspace && sourceSession) || sourceTask) {
+    if ((sourceWorkspace && sourceSession) || sourceTask || (checkpointId && checkpointWorkspace)) {
       setOpen(true);
       setDraft((previous) => ({
         ...previous,
         ...(sourceTask ? { taskId: sourceTask } : {}),
+        ...(checkpointId && checkpointWorkspace
+          ? { checkpoint: { checkpointId, workspaceId: checkpointWorkspace } }
+          : {}),
         source:
           sourceWorkspace && sourceSession
             ? { workspaceId: sourceWorkspace, sessionId: sourceSession }
             : undefined,
       }));
     }
-  }, [sourceWorkspace, sourceSession, sourceTask, projectId, router]);
+  }, [
+    sourceWorkspace,
+    sourceSession,
+    sourceTask,
+    checkpointId,
+    checkpointWorkspace,
+    projectId,
+    router,
+  ]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const [cursors, setCursors] = useState<(string | null)[]>([null]);
@@ -91,31 +116,40 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   const send = useMutation(api.colloHandoffs.send),
     respond = useMutation(api.colloHandoffs.respond);
   const closeHref = `/projects/${projectId}?tab=handoffs`;
+  const attachedCheckpoint = useQueryNoThrow(
+    api.collo.checkpointParts,
+    draft.checkpoint ? { projectId: projectId as Id<'projects'>, ...draft.checkpoint } : 'skip',
+  );
+  const checkpointReady =
+    !draft.checkpoint || (!attachedCheckpoint.error && attachedCheckpoint.data?.complete === true);
+  const denied = members.denied || page.denied;
   function changeOpen(value: boolean) {
     if (busy) return;
     setOpen(value);
     // Consume after the project route has canonicalized. An effect competing
     // with that route replacement can restore the stale open-intent parameters.
-    if (!value && (sourceWorkspace || sourceSession || sourceTask)) router.replace(closeHref);
+    if (!value && (sourceWorkspace || sourceSession || sourceTask || checkpointId))
+      router.replace(closeHref);
   }
   useEffect(() => {
-    if (!members.error && !page.error) writeView(scope, draft);
-  }, [scope, draft, members.error, page.error, projectId]);
+    if (!denied) writeView(scope, draft);
+  }, [scope, draft, denied]);
   useEffect(() => {
-    if (members.error || page.error) {
+    if (denied) {
       clearProjectViews(projectId);
       setOpen(false);
       setDraft({ ...emptyDraft });
     }
-  }, [members.error, page.error, projectId]);
+  }, [denied, projectId]);
   const edit = (key: keyof Draft, value: string) =>
     setDraft((previous) => ({ ...previous, [key]: value }));
   const name = (id: string) =>
     members.data?.members.find((m: { id: string }) => m.id === id)?.name ?? 'Member';
   const handoff =
-    !detail.error && !members.error && detail.data?.projectId === projectId ? detail.data : null;
+    !detail.denied && !members.denied && detail.data?.projectId === projectId ? detail.data : null;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
+    if (!checkpointReady || denied || members.error || page.error) return;
     setBusy(true);
     setError('');
     const contents = JSON.stringify({ ...draft, source });
@@ -131,6 +165,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
         nextSteps: draft.nextSteps,
         ...(draft.taskId ? { taskId: draft.taskId as Id<'tasks'> } : {}),
         ...(source ? { source } : {}),
+        ...(draft.checkpoint ? { checkpoint: draft.checkpoint } : {}),
       });
       writeView(scope, { ...emptyDraft });
       setDraft({ ...emptyDraft });
@@ -159,7 +194,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
     <div className="h-full collo-handoffs" data-testid="project-handoffs">
       <DetailSplitLayout
         closeHref={closeHref}
-        accessValid={!page.error && !members.error && !detail.error}
+        accessValid={!denied && !detail.denied}
         list={
           <div className="collo-session-list">
             <div className="collo-page-heading">
@@ -187,8 +222,8 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
               </p>
             )}
             {!page.data && !page.error && <p role="status">Loading handoffs…</p>}
-            {!page.error &&
-              !members.error &&
+            {!page.denied &&
+              !members.denied &&
               page.data?.page.map((h) => (
                 <button
                   key={h._id}
@@ -243,7 +278,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
         }
       >
         {selected ? (
-          <div className="collo-handoff-detail">
+          <div key={selected} className="collo-handoff-detail">
             <Button variant="ghost" size="sm" onClick={() => router.push(closeHref)}>
               <ArrowLeft size={16} /> Back to handoffs
             </Button>
@@ -291,10 +326,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                     </Link>
                   )}
                   {handoff.checkpoint && (
-                    <p className="collo-inline-notice">
-                      Checkpoint {handoff.checkpoint.checkpointId} ·{' '}
-                      {handoff.checkpoint.workspaceId}
-                    </p>
+                    <CheckpointSource projectId={projectId} source={handoff.checkpoint} />
                   )}
                 </div>
                 {error && (
@@ -336,7 +368,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
         ) : null}
       </DetailSplitLayout>
       <Dialog open={open} onOpenChange={changeOpen}>
-        {!members.error && !page.error && (
+        {!denied && (
           <DialogContent className="collo-handoff-form">
             <DialogHeader>
               <DialogTitle>New handoff</DialogTitle>
@@ -345,6 +377,21 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
               </DialogDescription>
             </DialogHeader>
             <form onSubmit={submit}>
+              {(members.error || page.error) && (
+                <p className="collo-inline-notice" role="alert">
+                  Connection interrupted. Your draft is kept.
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => {
+                      members.retry();
+                      page.retry();
+                    }}
+                  >
+                    Retry
+                  </Button>
+                </p>
+              )}
               <label>
                 To
                 <select
@@ -377,6 +424,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 Context
                 <textarea
                   required
+                  aria-label="Context"
                   rows={4}
                   maxLength={12000}
                   value={draft.context}
@@ -388,6 +436,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 Next steps
                 <textarea
                   rows={3}
+                  aria-label="Next steps"
                   maxLength={8000}
                   value={draft.nextSteps}
                   onChange={(e) => edit('nextSteps', e.target.value)}
@@ -398,7 +447,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 Related task <span className="text-sol-text-dim">(optional)</span>
                 <select value={draft.taskId} onChange={(e) => edit('taskId', e.target.value)}>
                   <option value="">No related task</option>
-                  {!members.error &&
+                  {!members.denied &&
                     Object.values(
                       tasks as Record<string, { _id: string; title: string; project_id?: string }>,
                     )
@@ -415,6 +464,13 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                   The current captured conversation will be attached.
                 </p>
               )}
+              {draft.checkpoint && (
+                <CheckpointSource
+                  projectId={projectId}
+                  source={draft.checkpoint}
+                  onRemove={() => setDraft((previous) => ({ ...previous, checkpoint: undefined }))}
+                />
+              )}
               {error && (
                 <p role="alert" className="collo-inline-notice">
                   {error}
@@ -429,7 +485,12 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 >
                   Keep draft
                 </Button>
-                <Button type="submit" disabled={busy || !!members.error || !draft.recipient}>
+                <Button
+                  type="submit"
+                  disabled={
+                    busy || !!members.error || !!page.error || !draft.recipient || !checkpointReady
+                  }
+                >
                   {busy ? 'Sending…' : 'Send handoff'}
                 </Button>
               </div>

@@ -8,6 +8,7 @@ import { colorThemeBootPlugin } from "../upstream/packages/web/plugins/colorThem
 import { laneBootPlugin } from "../upstream/packages/web/plugins/laneBoot";
 import { themeVarsByMode } from "../upstream/packages/web/lib/theme/themeVars";
 import { productTheme } from "../../../integrations/codecast/web/productTheme";
+import { productHtml } from "../../../integrations/codecast/boot.mjs";
 
 // Run the actual upstream app. Keep adaptation outside the vendored source.
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -56,7 +57,7 @@ export default defineConfig({
     react(), appMode ? {
       name: 'collosys-color-theme-boot',
       transformIndexHtml: { order: 'pre', handler: () => [{ tag: 'script', children: `window.__ccDefaultColorTheme=${JSON.stringify(themeVarsByMode(productTheme))}`, injectTo: 'head-prepend' }] },
-    } : colorThemeBootPlugin(), laneBootPlugin(),
+    } : colorThemeBootPlugin(), ...(appMode ? [] : [laneBootPlugin()]),
     {
       name: "collosys-local-boundary",
       resolveId(id) { if (id === "virtual:pwa-register") return "\0collosys-no-service-worker"; },
@@ -78,6 +79,7 @@ export default defineConfig({
       transformIndexHtml: {
         order: "pre",
         handler(html) {
+          if (appMode) html = productHtml(themeVarsByMode(productTheme));
           if (appMode) html = html
             .replace(/<title>[\s\S]*?<\/title>/, '<title>ColloSys</title>')
             .replace(/<meta\b[^>]*(?:name="(?:description|apple-itunes-app|twitter:[^"]+)"|property="og:[^"]+")[^>]*>/g, '')
@@ -89,7 +91,12 @@ export default defineConfig({
       },
     },
   ],
-  resolve: { ...sharedResolve, alias: Object.fromEntries(Object.entries(sharedResolve.alias).map(([key, value]) => [key, appMode && path.isAbsolute(value) ? value.replace(originalRoot, webRoot) : value])) },
+  resolve: { ...sharedResolve, alias: {
+    ...Object.fromEntries(Object.entries(sharedResolve.alias).map(([key, value]) => [key, appMode && path.isAbsolute(value) ? value.replace(originalRoot, webRoot) : value])),
+    // Dependency junctions point at the immutable install. Product auth must
+    // resolve the prepared source so owned storage patches reach the bundle.
+    ...(appMode ? { "@platform/auth/web": path.resolve(webRoot, '../../platform/packages/auth/src/web/index.ts') } : {}),
+  } },
   css: { postcss: webRoot },
   cacheDir: path.join(webRoot, appMode ? "node_modules/.vite-collo-app" : "node_modules/.vite-collo"),
   server: { host: "127.0.0.1", port: appMode ? 3407 : 3297, strictPort: true, headers: { "Content-Security-Policy": csp }, fs: { allow: [path.resolve(here, ".."), path.resolve(webRoot, '../..')] } },

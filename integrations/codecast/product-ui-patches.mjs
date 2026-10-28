@@ -38,7 +38,7 @@ const iconFiles = [
   'components/ui/dropdown-menu.tsx',
 ];
 const iconPatches = iconFiles.flatMap((file) =>
-  [...read(file).matchAll(/import\s*\{[^}]+\}\s*from\s*"lucide-react";/gs)].map((match) =>
+  [...read(file).matchAll(/import\s*\{[^}]+\}\s*from\s*"lucide-react";?/gs)].map((match) =>
     patch(
       file,
       match[0],

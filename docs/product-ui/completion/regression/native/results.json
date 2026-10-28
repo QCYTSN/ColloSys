@@ -1,0 +1,150 @@
+{
+  "native": true,
+  "passed": true,
+  "checks": [
+    "Real control size and press feedback survive the product cascade",
+    "Ordinary dialog uses a separate backdrop and actual surface",
+    "Settings has real exit, immediate intent and focus return",
+    "Global conversations keep their navigation source on open and return",
+    "Diff uses remaining stage height with one vertical code scroller",
+    "Project menu returns focus on Escape and closes on outside click",
+    "Long captured conversation restores its authorized page preparation and message anchor",
+    "Unsent handoff draft survives route changes and remains scoped to its project",
+    "Multi-file review retains the selected original path when returning",
+    "Layout works at 1440×900, 1280×800, 1920×1080 and narrow widths",
+    "Reduced motion and keyboard exit have a complete path"
+  ],
+  "styles": [
+    {
+      "label": "small outline button",
+      "font": "500 12px / 16px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "lineHeight": "16px",
+      "height": "32px",
+      "transition": "background-color 0.15s, box-shadow 0.15s, color 0.15s, transform 0.08s",
+      "border": "1px solid rgb(225, 227, 233)",
+      "radius": "7px",
+      "icon": {
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "label": "project tab",
+      "font": "12px / 18px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "lineHeight": "18px",
+      "height": "32px",
+      "transition": "color 0.15s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), text-decoration-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), fill 0.15s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "6px 6px 0px 0px",
+      "icon": {
+        "width": 14,
+        "height": 14
+      }
+    },
+    {
+      "label": "native select",
+      "font": "12px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "lineHeight": "normal",
+      "height": "32px",
+      "transition": "border-color 0.12s, box-shadow 0.12s",
+      "border": "1px solid rgb(225, 227, 233)",
+      "radius": "8px",
+      "icon": null
+    },
+    {
+      "label": "primary button",
+      "font": "500 12px / 16px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "lineHeight": "16px",
+      "height": "32px",
+      "transition": "background-color 0.15s, box-shadow 0.15s, color 0.15s, transform 0.08s",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "7px",
+      "icon": {
+        "width": 16,
+        "height": 16
+      }
+    },
+    {
+      "label": "input",
+      "font": "",
+      "fontSize": "13px",
+      "fontWeight": "400",
+      "lineHeight": "20px",
+      "height": "40px",
+      "transition": "border-color 0.12s, box-shadow 0.12s",
+      "border": "1px solid rgb(225, 227, 233)",
+      "radius": "8px",
+      "icon": null
+    },
+    {
+      "label": "settings navigation",
+      "font": "500 12px / 18px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "500",
+      "lineHeight": "18px",
+      "height": "32px",
+      "transition": "background-color 0.12s, color 0.12s",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "6px",
+      "icon": {
+        "width": 15.913482666015625,
+        "height": 15.913482666015625
+      }
+    },
+    {
+      "label": "icon button",
+      "font": "14px / 21px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "lineHeight": "21px",
+      "height": "32px",
+      "transition": "background-color 0.12s, color 0.12s, transform 0.08s",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "7px",
+      "icon": {
+        "width": 17.9412841796875,
+        "height": 17.941360473632812
+      }
+    },
+    {
+      "label": "project menu trigger",
+      "font": "12px / 18px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "12px",
+      "fontWeight": "400",
+      "lineHeight": "18px",
+      "height": "32px",
+      "transition": "all",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "7px",
+      "icon": {
+        "width": 14,
+        "height": 14
+      }
+    },
+    {
+      "label": "project menu item",
+      "font": "14px / 21px \"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "14px",
+      "fontWeight": "400",
+      "lineHeight": "21px",
+      "height": "24px",
+      "transition": "color 0.15s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), text-decoration-color 0.15s cubic-bezier(0.4, 0, 0.2, 1), fill 0.15s cubic-bezier(0.4, 0, 0.2, 1), stroke 0.15s cubic-bezier(0.4, 0, 0.2, 1)",
+      "border": "0px solid rgb(225, 227, 233)",
+      "radius": "6px",
+      "icon": {
+        "width": 13.8189697265625,
+        "height": 13.8189697265625
+      }
+    }
+  ],
+  "errors": [],
+  "capturedAt": "2026-10-28T07:32:37.939Z"
+}

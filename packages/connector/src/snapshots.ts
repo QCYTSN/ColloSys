@@ -79,6 +79,9 @@ export class Snapshots {
     )
       throw new Error('Managed Git repository points outside its authorized state directory');
     await git(this.mirror, ['config', 'core.autocrlf', 'false']);
+    // A managed mirror's absolute prefix is longer than the user's directory.
+    // Allow Windows Git to read those valid files without changing user/global Git.
+    if (process.platform === 'win32') await git(this.mirror, ['config', 'core.longpaths', 'true']);
     await git(this.mirror, ['config', 'core.hooksPath', path.join(this.state, 'disabled-hooks')]);
     try {
       await git(this.mirror, ['rev-parse', '--verify', 'HEAD']);

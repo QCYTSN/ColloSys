@@ -23,7 +23,6 @@ export function ProductProjectHeader({
           <ArrowLeft size={18} />
         </Link>
         <div className="collo-project-title">
-          <span className="collo-eyebrow">PROJECT</span>
           <IntentTitle
             title={title}
             onRename={onRename}

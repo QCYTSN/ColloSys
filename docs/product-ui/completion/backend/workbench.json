@@ -1,0 +1,13 @@
+{
+  "source": ".local/codecast-app/workbench-audit-1793173191081/result.json",
+  "passed": true,
+  "checks": [
+    "Isolated TEST team and project use existing real accounts and original membership APIs",
+    "241 real saved files produce multipart transport but one activity with a complete visible file detail",
+    "A disconnected browser catches every event after 45 real new checkpoints without a head gap",
+    "An old event opens from a cold short-project deep link without loading earlier activity and survives reload",
+    "Revoking membership removes the cached project events and visible checkpoint in both open member windows",
+    "Original UI sign-out and another account sign-in clear the previous principal collaboration cache"
+  ],
+  "at": "2026-10-28T07:43:25.805Z"
+}

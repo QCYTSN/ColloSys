@@ -99,7 +99,8 @@ export const send = mutation({
         !cp?.verifiedFromStart ||
         !cp.pathsVerified ||
         cp.pathError ||
-        cp.receivedParts !== cp.totalParts
+        cp.receivedParts !== cp.totalParts ||
+        cp.receivedFiles !== cp.totalFiles
       )
         return fail(409, 'Checkpoint is missing, incomplete or requires integrity verification');
     }

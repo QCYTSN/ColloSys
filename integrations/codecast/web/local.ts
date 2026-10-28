@@ -44,6 +44,6 @@ export async function localRequest<T = unknown>(
     signal: AbortSignal.timeout(125000),
   });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error || 'Local request failed');
+  if (!response.ok) throw Object.assign(new Error(data.error || 'Local request failed'), {data:{status:response.status}});
   return data;
 }

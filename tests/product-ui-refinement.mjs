@@ -6,7 +6,10 @@ import { chromium, _electron as electron, expect as baseExpect } from '@playwrig
 import { account, denseFixture, eventually } from './product-ui-refinement-data.mjs';
 const native = process.argv.includes('--native');
 const expect = baseExpect.configure({ timeout: 30000 });
-const out = path.resolve('docs/product-ui/refinement', native ? 'native' : 'after');
+const out = path.resolve(
+  process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/refinement',
+  native ? 'native' : 'after',
+);
 await fs.mkdir(out, { recursive: true });
 const checks = [],
   errors = [],
@@ -142,6 +145,7 @@ try {
   }
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(origin + '/login#pair=' + encodeURIComponent(pairing));
+  await expect(page.locator('#email')).toBeVisible();
   await shot('01-login');
   await login(account.a);
   await go(`/projects/${account.projectId}?tab=workspaces`);

@@ -18,7 +18,7 @@ const context = await browser.newContext({
   recordVideo: { dir: '.local/refinement-access-video' },
 });
 const page = await context.newPage();
-const out = 'docs/product-ui/refinement/access';
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/refinement/access';
 await fs.mkdir(out, { recursive: true });
 const checks = [];
 let removed = false;
@@ -118,6 +118,32 @@ try {
   await fs.writeFile(out + '/results.json', JSON.stringify({ passed: true, checks }, null, 2));
   console.log(checks.map((s) => 'PASS ' + s).join('\n'));
 } catch (e) {
+  await fs.writeFile(
+    out + '/failure-state.json',
+    JSON.stringify(
+      await page.evaluate(() => {
+        const root = document.getElementById('root');
+        let f = root?._reactRootContainer?._internalRoot?.current;
+        const el = document.querySelector('.collo-shell');
+        if (el) f = el[Object.keys(el).find((k) => k.startsWith('__reactFiber'))];
+        const auth = [];
+        while (f) {
+          const v = f.memoizedProps?.value;
+          if (v && typeof v === 'object' && ('isAuthenticated' in v || 'isLoading' in v))
+            auth.push({ isAuthenticated: v.isAuthenticated, isLoading: v.isLoading });
+          f = f.return;
+        }
+        return {
+          url: location.pathname,
+          auth,
+          storedAuthKeys: Object.keys(localStorage).filter((k) => k.startsWith('__convexAuth')),
+          viewCount: Object.keys(window.__inboxStore?.getState().colloViewState ?? {}).length,
+        };
+      }),
+      null,
+      2,
+    ),
+  );
   await page.screenshot({ path: out + '/failure.png' });
   throw e;
 } finally {

@@ -38,9 +38,19 @@ for (const [folder, owned] of [
   const files = (await fs.readdir(path.join(base, owned)))
     .filter((file) => /\.tsx?$/.test(file) && (owned === 'collo' || /^collo/.test(file)))
     .map((file) => path.join(base, owned, file));
+  if (owned === 'collo')
+    files.push(path.join(source, 'platform/packages/auth/src/web/durableAuthStorage.ts'));
   if (!files.length) throw new Error(`No owned integration files found under ${base}`);
   const program = ts.createProgram(files, {
     ...parsed.options,
+    ...(owned === 'collo'
+      ? {
+          paths: {
+            ...parsed.options.paths,
+            '@platform/auth/web': [path.join(source, 'platform/packages/auth/src/web/index.ts')],
+          },
+        }
+      : {}),
     noEmit: true,
     incremental: false,
     allowImportingTsExtensions: true,

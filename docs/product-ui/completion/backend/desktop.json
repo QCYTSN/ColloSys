@@ -1,0 +1,16 @@
+{
+  "source": ".local/codecast-app/desktop-acceptance-1793176626849/result.json",
+  "passed": true,
+  "checks": [
+    "Real independent Windows window uses original desktop bridge with OS sandbox and isolation",
+    "Desktop rejects screen capture, off-origin navigation and non-main-frame IPC",
+    "Real password sign-in and original project workbench operate inside the desktop",
+    "Actual Windows folder picker opens and Cancel leaves the directory unselected",
+    "Native directory-picker bridge and explicit sharing consent create a real connector",
+    "Saved file changes render in the desktop and confirmed preview restores actual bytes",
+    "Closing the last native window exits and reopening keeps the signed-in profile",
+    "A directory deep link selects its authorized directory after reopening",
+    "Pending-change close prompt honors Keep open and explicit Close now"
+  ],
+  "at": "2026-10-28T08:37:33.329Z"
+}

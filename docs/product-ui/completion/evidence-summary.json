@@ -1,0 +1,105 @@
+{
+  "authStorage": {
+    "passed": true,
+    "checks": [
+      "Unintentional localStorage loss still recovers the durable value",
+      "An IndexedDB read started before explicit logout cannot restore the removed value",
+      "A queued durable write cannot outlive logout",
+      "An older purge cannot delete a newer explicit sign-in value",
+      "Refresh rotation preserves the existing durable recovery behavior",
+      "Explicit logout removes refresh recovery too"
+    ],
+    "at": "2026-10-28T08:24:50.927Z"
+  },
+  "after": {
+    "checks": 12,
+    "errors": [],
+    "at": "2026-10-28T07:29:30.669Z"
+  },
+  "native": {
+    "checks": 12,
+    "errors": [],
+    "at": "2026-10-28T07:30:13.494Z"
+  },
+  "surfaces": {
+    "checks": 7,
+    "at": "2026-10-28T07:26:28.834Z"
+  },
+  "native-surfaces": {
+    "checks": 4,
+    "at": "2026-10-28T07:30:34.044Z"
+  },
+  "handoffs": {
+    "checks": 6,
+    "at": "2026-10-28T05:48:07.194Z"
+  },
+  "regression/after": {
+    "checks": 11,
+    "passed": true,
+    "errors": [],
+    "at": "2026-10-28T07:31:33.973Z"
+  },
+  "regression/native": {
+    "checks": 11,
+    "passed": true,
+    "errors": [],
+    "at": "2026-10-28T07:32:37.939Z"
+  },
+  "access": {
+    "checks": 3,
+    "passed": true
+  },
+  "flow": {
+    "checks": 7,
+    "passed": true,
+    "errors": [],
+    "at": "2026-10-28T08:34:00.642Z"
+  },
+  "auth": {
+    "checks": 3,
+    "passed": true,
+    "at": "2026-10-28T08:23:07.071Z"
+  },
+  "boot": {
+    "frames": 148,
+    "phases": {
+      "static": 99,
+      "react": 39,
+      "auth": 10
+    },
+    "marks": {
+      "static": {
+        "x": 20,
+        "y": 14,
+        "width": 30,
+        "height": 30,
+        "top": 14,
+        "right": 50,
+        "bottom": 44,
+        "left": 20
+      },
+      "react": {
+        "x": 20,
+        "y": 14,
+        "width": 30,
+        "height": 30,
+        "top": 14,
+        "right": 50,
+        "bottom": 44,
+        "left": 20
+      },
+      "auth": {
+        "x": 20,
+        "y": 14,
+        "width": 30,
+        "height": 30,
+        "top": 14,
+        "right": 50,
+        "bottom": 44,
+        "left": 20
+      }
+    },
+    "firstAt": 71,
+    "lastAt": 1652
+  }
+}

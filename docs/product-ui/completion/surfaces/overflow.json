@@ -1,0 +1,325 @@
+[
+  {
+    "name": "auth-error",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "projects-1440-minimum",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-1440-maximum",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-1280-minimum",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-1280-maximum",
+    "viewport": {
+      "width": 1280,
+      "height": 800
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-1920-minimum",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-1920-maximum",
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-960-minimum",
+    "viewport": {
+      "width": 960,
+      "height": 720
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "projects-960-maximum",
+    "viewport": {
+      "width": 960,
+      "height": 720
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      },
+      {
+        "tag": "STRONG",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "project-menu",
+    "viewport": {
+      "width": 960,
+      "height": 720
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "settings-Profile & appearance",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Your identity and how ColloSys looks",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "settings-Notifications",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Choose what needs your attention",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "settings-Keyboard",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Shortcuts that fit your workflow",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "settings-Connections",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Your directories and captured sessions",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "settings-About ColloSys",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Version, storage and credits",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "zoom-125",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "H1",
+        "cls": "min-w-0 shrink font-medium tracking-[-0.01em] text-[17px] leading-[24px] truncate cursor-text",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  },
+  {
+    "name": "settings-zoom",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "P",
+        "cls": "truncate text-xs text-sol-text-muted",
+        "text": "Your identity and how ColloSys looks",
+        "reason": "intentional ellipsis; full text in title, accessible name or detail"
+      }
+    ]
+  }
+]

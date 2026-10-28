@@ -10,7 +10,7 @@ import {
 import { useInboxStore, type ProjectItem } from '../store/inboxStore';
 import { useSyncProjects } from '../hooks/useSyncProjects';
 import { useWorkspaceCollection } from '../hooks/useWorkspaceCollection';
-import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
+import { useProductQuery as useQueryNoThrow } from './useProductQuery';
 import { colloApi } from './colloApi';
 import type { Id } from '@codecast/convex/convex/_generated/dataModel';
 import { ProjectCreate } from './ProjectCreate';
@@ -27,12 +27,12 @@ export function ProductProjects() {
   const rows = projects.filter((p) =>
     `${p.title} ${p.description ?? ''}`.toLowerCase().includes(filter.toLowerCase()),
   );
-  const selected = projects.find((p) => p._id === focused) ?? projects[0];
+  // A preview belongs to the visible result set, including its empty state.
+  const selected = rows.find((p) => p._id === focused) ?? rows[0];
   return (
     <div className="collo-projects">
       <header className="collo-page-heading">
         <div>
-          <span className="collo-eyebrow">YOUR WORKSPACE</span>
           <h1>Projects</h1>
           <p>A shared place for the work in progress.</p>
         </div>
@@ -73,7 +73,7 @@ export function ProductProjects() {
                 >
                   <FolderSimple size={21} weight="duotone" />
                   <span>
-                    <strong>{p.title}</strong>
+                    <strong title={p.title}>{p.title}</strong>
                     <small>
                       {p.description || 'Project activity, conversations and shared work'}
                     </small>
@@ -141,7 +141,6 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
     );
   return (
     <aside className="collo-project-overview">
-      <span className="collo-eyebrow">IN FOCUS</span>
       <h2>{project.title}</h2>
       <div className="collo-project-people">
         {members.data?.members.map((m) => (

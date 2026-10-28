@@ -14,7 +14,7 @@ import { ConversationView } from '../components/ConversationView';
 import type { ConversationData } from '../components/conversation/types';
 import { Button } from '../components/ui/button';
 import { DetailSplitLayout } from '../components/DetailSplitLayout';
-import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
+import { useProductQuery as useQueryNoThrow } from './useProductQuery';
 import { useAuthPrincipal } from '../lib/authPrincipal';
 import { AgentBadge } from './AgentBadge';
 import { formatAgentType } from '../components/AgentTypeIcon';
@@ -95,18 +95,18 @@ function Reader({
     projectId: projectId as Id<'projects'>,
   });
   const access = useRef(true);
-  access.current = !page.error && !members.error;
+  access.current = !page.denied && !members.denied;
   // Replay only previously requested pages through the existing authorized query.
   // Reading hints contain no message text and are useless without fresh access.
   useEffect(() => {
-    if (page.error || members.error) {
+    if (page.denied || members.denied) {
       clearProjectViews(projectId);
       saved.current = undefined;
       return;
     }
     if (page.data?.hasMore && page.data.cursor <= (saved.current?.cursor ?? 0))
       setAfter(page.data.cursor);
-  }, [page.data, page.error, members.error, projectId]);
+  }, [page.data, page.denied, members.denied, projectId]);
   useEffect(() => {
     const root = container.current;
     if (!root) return;
@@ -131,16 +131,16 @@ function Reader({
     };
   }, [key, after, !!page.data]);
   useEffect(() => {
-    if (page.error) {
+    if (page.denied || members.denied) {
       setPages({});
       return;
     }
     const data = page.data;
     if (data)
       setPages((previous) => ({ ...previous, [after]: data.messages as CapturedMessage[] }));
-  }, [page.data, page.error, after]);
+  }, [page.data, page.denied, members.denied, after]);
   const rows = useMemo(() => {
-    if (page.error || members.error) return [];
+    if (page.denied || members.denied) return [];
     const unique = new Map<string, CapturedMessage>();
     for (const row of [
       ...Object.values(pages).flat(),
@@ -148,7 +148,7 @@ function Reader({
     ])
       unique.set(row.eventId, row);
     return [...unique.values()].sort((a, b) => a.seq - b.seq);
-  }, [pages, page.data, page.error, members.error]);
+  }, [pages, page.data, page.denied, members.denied]);
   const first = rows[0];
   const member = members.data?.members.find((m: { id: string }) => m.id === first?.userId);
   const conversation: ConversationData = useMemo(
@@ -172,7 +172,7 @@ function Reader({
     }),
     [rows, member?.name, workspaceId, sessionId],
   );
-  if (page.error || members.error)
+  if (page.denied || members.denied || ((page.error || members.error) && !rows.length))
     return (
       <div className="collo-empty" role="alert">
         <p>Could not read this conversation. Access may have changed.</p>
@@ -316,7 +316,7 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
   const workspaceId = search.get('workspace'),
     sessionId = search.get('session');
   useEffect(() => {
-    if (page.error || members.error) {
+    if (page.denied || members.denied) {
       clearProjectViews(projectId);
       return;
     }
@@ -330,11 +330,17 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
   const closeHref = global ? `/inbox?project=${projectId}` : `/projects/${projectId}?tab=sessions`;
   const name = (id: string) =>
     members.data?.members.find((m: { id: string }) => m.id === id)?.name ?? 'Member';
+  const matching =
+    page.data?.page.filter((s: { userId: string; sessionId: string; preview?: string }) =>
+      `${name(s.userId)} ${s.sessionId} ${s.preview ?? ''}`
+        .toLowerCase()
+        .includes(filter.toLowerCase()),
+    ) ?? [];
   return (
     <div className="collo-sessions h-full" data-testid="captured-sessions">
       <DetailSplitLayout
         closeHref={closeHref}
-        accessValid={!page.error && !members.error}
+        accessValid={!page.denied && !members.denied}
         list={
           <div className="collo-session-list">
             <div className="collo-page-heading">
@@ -347,11 +353,15 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
               <MagnifyingGlass size={17} />
               <input
                 aria-label="Filter captured conversations"
-                placeholder="Find a conversation…"
+                placeholder="Filter this page…"
                 value={filter}
                 onChange={(e) => setFilter(e.target.value)}
               />
             </label>
+            <p className="collo-search-scope">
+              Filters this page’s member, session ID and opening message. Use Next for older
+              conversations.
+            </p>
             {(page.error || members.error || error) && (
               <div className="collo-inline-notice" role="alert">
                 {error || 'Conversations could not be loaded.'}
@@ -398,57 +408,59 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
                 </Button>
               </div>
             )}
-            {!page.error &&
-              !members.error &&
-              page.data?.page
-                .filter((s: { userId: string; sessionId: string; preview?: string }) =>
-                  `${name(s.userId)} ${s.sessionId} ${s.preview ?? ''}`
-                    .toLowerCase()
-                    .includes(filter.toLowerCase()),
-                )
-                .map(
-                  (s: {
-                    _id: string;
-                    workspaceId: string;
-                    sessionId: string;
-                    userId: string;
-                    updatedAt: number;
-                    messageCount: number;
-                    adapter?: string;
-                    preview?: string;
-                  }) => (
-                    <button
-                      key={s._id}
-                      data-captured-session={s.sessionId}
-                      className={`collo-session-row ${sessionId === s.sessionId && workspaceId === s.workspaceId ? 'selected' : ''}`}
-                      onClick={() =>
-                        router.push(
-                          global
-                            ? `${closeHref}&workspace=${encodeURIComponent(s.workspaceId)}&session=${encodeURIComponent(s.sessionId)}`
-                            : capturedHref(projectId, s.workspaceId, s.sessionId),
-                        )
-                      }
-                    >
-                      <span className="collo-session-glyph">
-                        <AgentBadge agent={s.adapter} compact />
+            {!page.denied &&
+              !members.denied &&
+              matching.map(
+                (s: {
+                  _id: string;
+                  workspaceId: string;
+                  sessionId: string;
+                  userId: string;
+                  updatedAt: number;
+                  messageCount: number;
+                  adapter?: string;
+                  preview?: string;
+                }) => (
+                  <button
+                    key={s._id}
+                    data-captured-session={s.sessionId}
+                    className={`collo-session-row ${sessionId === s.sessionId && workspaceId === s.workspaceId ? 'selected' : ''}`}
+                    onClick={() =>
+                      router.push(
+                        global
+                          ? `${closeHref}&workspace=${encodeURIComponent(s.workspaceId)}&session=${encodeURIComponent(s.sessionId)}`
+                          : capturedHref(projectId, s.workspaceId, s.sessionId),
+                      )
+                    }
+                  >
+                    <span className="collo-session-glyph">
+                      <AgentBadge agent={s.adapter} compact />
+                    </span>
+                    <span className="collo-session-summary">
+                      <strong>{s.preview || `${formatAgentType(s.adapter)} conversation`}</strong>
+                      <span>
+                        {name(s.userId)} · {formatAgentType(s.adapter)} · {s.messageCount} messages
                       </span>
-                      <span className="collo-session-summary">
-                        <strong>{s.preview || `${formatAgentType(s.adapter)} conversation`}</strong>
-                        <span>
-                          {name(s.userId)} · {formatAgentType(s.adapter)} · {s.messageCount}{' '}
-                          messages
-                        </span>
-                      </span>
-                      <time>
-                        {new Date(s.updatedAt).toLocaleDateString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                        })}
-                      </time>
-                      <ArrowRight size={16} />
-                    </button>
-                  ),
-                )}
+                    </span>
+                    <time>
+                      {new Date(s.updatedAt).toLocaleDateString(undefined, {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </time>
+                    <ArrowRight size={16} />
+                  </button>
+                ),
+              )}
+            {!!filter && !!page.data?.page.length && !matching.length && (
+              <div className="collo-empty">
+                <h3>No matches on this page</h3>
+                <p>Try a different phrase or browse older conversations.</p>
+                <Button variant="outline" onClick={() => setFilter('')}>
+                  Clear filter
+                </Button>
+              </div>
+            )}
             {page.data?.page.length === 0 && (
               <div className="collo-empty">
                 <Chats size={28} />

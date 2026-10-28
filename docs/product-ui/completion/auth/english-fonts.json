@@ -1,0 +1,10 @@
+{
+  "fonts": [
+    {
+      "familyName": "Google Sans",
+      "postScriptName": "Google-Sans-Bold",
+      "isCustomFont": true,
+      "glyphCount": 26
+    }
+  ]
+}

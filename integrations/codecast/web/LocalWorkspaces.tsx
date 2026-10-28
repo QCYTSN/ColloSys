@@ -13,6 +13,8 @@ import {
   ArrowLeft,
 } from './ProductIcons';
 import { AgentBadge } from './AgentBadge';
+import { CheckpointSource } from './CheckpointSource';
+import { DirectoryStorage } from './DirectoryStorage';
 import { formatAgentType } from '../components/AgentTypeIcon';
 import { capturedHref } from './CapturedSessions';
 import { FileDiffLayout } from '../components/FileDiffLayout';
@@ -141,6 +143,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const [consent, setConsent] = useState(false);
   const [preview, setPreview] = useState<RestorePreview | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
+  const [storageOpen, setStorageOpen] = useState(false);
   const [log, setLog] = useState('');
   const [agentPreview, setAgentPreview] = useState<(AgentPreview & { path: string }) | null>(null);
   const [history, setHistory] = useState(false);
@@ -196,6 +199,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
     setSelected(null);
     setConnectOpen(false);
     setAgentOpen(false);
+    setStorageOpen(false);
     setRoot('');
     setLog('');
     setError('');
@@ -208,6 +212,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
     setCheckpoints([]);
     setPreview(null);
     setAgentPreview(null);
+    setStorageOpen(false);
   }, [scope]);
   useEffect(() => {
     if (!visible) return;
@@ -454,6 +459,14 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
             <Button
               variant="outline"
               size="sm"
+              disabled={!directory.running}
+              onClick={() => setStorageOpen(true)}
+            >
+              Storage &amp; backups
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               disabled={busy || !directory.running}
               onClick={() =>
                 run(async () => {
@@ -506,7 +519,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
       <div className="min-h-0 flex-1">
         <DetailSplitLayout
           closeHref={closeHref}
-          accessValid={!collaboration.error}
+          accessValid={collaboration.accessValid}
           list={
             <div className="collo-activity-list" data-testid="collaboration-list">
               <div className="collo-activity-inner">
@@ -659,7 +672,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           }
         >
           {current ? (
-            <div className="collo-review" data-testid="collaboration-detail">
+            <div key={current} className="collo-review" data-testid="collaboration-detail">
               <div className="collo-review-content">
                 <Button variant="ghost" size="sm" onClick={() => setCurrent(null)}>
                   <ArrowLeft />
@@ -724,6 +737,14 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                             checkpoint is retained; shared differences are not a file backup.
                           </p>
                         </details>
+                        <CheckpointSource
+                          projectId={projectId}
+                          source={{
+                            workspaceId: selectedEvent.workspaceId,
+                            checkpointId: selectedEvent.payload.checkpointId,
+                          }}
+                          compose
+                        />
                         {checkpoint.error && (
                           <div role="alert" className="mb-4 text-xs text-sol-text-muted">
                             {checkpoint.error.message}
@@ -1014,6 +1035,25 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
               {agentPreview?.path === log ? 'Connect and share messages' : 'Preview log'}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog open={storageOpen && collaboration.accessValid} onOpenChange={setStorageOpen}>
+        <DialogContent className="collo-storage-dialog">
+          <DialogHeader>
+            <DialogTitle>Storage &amp; backups</DialogTitle>
+            <DialogDescription>
+              {directory?.label} · this directory on this device
+            </DialogDescription>
+          </DialogHeader>
+          {storageOpen && directory?.running && collaboration.accessValid && (
+            <DirectoryStorage
+              key={scope}
+              token={token}
+              directory={directory}
+              checkpoints={checkpoints}
+              onChanged={inspect}
+            />
+          )}
         </DialogContent>
       </Dialog>
     </div>

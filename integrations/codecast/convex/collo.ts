@@ -467,6 +467,8 @@ export const checkpointParts = query({
       hasMore,
       totalParts: summary?.totalParts ?? first?.event.payload.parts ?? null,
       receivedParts: verified ? summary.receivedParts : null,
+      verificationAvailable: summary?.verifiedFromStart === true && !summary.pathError,
+      pathError: summary?.pathError === true,
       complete: verified
         ? summary.receivedParts === summary.totalParts &&
           summary.receivedFiles === summary.totalFiles

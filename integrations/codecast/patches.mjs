@@ -7,6 +7,8 @@ import frontendPatches from './frontend-patches.mjs';
 import { designPatches } from './design-patches.mjs';
 import { productUiPatches } from './product-ui-patches.mjs';
 import { refinementPatches } from './refinement-patches.mjs';
+import { completionPatches } from './completion-patches.mjs';
+import { authStoragePatches } from './auth-storage-patches.mjs';
 export const patches = [
   ...productPatches,
   ...backendPatches,
@@ -127,4 +129,6 @@ export const patches = [
   },
   ...productUiPatches,
   ...refinementPatches,
+  ...completionPatches,
+  ...authStoragePatches,
 ];

@@ -10,6 +10,15 @@
   --collo-shadow: 0 2px 6px #20233006, 0 12px 38px #2023300e;
   --collo-accent-soft: color-mix(in srgb, var(--sol-violet) 11%, var(--sol-bg));
   --font-sans: 'Google Sans', 'Microsoft YaHei UI', sans-serif;
+  --collo-content: var(--sol-bg);
+  --collo-tool: var(--sol-bg-alt);
+  --collo-selected: color-mix(in srgb, var(--sol-violet) 8%, var(--sol-bg));
+  --collo-floating: color-mix(in srgb, var(--sol-bg) 94%, transparent);
+  --collo-floating-filter: blur(14px);
+  --collo-edge: color-mix(in srgb, var(--sol-text) 12%, transparent);
+  --collo-float-shadow: 0 3px 8px #1517210c, 0 18px 48px #15172118;
+  --collo-z-hint: 140;
+  --collo-z-menu: 210;
 }
 [data-product='collosys'] {
   --font-ui: 'Google Sans', 'Microsoft YaHei UI', sans-serif;
@@ -466,10 +475,10 @@ html[data-product='collosys'] h2 {
   display: flex;
   align-items: center;
   gap: 9px;
-  flex-wrap: wrap;
   font-size: 12px;
   color: var(--sol-text-muted);
   overflow-wrap: anywhere;
+  flex-wrap: wrap;
 }
 .collo-handoff-detail section {
   margin-top: 30px;
@@ -484,8 +493,8 @@ html[data-product='collosys'] h2 {
 .collo-handoff-detail section p {
   font-size: 14px;
   line-height: 1.85;
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 .collo-handoff-links {
   display: flex;
@@ -515,8 +524,9 @@ html[data-product='collosys'] h2 {
   color: var(--sol-violet);
 }
 .collo-handoff-form {
-  max-height: 90dvh;
+  max-height: calc(100dvh - 48px);
   overflow: auto;
+  scrollbar-gutter: stable;
 }
 .collo-handoff-form label {
   display: block;
@@ -567,7 +577,7 @@ html.dark[data-product='collosys'] {
 html:not(.dark)[data-product='collosys'] {
   color-scheme: light;
 }
-[data-product='collosys'] :is(input, textarea, select):focus-visible {
+:where([data-product='collosys'] :is(input, textarea, select)):focus-visible {
   outline: 2px solid color-mix(in srgb, var(--sol-violet) 45%, transparent);
   outline-offset: 2px;
 }

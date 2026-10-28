@@ -204,16 +204,20 @@
   border-bottom: 1px solid var(--collo-rule);
   padding: 0 26px;
   background: var(--sol-bg);
+  container: project-header / inline-size;
+  min-width: 0;
 }
 .collo-project-identity {
   display: flex;
   align-items: center;
   min-height: 84px;
   gap: 12px;
+  min-width: 0;
 }
 .collo-project-title {
   min-width: 0;
   flex: 1;
+  overflow-wrap: anywhere;
 }
 .collo-eyebrow {
   display: block;
@@ -227,6 +231,12 @@
   font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.025em;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.4;
 }
 .collo-project-properties {
   position: relative;
@@ -258,6 +268,7 @@
 .collo-project-actions {
   display: flex;
   align-items: center;
+  flex: none;
 }
 .collo-project-tools {
   padding: 0 0 4px;
@@ -265,11 +276,16 @@
 .collo-project-tools button {
   font-size: 12px;
   line-height: 18px;
+  flex: none;
+  white-space: nowrap;
 }
 .collo-projects {
   height: 100%;
   overflow: auto;
   padding: 36px 38px;
+  container: projects / inline-size;
+  scrollbar-gutter: stable;
+  min-width: 0;
 }
 .collo-page-heading {
   display: flex;
@@ -292,9 +308,9 @@
 }
 .collo-projects-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
-  gap: 36px;
   align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(230px, 28%);
+  gap: 32px;
 }
 .collo-project-index {
   min-width: 0;
@@ -308,6 +324,7 @@
   border-bottom: 1px solid var(--sol-border);
   font-size: 12px;
   color: var(--sol-text-muted);
+  flex-wrap: wrap;
 }
 .collo-search {
   display: flex;
@@ -320,6 +337,8 @@
   border-radius: 7px;
   color: var(--sol-text-muted);
   background: var(--sol-bg);
+  flex: 1;
+  min-width: 120px;
 }
 .collo-search input {
   width: 100%;
@@ -350,10 +369,10 @@
   display: flex;
   align-items: center;
   gap: 15px;
-  min-width: 0;
   flex: 1;
   text-align: left;
   border-radius: 4px;
+  min-width: 0;
 }
 .collo-project-select > svg {
   flex: none;
@@ -369,6 +388,10 @@
   font-size: 14px;
   font-weight: 500;
   overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 .collo-project-select small {
   font-size: 12px;
@@ -383,13 +406,17 @@
   font-size: 11px;
   color: var(--sol-text-muted);
   text-transform: capitalize;
+  flex: none;
 }
 .collo-project-overview {
   padding: 24px;
-  background: var(--sol-bg-alt);
   border-radius: 10px;
   border: 1px solid var(--collo-rule);
   min-width: 0;
+  display: block;
+  background: var(--collo-tool);
+  border-color: transparent;
+  animation: collo-reveal 140ms ease-out;
 }
 .collo-project-overview h2 {
   font-size: 18px;
@@ -483,6 +510,7 @@
   overflow: hidden;
   outline: 0;
   animation: collo-panel-in 190ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  container: settings / inline-size;
 }
 .collo-settings-top {
   display: flex;
@@ -539,6 +567,8 @@
   transition:
     background-color 120ms,
     color 120ms;
+  white-space: normal;
+  text-align: left;
 }
 .collo-settings-group button:hover {
   background: var(--sol-bg-alt);
@@ -578,6 +608,7 @@
   padding: 12px 32px 30px;
   animation: collo-content-in 130ms ease both;
   scrollbar-gutter: stable;
+  overflow-wrap: anywhere;
 }
 .collo-settings-backdrop[data-phase='closing'],
 .collo-dialog-backdrop[data-state='closed'] {
@@ -651,6 +682,7 @@
   min-height: 0;
   overflow: hidden;
   background: var(--sol-bg);
+  animation: collo-reveal 140ms ease-out;
 }
 .collo-review-content {
   display: flex;
@@ -709,10 +741,11 @@
 }
 .collo-review-heading {
   display: flex;
-  align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin: 14px 0;
+  flex-wrap: wrap;
+  align-items: flex-start;
 }
 .collo-review-heading h3 {
   font-size: 18px;
@@ -826,26 +859,8 @@
   }
 }
 @media (min-width: 1800px) {
-  .collo-projects {
-    padding-left: 52px;
-    padding-right: 52px;
-  }
-  .collo-projects-grid {
-    grid-template-columns: minmax(0, 1fr) 340px;
-    gap: 48px;
-  }
 }
 @media (max-width: 1100px) {
-  .collo-projects {
-    padding: 26px;
-  }
-  .collo-projects-grid {
-    grid-template-columns: minmax(0, 1fr) 240px;
-    gap: 20px;
-  }
-  .collo-project-status {
-    display: none;
-  }
   .collo-home {
     width: 160px;
   }
@@ -864,19 +879,6 @@
   }
 }
 @media (max-width: 900px) {
-  .collo-projects-grid {
-    grid-template-columns: 1fr;
-  }
-  .collo-project-overview {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 8px 24px;
-  }
-  .collo-project-overview > .collo-eyebrow,
-  .collo-project-overview > h2,
-  .collo-open-project {
-    grid-column: 1/-1;
-  }
   .collo-project-header {
     padding: 0 20px;
   }
@@ -897,9 +899,6 @@
   }
   .collo-topbar {
     height: 52px;
-  }
-  .collo-projects {
-    padding: 24px 18px;
   }
   .collo-project-properties {
     font-size: 11px;
@@ -967,5 +966,276 @@
   .collo-activity-event,
   .collo-project-row {
     transition: none;
+  }
+} /* Product surfaces: content remains solid; only temporary tools use material. */
+.collo-project-row[data-selected='true'] {
+  background: var(--collo-selected);
+  box-shadow: inset 2px 0 var(--sol-violet);
+}
+.collo-menu-surface,
+[data-collo-floating] {
+  background: var(--collo-floating);
+  backdrop-filter: var(--collo-floating-filter);
+  border: 1px solid var(--collo-edge);
+  box-shadow: var(--collo-float-shadow);
+  color: var(--sol-text);
+  z-index: var(--collo-z-menu);
+  max-width: calc(100vw - 24px);
+  max-height: var(--radix-popover-content-available-height, calc(100dvh - 24px));
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+@supports not (backdrop-filter: blur(1px)) {
+  :root {
+    --collo-floating: var(--sol-bg);
+    --collo-floating-filter: none;
+  }
+}
+@media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+  :root {
+    --collo-floating: var(--sol-bg);
+    --collo-floating-filter: none;
+  }
+}
+html[data-low-performance='true'] {
+  --collo-floating: var(--sol-bg);
+  --collo-floating-filter: none;
+}
+.collo-project-overview p,
+.collo-recent-row,
+.collo-source-id {
+  overflow-wrap: anywhere;
+}
+.collo-page-heading > div {
+  min-width: 0;
+}
+.collo-page-heading > button {
+  flex: none;
+}
+@container projects (max-width:760px) {
+  .collo-projects-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .collo-project-overview {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px 24px;
+  }
+  .collo-project-overview > h2,
+  .collo-project-overview > .collo-eyebrow,
+  .collo-project-overview > .collo-project-people,
+  .collo-open-project {
+    grid-column: 1/-1;
+  }
+  .collo-project-status {
+    display: none;
+  }
+  .collo-page-heading {
+    gap: 12px;
+  }
+}
+@container projects (max-width:440px) {
+  .collo-project-overview {
+    display: block;
+  }
+  .collo-project-row {
+    gap: 8px;
+    padding: 15px 6px;
+  }
+  .collo-page-heading {
+    flex-wrap: wrap;
+  }
+  .collo-page-heading h1 {
+    font-size: 24px;
+  }
+  .collo-index-tools .collo-search {
+    max-width: none;
+    flex-basis: 100%;
+  }
+}
+.collo-project-tools > div {
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 3px;
+  min-width: 0;
+}
+@container project-header (max-width:570px) {
+  .collo-project-identity {
+    flex-wrap: wrap;
+    padding: 16px 0 12px;
+    gap: 8px;
+  }
+  .collo-project-title {
+    flex-basis: calc(100% - 50px);
+  }
+  .collo-project-properties {
+    margin-left: 32px;
+  }
+  .collo-project-tools {
+    padding-bottom: 8px;
+  }
+}
+.collo-workspaces,
+.collo-detail-stage,
+.collo-captured-reader {
+  min-width: 0;
+  container: work-area / inline-size;
+}
+.collo-workspace-heading > div,
+.collo-review-heading > div,
+.collo-event-copy {
+  min-width: 0;
+}
+.collo-directory-toolbar select,
+.collo-member-filter {
+  min-width: 0;
+  max-width: min(100%, 240px);
+}
+.collo-review-heading > div {
+  flex: 1 1 220px;
+}
+.collo-review-heading > button {
+  flex: none;
+}
+.collo-review-content,
+.collo-handoff-detail,
+.collo-reading-header {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.collo-handoff-detail,
+.collo-project-overview,
+.collo-reading-header {
+  animation: collo-reveal 140ms ease-out;
+}
+.collo-search-scope {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--sol-text-muted);
+  margin: 10px 0 18px;
+  overflow-wrap: anywhere;
+}
+.collo-search-scope a {
+  color: var(--sol-link);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.collo-session-row > svg {
+  flex: none;
+}
+.collo-session-list,
+.collo-activity-inner {
+  min-width: 0;
+}
+.collo-handoff-form :is(input, textarea, select) {
+  min-width: 0;
+  max-width: 100%;
+}
+.collo-handoff-form form {
+  min-width: 0;
+}
+.collo-handoff-actions,
+.collo-inline-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.collo-source-card {
+  flex: none;
+  padding: 14px 16px;
+  margin: 10px 0;
+  border: 1px solid var(--collo-rule);
+  background: var(--collo-tool);
+  border-radius: 9px;
+  font-size: 12px;
+  min-width: 0;
+}
+.collo-source-card strong {
+  display: block;
+  font-size: 13px;
+  color: var(--sol-text);
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+.collo-source-card p {
+  color: var(--sol-text-muted);
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.collo-source-id {
+  font-size: 11px;
+}
+.collo-source-card .collo-inline-actions {
+  margin-top: 10px;
+}
+@container work-area (max-width:600px) {
+  .collo-workspace-heading {
+    padding: 24px 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .collo-workspace-tabs {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+  .collo-session-list {
+    padding: 24px 20px;
+  }
+  .collo-page-heading {
+    flex-wrap: wrap;
+  }
+  .collo-sessions-scope {
+    flex-wrap: wrap;
+    padding: 14px 20px;
+  }
+  .collo-session-row {
+    gap: 8px;
+    padding: 14px 4px;
+  }
+  .collo-session-row time {
+    white-space: normal;
+    max-width: 78px;
+  }
+  .collo-activity-filters {
+    flex-wrap: wrap;
+  }
+  .collo-handoff-detail {
+    padding: 24px 20px;
+  }
+}
+.collo-settings-body :is(input, select, textarea) {
+  max-width: 100%;
+  min-width: 0;
+}
+.collo-settings-group > div {
+  min-width: 0;
+}
+@container settings (max-width:650px) {
+  .collo-settings-top {
+    padding: 18px 20px;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .collo-settings-top .collo-search {
+    min-width: 120px;
+    flex: 1;
+  }
+  .collo-settings-nav {
+    padding: 0 20px 14px;
+  }
+  .collo-settings-group {
+    align-items: flex-start;
+  }
+  .collo-settings-group > span {
+    width: 66px;
+    padding-top: 7px;
+  }
+  .collo-settings-body {
+    padding: 10px 20px 24px;
+  }
+  .collo-settings-section-heading {
+    padding: 20px 20px 8px;
   }
 }

@@ -1,0 +1,29 @@
+{
+  "nativeHandle": true,
+  "entry": "npm start",
+  "capture": "PrintWindow of verified ColloSys process; foreground-independent",
+  "ports": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3411
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3410
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3409
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3408
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3407
+    }
+  ],
+  "title": "ColloSys",
+  "capturedAt": "2026-10-28T08:33:28.5676339Z"
+}

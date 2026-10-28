@@ -60,6 +60,7 @@ export async function storageApi(
   if (route === '/api/storage' && method === 'GET')
     return {
       ...retentionPlan(snapshots),
+      pinned: store.setting<string[]>('pinnedCheckpoints', []),
       bytes: await diskBytes(config.state),
       recoveryDirectory: snapshots.recoveries,
       recoveries: store.recoveries().map(({ manifest, ...recovery }) => ({

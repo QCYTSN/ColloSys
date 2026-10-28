@@ -1,0 +1,20 @@
+{
+  "at": "2026-10-28T07:26:28.834Z",
+  "native": false,
+  "checks": [
+    "Static boot, React initialization and auth have continuous geometry and no retained overlay",
+    "Validation, error announcement and password manager fields remain functional",
+    "Configured local registration validates confirmation and creates a real account",
+    "Container layout survives sidebar drag extremes with the right rail open",
+    "Anchored project menu flips and fits, then restores keyboard focus",
+    "Settings, page switching, exit and rapid reopening have interruptible feedback",
+    "Text zoom, dark theme and reduced motion remain operable"
+  ],
+  "motion": [
+    {
+      "phase": "closing",
+      "opacity": "0.916496",
+      "animation": "collo-panel-out"
+    }
+  ]
+}

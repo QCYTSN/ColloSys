@@ -1,0 +1,7 @@
+{
+  "source": ".local/codecast-app/backend-completion-1793167226590/restart-result.json",
+  "passed": true,
+  "checks": [
+    "Backend restart preserves encrypted bytes, completed receipt, session pagination and accepted handoff"
+  ]
+}

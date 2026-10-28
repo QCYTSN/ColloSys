@@ -1,0 +1,16 @@
+{
+  "source": ".local/codecast-app/native-backend-audit-1793169231034/result.json",
+  "passed": true,
+  "checks": [
+    "owned patches match pinned source and parse as TypeScript (not a full typecheck)",
+    "removed team owner and assignee denied; personal explicit grants preserved",
+    "deleted account bearer verification and setup exchange fail closed",
+    "assignee membership check does not turn personal sharing into a team rule",
+    "native launch uses task authorization and queued revoked push is dropped before scheduling",
+    "native web, dispatch and CLI reject outside-team assignee; unauthorized subscription denied",
+    "private task launch denied via native web, CLI and dispatch",
+    "membership removal revokes creator, assignee, CLI writes, sync cargo and new comment notifications",
+    "account deletion disables the 51st credential, device-token factory, JWT and team seat",
+    "revoked session dispatch explicitly preserves the retryable outbox contract"
+  ]
+}

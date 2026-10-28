@@ -1,0 +1,13 @@
+{
+  "baseline": "1cbc2699ee5b202e68c7027a591fd13d903f51ff",
+  "branch": "codex/product-ui",
+  "inputFingerprint": "81b9279009b216147e5968a111488c11f223098bedfae1447a8637801d0716c6",
+  "upstream": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+  "openDesignReference": "6bf7fa79120f9da261be43a71d7ec1a28c2b2ef9",
+  "entry": "npm start",
+  "preparedChangedFiles": 147,
+  "capturedAt": "2026-10-28T08:38:34.608Z",
+  "committedAtCapture": false,
+  "pushedAtCapture": false,
+  "publication": "Subsequently authorized for local commit by the user; not pushed."
+}

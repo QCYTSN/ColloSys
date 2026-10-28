@@ -470,6 +470,7 @@ export function useCollaboration(projectId: string, currentEventId: string | nul
   const visible = !!principal.principalId && !refused;
   const activityError = errors.find(Boolean);
   return {
+    accessValid: visible,
     events: visible ? cachedEvents.filter((event) => range && event.seq >= range.oldest) : [],
     workspaces: visible ? cachedWorkspaces : [],
     loading: !refused && (!head.data || (activityState.scope === scope && activityState.loading)),
