@@ -1,0 +1,59 @@
+{
+  "viewport": {
+    "width": 900,
+    "height": 700
+  },
+  "documentOverflow": 2927,
+  "faults": [
+    {
+      "tag": "BUTTON",
+      "id": "ellipsis-geometry",
+      "cls": "ellipsis",
+      "text": "A long button with an exact title",
+      "reason": "clipped horizontally by ancestor",
+      "ancestor": {
+        "tag": "SECTION",
+        "id": "",
+        "cls": "clip",
+        "text": "A long button with an exact title"
+      }
+    },
+    {
+      "tag": "BUTTON",
+      "id": "vertical-action",
+      "cls": "",
+      "text": "A full height action",
+      "reason": "clipped vertically by ancestor",
+      "ancestor": {
+        "tag": "SECTION",
+        "id": "",
+        "cls": "clip",
+        "text": "A full height action"
+      }
+    },
+    {
+      "tag": "SPAN",
+      "id": "span-overflow",
+      "cls": "",
+      "text": "unbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbr",
+      "reason": "outside horizontal viewport"
+    },
+    {
+      "tag": "SPAN",
+      "id": "span-overflow",
+      "cls": "",
+      "text": "unbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbr",
+      "reason": "text range escapes its containing surface"
+    }
+  ],
+  "legal": [
+    {
+      "tag": "DIV",
+      "id": "valid-ellipsis",
+      "cls": "",
+      "text": "Full text available from this exact title",
+      "reason": "truncated text has an exact full-text title",
+      "access": "Full text available from this exact title"
+    }
+  ]
+}

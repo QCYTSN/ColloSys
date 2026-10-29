@@ -1,0 +1,20 @@
+{
+  "title": "ColloSys",
+  "visible": true,
+  "native": true,
+  "isolation": true,
+  "nodeIntegration": false,
+  "bounds": {
+    "x": 0,
+    "y": 0,
+    "width": 1454,
+    "height": 962
+  },
+  "contentBounds": {
+    "x": 7,
+    "y": 55,
+    "width": 1441,
+    "height": 901
+  },
+  "scaleFactor": 2
+}

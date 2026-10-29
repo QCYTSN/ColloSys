@@ -1,0 +1,10 @@
+PASS Real independent Windows window uses original desktop bridge with OS sandbox and isolation
+PASS Desktop rejects screen capture, off-origin navigation and non-main-frame IPC
+PASS Real password sign-in and original project workbench operate inside the desktop
+PASS Actual Windows folder picker opens and Cancel leaves the directory unselected
+PASS Native directory-picker bridge and explicit sharing consent create a real connector
+PASS Saved file changes render in the desktop and confirmed preview restores actual bytes
+PASS Closing the last native window exits and reopening keeps the signed-in profile
+PASS A directory deep link selects its authorized directory after reopening
+PASS Pending-change close prompt honors Keep open and explicit Close now
+Evidence: D:\Github_Ku\ColloSys\.local\codecast-app\desktop-acceptance-1793201929637

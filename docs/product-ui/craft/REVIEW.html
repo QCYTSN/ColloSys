@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ColloSys · 本轮正式产品对照</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eef0f3;color:#252831;font:15px/1.65 system-ui,"Microsoft YaHei UI",sans-serif}main{max-width:1540px;margin:auto;padding:32px}h1{font-size:28px;margin:0 0 10px}p{margin:8px 0;color:#596170}a{color:#554d97}nav{display:flex;flex-wrap:wrap;gap:7px;margin:24px 0 14px}button{border:1px solid #c6cad3;border-radius:7px;padding:8px 14px;background:white;color:inherit;font:inherit;cursor:pointer}button[aria-pressed=true]{background:#292b34;color:white;border-color:#292b34}button:focus-visible,a:focus-visible{outline:3px solid #8373bd;outline-offset:3px}.tools{display:flex;align-items:center;gap:18px;flex-wrap:wrap;margin:12px 0}input{width:260px;accent-color:#7568b6}.compare{position:relative;width:100%;aspect-ratio:1440/900;background:white;border:1px solid #d9dce3;border-radius:12px;overflow:hidden}.compare img{display:block;width:100%;height:100%;object-fit:contain}.compare .before{position:absolute;inset:0;clip-path:inset(0 calc(100% - var(--split,50%)) 0 0)}.line{position:absolute;top:0;bottom:0;left:var(--split,50%);width:2px;background:#7568b6;pointer-events:none}.labels{display:flex;justify-content:space-between;font-size:12px;color:#596170;margin:8px 0}.links{display:flex;gap:20px;flex-wrap:wrap;margin:16px 0 32px}.videos{display:grid;grid-template-columns:1fr 1fr;gap:24px}video{width:100%;max-height:600px;background:#171920;border-radius:10px}.section{border-top:1px solid #d5d9e0;margin-top:32px;padding-top:24px}.section h2{font-size:20px}ul{padding-left:22px}.state{font-size:13px;background:#fff;padding:16px 20px;border-radius:8px}@media(max-width:800px){main{padding:20px}.videos{grid-template-columns:1fr}}
+</style>
+<main><h1>ColloSys · 正式产品对照</h1>
+<p>本轮基于 <code>codex/product-ui / 98dd719</code>，正常入口是 <code>npm start</code> 的独立 Windows 窗口。2026-10-29用户已明确授权将本轮改动与证据提交、推送到该分支；应用未公开部署。</p>
+<p>下面是本轮重新采集的真实页面，使用隔离 TEST 数据。视觉品质和功能正确性分别判断；通过测试不代表已获得审美认可。</p>
+<nav id="pages" aria-label="选择对照页面"></nav>
+<div class="tools"><label>修改前 ← <input id="split" aria-label="前后对照分界" type="range" min="0" max="100" value="50"> → 修改后</label><button id="old">只看修改前</button><button id="new">只看修改后</button><button id="half">各半</button><label><input id="mask" type="checkbox" style="width:auto"> 遮住标志看结构</label></div>
+<div class="compare" id="compare"><img id="after" alt="修改后完整正式页面"><img class="before" id="before" alt="修改前完整正式页面"><span class="line"></span><div id="brandMask" hidden style="position:absolute;left:0;top:0;width:15.5%;height:6.5%;background:#e3e6eb;align-items:center;justify-content:center;color:#697180;font-size:12px">标志已遮挡</div></div>
+<div class="labels"><span>修改前：本轮采集的 98dd719 · 1440 × 900</span><span>修改后：b070ccc视觉冻结 · 同窗口与核心内容</span></div>
+<div class="links"><a id="beforeLink" target="_blank">打开原尺寸：修改前</a><a id="afterLink" target="_blank">打开原尺寸：修改后</a><a href="EXECUTION.md">完整执行账本、范围和限制</a></div>
+<div class="state">重点观察：项目范围层与活动首行的距离；列表、元信息与动作的强弱；真实长内容和菜单展开后的布局；登录身份与表单的比例。不要仅看圆角或阴影。</div>
+<p>最终运行构建为 <code>3997171</code>（完整输入指纹见账本），只在视觉冻结之后补上检查点标题的切换动效目标；静态样式未变。配对截图保留相同的原有数据，最终原生录像另外采集。</p>
+<section class="section"><h2>交互连续性</h2><div class="videos"><div><p>真实状态专项：短暂失败、慢提交、新来源、关闭与重开、面板中间宽度、恢复入口。</p><video controls preload="metadata" src="evidence/continuity/continuity.webm"></video></div><div><p>最终独立桌面窗口：完整工作台操作与阅读返回。</p><video controls preload="metadata" src="evidence/refinement/native/continuity.webm"></video></div></div><p>退出时长650ms属于明确标注的测试覆盖，用于检查生命周期是否跟随实际动画；它不是产品默认时长。没有FPS测量或多物理显示器认证。</p></section>
+<section class="section"><h2>直接核对证据</h2><ul>
+<li><a href="evidence/continuity/results.json">七组连续性检查和31帧面板宽度采样</a></li>
+<li><a href="evidence/visual/results.json">实际文字、动作与聚焦控件对比度及字体</a></li>
+<li><a href="evidence/storage-review/results.json">检查点失效与导出路径变化后的重审</a></li>
+<li><a href="evidence/late-reply/results.json">真实撤权期间回包、恢复权限后重新编辑</a></li>
+<li><a href="evidence/completion/native-surfaces/results.json">原生窗口缩放、拖动、菜单和减少动态效果</a></li>
+<li><a href="evidence/native-flow/03-native-frame.png">原生窗口截图</a> · <a href="evidence/refinement/native/window.json">窗口句柄、DPI与隔离配置</a> · <a href="evidence/completion/native-surfaces/environment.json">实际CSS尺寸、DPR与Electron缩放</a></li>
+<li><a href="evidence/detail-continuity/detail-selection.webm">最终A→B标题衔接录像</a> · <a href="evidence/detail-continuity/results.json">保留节点与减少动态结果</a></li>
+<li><a href="evidence/tooltip-contract/results.json">提示层级的隔离真实组件契约</a>（不作为产品页截图）</li>
+<li><a href="evidence/verification.json">本轮版本、验证矩阵与证据索引</a></li>
+<li><a href="evidence/counterexamples/known-failures.png">故意失败的三个溢出反例</a> · <a href="evidence/counterexamples/results.json">检测结果</a></li>
+</ul></section>
+<p class="section">兼容边界仍保留 Codecast 的依赖、许可证、历史认证/主题键、IPC 和数据目录；真实 Agent 标志继续使用原身份图标。本轮没有迁移账号或数据库，也没有自动应用队友文件。</p>
+</main><script>
+const data=[['活动','03-activity.png'],['项目','04-projects.png'],['认证','01-login.png'],['会话','10-reader.png'],['密集会话','16-dense-reader.png'],['代码审查','20-dense-diff.png'],['任务','19-task-detail.png'],['交接','18-handoff-draft.png'],['目录历史','13-history.png'],['设置','06-settings.png'],['连接','15-connections.png']];
+const parent=document.getElementById('pages'),comparison=document.getElementById('compare'),range=document.getElementById('split');
+function position(value){range.value=value;comparison.style.setProperty('--split',value+'%')}
+function select(index){const [label,file]=data[index];document.getElementById('before').src='evidence/baseline/after/'+file;document.getElementById('after').src='evidence/refinement/after/'+file;document.getElementById('beforeLink').href=document.getElementById('before').src;document.getElementById('afterLink').href=document.getElementById('after').src;[...parent.children].forEach((button,i)=>button.setAttribute('aria-pressed',String(i===index)));comparison.setAttribute('aria-label',label+'前后对照')}
+data.forEach(([label],i)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>select(i);parent.append(b)});range.oninput=()=>position(range.value);document.getElementById('old').onclick=()=>position(100);document.getElementById('new').onclick=()=>position(0);document.getElementById('half').onclick=()=>position(50);select(0);
+document.getElementById('mask').onchange=e=>{const mask=document.getElementById('brandMask');mask.hidden=!e.target.checked;mask.style.display=e.target.checked?'flex':'none'};
+</script></html>

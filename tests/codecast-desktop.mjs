@@ -288,6 +288,14 @@ try {
   await check(
     'A directory deep link selects its authorized directory after reopening',
     async () => {
+      // A test-directed full navigation can encounter the real pending-store
+      // leave prompt just after reopening. Explicitly accept this isolated TEST
+      // navigation; the next group separately asserts both native close choices.
+      await app.evaluate(({ dialog }) => {
+        const original = dialog.showMessageBoxSync;
+        dialog.showMessageBoxSync = (window, options) =>
+          options.buttons?.includes('Close now') ? 1 : original(window, options);
+      });
       await page.goto(
         `http://127.0.0.1:3407/projects/${credentials.projectId}?tab=workspaces&workspaceView=history&directory=${connector.workspaceId}`,
       );

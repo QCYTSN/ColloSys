@@ -1,0 +1,20 @@
+{
+  "commit": "98dd71924f0fe78c90ac6a10360282881d55f269",
+  "metrics": {
+    "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+    "size": "48.96px",
+    "weight": "600",
+    "tracking": "-1.224px",
+    "lineHeight": "53.856px",
+    "rect": {
+      "x": 72,
+      "y": 415.90625,
+      "width": 540,
+      "height": 107.6875,
+      "top": 415.90625,
+      "right": 612,
+      "bottom": 523.59375,
+      "left": 72
+    }
+  }
+}

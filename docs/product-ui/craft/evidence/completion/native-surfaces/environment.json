@@ -1,0 +1,226 @@
+[
+  {
+    "name": "projects-1440-minimum",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-1440-maximum",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-1280-minimum",
+    "cssViewport": {
+      "width": 1281,
+      "height": 801
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-1280-maximum",
+    "cssViewport": {
+      "width": 1281,
+      "height": 801
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-1920-minimum",
+    "cssViewport": {
+      "width": 1921,
+      "height": 1081
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-1920-maximum",
+    "cssViewport": {
+      "width": 1921,
+      "height": 1081
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-960-minimum",
+    "cssViewport": {
+      "width": 961,
+      "height": 721
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "projects-960-maximum",
+    "cssViewport": {
+      "width": 961,
+      "height": 721
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "project-menu",
+    "cssViewport": {
+      "width": 961,
+      "height": 721
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-Profile & appearance",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-Notifications",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-Keyboard",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-Connections",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-About ColloSys",
+    "cssViewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "devicePixelRatio": 2,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "zoom-125",
+    "cssViewport": {
+      "width": 1153,
+      "height": 721
+    },
+    "devicePixelRatio": 2.5,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1.25,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  },
+  {
+    "name": "settings-zoom",
+    "cssViewport": {
+      "width": 1153,
+      "height": 721
+    },
+    "devicePixelRatio": 2.5,
+    "cssZoom": "1",
+    "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ColloSys/44.3.0 Chrome/152.0.7977.78 Electron/44.3.0 Safari/537.36",
+    "electronZoomFactor": 1.25,
+    "windowsDisplayScale": 2,
+    "electronVersion": "44.3.0",
+    "chromeVersion": "152.0.7977.78"
+  }
+]

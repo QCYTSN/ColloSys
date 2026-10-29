@@ -283,7 +283,7 @@ try {
     await expect(page.locator('.collo-project-property-menu')).toHaveCount(0);
     await expect(trigger).toBeFocused();
     await trigger.click();
-    await page.locator('.collo-header-label').click();
+    await page.locator('.collo-topbar').click({ position: { x: 300, y: 2 } });
     await expect(page.locator('.collo-project-property-menu')).toHaveCount(0);
   });
   for (const [name, route, ready] of [
@@ -516,7 +516,11 @@ try {
   if (page) await page.screenshot({ path: path.join(out, 'failure.png') }).catch(() => {});
   throw error;
 } finally {
+  const recordedPath = video ? await video.path() : null;
   if (app) await app.close();
-  if (browser) await browser.close();
-  if (video) await video.saveAs(path.join(out, 'continuity.webm')).catch(() => {});
+  if (browser) {
+    await page?.context().close();
+    await browser.close();
+  }
+  if (recordedPath) await fs.copyFile(recordedPath, path.join(out, 'continuity.webm'));
 }

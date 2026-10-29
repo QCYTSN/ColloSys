@@ -6,7 +6,7 @@ import { account, completionFixture, longUrl, eventually } from './product-ui-co
 import { inspectOverflow } from './product-ui-overflow.mjs';
 const expect = baseExpect.configure({ timeout: 30000 }),
   f = await completionFixture();
-const out = 'docs/product-ui/completion/handoffs';
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/completion/handoffs';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',

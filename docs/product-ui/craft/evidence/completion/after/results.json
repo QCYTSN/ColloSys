@@ -1,0 +1,19 @@
+{
+  "at": "2026-10-28T15:01:38.983Z",
+  "native": false,
+  "checks": [
+    "Independent auth surface, password visibility and keyboard submission",
+    "Filtered project preview follows visible results and clears at zero results",
+    "Long Chinese and unbroken English project titles across window sizes",
+    "Full project header and manual activity survive long-content bounds",
+    "Capture filter declares its page scope and opens real paginated conversation",
+    "Storage is reachable from directory history with actual quota and checkpoints",
+    "Retention policy and cleanup affect only eligible managed test history",
+    "Pin persists in the real connector and can be undone",
+    "Create encrypted backup through the product and verify persisted receipt",
+    "Recover into a separate copy and export without touching working files",
+    "Delete only the selected isolated encrypted backup with confirmation",
+    "Actual restore preview remains a separate confirmed operation"
+  ],
+  "errors": []
+}

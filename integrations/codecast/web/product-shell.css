@@ -1,25 +1,20 @@
 /* Formal application frame, project index and the shared surface family. */
 :root {
-  --collo-rule: color-mix(in srgb, var(--sol-border) 75%, transparent);
+  --collo-rule: color-mix(in srgb, var(--collo-line) 75%, transparent);
 }
 .collo-preference-fields {
   border-top: 1px solid var(--collo-rule);
   border-bottom: 1px solid var(--collo-rule);
-  background: var(--sol-bg);
+  background: var(--collo-content);
 }
 .collo-preference-title {
   font-size: 13px;
   font-weight: 600;
   line-height: 20px;
-  color: var(--sol-text);
-}
-.collo-settings-body .cc-btn-cyan {
-  --btn-tint: var(--sol-text);
-  --btn-ink: var(--sol-bg);
-  color: var(--sol-bg);
+  color: var(--collo-ink);
 }
 .cc-btn {
-  border-radius: 7px;
+  border-radius: var(--collo-radius-compact);
 }
 .collo-icon-button {
   display: inline-flex;
@@ -29,28 +24,28 @@
   height: 32px;
   flex: none;
   border-radius: 7px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   transition:
     background-color 120ms,
     color 120ms,
     transform 80ms;
 }
 .collo-icon-button:hover {
-  background: var(--sol-bg-alt);
-  color: var(--sol-text);
+  background: var(--collo-tool);
+  color: var(--collo-ink);
 }
 .collo-icon-button:active {
   transform: translateY(0.5px);
 }
 .collo-icon-button:focus-visible,
 .collo-project-select:focus-visible {
-  outline: 2px solid var(--sol-violet);
+  outline: 2px solid var(--collo-accent);
   outline-offset: 2px;
 }
 .collo-shell,
 .collo-shell-header,
 .collo-sidebar-slot {
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
 }
 .collo-shell-header {
   border: 0;
@@ -61,7 +56,7 @@
   align-items: center;
   gap: 10px;
   padding: 0 20px;
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
 }
 .collo-home {
   display: flex;
@@ -71,7 +66,7 @@
 }
 .collo-header-label {
   font-size: 12px;
-  color: var(--sol-text-dim);
+  color: var(--collo-tertiary);
   padding-left: 6px;
 }
 .collo-topbar-nav,
@@ -98,7 +93,7 @@
   width: 100%;
 }
 [data-product-nav] {
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
   padding: 4px 12px 12px;
   border: 0;
 }
@@ -109,8 +104,8 @@
   margin: 0 14px 14px 2px;
   min-width: 0;
   overflow: hidden;
-  background: var(--sol-bg);
-  border: 1px solid var(--sol-border);
+  background: var(--collo-content);
+  border: 1px solid var(--collo-line);
   border-radius: 12px;
   box-shadow: 0 2px 4px #16172504;
 }
@@ -125,7 +120,7 @@
   flex: 1;
 }
 .collo-work-tabs {
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
   height: 36px;
   padding: 3px 10px;
   border-color: var(--collo-rule);
@@ -150,7 +145,7 @@
   text-transform: uppercase;
   padding: 0 12px;
   margin: 0 0 9px;
-  color: var(--sol-text-dim);
+  color: var(--collo-tertiary);
 }
 .collo-navigation a,
 .collo-settings-button {
@@ -163,14 +158,14 @@
   border-left: 0;
 }
 .collo-navigation [aria-current='page'] {
-  background: var(--sol-bg);
-  color: var(--sol-text);
+  background: var(--collo-content);
+  color: var(--collo-ink);
   font-weight: 600;
   box-shadow: 0 1px 3px #16172509;
 }
 .collo-navigation a:hover,
 .collo-settings-button:hover {
-  background: var(--sol-bg);
+  background: var(--collo-content);
 }
 .collo-navigation .group\/nav {
   border-left: 0;
@@ -187,7 +182,7 @@
   align-items: center;
   width: 100%;
   text-align: left;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   transition:
     background-color 120ms,
     color 120ms;
@@ -196,21 +191,21 @@
   display: flex;
   justify-content: space-between;
   font-size: 11px;
-  color: var(--sol-text-dim);
+  color: var(--collo-tertiary);
   padding: 22px 12px 0;
 }
 .collo-project-header {
   flex: none;
   border-bottom: 1px solid var(--collo-rule);
-  padding: 0 26px;
-  background: var(--sol-bg);
+  padding: 0 30px;
+  background: var(--collo-content);
   container: project-header / inline-size;
   min-width: 0;
 }
 .collo-project-identity {
   display: flex;
   align-items: center;
-  min-height: 84px;
+  min-height: 66px;
   gap: 12px;
   min-width: 0;
 }
@@ -221,7 +216,7 @@
 }
 .collo-eyebrow {
   display: block;
-  color: var(--sol-text-dim);
+  color: var(--collo-tertiary);
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.1em;
@@ -241,7 +236,7 @@
 .collo-project-properties {
   position: relative;
   font-size: 12px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   flex: none;
 }
 .collo-project-properties {
@@ -254,7 +249,7 @@
   border-radius: 7px;
 }
 .collo-project-properties:hover {
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
 }
 .collo-project-property-menu {
   width: 280px;
@@ -282,7 +277,7 @@
 .collo-projects {
   height: 100%;
   overflow: auto;
-  padding: 36px 38px;
+  padding: 30px 32px;
   container: projects / inline-size;
   scrollbar-gutter: stable;
   min-width: 0;
@@ -304,12 +299,12 @@
 }
 .collo-page-heading p {
   font-size: 13px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
 }
 .collo-projects-grid {
   display: grid;
   align-items: start;
-  grid-template-columns: minmax(0, 1fr) minmax(230px, 28%);
+  grid-template-columns: minmax(340px, 1fr) minmax(300px, 34%);
   gap: 32px;
 }
 .collo-project-index {
@@ -321,9 +316,9 @@
   justify-content: space-between;
   gap: 18px;
   padding: 0 0 14px;
-  border-bottom: 1px solid var(--sol-border);
+  border-bottom: 1px solid var(--collo-line);
   font-size: 12px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   flex-wrap: wrap;
 }
 .collo-search {
@@ -333,10 +328,10 @@
   max-width: 330px;
   height: 34px;
   padding: 0 10px;
-  border: 1px solid var(--sol-border);
-  border-radius: 7px;
-  color: var(--sol-text-muted);
-  background: var(--sol-bg);
+  border: 1px solid var(--collo-control-edge);
+  border-radius: var(--collo-radius-control);
+  color: var(--collo-secondary);
+  background: var(--collo-content);
   flex: 1;
   min-width: 120px;
 }
@@ -348,22 +343,19 @@
   background: none;
   font-size: 12px;
   line-height: 18px;
-  color: var(--sol-text);
+  color: var(--collo-ink);
 }
 .collo-search:focus-within {
-  border-color: var(--sol-violet);
+  border-color: var(--collo-accent);
   box-shadow: 0 0 0 2px var(--collo-accent-soft);
 }
 .collo-project-row {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 18px 12px;
+  padding: 21px 16px;
   border-bottom: 1px solid var(--collo-rule);
   transition: background-color 120ms;
-}
-.collo-project-row[data-selected='true'] {
-  background: linear-gradient(90deg, var(--collo-accent-soft), transparent 85%);
 }
 .collo-project-select {
   display: flex;
@@ -376,7 +368,7 @@
 }
 .collo-project-select > svg {
   flex: none;
-  color: var(--sol-violet);
+  color: var(--collo-accent);
 }
 .collo-project-select > span {
   display: flex;
@@ -385,7 +377,7 @@
   min-width: 0;
 }
 .collo-project-select strong {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   overflow-wrap: anywhere;
   display: -webkit-box;
@@ -395,7 +387,7 @@
 }
 .collo-project-select small {
   font-size: 12px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   line-height: 18px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -403,19 +395,18 @@
   overflow: hidden;
 }
 .collo-project-status {
-  font-size: 11px;
-  color: var(--sol-text-muted);
+  font-size: 12px;
+  color: var(--collo-secondary);
   text-transform: capitalize;
   flex: none;
 }
 .collo-project-overview {
   padding: 24px;
-  border-radius: 10px;
-  border: 1px solid var(--collo-rule);
+  border-radius: var(--collo-radius-surface);
+  border: 1px solid var(--collo-line);
   min-width: 0;
   display: block;
   background: var(--collo-tool);
-  border-color: transparent;
   animation: collo-reveal 140ms ease-out;
 }
 .collo-project-overview h2 {
@@ -434,7 +425,7 @@
 }
 .collo-project-people > span:last-child {
   font-size: 11px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin-left: 5px;
 }
 .collo-overview-section {
@@ -450,7 +441,7 @@
 }
 .collo-overview-section p {
   font-size: 12px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   line-height: 1.7;
   overflow-wrap: anywhere;
 }
@@ -464,15 +455,15 @@
   overflow-wrap: anywhere;
 }
 .collo-recent-row small {
-  font-size: 11px;
-  color: var(--sol-text-muted);
+  font-size: 12px;
+  color: var(--collo-secondary);
 }
 .collo-open-project {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding-top: 25px;
-  color: var(--sol-cyan);
+  color: var(--collo-link);
   font-size: 12px;
   font-weight: 500;
 }
@@ -496,15 +487,15 @@
 .collo-settings-surface,
 .collo-dialog-surface,
 .collo-menu-surface {
-  background: var(--sol-bg);
-  color: var(--sol-text);
-  border: 1px solid var(--sol-border);
+  background: var(--collo-content);
+  color: var(--collo-ink);
+  border: 1px solid var(--collo-line);
   box-shadow: var(--collo-shadow);
 }
 .collo-settings-surface {
   width: min(920px, 100%);
   height: min(760px, calc(100dvh - 64px));
-  border-radius: 14px;
+  border-radius: var(--collo-radius-dialog);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -535,7 +526,7 @@
   flex-direction: column;
   gap: 5px;
   flex: none;
-  border-bottom: 1px solid var(--sol-border);
+  border-bottom: 1px solid var(--collo-line);
 }
 .collo-settings-group {
   display: flex;
@@ -546,7 +537,7 @@
   width: 82px;
   flex: none;
   font-size: 11px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
 }
 .collo-settings-group > div {
   display: flex;
@@ -563,7 +554,7 @@
   font-size: 12px;
   line-height: 18px;
   font-weight: 400;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   transition:
     background-color 120ms,
     color 120ms;
@@ -571,12 +562,12 @@
   text-align: left;
 }
 .collo-settings-group button:hover {
-  background: var(--sol-bg-alt);
-  color: var(--sol-text);
+  background: var(--collo-tool);
+  color: var(--collo-ink);
 }
 .collo-settings-group button[aria-current='page'] {
   background: var(--collo-accent-soft);
-  color: var(--sol-cyan);
+  color: var(--collo-link);
   font-weight: 500;
 }
 .collo-settings-content {
@@ -663,7 +654,7 @@
   display: block;
   height: 42px;
   border-radius: 6px;
-  background: var(--sol-bg-alt);
+  background: var(--collo-tool);
   border: 1px solid var(--collo-rule);
 }
 .collo-skeleton-list i:nth-child(2) {
@@ -681,7 +672,7 @@
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
-  background: var(--sol-bg);
+  background: var(--collo-content);
   animation: collo-reveal 140ms ease-out;
 }
 .collo-review-content {
@@ -714,8 +705,8 @@
   flex: 1;
 }
 .collo-event-copy > strong {
-  font-size: 14px;
-  line-height: 21px;
+  font-size: 15px;
+  line-height: 23px;
   font-weight: 500;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -730,12 +721,12 @@
   font-size: 12px;
   margin: 5px 0 0;
   max-width: none;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
 }
 .collo-event-directory {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 18px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin: 6px 0 0 40px;
   overflow-wrap: anywhere;
 }
@@ -755,13 +746,13 @@
 .collo-review-heading p {
   font-size: 12px;
   line-height: 18px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin-top: 5px;
 }
 .collo-review-provenance {
   font-size: 12px;
   flex: none;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin: 0 0 12px;
 }
 .collo-review-provenance summary {
@@ -778,12 +769,12 @@
 .collo-checkpoint-diff {
   flex: 1;
   min-height: 160px;
-  border: 1px solid var(--sol-border);
+  border: 1px solid var(--collo-line);
   border-radius: 8px;
   overflow: hidden;
 }
 .collo-workspaces {
-  background: var(--sol-bg);
+  background: var(--collo-content);
 }
 .collo-activity-list {
   height: 100%;
@@ -791,8 +782,8 @@
   padding: 12px 20px;
 }
 .collo-activity-inner {
-  padding: 16px 12px;
-  max-width: none;
+  padding: 10px 12px;
+  max-width: 1140px;
 }
 .collo-activity-event {
   font-size: 14px;
@@ -811,7 +802,7 @@
   font-size: 12px;
   margin: 5px 0 0 36px;
   max-width: 650px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
 }
 @keyframes collo-panel-in {
   from {
@@ -941,7 +932,7 @@
     padding: 10px 20px 24px;
   }
   .collo-project-identity {
-    min-height: 76px;
+    min-height: 66px;
   }
   .collo-project-title h1 {
     font-size: 16px;
@@ -970,7 +961,7 @@
 } /* Product surfaces: content remains solid; only temporary tools use material. */
 .collo-project-row[data-selected='true'] {
   background: var(--collo-selected);
-  box-shadow: inset 2px 0 var(--sol-violet);
+  box-shadow: inset 2px 0 var(--collo-accent);
 }
 .collo-menu-surface,
 [data-collo-floating] {
@@ -978,7 +969,7 @@
   backdrop-filter: var(--collo-floating-filter);
   border: 1px solid var(--collo-edge);
   box-shadow: var(--collo-float-shadow);
-  color: var(--sol-text);
+  color: var(--collo-ink);
   z-index: var(--collo-z-menu);
   max-width: calc(100vw - 24px);
   max-height: var(--radix-popover-content-available-height, calc(100dvh - 24px));
@@ -987,19 +978,15 @@
 }
 @supports not (backdrop-filter: blur(1px)) {
   :root {
-    --collo-floating: var(--sol-bg);
+    --collo-floating: var(--collo-content);
     --collo-floating-filter: none;
   }
 }
 @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
   :root {
-    --collo-floating: var(--sol-bg);
+    --collo-floating: var(--collo-content);
     --collo-floating-filter: none;
   }
-}
-html[data-low-performance='true'] {
-  --collo-floating: var(--sol-bg);
-  --collo-floating-filter: none;
 }
 .collo-project-overview p,
 .collo-recent-row,
@@ -1100,24 +1087,24 @@ html[data-low-performance='true'] {
 }
 .collo-review-content,
 .collo-handoff-detail,
-.collo-reading-header {
+.collo-reader-heading {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 .collo-handoff-detail,
 .collo-project-overview,
-.collo-reading-header {
+.collo-reader-heading {
   animation: collo-reveal 140ms ease-out;
 }
 .collo-search-scope {
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin: 10px 0 18px;
   overflow-wrap: anywhere;
 }
 .collo-search-scope a {
-  color: var(--sol-link);
+  color: var(--collo-link);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -1155,12 +1142,12 @@ html[data-low-performance='true'] {
 .collo-source-card strong {
   display: block;
   font-size: 13px;
-  color: var(--sol-text);
+  color: var(--collo-ink);
   margin: 4px 0;
   overflow-wrap: anywhere;
 }
 .collo-source-card p {
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
   margin: 6px 0;
   overflow-wrap: anywhere;
 }
@@ -1237,5 +1224,70 @@ html[data-low-performance='true'] {
   }
   .collo-settings-section-heading {
     padding: 20px 20px 8px;
+  }
+}
+
+/* Disabled submission fields keep their geometry and make the pending scope explicit. */
+.collo-form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: contents;
+}
+.collo-form-fields:disabled :is(input, textarea, select) {
+  opacity: 0.7;
+  cursor: wait;
+}
+.collo-pending-button {
+  position: relative;
+}
+.collo-pending-label {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+.collo-project-query-notice {
+  grid-column: 1 / -1;
+}
+
+/* One timing source for sibling tracks. A drag removes this class immediately. */
+.collo-panels-moving > [data-panel] {
+  transition: flex-grow var(--collo-motion-panel);
+  overflow: hidden !important;
+}
+.collo-hint {
+  max-width: min(320px, calc(100vw - 24px));
+  padding: 7px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--collo-on-action);
+  background: var(--collo-action);
+  box-shadow: 0 2px 8px #17192318;
+  animation: collo-hint-in 100ms ease-out;
+  overflow-wrap: anywhere;
+}
+.collo-hint[data-state='closed'] {
+  animation: collo-hint-out 80ms ease-in;
+}
+@keyframes collo-hint-in {
+  from {
+    opacity: 0;
+    translate: 0 2px;
+  }
+}
+@keyframes collo-hint-out {
+  to {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collo-panels-moving > [data-panel] {
+    transition: none;
+  }
+  .collo-hint {
+    animation: none;
   }
 }

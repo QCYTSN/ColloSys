@@ -16,7 +16,7 @@ import {
 import { DetailSplitLayout } from '../components/DetailSplitLayout';
 import { useProductQuery as useQueryNoThrow } from './useProductQuery';
 import { CheckpointSource, type CheckpointReference } from './CheckpointSource';
-import { useAuthPrincipal } from '../lib/authPrincipal';
+import { useAuthPrincipal, authPrincipal } from '../lib/authPrincipal';
 import { useInboxStore } from '../store/inboxStore';
 import { capturedHref } from './CapturedSessions';
 import { readView, writeView, viewKey, clearProjectViews } from './productViewState';
@@ -67,6 +67,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
     ...(search.get('fromTask') ? { taskId: search.get('fromTask')! } : {}),
   }));
   const source = draft.source;
+  const draftVersion = useRef(0);
   const sourceWorkspace = search.get('fromWorkspace'),
     sourceSession = search.get('fromSession'),
     sourceTask = search.get('fromTask'),
@@ -74,6 +75,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
     checkpointWorkspace = search.get('checkpointWorkspace');
   useEffect(() => {
     if ((sourceWorkspace && sourceSession) || sourceTask || (checkpointId && checkpointWorkspace)) {
+      draftVersion.current++;
       setOpen(true);
       setDraft((previous) => ({
         ...previous,
@@ -123,6 +125,19 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   const checkpointReady =
     !draft.checkpoint || (!attachedCheckpoint.error && attachedCheckpoint.data?.complete === true);
   const denied = members.denied || page.denied;
+  const inFlight = useRef(false),
+    alive = useRef(true),
+    epoch = useRef(authPrincipal.epoch());
+  const access = useRef(denied);
+  access.current = denied;
+  const mounted = () => alive.current && epoch.current === authPrincipal.epoch();
+  const current = () => mounted() && !access.current;
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
   function changeOpen(value: boolean) {
     if (busy) return;
     setOpen(value);
@@ -136,22 +151,28 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   }, [scope, draft, denied]);
   useEffect(() => {
     if (denied) {
+      draftVersion.current++;
+      request.current = null;
       clearProjectViews(projectId);
       setOpen(false);
       setDraft({ ...emptyDraft });
     }
   }, [denied, projectId]);
-  const edit = (key: keyof Draft, value: string) =>
+  const edit = (key: keyof Draft, value: string) => {
+    draftVersion.current++;
     setDraft((previous) => ({ ...previous, [key]: value }));
+  };
   const name = (id: string) =>
     members.data?.members.find((m: { id: string }) => m.id === id)?.name ?? 'Member';
   const handoff =
     !detail.denied && !members.denied && detail.data?.projectId === projectId ? detail.data : null;
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    if (!checkpointReady || denied || members.error || page.error) return;
+    if (inFlight.current || !checkpointReady || denied || members.error || page.error) return;
+    inFlight.current = true;
     setBusy(true);
     setError('');
+    const submittedVersion = draftVersion.current;
     const contents = JSON.stringify({ ...draft, source });
     if (request.current?.contents !== contents)
       request.current = { contents, id: crypto.randomUUID() };
@@ -167,27 +188,33 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
         ...(source ? { source } : {}),
         ...(draft.checkpoint ? { checkpoint: draft.checkpoint } : {}),
       });
+      if (!current() || submittedVersion !== draftVersion.current) return;
       writeView(scope, { ...emptyDraft });
       setDraft({ ...emptyDraft });
       setOpen(false);
       request.current = null;
       router.push(`${closeHref}&handoff=${result.id}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Handoff could not be saved.');
+      if (current() && submittedVersion === draftVersion.current)
+        setError(e instanceof Error ? e.message : 'Handoff could not be saved.');
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      if (mounted()) setBusy(false);
     }
   }
   async function answer(status: 'accepted' | 'declined' | 'cancelled') {
-    if (!handoff) return;
+    if (!handoff || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError('');
     try {
       await respond({ id: handoff._id, revision: handoff.revision, status });
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Handoff changed. Reload and try again.');
+      if (current())
+        setError(e instanceof Error ? e.message : 'Handoff changed. Reload and try again.');
     } finally {
-      setBusy(false);
+      inFlight.current = false;
+      if (mounted()) setBusy(false);
     }
   }
   return (
@@ -376,124 +403,141 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 A recipient, the context and a useful next step.
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={submit}>
-              {(members.error || page.error) && (
-                <p className="collo-inline-notice" role="alert">
-                  Connection interrupted. Your draft is kept.
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      members.retry();
-                      page.retry();
-                    }}
+            <form onSubmit={submit} aria-busy={busy}>
+              <fieldset disabled={busy} className="collo-form-fields">
+                {(members.error || page.error) && (
+                  <p className="collo-inline-notice" role="alert">
+                    Connection interrupted. Your draft is kept.
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => {
+                        members.retry();
+                        page.retry();
+                      }}
+                    >
+                      Retry
+                    </Button>
+                  </p>
+                )}
+                <label>
+                  To
+                  <select
+                    required
+                    aria-label="Handoff recipient"
+                    value={draft.recipient}
+                    onChange={(e) => edit('recipient', e.target.value)}
                   >
-                    Retry
-                  </Button>
-                </p>
-              )}
-              <label>
-                To
-                <select
-                  required
-                  aria-label="Handoff recipient"
-                  value={draft.recipient}
-                  onChange={(e) => edit('recipient', e.target.value)}
-                >
-                  <option value="">Choose a project member</option>
-                  {members.data?.members
-                    .filter((m: { id: string }) => m.id !== viewer)
-                    .map((m: { id: string; name: string }) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-              <label>
-                Title
-                <input
-                  required
-                  maxLength={160}
-                  value={draft.title}
-                  onChange={(e) => edit('title', e.target.value)}
-                  placeholder="What is ready to continue?"
-                />
-              </label>
-              <label>
-                Context
-                <textarea
-                  required
-                  aria-label="Context"
-                  rows={4}
-                  maxLength={12000}
-                  value={draft.context}
-                  onChange={(e) => edit('context', e.target.value)}
-                  placeholder="What has happened, and what should they know?"
-                />
-              </label>
-              <label>
-                Next steps
-                <textarea
-                  rows={3}
-                  aria-label="Next steps"
-                  maxLength={8000}
-                  value={draft.nextSteps}
-                  onChange={(e) => edit('nextSteps', e.target.value)}
-                  placeholder="A clear next action"
-                />
-              </label>
-              <label>
-                Related task <span className="text-sol-text-dim">(optional)</span>
-                <select value={draft.taskId} onChange={(e) => edit('taskId', e.target.value)}>
-                  <option value="">No related task</option>
-                  {!members.denied &&
-                    Object.values(
-                      tasks as Record<string, { _id: string; title: string; project_id?: string }>,
-                    )
-                      .filter((t) => t.project_id === projectId)
-                      .map((t) => (
-                        <option key={t._id} value={t._id}>
-                          {t.title}
+                    <option value="">Choose a project member</option>
+                    {members.data?.members
+                      .filter((m: { id: string }) => m.id !== viewer)
+                      .map((m: { id: string; name: string }) => (
+                        <option key={m.id} value={m.id}>
+                          {m.name}
                         </option>
                       ))}
-                </select>
-              </label>
-              {source && (
-                <p className="collo-inline-notice">
-                  The current captured conversation will be attached.
-                </p>
-              )}
-              {draft.checkpoint && (
-                <CheckpointSource
-                  projectId={projectId}
-                  source={draft.checkpoint}
-                  onRemove={() => setDraft((previous) => ({ ...previous, checkpoint: undefined }))}
-                />
-              )}
-              {error && (
-                <p role="alert" className="collo-inline-notice">
-                  {error}
-                </p>
-              )}
-              <div className="collo-handoff-actions">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => changeOpen(false)}
-                  disabled={busy}
-                >
-                  Keep draft
-                </Button>
-                <Button
-                  type="submit"
-                  disabled={
-                    busy || !!members.error || !!page.error || !draft.recipient || !checkpointReady
-                  }
-                >
-                  {busy ? 'Sending…' : 'Send handoff'}
-                </Button>
-              </div>
+                  </select>
+                </label>
+                <label>
+                  Title
+                  <input
+                    required
+                    maxLength={160}
+                    value={draft.title}
+                    onChange={(e) => edit('title', e.target.value)}
+                    placeholder="What is ready to continue?"
+                  />
+                </label>
+                <label>
+                  Context
+                  <textarea
+                    required
+                    aria-label="Context"
+                    rows={4}
+                    maxLength={12000}
+                    value={draft.context}
+                    onChange={(e) => edit('context', e.target.value)}
+                    placeholder="What has happened, and what should they know?"
+                  />
+                </label>
+                <label>
+                  Next steps
+                  <textarea
+                    rows={3}
+                    aria-label="Next steps"
+                    maxLength={8000}
+                    value={draft.nextSteps}
+                    onChange={(e) => edit('nextSteps', e.target.value)}
+                    placeholder="A clear next action"
+                  />
+                </label>
+                <label>
+                  Related task <span className="text-sol-text-dim">(optional)</span>
+                  <select value={draft.taskId} onChange={(e) => edit('taskId', e.target.value)}>
+                    <option value="">No related task</option>
+                    {!members.denied &&
+                      Object.values(
+                        tasks as Record<
+                          string,
+                          { _id: string; title: string; project_id?: string }
+                        >,
+                      )
+                        .filter((t) => t.project_id === projectId)
+                        .map((t) => (
+                          <option key={t._id} value={t._id}>
+                            {t.title}
+                          </option>
+                        ))}
+                  </select>
+                </label>
+                {source && (
+                  <p className="collo-inline-notice">
+                    The current captured conversation will be attached.
+                  </p>
+                )}
+                {draft.checkpoint && (
+                  <CheckpointSource
+                    projectId={projectId}
+                    source={draft.checkpoint}
+                    onRemove={() => {
+                      draftVersion.current++;
+                      setDraft((previous) => ({ ...previous, checkpoint: undefined }));
+                    }}
+                  />
+                )}
+                {error && (
+                  <p role="alert" className="collo-inline-notice">
+                    {error}
+                  </p>
+                )}
+                <div className="collo-handoff-actions">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => changeOpen(false)}
+                    disabled={busy}
+                  >
+                    Keep draft
+                  </Button>
+                  <Button
+                    type="submit"
+                    className="collo-pending-button"
+                    aria-busy={busy}
+                    disabled={
+                      busy ||
+                      !!members.error ||
+                      !!page.error ||
+                      !draft.recipient ||
+                      !checkpointReady
+                    }
+                  >
+                    <span aria-hidden={busy} style={{ visibility: busy ? 'hidden' : 'visible' }}>
+                      Send handoff
+                    </span>
+                    {busy && <span className="collo-pending-label">Sending…</span>}
+                  </Button>
+                </div>
+              </fieldset>
             </form>
           </DialogContent>
         )}

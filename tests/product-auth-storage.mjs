@@ -88,7 +88,7 @@ try {
   });
   assert.equal(checks.length, 6);
   await fs.writeFile(
-    'docs/product-ui/completion/auth/storage-results.json',
+    (process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/completion/auth') + '/storage-results.json',
     JSON.stringify({ passed: true, checks, at: new Date().toISOString() }, null, 2),
   );
   checks.forEach((c) => console.log('PASS', c));

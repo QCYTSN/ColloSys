@@ -1,0 +1,16 @@
+{
+  "passed": true,
+  "checks": [
+    "Real connector encrypts a captured checkpoint, Convex persists verified bytes, retries deduplicate and teammate/outsider reads fail",
+    "Wrong key fails; encrypted recovery exports to a new registered directory while both original working directories remain unchanged",
+    "Concurrent quota reservations allow one final slot, same-ID retries do not charge twice, corrupted bytes never become complete",
+    "Two concurrent 24 MiB uploads produce one durable manifest; streamed download matches the full digest and deletion revokes access",
+    "Delete/recreate and device revocation during streamed upload cannot publish stale backup bytes",
+    "Captured session pages, native task comments, frozen context, idempotent sending and concurrent handoff responses persist consistently",
+    "A moved task prevents acceptance but does not trap the recipient in a permanently pending handoff",
+    "A pre-upgrade multipart receipt is migrated before accepting more parts; duplicate paths fail without corrupting its count",
+    "Old session migration advances across 19 MiB of checkpoint history in bounded transactions without duplicate projection",
+    "Removing a member immediately revokes captured session, handoff and device backup access"
+  ],
+  "observations": {}
+}

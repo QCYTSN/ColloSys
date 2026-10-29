@@ -212,7 +212,7 @@ function Reader({
             <ArrowLeft size={17} />
           </Button>
           <AgentBadge agent={first.adapter} />
-          <span className="collo-reader-owner">{member?.name || 'Member'}</span>
+          <span className="collo-reader-owner" title={member?.name || 'Member'}>{member?.name || 'Member'}</span>
           <span className="collo-tag">Captured session</span>
         </div>
         <Button
@@ -438,7 +438,7 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
                     </span>
                     <span className="collo-session-summary">
                       <strong>{s.preview || `${formatAgentType(s.adapter)} conversation`}</strong>
-                      <span>
+                      <span title={`${name(s.userId)} · ${formatAgentType(s.adapter)} · ${s.messageCount} messages`}>
                         {name(s.userId)} · {formatAgentType(s.adapter)} · {s.messageCount} messages
                       </span>
                     </span>

@@ -14,7 +14,7 @@ import {
 import { inspectOverflow } from './product-ui-overflow.mjs';
 const expect = baseExpect.configure({ timeout: 30000 });
 const native = process.argv.includes('--native'),
-  out = path.resolve('docs/product-ui/completion', native ? 'native' : 'after');
+  out = path.resolve(process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/completion', native ? 'native' : 'after');
 await fs.mkdir(out, { recursive: true });
 const origin = 'http://127.0.0.1:3407',
   fixture = await completionFixture();
@@ -240,7 +240,7 @@ try {
   async function confirm() {
     const form = page.getByRole('form', { name: 'Confirm storage operation' });
     await form.getByRole('checkbox').check();
-    await form.getByRole('button', { name: 'Confirm operation', exact: true }).click();
+    await form.locator('button[type=submit]').click();
     await expect(form).toHaveCount(0, { timeout: 120000 });
     await expect(storage.getByRole('button', { name: 'Refresh storage', exact: true })).toBeEnabled(
       { timeout: 120000 },
@@ -259,7 +259,7 @@ try {
     async () => {
       await storage.getByRole('button', { name: 'Create encrypted backup', exact: true }).click();
       await expect(
-        page.getByRole('button', { name: 'Confirm operation', exact: true }),
+        page.locator('.collo-storage-confirm button[type=submit]'),
       ).toBeDisabled();
       await page.getByLabel('Backup passphrase', { exact: true }).fill(passphrase);
       await confirm();
@@ -304,7 +304,7 @@ try {
       .getByRole('button', { name: 'Delete backup', exact: true })
       .click();
     await expect(
-      page.getByRole('button', { name: 'Confirm operation', exact: true }),
+      page.locator('.collo-storage-confirm button[type=submit]'),
     ).toBeDisabled();
     await confirm();
     await expect(storage.locator('[data-backup-id]')).toHaveCount(previousBackups.length);

@@ -15,6 +15,7 @@ await fs.mkdir(out, { recursive: true });
 const f = await completionFixture(),
   checks = [],
   audits = [],
+  environments = [],
   motion = [];
 let browser, app, context, page;
 const origin = 'http://127.0.0.1:3407';
@@ -28,6 +29,27 @@ async function shot(name) {
 }
 async function audit(name, selector) {
   const r = await inspectOverflow(page, selector);
+  environments.push({
+    name,
+    ...(await page.evaluate(() => ({
+      cssViewport: { width: innerWidth, height: innerHeight },
+      devicePixelRatio,
+      cssZoom: getComputedStyle(document.documentElement).zoom,
+      userAgent: navigator.userAgent,
+    }))),
+    ...(app
+      ? await app.evaluate(({ BrowserWindow, screen }) => {
+          const w = BrowserWindow.getAllWindows()[0];
+          return {
+            electronZoomFactor: w.webContents.getZoomFactor(),
+            windowsDisplayScale: screen.getDisplayMatching(w.getBounds()).scaleFactor,
+            electronVersion: process.versions.electron,
+            chromeVersion: process.versions.chrome,
+          };
+        })
+      : {}),
+  });
+  await fs.writeFile(path.join(out, 'environment.json'), JSON.stringify(environments, null, 2));
   audits.push({ name, ...r });
   await fs.writeFile(path.join(out, 'overflow.json'), JSON.stringify(audits, null, 2));
   assert.deepEqual(r.faults, [], name);
@@ -319,12 +341,10 @@ try {
     else await page.evaluate(() => (document.documentElement.style.zoom = ''));
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await page.locator('.collo-settings-button').click();
-    const reduced = await page
-      .locator('.collo-settings-surface')
-      .evaluate((e) => ({
-        name: getComputedStyle(e).animationName,
-        duration: getComputedStyle(e).animationDuration,
-      }));
+    const reduced = await page.locator('.collo-settings-surface').evaluate((e) => ({
+      name: getComputedStyle(e).animationName,
+      duration: getComputedStyle(e).animationDuration,
+    }));
     assert.equal(reduced.name, 'none');
     assert.ok(reduced.duration.split(',').every((value) => parseFloat(value) <= 0.00001));
     await page.keyboard.press('Escape');

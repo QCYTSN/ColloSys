@@ -558,7 +558,13 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                               <div className="collo-event-identity">
                                 <MemberFace id={event.actor.id} name={event.actor.name} size={30} />
                                 <div className="collo-event-copy">
-                                  <strong>
+                                  <strong
+                                    title={
+                                      event.kind === 'checkpoint'
+                                        ? event.payload.label
+                                        : event.payload.text
+                                    }
+                                  >
                                     {event.kind === 'checkpoint'
                                       ? event.payload.label
                                       : event.payload.text.slice(0, 180)}
@@ -1047,7 +1053,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           </DialogHeader>
           {storageOpen && directory?.running && collaboration.accessValid && (
             <DirectoryStorage
-              key={scope}
+              key={`${scope}:${directory.url}`}
               token={token}
               directory={directory}
               checkpoints={checkpoints}

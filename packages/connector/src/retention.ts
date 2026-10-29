@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Snapshots, Preview } from './snapshots';
 import type { LocalCheckpoint } from './store';
 import { git, SNAPSHOT_IDENTITY } from './vendor/codecast/git';
-import { safePath } from './files';
+import { safePath, digest } from './files';
 export const retentionSchema = z
   .object({
     maxCheckpoints: z.number().int().min(2).max(10000),
@@ -23,6 +23,8 @@ export async function diskBytes(directory: string): Promise<number> {
   return total;
 }
 export function retentionPlan(snapshots: Snapshots) {
+  const now = Date.now();
+  const expiredPreviews: string[] = [];
   const store = snapshots.store,
     policy = retentionSchema.parse(store.setting('retention', defaultRetention));
   const rows = (
@@ -35,38 +37,60 @@ export function retentionPlan(snapshots: Snapshots) {
     const event = JSON.parse(row.event);
     if (event.kind === 'checkpoint') protectedIds.add(event.payload.checkpointId);
   }
-  for (const row of store.db.prepare('SELECT data FROM previews').all() as { data: string }[]) {
-    const preview = JSON.parse(row.data) as Preview;
-    if (preview.expiresAt > Date.now()) protectedIds.add(preview.checkpointId);
-  }
-  for (const id of store.setting<string[]>('pinnedCheckpoints', [])) protectedIds.add(id);
-  const remove = rows.filter(
-    (cp, i) =>
-      !protectedIds.has(cp.id) &&
-      (i >= policy.maxCheckpoints || cp.createdAt < Date.now() - policy.maxAgeDays * 86400000),
-  );
-  return {
-    policy,
-    remove: remove.map((cp) => cp.id),
-    protected: Array.from(protectedIds),
-    count: rows.length,
-  };
-}
-export async function cleanRetention(snapshots: Snapshots) {
-  const plan = retentionPlan(snapshots),
-    store = snapshots.store;
   for (const row of store.db.prepare('SELECT id,data FROM previews').all() as {
     id: string;
     data: string;
   }[]) {
     const preview = JSON.parse(row.data) as Preview;
-    if (preview.expiresAt > Date.now()) continue;
+    if (preview.expiresAt > now) protectedIds.add(preview.checkpointId);
+    else expiredPreviews.push(row.id);
+  }
+  for (const id of store.setting<string[]>('pinnedCheckpoints', [])) protectedIds.add(id);
+  const remove = rows.filter(
+    (cp, i) =>
+      !protectedIds.has(cp.id) &&
+      (i >= policy.maxCheckpoints || cp.createdAt < now - policy.maxAgeDays * 86400000),
+  );
+  const expiredRecoveries = store
+    .recoveries()
+    .filter((r) => r.status !== 'ready' || r.expiresAt <= now)
+    .map((r) => r.id)
+    .sort();
+  expiredPreviews.sort();
+  const cleanupToken = digest(
+    JSON.stringify({
+      remove: remove.map((cp) => cp.id).sort(),
+      expiredPreviews,
+      expiredRecoveries,
+      policy,
+    }),
+  );
+  return {
+    policy,
+    cleanupToken,
+    expiredPreviews,
+    expiredRecoveries,
+    remove: remove.map((cp) => cp.id),
+    protected: Array.from(protectedIds),
+    count: rows.length,
+  };
+}
+export async function cleanRetention(snapshots: Snapshots, expectedPlan?: string) {
+  const plan = retentionPlan(snapshots),
+    store = snapshots.store;
+  if (expectedPlan !== undefined && plan.cleanupToken !== expectedPlan)
+    throw new Error('409: Cleanup scope changed. Refresh storage and review the new cleanup plan.');
+  for (const row of store.db.prepare('SELECT id,data FROM previews').all() as {
+    id: string;
+    data: string;
+  }[]) {
+    if (!plan.expiredPreviews.includes(row.id)) continue;
     const dir = await safePath(snapshots.previews, row.id);
     await fs.rm(dir, { recursive: true, force: true });
     store.db.prepare('DELETE FROM previews WHERE id=?').run(row.id);
   }
   for (const recovery of store.recoveries()) {
-    if (recovery.status === 'ready' && recovery.expiresAt > Date.now()) continue;
+    if (!plan.expiredRecoveries.includes(recovery.id)) continue;
     const dir = await safePath(snapshots.recoveries, recovery.id);
     await fs.rm(dir, { recursive: true, force: true });
     store.db.prepare('DELETE FROM recoveries WHERE id=?').run(recovery.id);

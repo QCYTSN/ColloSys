@@ -91,10 +91,10 @@ export async function storageApi(
     });
   }
   if (route === '/api/storage/clean' && method === 'POST') {
-    z.object({ confirmed: z.literal(true) })
+    const input = z.object({ confirmed: z.literal(true), expectedPlan: z.string().regex(/^[a-f0-9]{64}$/).optional() })
       .strict()
       .parse(raw);
-    return connector.serial(() => cleanRetention(snapshots));
+    return connector.serial(() => cleanRetention(snapshots, input.expectedPlan));
   }
   const base = `/api/projects/${config.projectId}/backups`;
   const credential: Record<string, string> =

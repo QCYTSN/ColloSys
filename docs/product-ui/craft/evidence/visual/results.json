@@ -1,0 +1,317 @@
+{
+  "checks": [
+    "Actual light auth text, focused control and error contrasts are measurable",
+    "Selected and secondary text plus the real settings action have sufficient contrast in both themes",
+    "Reachable local share page uses ColloSys identity and truthful clipboard feedback"
+  ],
+  "contrasts": [
+    {
+      "label": "auth title",
+      "property": "color",
+      "foreground": [
+        38,
+        40,
+        48
+      ],
+      "background": [
+        255,
+        255,
+        255
+      ],
+      "ratio": 14.699597017973858,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "28px",
+      "weight": "500",
+      "lineHeight": "33.6px",
+      "borderRadius": "0px",
+      "height": 33.59375
+    },
+    {
+      "label": "auth supporting text",
+      "property": "color",
+      "foreground": [
+        86,
+        92,
+        104
+      ],
+      "background": [
+        255,
+        255,
+        255
+      ],
+      "ratio": 6.716903932586141,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "14px",
+      "weight": "400",
+      "lineHeight": "23.8px",
+      "borderRadius": "0px",
+      "height": 23.796875
+    },
+    {
+      "label": "auth action",
+      "property": "color",
+      "foreground": [
+        255,
+        255,
+        255
+      ],
+      "background": [
+        39,
+        40,
+        46
+      ],
+      "ratio": 14.693174382177359,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "14px",
+      "weight": "500",
+      "lineHeight": "20px",
+      "borderRadius": "7px",
+      "height": 44
+    },
+    {
+      "label": "focused input",
+      "property": "borderTopColor",
+      "foreground": [
+        117,
+        104,
+        182
+      ],
+      "background": [
+        255,
+        255,
+        255
+      ],
+      "ratio": 4.759759990553684,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "14px",
+      "weight": "400",
+      "lineHeight": "22px",
+      "borderRadius": "8px",
+      "height": 46
+    },
+    {
+      "label": "auth error",
+      "property": "color",
+      "foreground": [
+        196,
+        66,
+        75
+      ],
+      "background": [
+        251,
+        242,
+        242
+      ],
+      "ratio": 4.5138803599766275,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "13px",
+      "weight": "400",
+      "lineHeight": "19.5px",
+      "borderRadius": "8px",
+      "height": 43.5
+    },
+    {
+      "label": "light project title",
+      "property": "color",
+      "foreground": [
+        38,
+        40,
+        48
+      ],
+      "background": [
+        255,
+        255,
+        255
+      ],
+      "ratio": 14.699597017973858,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "28px",
+      "weight": "600",
+      "lineHeight": "35px",
+      "borderRadius": "0px",
+      "height": 35
+    },
+    {
+      "label": "light selected project",
+      "property": "color",
+      "foreground": [
+        38,
+        40,
+        48
+      ],
+      "background": [
+        244,
+        243,
+        249
+      ],
+      "ratio": 13.323971478306664,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "15px",
+      "weight": "500",
+      "lineHeight": "22.5px",
+      "borderRadius": "0px",
+      "height": 45
+    },
+    {
+      "label": "light project metadata",
+      "property": "color",
+      "foreground": [
+        86,
+        92,
+        104
+      ],
+      "background": [
+        244,
+        243,
+        249
+      ],
+      "ratio": 6.088319041050787,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "12px",
+      "weight": "400",
+      "lineHeight": "18px",
+      "borderRadius": "0px",
+      "height": 18
+    },
+    {
+      "label": "light save action",
+      "property": "color",
+      "foreground": [
+        255,
+        255,
+        255
+      ],
+      "background": [
+        39,
+        40,
+        46
+      ],
+      "ratio": 14.693174382177359,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "12px",
+      "weight": "500",
+      "lineHeight": "16px",
+      "borderRadius": "7px",
+      "height": 32
+    },
+    {
+      "label": "dark project title",
+      "property": "color",
+      "foreground": [
+        236,
+        236,
+        242
+      ],
+      "background": [
+        32,
+        33,
+        39
+      ],
+      "ratio": 13.641776479169849,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "28px",
+      "weight": "600",
+      "lineHeight": "35px",
+      "borderRadius": "0px",
+      "height": 35
+    },
+    {
+      "label": "dark selected project",
+      "property": "color",
+      "foreground": [
+        236,
+        236,
+        242
+      ],
+      "background": [
+        44,
+        44,
+        55
+      ],
+      "ratio": 11.721846487238262,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "15px",
+      "weight": "500",
+      "lineHeight": "22.5px",
+      "borderRadius": "0px",
+      "height": 45
+    },
+    {
+      "label": "dark project metadata",
+      "property": "color",
+      "foreground": [
+        179,
+        181,
+        194
+      ],
+      "background": [
+        44,
+        44,
+        55
+      ],
+      "ratio": 6.768515964890099,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "12px",
+      "weight": "400",
+      "lineHeight": "18px",
+      "borderRadius": "0px",
+      "height": 18
+    },
+    {
+      "label": "dark save action",
+      "property": "color",
+      "foreground": [
+        32,
+        33,
+        39
+      ],
+      "background": [
+        236,
+        236,
+        241
+      ],
+      "ratio": 13.632614468925793,
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "size": "12px",
+      "weight": "500",
+      "lineHeight": "16px",
+      "borderRadius": "7px",
+      "height": 32
+    }
+  ],
+  "typography": [
+    {
+      "role": "settings title",
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "weight": "600",
+      "size": "24px",
+      "tracking": "-0.84px"
+    },
+    {
+      "role": "settings title",
+      "font": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif",
+      "weight": "600",
+      "size": "24px",
+      "tracking": "-0.84px"
+    },
+    {
+      "role": "Chinese project title",
+      "fonts": {
+        "fonts": [
+          {
+            "familyName": "Google Sans",
+            "postScriptName": "Google-Sans-Bold",
+            "isCustomFont": true,
+            "glyphCount": 1
+          },
+          {
+            "familyName": "Microsoft YaHei UI",
+            "postScriptName": "MicrosoftYaHeiUI-Bold",
+            "isCustomFont": false,
+            "glyphCount": 110
+          }
+        ]
+      }
+    }
+  ]
+}

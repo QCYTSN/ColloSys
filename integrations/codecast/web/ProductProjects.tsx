@@ -74,7 +74,9 @@ export function ProductProjects() {
                   <FolderSimple size={21} weight="duotone" />
                   <span>
                     <strong title={p.title}>{p.title}</strong>
-                    <small>
+                    <small
+                      title={p.description || 'Project activity, conversations and shared work'}
+                    >
                       {p.description || 'Project activity, conversations and shared work'}
                     </small>
                   </span>
@@ -121,20 +123,14 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
     paginationOpts: { numItems: 10, cursor: null },
   });
   const href = `/projects/${project.short_id || project._id}`;
-  if (members.error || feed.error || workspaces.error)
+  const queries = [members, feed, workspaces, handoffs];
+  const retry = () => queries.forEach((q) => q.retry());
+  if (queries.some((q) => q.denied))
     return (
       <aside className="collo-project-overview">
         <h2>Project overview</h2>
-        <p role="alert">This project could not be loaded.</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            members.retry();
-            feed.retry();
-            workspaces.retry();
-          }}
-        >
+        <p role="alert">Your access to this project has changed.</p>
+        <Button variant="outline" size="sm" onClick={retry}>
           Retry
         </Button>
       </aside>
@@ -142,17 +138,33 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
   return (
     <aside className="collo-project-overview">
       <h2>{project.title}</h2>
+      {queries.some((q) => q.error) && (
+        <p role="alert" className="collo-inline-notice">
+          Could not refresh this overview. Available information is kept here.
+          <Button size="sm" variant="ghost" onClick={retry}>
+            Retry
+          </Button>
+        </p>
+      )}
       <div className="collo-project-people">
         {members.data?.members.map((m) => (
           <MemberFace key={m.id} name={m.name} id={m.id} />
         ))}
-        <span>{members.data ? `${members.data.members.length} members` : 'Loading members…'}</span>
+        <span>
+          {members.data
+            ? `${members.data.members.length} members`
+            : members.error
+              ? 'Members unavailable'
+              : 'Loading members…'}
+        </span>
       </div>
       <div className="collo-overview-section">
         <h3>
           <Pulse size={16} /> Recent activity
         </h3>
-        {!feed.data ? (
+        {!feed.data && feed.error ? (
+          <p>Activity is temporarily unavailable.</p>
+        ) : !feed.data ? (
           <div className="collo-skeleton-list" role="status" aria-label="Loading activity">
             <i />
             <i />
@@ -188,10 +200,12 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
               : 'No directories connected yet.'}
           </p>
         ) : (
-          <p>Loading directories…</p>
+          <p>
+            {workspaces.error ? 'Directories are temporarily unavailable.' : 'Loading directories…'}
+          </p>
         )}
       </div>
-      {!handoffs.error && handoffs.data?.page.some((h) => h.status === 'pending') && (
+      {handoffs.data?.page.some((h) => h.status === 'pending') && (
         <div className="collo-overview-section">
           <h3>Awaiting response</h3>
           {handoffs.data.page

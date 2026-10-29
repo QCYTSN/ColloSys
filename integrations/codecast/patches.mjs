@@ -9,6 +9,7 @@ import { productUiPatches } from './product-ui-patches.mjs';
 import { refinementPatches } from './refinement-patches.mjs';
 import { completionPatches } from './completion-patches.mjs';
 import { authStoragePatches } from './auth-storage-patches.mjs';
+import { craftPatches } from './craft-patches.mjs';
 export const patches = [
   ...productPatches,
   ...backendPatches,
@@ -131,4 +132,5 @@ export const patches = [
   ...refinementPatches,
   ...completionPatches,
   ...authStoragePatches,
+  ...craftPatches,
 ];

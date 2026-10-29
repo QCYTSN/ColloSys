@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account } from './product-ui-refinement-data.mjs';
 const expect = baseExpect.configure({ timeout: 30000 });
-const out = 'docs/product-ui/completion/auth';
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/completion/auth';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -28,7 +28,7 @@ try {
   const dom = await cdp.send('DOM.getDocument');
   const node = await cdp.send('DOM.querySelector', {
     nodeId: dom.root.nodeId,
-    selector: '.collo-auth-statement h1',
+    selector: '.collo-auth-step h1',
   });
   const fonts = await cdp.send('CSS.getPlatformFontsForNode', { nodeId: node.nodeId });
   assert.ok(fonts.fonts.some((f) => f.isCustomFont && f.familyName.includes('Google Sans')));

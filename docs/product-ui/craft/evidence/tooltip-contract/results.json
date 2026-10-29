@@ -1,0 +1,35 @@
+{
+  "scope": "Isolated actual component contract, not a formal product screenshot",
+  "at": "2026-10-28T15:38:05.119Z",
+  "layers": [
+    {
+      "name": "Page action",
+      "z": 140
+    },
+    {
+      "name": "Settings action",
+      "z": 160
+    },
+    {
+      "name": "Dialog action",
+      "z": 205
+    },
+    {
+      "name": "Menu action",
+      "z": 220,
+      "rect": {
+        "x": 819,
+        "y": 595,
+        "width": 120.828125,
+        "height": 32,
+        "top": 595,
+        "right": 939.828125,
+        "bottom": 627,
+        "left": 819
+      },
+      "menuZ": 210
+    }
+  ],
+  "errors": [],
+  "passed": true
+}

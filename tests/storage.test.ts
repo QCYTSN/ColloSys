@@ -99,6 +99,33 @@ test('retention protects pending, pinned, live previews and latest two; retained
     await fs.rm(f.temp, { recursive: true, force: true });
   }
 });
+test('cleanup rejects a changed reviewed scope before deleting any checkpoint', async () => {
+  const f = await fixture();
+  try {
+    for (let i = 0; i < 5; i++) {
+      await fs.writeFile(path.join(f.root, 'file.txt'), `TEST version ${i}`);
+      await f.snapshots.capture();
+    }
+    for (const row of f.store.db.prepare('SELECT id FROM outbox').all() as { id: string }[])
+      f.store.acknowledge(row.id, 1);
+    f.store.set('retention', { maxCheckpoints: 2, maxAgeDays: 30, maxDiskMiB: 128 });
+    const reviewed = retentionPlan(f.snapshots);
+    assert.equal(reviewed.remove.length, 3);
+    f.store.set('pinnedCheckpoints', [reviewed.remove[0]]);
+    await assert.rejects(() => cleanRetention(f.snapshots, reviewed.cleanupToken), /Cleanup scope changed/);
+    assert.equal(f.store.list().length, 5);
+    assert.equal(await fs.readFile(path.join(f.root, 'file.txt'), 'utf8'), 'TEST version 4');
+    const fresh = retentionPlan(f.snapshots);
+    assert.notEqual(fresh.cleanupToken, reviewed.cleanupToken);
+    const result = await cleanRetention(f.snapshots, fresh.cleanupToken);
+    assert.equal(result.removed, 2);
+    assert.equal(f.store.list().length, 3);
+    assert.ok(f.store.get(reviewed.remove[0]));
+  } finally {
+    f.store.close();
+    await fs.rm(f.temp, { recursive: true, force: true });
+  }
+});
 test('quota refuses new checkpoint without discarding pending events or claiming captured state', async () => {
   const f = await fixture();
   try {

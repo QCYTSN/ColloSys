@@ -60,7 +60,11 @@ export function SlowBootNote() {
     <div className="collo-slow-boot" role="status">
       <p>This is taking longer than usual.</p>
       <button onClick={() => window.location.reload()}>Retry loading</button>
-      <a href="/login">Return to sign in</a>
+      <a
+        href={`/login?recover=1&return_to=${encodeURIComponent(window.location.pathname + window.location.search)}`}
+      >
+        Sign-in recovery
+      </a>
     </div>
   ) : null;
 }

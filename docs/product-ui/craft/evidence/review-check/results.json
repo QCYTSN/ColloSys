@@ -1,0 +1,187 @@
+{
+  "at": "2026-10-28T15:58:02.632Z",
+  "comparisons": [
+    {
+      "label": "活动前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/03-activity.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/03-activity.png"
+        }
+      ]
+    },
+    {
+      "label": "项目前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/04-projects.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/04-projects.png"
+        }
+      ]
+    },
+    {
+      "label": "认证前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/01-login.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/01-login.png"
+        }
+      ]
+    },
+    {
+      "label": "会话前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/10-reader.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/10-reader.png"
+        }
+      ]
+    },
+    {
+      "label": "密集会话前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/16-dense-reader.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/16-dense-reader.png"
+        }
+      ]
+    },
+    {
+      "label": "代码审查前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/20-dense-diff.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/20-dense-diff.png"
+        }
+      ]
+    },
+    {
+      "label": "任务前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/19-task-detail.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/19-task-detail.png"
+        }
+      ]
+    },
+    {
+      "label": "交接前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/18-handoff-draft.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/18-handoff-draft.png"
+        }
+      ]
+    },
+    {
+      "label": "目录历史前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/13-history.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/13-history.png"
+        }
+      ]
+    },
+    {
+      "label": "设置前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/06-settings.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/06-settings.png"
+        }
+      ]
+    },
+    {
+      "label": "连接前后对照",
+      "images": [
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/refinement/after/15-connections.png"
+        },
+        {
+          "width": 1440,
+          "height": 900,
+          "source": "evidence/baseline/after/15-connections.png"
+        }
+      ]
+    }
+  ],
+  "videos": [
+    {
+      "source": "evidence/continuity/continuity.webm",
+      "duration": 43.32,
+      "width": 1440,
+      "height": 900
+    },
+    {
+      "source": "evidence/refinement/native/continuity.webm",
+      "duration": 60.84,
+      "width": 1440,
+      "height": 900
+    }
+  ],
+  "errors": [],
+  "linksChecked": true,
+  "viewerControlsChecked": true
+}

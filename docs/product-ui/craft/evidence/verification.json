@@ -1,0 +1,147 @@
+{
+  "at": "2026-10-28T15:53:17.290Z",
+  "baseCommit": "98dd71924f0fe78c90ac6a10360282881d55f269",
+  "branch": "codex/product-ui",
+  "productVersion": "0.1.0 (uncommitted craft revision)",
+  "entry": "npm start; independent Windows application",
+  "finalBuildFingerprint": "39971719174bae017d27fdd466c7a07991dc1da943644d716829f6f4d4ab10e8",
+  "visualComparisonFingerprint": "b070ccc0fedaebe50fd06aa1d1291f5a0419f43935ec0bde94680d7e8cd01be2",
+  "lastBuildDelta": "Only added .collo-review-heading to the detail transition target; static CSS/DOM/fonts unchanged. Final detail, continuity, native refinement and native surfaces rerun.",
+  "upstream": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+  "explicitPatches": 156,
+  "engineering": {
+    "typecheck": "passed",
+    "unitTests": 65,
+    "integrationOwnedFiles": 58,
+    "immutableFiles": 9854,
+    "immutableFailures": 0,
+    "build": "passed; 1m21s; upstream warnings retained"
+  },
+  "results": [
+    {
+      "file": "refinement/after/results.json",
+      "groups": 11,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:33:56.999Z"
+    },
+    {
+      "file": "refinement/native/results.json",
+      "groups": 11,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:49:46.068Z"
+    },
+    {
+      "file": "completion/after/results.json",
+      "groups": 12,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:01:38.983Z"
+    },
+    {
+      "file": "completion/native/results.json",
+      "groups": 12,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:35:37.630Z"
+    },
+    {
+      "file": "completion/surfaces/results.json",
+      "groups": 7,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:04:42.627Z"
+    },
+    {
+      "file": "completion/native-surfaces/results.json",
+      "groups": 4,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:50:08.032Z"
+    },
+    {
+      "file": "continuity/results.json",
+      "groups": 7,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:48:44.073Z"
+    },
+    {
+      "file": "handoffs/results.json",
+      "groups": 6,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:08:43.183Z"
+    },
+    {
+      "file": "access/results.json",
+      "groups": 3,
+      "passed": true,
+      "capturedAt": null
+    },
+    {
+      "file": "auth/results.json",
+      "groups": 3,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:09:24.741Z"
+    },
+    {
+      "file": "auth/storage-results.json",
+      "groups": 6,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:09:26.108Z"
+    },
+    {
+      "file": "visual/results.json",
+      "groups": 3,
+      "passed": true,
+      "capturedAt": null
+    },
+    {
+      "file": "storage-review/results.json",
+      "groups": 2,
+      "passed": true,
+      "capturedAt": null
+    },
+    {
+      "file": "native-flow/results.json",
+      "groups": 7,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:36:42.631Z"
+    },
+    {
+      "file": "backend/result.json",
+      "groups": 10,
+      "passed": true,
+      "capturedAt": null
+    },
+    {
+      "file": "backend/restart-result.json",
+      "groups": 1,
+      "passed": true,
+      "capturedAt": null
+    },
+    {
+      "file": "native-desktop/results.json",
+      "groups": 9,
+      "passed": true,
+      "capturedAt": "2026-10-28T15:39:10.024Z"
+    },
+    {
+      "file": "late-reply/results.json",
+      "groups": 1,
+      "passed": true
+    },
+    {
+      "file": "detail-continuity/results.json",
+      "groups": 1,
+      "passed": true
+    },
+    {
+      "file": "tooltip-contract/results.json",
+      "groups": 1,
+      "passed": true
+    }
+  ],
+  "limitations": [
+    "Visual selection remains with the user.",
+    "Official OpenDesign/DSH sources and public Claude/Codex pages were studied; their applications were not locally run.",
+    "Component tooltip contract is isolated, not a product-page screenshot.",
+    "Some cases inject transport/inspection responses and are explicitly labelled; membership and backend writes are real TEST operations.",
+    "No FPS, multi-monitor, cross-platform, public-capacity or full accessibility certification.",
+    "No installer, public deployment, paid API, invitation, commit or push."
+  ]
+}

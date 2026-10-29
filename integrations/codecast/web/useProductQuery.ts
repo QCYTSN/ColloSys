@@ -20,12 +20,22 @@ export function useProductQuery<Q extends FunctionReference<'query'>>(
     key,
     data: undefined,
   });
-  const denied =
-    permissionFailure(result.error) ||
-    auth.identityLost ||
-    !principal.principalId ||
-    args === 'skip';
-  if (previous.current.key !== key || denied) previous.current = { key, data: undefined };
+  const idle = args === 'skip';
+  const denied = auth.identityLost || (!idle && permissionFailure(result.error));
+  if (previous.current.key !== key || denied || idle || !principal.principalId)
+    previous.current = { key, data: undefined };
   else if (result.data !== undefined) previous.current = { key, data: result.data };
-  return { ...result, data: denied ? undefined : (result.data ?? previous.current.data), denied };
+  const data =
+    denied || idle || !principal.principalId ? undefined : (result.data ?? previous.current.data);
+  const error = idle ? undefined : result.error;
+  const status = denied
+    ? 'access-denied'
+    : idle
+      ? 'idle'
+      : error
+        ? 'transient-error'
+        : data === undefined
+          ? 'loading'
+          : 'valid';
+  return { ...result, data, error, denied, status };
 }

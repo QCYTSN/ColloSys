@@ -1,0 +1,5 @@
+
+> collosys@0.1.0 typecheck:integration
+> node scripts/codecast-typecheck.mjs
+
+Codecast integration typecheck passed (58 owned files; actual upstream types).

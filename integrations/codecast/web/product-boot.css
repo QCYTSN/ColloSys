@@ -8,11 +8,11 @@
 html,
 body {
   margin: 0;
-  background: var(--sol-bg-alt, #f4f5f7);
+  background: var(--collo-tool, var(--sol-bg-alt, #f0f1f3));
 }
 .collo-loading {
   box-sizing: border-box;
-  color: var(--sol-text-muted, #626572);
+  color: var(--collo-secondary, var(--sol-text-muted, #565c68));
   font-family: 'Google Sans', 'Microsoft YaHei UI', sans-serif;
   font-size: 14px;
 }
@@ -22,7 +22,7 @@ body {
 .collo-loading-screen {
   height: 100dvh;
   min-height: 360px;
-  background: var(--sol-bg-alt, #f4f5f7);
+  background: var(--collo-tool, var(--sol-bg-alt, #f0f1f3));
 }
 #boot-shell {
   position: fixed;
@@ -47,7 +47,7 @@ body {
   font-size: 18px;
   font-weight: 650;
   letter-spacing: -0.55px;
-  color: var(--sol-text, #252630);
+  color: var(--collo-ink, var(--sol-text, #262830));
 }
 .collo-boot-logo img {
   border-radius: 24%;
@@ -111,7 +111,7 @@ html[data-collo-nav-hidden] .collo-loading-nav {
 .collo-loading-lines i {
   display: block;
   height: 13px;
-  background: var(--sol-bg-alt, #f4f5f7);
+  background: var(--collo-tool, var(--sol-bg-alt, #f0f1f3));
   border-radius: 4px;
   width: 90%;
 }
@@ -140,14 +140,14 @@ html[data-collo-nav-hidden] .collo-loading-nav {
   left: 270px;
   right: 38px;
   padding: 16px;
-  background: var(--sol-bg);
-  border: 1px solid var(--sol-border);
+  background: var(--collo-content);
+  border: 1px solid var(--collo-line);
   border-radius: 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
   font-size: 13px;
-  color: var(--sol-text-muted);
+  color: var(--collo-secondary);
 }
 .collo-slow-boot a,
 .collo-slow-boot button,

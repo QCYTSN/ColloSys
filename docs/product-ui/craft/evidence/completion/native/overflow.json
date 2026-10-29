@@ -1,0 +1,151 @@
+[
+  {
+    "name": "login",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "projects-1440",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "projects-1280",
+    "viewport": {
+      "width": 1281,
+      "height": 801
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "STRONG",
+        "id": "",
+        "cls": "",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "truncated text has an exact full-text title",
+        "access": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与"
+      },
+      {
+        "tag": "STRONG",
+        "id": "",
+        "cls": "",
+        "text": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+        "reason": "truncated text has an exact full-text title",
+        "access": "UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle"
+      }
+    ]
+  },
+  {
+    "name": "projects-1920",
+    "viewport": {
+      "width": 1921,
+      "height": 1081
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "projects-960",
+    "viewport": {
+      "width": 961,
+      "height": 721
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "project-heading",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "H1",
+        "id": "",
+        "cls": "min-w-0 shrink font-medium tracking-[-0.01em] text-[17px] leading-[24px] truncate cursor-text",
+        "text": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与",
+        "reason": "truncated text has an exact full-text title",
+        "access": "团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与上下文连续性团队协作与"
+      }
+    ]
+  },
+  {
+    "name": "activity",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  },
+  {
+    "name": "conversation",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": [
+      {
+        "tag": "SPAN",
+        "id": "",
+        "cls": "collo-reader-owner",
+        "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test",
+        "reason": "truncated text has an exact full-text title",
+        "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+      },
+      {
+        "tag": "SPAN",
+        "id": "",
+        "cls": "truncate font-mono text-[11px] text-sol-text-muted",
+        "text": "example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-eviden",
+        "reason": "truncated text has an exact full-text title",
+        "access": "https://example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/source"
+      },
+      {
+        "tag": "SPAN",
+        "id": "",
+        "cls": "truncate font-mono text-[11px] text-sol-text-muted",
+        "text": "example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-eviden",
+        "reason": "truncated text has an exact full-text title",
+        "access": "https://example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/source"
+      },
+      {
+        "tag": "SPAN",
+        "id": "",
+        "cls": "truncate font-mono text-[11px] text-sol-text-muted",
+        "text": "example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-eviden",
+        "reason": "truncated text has an exact full-text title",
+        "access": "https://example.invalid/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/project-context-and-evidence/source"
+      }
+    ]
+  },
+  {
+    "name": "storage",
+    "viewport": {
+      "width": 1441,
+      "height": 901
+    },
+    "documentOverflow": 0,
+    "faults": [],
+    "legal": []
+  }
+]

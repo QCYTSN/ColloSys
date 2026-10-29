@@ -1,0 +1,13 @@
+{
+  "visible": true,
+  "title": "ColloSys",
+  "bounds": {
+    "x": 7,
+    "y": 55,
+    "width": 1441,
+    "height": 901
+  },
+  "nativeHandle": true,
+  "contextIsolation": true,
+  "nodeIntegration": false
+}

@@ -17,6 +17,7 @@ type Recovery = {
   files: number;
 };
 type Storage = {
+  cleanupToken: string;
   bytes: number;
   count: number;
   protected: string[];
@@ -44,6 +45,21 @@ const size = (bytes: number) =>
 type Operation = {
   kind: 'policy' | 'clean' | 'create' | 'recover' | 'export' | 'delete';
   id?: string;
+  reviewId: string;
+  policy: Policy;
+  checkpointId: string;
+  subject: string;
+  exportPath: string;
+  cleanupToken?: string;
+  removeCount: number;
+};
+const actionLabels = {
+  policy: 'Save policy',
+  clean: 'Clean reviewed history',
+  create: 'Save encrypted backup',
+  recover: 'Recover separate copy',
+  export: 'Export to this directory',
+  delete: 'Delete this backup',
 };
 
 export function DirectoryStorage({
@@ -83,6 +99,7 @@ export function DirectoryStorage({
     [denied, setDenied] = useState(false);
   const alive = useRef(true),
     epoch = useRef(authPrincipal.epoch()),
+    inFlight = useRef(false),
     policyDirty = useRef(false);
   const confirmation = useRef<HTMLFormElement>(null);
   useEffect(() => {
@@ -90,7 +107,7 @@ export function DirectoryStorage({
       confirmation.current?.scrollIntoView({ block: 'nearest' });
       confirmation.current?.focus({ preventScroll: true });
     }
-  }, [operation]);
+  }, [operation?.reviewId]);
   const current = () => alive.current && epoch.current === authPrincipal.epoch();
   const request = <T,>(route: string, body?: unknown) =>
     localRequest<T>(token, route, body, directory.url);
@@ -142,15 +159,36 @@ export function DirectoryStorage({
       alive.current = false;
     };
   }, [refresh]);
-  function choose(next: Operation | null) {
-    setOperation(next);
+  function choose(next: Pick<Operation, 'kind' | 'id'> | null) {
+    const cp = checkpoints.find((c) => c.id === checkpoint);
+    const backup = backups?.backups.find((b) => b.id === next?.id);
+    setOperation(
+      next
+        ? {
+            ...next,
+            reviewId: crypto.randomUUID(),
+            policy: { ...policy },
+            checkpointId: checkpoint,
+            subject: backup
+              ? `Backup saved ${new Date(backup.created_at).toLocaleString()}`
+              : cp
+                ? `${cp.label} · ${new Date(cp.createdAt).toLocaleString()}`
+                : directory.label,
+            exportPath: '',
+            cleanupToken: storage?.cleanupToken,
+            removeCount: storage?.remove.length ?? 0,
+          }
+        : null,
+    );
+    setExportPath('');
     setConfirmed(false);
     setPassphrase('');
     setError('');
     setMessage('');
   }
   async function execute(action: () => Promise<unknown>, success: string) {
-    if (busy || denied) return false;
+    if (inFlight.current || denied) return false;
+    inFlight.current = true;
     setBusy(true);
     setError('');
     setMessage('');
@@ -168,6 +206,7 @@ export function DirectoryStorage({
       failure(e);
       return false;
     } finally {
+      inFlight.current = false;
       if (current()) {
         setBusy(false);
         setPassphrase('');
@@ -176,18 +215,23 @@ export function DirectoryStorage({
   }
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!confirmed || !operation) return;
+    if (!confirmed || !operation || !reviewValid || inFlight.current) return;
     const op = operation;
     const actions = {
-      policy: () => request('/api/storage/policy', { policy, confirmed: true }),
-      clean: () => request('/api/storage/clean', { confirmed: true }),
+      policy: () => request('/api/storage/policy', { policy: op.policy, confirmed: true }),
+      clean: () =>
+        request('/api/storage/clean', { confirmed: true, expectedPlan: op.cleanupToken }),
       create: () =>
-        request('/api/backups/create', { checkpointId: checkpoint, passphrase, confirmed: true }),
+        request('/api/backups/create', {
+          checkpointId: op.checkpointId,
+          passphrase,
+          confirmed: true,
+        }),
       recover: () => request('/api/backups/recover', { id: op.id, passphrase, confirmed: true }),
       export: () =>
         request('/api/backups/export', {
           recoveryId: op.id,
-          directory: exportPath,
+          directory: op.exportPath,
           confirmed: true,
         }),
       delete: () => request('/api/backups/delete', { id: op.id, confirmed: true }),
@@ -205,6 +249,22 @@ export function DirectoryStorage({
     );
     if (saved && op.kind === 'policy') policyDirty.current = false;
   }
+  const reviewValid =
+    !operation ||
+    (operation.kind === 'create'
+      ? checkpoints.some((c) => c.id === operation.checkpointId && c.integrity !== 'invalid')
+      : operation.kind === 'clean'
+        ? !!operation.cleanupToken && operation.cleanupToken === storage?.cleanupToken
+        : operation.kind === 'export'
+          ? storage?.recoveries.some(
+              (r) => r.id === operation.id && r.status === 'ready' && r.expiresAt > Date.now(),
+            )
+          : operation.kind === 'delete' || operation.kind === 'recover'
+            ? backups?.backups.some(
+                (b) =>
+                  b.id === operation.id && (operation.kind === 'delete' || b.status === 'complete'),
+              )
+            : true);
   if (denied)
     return (
       <div role="alert" className="collo-empty">
@@ -216,11 +276,12 @@ export function DirectoryStorage({
       <div className="collo-storage-summary">
         <Database size={24} />
         <div>
-          <strong>
+          <strong>{directory.label}</strong>
+          <p>
             {storage
               ? `${storage.count} checkpoints · ${size(storage.bytes)}`
               : 'Reading local storage…'}
-          </strong>
+          </p>
           <p title={directory.root}>{directory.root}</p>
         </div>
         <Button size="sm" variant="ghost" disabled={busy} onClick={refresh}>
@@ -256,11 +317,13 @@ export function DirectoryStorage({
                 <label key={key}>
                   {label}
                   <input
+                    disabled={busy}
                     type="number"
                     min={min}
                     max={max}
                     value={policy[key]}
                     onChange={(e) => {
+                      if (operation?.kind === 'policy') choose(null);
                       policyDirty.current = true;
                       setPolicy((p) => ({ ...p, [key]: Number(e.target.value) }));
                     }}
@@ -293,9 +356,13 @@ export function DirectoryStorage({
             <label className="collo-storage-checkpoint">
               Checkpoint
               <select
+                disabled={busy}
                 aria-label="Storage checkpoint"
                 value={checkpoint}
-                onChange={(e) => setCheckpoint(e.target.value)}
+                onChange={(e) => {
+                  if (operation?.kind === 'create') choose(null);
+                  setCheckpoint(e.target.value);
+                }}
               >
                 {checkpoints.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.integrity === 'invalid'}>
@@ -339,7 +406,7 @@ export function DirectoryStorage({
               <h3>Encrypted backups</h3>
               <span>
                 {backups?.location === 'local-convex-storage'
-                  ? 'Local Convex storage'
+                  ? 'On this computer'
                   : 'Backup service'}
               </span>
             </header>
@@ -423,7 +490,18 @@ export function DirectoryStorage({
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={() => navigator.clipboard.writeText(r.directory)}
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(r.directory);
+                        if (current()) {
+                          setError('');
+                          setMessage('Recovery path copied.');
+                        }
+                      } catch {
+                        if (current())
+                          setError('Could not copy the path. Select and copy the path shown here.');
+                      }
+                    }}
                   >
                     Copy path
                   </Button>
@@ -464,21 +542,34 @@ export function DirectoryStorage({
           </h3>
           <p>
             {operation.kind === 'clean'
-              ? `${storage?.remove.length} eligible checkpoints and expired recovery copies will be removed from managed storage for ${directory.label}. Your working files are untouched.`
+              ? `${operation.removeCount} reviewed checkpoints and expired recovery copies will be removed from managed storage for ${directory.label}. Your working files are untouched.`
               : operation.kind === 'delete'
-                ? `Only backup ${operation.id} will be deleted from the backup service. This cannot be undone.`
+                ? `Only “${operation.subject}” will be deleted from the backup service. This cannot be undone. Local checkpoints and working files are kept.`
                 : operation.kind === 'policy'
-                  ? `Keep up to ${policy.maxCheckpoints} checkpoints for ${policy.maxAgeDays} days with a ${policy.maxDiskMiB} MiB limit. Cleanup is a separate action.`
+                  ? `Keep up to ${operation.policy.maxCheckpoints} checkpoints for ${operation.policy.maxAgeDays} days with a ${operation.policy.maxDiskMiB} MiB limit. Cleanup is a separate action.`
                   : operation.kind === 'export'
                     ? 'Choose a new, non-existing absolute directory outside the source project and managed storage. Existing destinations are rejected.'
                     : operation.kind === 'recover'
                       ? 'Decrypt this backup into a new temporary recovery directory. Your project will not be changed.'
-                      : `Encrypt checkpoint ${checkpoint} and send the encrypted copy to this local backup service.`}
+                      : `Encrypt “${operation.subject}” from ${directory.label} and save the copy on this computer. Your working directory stays unchanged.`}
           </p>
+          {!reviewValid && (
+            <p role="alert">
+              This reviewed item or cleanup scope has changed. Cancel and review the current
+              information before continuing.
+            </p>
+          )}
+          {operation.kind !== 'policy' && operation.kind !== 'clean' && (
+            <details>
+              <summary>Source details</summary>
+              <p className="collo-path">{operation.id || operation.checkpointId}</p>
+            </details>
+          )}
           {(operation.kind === 'create' || operation.kind === 'recover') && (
             <label>
               Backup passphrase
               <input
+                disabled={busy}
                 type="password"
                 autoComplete="off"
                 minLength={16}
@@ -494,17 +585,23 @@ export function DirectoryStorage({
             <label>
               New export directory
               <input
+                disabled={busy}
                 required
                 value={exportPath}
-                onChange={(e) => setExportPath(e.target.value)}
+                onChange={(e) => {
+                  setExportPath(e.target.value);
+                  setOperation((op) => op && { ...op, exportPath: e.target.value });
+                  setConfirmed(false);
+                }}
                 placeholder="D:\\Recovery\\new-directory"
               />
             </label>
           )}
           <label className="collo-confirm-check">
             <input
+              disabled={busy || !reviewValid}
               type="checkbox"
-              checked={confirmed}
+              checked={confirmed && !!reviewValid}
               onChange={(e) => setConfirmed(e.target.checked)}
             />
             I confirm this operation and its scope.
@@ -513,8 +610,16 @@ export function DirectoryStorage({
             <Button type="button" variant="outline" disabled={busy} onClick={() => choose(null)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!confirmed || busy}>
-              {busy ? 'Working…' : 'Confirm operation'}
+            <Button
+              type="submit"
+              className="collo-pending-button"
+              disabled={!confirmed || busy || !reviewValid}
+              aria-busy={busy}
+            >
+              <span aria-hidden={busy} style={{ visibility: busy ? 'hidden' : 'visible' }}>
+                {actionLabels[operation.kind]}
+              </span>
+              {busy && <span className="collo-pending-label">Working…</span>}
             </Button>
           </div>
         </form>
