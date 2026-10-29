@@ -1,0 +1,4708 @@
+{
+  "evidence": "Real local backend and formal page",
+  "checks": [
+    "Two older pending handoffs survive 105 newer handled records, including both recipients",
+    "Formal overview displays the previously omitted records",
+    "Bounded project/status pagination reaches all 37+ pending records once, across recipients",
+    "Other project remains isolated",
+    "Accept, decline and cancel remove the same authoritative pending records reactively",
+    "Keyboard activation opens full participant names from the truncated narrow row; title alone is not counted as proof",
+    "Existing project authorization rejects both indexed queries across ownership",
+    "Formal initial loading with held response is distinct from confirmed empty project; real empty query has hasMore false"
+  ],
+  "audits": [
+    {
+      "width": 1440,
+      "height": 900,
+      "geometry": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "All handoffs",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 259.5,
+              "width": 74.953125,
+              "height": 21,
+              "top": 259.5,
+              "right": 359.578125,
+              "bottom": 280.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 322.1015625,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 290.625,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Awaiting response",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 367.578125,
+              "y": 259.5,
+              "width": 116.265625,
+              "height": 21,
+              "top": 259.5,
+              "right": 483.84375,
+              "bottom": 280.5,
+              "left": 367.578125
+            },
+            "samples": [
+              {
+                "x": 425.7109375,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 373.578125,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "New handoff",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1268.203125,
+              "y": 219.75,
+              "width": 119.796875,
+              "height": 32,
+              "top": 219.75,
+              "right": 1388,
+              "bottom": 251.75,
+              "left": 1268.203125
+            },
+            "samples": [
+              {
+                "x": 1328.1015625,
+                "y": 235.75,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1274.203125,
+                "y": 225.75,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 32 3d56e6test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 308.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 308.5,
+              "right": 1388,
+              "bottom": 389.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 349,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 314.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 31 f711d0test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 392.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 392.5,
+              "right": 1388,
+              "bottom": 473.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 433,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 398.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 30 48b81atest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 476.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 476.5,
+              "right": 1388,
+              "bottom": 557.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 517,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 482.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 29 5cdd49test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 560.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 560.5,
+              "right": 1388,
+              "bottom": 641.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 601,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 566.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 28 3b24e5test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 644.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 644.5,
+              "right": 1388,
+              "bottom": 725.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 685,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 650.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 27 b7f5batest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 728.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 728.5,
+              "right": 1388,
+              "bottom": 809.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 769,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 734.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 26 316ec8test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 803.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 803.5,
+              "right": 1388,
+              "bottom": 884.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 844,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 809.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 25 b19c84test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 794.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 794.5,
+              "right": 1388,
+              "bottom": 875.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 835,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 800.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 24 ad3f1dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 803.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 803.5,
+              "right": 1388,
+              "bottom": 884.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 844,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 809.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 23 93ff53test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 22 395562test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 21 0f70d5test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 20 00250dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 19 ea9fb2test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 18 c802cbtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 17 ef214ftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 16 07a249test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 15 c6ac09test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 14 37e4b7test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 13 e743detest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 12 8da85dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 11 2519aftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 10 7c5e3ctest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 533.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 533.5,
+              "right": 1388,
+              "bottom": 614.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 574,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 539.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 9 de81b9test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 560.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 560.5,
+              "right": 1388,
+              "bottom": 641.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 601,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 566.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 8 15f13etest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 644.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 644.5,
+              "right": 1388,
+              "bottom": 725.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 685,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 650.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 7 03f659test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 728.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 728.5,
+              "right": 1388,
+              "bottom": 809.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 769,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 734.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 6 d3334dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 284.625,
+              "y": 803.5,
+              "width": 1103.375,
+              "height": 81,
+              "top": 803.5,
+              "right": 1388,
+              "bottom": 884.5,
+              "left": 284.625
+            },
+            "samples": [
+              {
+                "x": 836.3125,
+                "y": 844,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 290.625,
+                "y": 809.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Next",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1337.890625,
+              "y": 808.5,
+              "width": 50.109375,
+              "height": 32,
+              "top": 808.5,
+              "right": 1388,
+              "bottom": 840.5,
+              "left": 1337.890625
+            },
+            "samples": [
+              {
+                "x": 1362.9453125,
+                "y": 824.5,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1343.890625,
+                "y": 814.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "geometry": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "All handoffs",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 259.5,
+              "width": 74.953125,
+              "height": 21,
+              "top": 259.5,
+              "right": 332.390625,
+              "bottom": 280.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 294.9140625,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 263.4375,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Awaiting response",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 340.390625,
+              "y": 259.5,
+              "width": 116.265625,
+              "height": 21,
+              "top": 259.5,
+              "right": 456.65625,
+              "bottom": 280.5,
+              "left": 340.390625
+            },
+            "samples": [
+              {
+                "x": 398.5234375,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 346.390625,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "New handoff",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1108.203125,
+              "y": 219.75,
+              "width": 119.796875,
+              "height": 32,
+              "top": 219.75,
+              "right": 1228,
+              "bottom": 251.75,
+              "left": 1108.203125
+            },
+            "samples": [
+              {
+                "x": 1168.1015625,
+                "y": 235.75,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1114.203125,
+                "y": 225.75,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 32 3d56e6test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 308.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 308.5,
+              "right": 1228,
+              "bottom": 389.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 349,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 314.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 31 f711d0test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 392.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 392.5,
+              "right": 1228,
+              "bottom": 473.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 433,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 398.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 30 48b81atest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 476.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 476.5,
+              "right": 1228,
+              "bottom": 557.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 517,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 482.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 29 5cdd49test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 560.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 560.5,
+              "right": 1228,
+              "bottom": 641.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 601,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 566.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 28 3b24e5test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 644.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 644.5,
+              "right": 1228,
+              "bottom": 725.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 685,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 650.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 27 b7f5batest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 703.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 703.5,
+              "right": 1228,
+              "bottom": 784.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 744,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 709.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 26 316ec8test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 703.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 703.5,
+              "right": 1228,
+              "bottom": 784.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 744,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 709.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 25 b19c84test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 24 ad3f1dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 23 93ff53test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 22 395562test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 21 0f70d5test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 20 00250dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 19 ea9fb2test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 18 c802cbtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 17 ef214ftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 16 07a249test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 15 c6ac09test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 14 37e4b7test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 13 e743detest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 12 8da85dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 11 2519aftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 10 7c5e3ctest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 9 de81b9test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 483.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 483.5,
+              "right": 1228,
+              "bottom": 564.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 524,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 489.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 8 15f13etest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 544.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 544.5,
+              "right": 1228,
+              "bottom": 625.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 585,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 550.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 7 03f659test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 628.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 628.5,
+              "right": 1228,
+              "bottom": 709.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 669,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 634.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 6 d3334dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 257.4375,
+              "y": 703.5,
+              "width": 970.5625,
+              "height": 81,
+              "top": 703.5,
+              "right": 1228,
+              "bottom": 784.5,
+              "left": 257.4375
+            },
+            "samples": [
+              {
+                "x": 742.71875,
+                "y": 744,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 263.4375,
+                "y": 709.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Next",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1177.890625,
+              "y": 708.5,
+              "width": 50.109375,
+              "height": 32,
+              "top": 708.5,
+              "right": 1228,
+              "bottom": 740.5,
+              "left": 1177.890625
+            },
+            "samples": [
+              {
+                "x": 1202.9453125,
+                "y": 724.5,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1183.890625,
+                "y": 714.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 960,
+      "height": 720,
+      "geometry": {
+        "viewport": {
+          "width": 960,
+          "height": 720
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": [
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          },
+          {
+            "tag": "SPAN",
+            "id": "",
+            "cls": "",
+            "text": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef7",
+            "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+            "access": "test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test"
+          }
+        ]
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "All handoffs",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 259.5,
+              "width": 74.953125,
+              "height": 21,
+              "top": 259.5,
+              "right": 294.765625,
+              "bottom": 280.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 257.2890625,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 225.8125,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Awaiting response",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 302.765625,
+              "y": 259.5,
+              "width": 116.265625,
+              "height": 21,
+              "top": 259.5,
+              "right": 419.03125,
+              "bottom": 280.5,
+              "left": 302.765625
+            },
+            "samples": [
+              {
+                "x": 360.8984375,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 308.765625,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "New handoff",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 788.203125,
+              "y": 219.75,
+              "width": 119.796875,
+              "height": 32,
+              "top": 219.75,
+              "right": 908,
+              "bottom": 251.75,
+              "left": 788.203125
+            },
+            "samples": [
+              {
+                "x": 848.1015625,
+                "y": 235.75,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 794.203125,
+                "y": 225.75,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 32 3d56e6test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 308.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 308.5,
+              "right": 908,
+              "bottom": 389.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 349,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 314.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 31 f711d0test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 392.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 392.5,
+              "right": 908,
+              "bottom": 473.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 433,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 398.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 30 48b81atest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 476.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 476.5,
+              "right": 908,
+              "bottom": 557.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 517,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 482.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 29 5cdd49test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 560.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 560.5,
+              "right": 908,
+              "bottom": 641.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 601,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 566.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 28 3b24e5test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 623.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 908,
+              "bottom": 704.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 27 b7f5batest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 623.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 908,
+              "bottom": 704.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 26 316ec8test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 25 b19c84test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 24 ad3f1dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 23 93ff53test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 22 395562test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 21 0f70d5test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 20 00250dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 19 ea9fb2test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 18 c802cbtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 17 ef214ftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 16 07a249test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 15 c6ac09test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 14 37e4b7test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 13 e743detest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 12 8da85dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 11 2519aftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 10 7c5e3ctest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 9 de81b9test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 443.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 443.5,
+              "right": 908,
+              "bottom": 524.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 484,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 449.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 8 15f13etest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 464.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 464.5,
+              "right": 908,
+              "bottom": 545.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 505,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 470.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 7 03f659test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 548.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 548.5,
+              "right": 908,
+              "bottom": 629.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 589,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 554.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 6 d3334dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 219.8125,
+              "y": 623.5,
+              "width": 688.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 908,
+              "bottom": 704.5,
+              "left": 219.8125
+            },
+            "samples": [
+              {
+                "x": 563.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 225.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Next",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 857.890625,
+              "y": 628.5,
+              "width": 50.109375,
+              "height": 32,
+              "top": 628.5,
+              "right": 908,
+              "bottom": 660.5,
+              "left": 857.890625
+            },
+            "samples": [
+              {
+                "x": 882.9453125,
+                "y": 644.5,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 863.890625,
+                "y": 634.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "geometry": {
+        "viewport": {
+          "width": 1920,
+          "height": 1080
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "All handoffs",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 259.5,
+              "width": 74.953125,
+              "height": 21,
+              "top": 259.5,
+              "right": 474.765625,
+              "bottom": 280.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 437.2890625,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 405.8125,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Awaiting response",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 482.765625,
+              "y": 259.5,
+              "width": 116.265625,
+              "height": 21,
+              "top": 259.5,
+              "right": 599.03125,
+              "bottom": 280.5,
+              "left": 482.765625
+            },
+            "samples": [
+              {
+                "x": 540.8984375,
+                "y": 270,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 488.765625,
+                "y": 265.5,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "New handoff",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1748.203125,
+              "y": 219.75,
+              "width": 119.796875,
+              "height": 32,
+              "top": 219.75,
+              "right": 1868,
+              "bottom": 251.75,
+              "left": 1748.203125
+            },
+            "samples": [
+              {
+                "x": 1808.1015625,
+                "y": 235.75,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1754.203125,
+                "y": 225.75,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 32 3d56e6test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 308.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 308.5,
+              "right": 1868,
+              "bottom": 389.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 349,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 314.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 31 f711d0test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 392.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 392.5,
+              "right": 1868,
+              "bottom": 473.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 433,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 398.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 30 48b81atest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 476.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 476.5,
+              "right": 1868,
+              "bottom": 557.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 517,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 482.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 29 5cdd49test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 560.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 560.5,
+              "right": 1868,
+              "bottom": 641.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 601,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 566.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 28 3b24e5test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 644.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 644.5,
+              "right": 1868,
+              "bottom": 725.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 685,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 650.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 27 b7f5batest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 728.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 728.5,
+              "right": 1868,
+              "bottom": 809.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 769,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 734.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 26 316ec8test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 812.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 812.5,
+              "right": 1868,
+              "bottom": 893.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 853,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 818.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 25 b19c84test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 896.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 896.5,
+              "right": 1868,
+              "bottom": 977.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 937,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 902.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 24 ad3f1dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 980.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 980.5,
+              "right": 1868,
+              "bottom": 1061.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 1021,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 986.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 23 93ff53test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 983.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 983.5,
+              "right": 1868,
+              "bottom": 1064.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 1024,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 989.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 22 395562test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 983.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 983.5,
+              "right": 1868,
+              "bottom": 1064.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 1024,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 989.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 21 0f70d5test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 20 00250dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 19 ea9fb2test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 18 c802cbtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 17 ef214ftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 16 07a249test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 15 c6ac09test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 14 37e4b7test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 13 e743detest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 12 8da85dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 11 2519aftest-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 623.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 623.5,
+              "right": 1868,
+              "bottom": 704.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 664,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 629.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 10 7c5e3ctest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 656.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 656.5,
+              "right": 1868,
+              "bottom": 737.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 697,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 662.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 9 de81b9test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 740.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 740.5,
+              "right": 1868,
+              "bottom": 821.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 781,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 746.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 8 15f13etest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 824.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 824.5,
+              "right": 1868,
+              "bottom": 905.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 865,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 830.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 7 03f659test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test → test-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 908.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 908.5,
+              "right": 1868,
+              "bottom": 989.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 949,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 914.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "TEST indexed pending 6 d3334dtest-bob-5a53f042-25a6-494e-9e2f-2807d3f6d69b@example.test → test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.testpending",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 399.8125,
+              "y": 983.5,
+              "width": 1468.1875,
+              "height": 81,
+              "top": 983.5,
+              "right": 1868,
+              "bottom": 1064.5,
+              "left": 399.8125
+            },
+            "samples": [
+              {
+                "x": 1133.90625,
+                "y": 1024,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 405.8125,
+                "y": 989.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Next",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1817.890625,
+              "y": 988.5,
+              "width": 50.109375,
+              "height": 32,
+              "top": 988.5,
+              "right": 1868,
+              "bottom": 1020.5,
+              "left": 1817.890625
+            },
+            "samples": [
+              {
+                "x": 1842.9453125,
+                "y": 1004.5,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1823.890625,
+                "y": 994.5,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -46,6 +46,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   const router = useRouter(),
     search = useSearchParams();
   const selected = search.get('handoff');
+  const pendingOnly = search.get('status') === 'pending';
   const incomingSource =
     search.get('fromWorkspace') && search.get('fromSession')
       ? { workspaceId: search.get('fromWorkspace')!, sessionId: search.get('fromSession')! }
@@ -100,7 +101,17 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   ]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const [cursors, setCursors] = useState<(string | null)[]>([null]);
+  const [pagination, setPagination] = useState<{
+    pendingOnly: boolean;
+    cursors: (string | null)[];
+  }>({ pendingOnly, cursors: [null] });
+  const cursors = pagination.pendingOnly === pendingOnly ? pagination.cursors : [null];
+  useEffect(() => {
+    setPagination({ pendingOnly, cursors: [null] });
+  }, [pendingOnly]);
+  const setCursors = (
+    next: (string | null)[] | ((previous: (string | null)[]) => (string | null)[]),
+  ) => setPagination({ pendingOnly, cursors: typeof next === 'function' ? next(cursors) : next });
   const request = useRef<{ contents: string; id: string } | null>(null);
   const viewer = useInboxStore((s) => s.currentUser?._id);
   const tasks = useInboxStore((s) => s.tasks);
@@ -109,6 +120,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   });
   const page = useQueryNoThrow(api.colloHandoffs.list, {
     projectId: projectId as Id<'projects'>,
+    ...(pendingOnly ? { status: 'pending' as const } : {}),
     paginationOpts: { numItems: 30, cursor: cursors.at(-1) ?? null },
   });
   const detail = useQueryNoThrow(
@@ -117,7 +129,8 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
   );
   const send = useMutation(api.colloHandoffs.send),
     respond = useMutation(api.colloHandoffs.respond);
-  const closeHref = `/projects/${projectId}?tab=handoffs`;
+  const listHref = `/projects/${projectId}?tab=handoffs`;
+  const closeHref = `${listHref}${pendingOnly ? '&status=pending' : ''}`;
   const attachedCheckpoint = useQueryNoThrow(
     api.collo.checkpointParts,
     draft.checkpoint ? { projectId: projectId as Id<'projects'>, ...draft.checkpoint } : 'skip',
@@ -228,8 +241,19 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
               <div>
                 <h2>Handoffs</h2>
                 <p>Give the next person the context to continue.</p>
+                <nav className="collo-inline-actions" aria-label="Handoff status">
+                  <Link aria-current={!pendingOnly ? 'page' : undefined} href={listHref}>
+                    All handoffs
+                  </Link>
+                  <Link
+                    aria-current={pendingOnly ? 'page' : undefined}
+                    href={`${listHref}&status=pending`}
+                  >
+                    Awaiting response
+                  </Link>
+                </nav>
               </div>
-              <Button size="sm" onClick={() => setOpen(true)}>
+              <Button type="button" size="sm" onClick={() => setOpen(true)}>
                 <Plus size={16} />
                 New handoff
               </Button>
@@ -238,6 +262,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
               <p role="alert" className="collo-inline-notice">
                 Handoffs could not be loaded.{' '}
                 <Button
+                  type="button"
                   variant="ghost"
                   onClick={() => {
                     page.retry();
@@ -263,7 +288,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                   </span>
                   <span className="collo-session-summary">
                     <strong>{h.title}</strong>
-                    <span>
+                    <span title={`${name(h.sender)} → ${name(h.recipient)}`}>
                       {name(h.sender)} → {name(h.recipient)}
                     </span>
                   </span>
@@ -273,18 +298,23 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                   <ArrowRight size={16} />
                 </button>
               ))}
-            {page.data?.page.length === 0 && (
+            {!page.error && page.data?.page.length === 0 && (
               <div className="collo-empty">
                 <ArrowsLeftRight size={30} />
-                <h3>A clear next step</h3>
-                <p>Share a conversation, a task and what needs to happen next.</p>
-                <Button variant="outline" onClick={() => setOpen(true)}>
+                <h3>{pendingOnly ? 'No handoffs awaiting response' : 'A clear next step'}</h3>
+                <p>
+                  {pendingOnly
+                    ? 'This project has no pending handoffs on this page.'
+                    : 'Share a conversation, a task and what needs to happen next.'}
+                </p>
+                <Button type="button" variant="outline" onClick={() => setOpen(true)}>
                   Create a handoff
                 </Button>
               </div>
             )}
             <div className="collo-list-pagination">
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 disabled={cursors.length === 1}
@@ -293,6 +323,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                 Previous
               </Button>
               <Button
+                type="button"
                 variant="ghost"
                 size="sm"
                 disabled={!page.data || page.data.isDone}
@@ -306,13 +337,13 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
       >
         {selected ? (
           <div key={selected} className="collo-handoff-detail">
-            <Button variant="ghost" size="sm" onClick={() => router.push(closeHref)}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => router.push(closeHref)}>
               <ArrowLeft size={16} /> Back to handoffs
             </Button>
             {detail.error && (
               <p role="alert">
                 Could not read this handoff.{' '}
-                <Button variant="ghost" onClick={detail.retry}>
+                <Button type="button" variant="ghost" onClick={detail.retry}>
                   Retry
                 </Button>
               </p>
@@ -365,11 +396,12 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                   <div className="collo-handoff-actions">
                     {viewer === handoff.recipient ? (
                       <>
-                        <Button disabled={busy} onClick={() => answer('accepted')}>
+                        <Button type="button" disabled={busy} onClick={() => answer('accepted')}>
                           <Check size={16} />
                           Accept handoff
                         </Button>
                         <Button
+                          type="button"
                           variant="outline"
                           disabled={busy}
                           onClick={() => answer('declined')}
@@ -379,7 +411,12 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                         </Button>
                       </>
                     ) : viewer === handoff.sender ? (
-                      <Button variant="outline" disabled={busy} onClick={() => answer('cancelled')}>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => answer('cancelled')}
+                      >
                         Cancel handoff
                       </Button>
                     ) : null}
@@ -499,6 +536,7 @@ function Handoffs({ projectId, scope }: { projectId: string; scope: string }) {
                   <CheckpointSource
                     projectId={projectId}
                     source={draft.checkpoint}
+                    receipt={attachedCheckpoint}
                     onRemove={() => {
                       draftVersion.current++;
                       setDraft((previous) => ({ ...previous, checkpoint: undefined }));

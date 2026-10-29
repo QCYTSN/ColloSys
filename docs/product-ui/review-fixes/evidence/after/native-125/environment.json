@@ -1,0 +1,20 @@
+{
+  "visible": true,
+  "nativeHandle": true,
+  "zoomFactor": 1.25,
+  "displayScale": 2,
+  "bounds": {
+    "x": 7,
+    "y": 55,
+    "width": 1281,
+    "height": 801
+  },
+  "electron": "44.3.0",
+  "chromium": "152.0.7977.78",
+  "cssViewport": {
+    "width": 1025,
+    "height": 641
+  },
+  "devicePixelRatio": 2.5,
+  "cssZoom": "1"
+}

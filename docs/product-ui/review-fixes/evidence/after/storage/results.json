@@ -1,0 +1,3557 @@
+{
+  "evidence": "Formal application with real local services; specified HTTP failures and clipboard promise substituted",
+  "checks": [
+    "B1 real page HTTP failure then success clears matching local error",
+    "B3 actual pin write interleaved with a held pre-write GET cannot roll back the displayed result",
+    "B6 policy commits once; failed re-read stays a read error and focus stays on completion",
+    "Actual encrypted TEST backup persisted through confirmation",
+    "D1 real wrong passphrase has field association/focus; independent read recovery preserves it",
+    "D2 real recovery result keeps actual returned directory and surviving focus at confirmation position",
+    "D1 clipboard controlled promise reports only after settlement, in the correct row, stable width/scroll; keyboard failure exposes selectable full path",
+    "Real invalid export path stays at field; changed target revokes confirmation; successful export shows returned location",
+    "Real backup deletion focuses surviving completion after its row is removed",
+    "Source and independent TEST teammate files remain byte-for-byte unchanged"
+  ],
+  "writes": {
+    "/api/storage/pin": 1,
+    "/api/storage/policy": 1,
+    "/api/backups/create": 1,
+    "/api/backups/recover": 2,
+    "/api/backups/export": 2,
+    "/api/backups/delete": 1
+  },
+  "audits": [
+    {
+      "width": 1440,
+      "height": 900,
+      "geometry": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 928.65625,
+              "y": 151.078125,
+              "width": 113.34375,
+              "height": 32,
+              "top": 151.078125,
+              "right": 1042,
+              "bottom": 183.078125,
+              "left": 928.65625
+            },
+            "samples": [
+              {
+                "x": 985.328125,
+                "y": 167.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 934.65625,
+                "y": 157.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 359,
+              "y": 328.359375,
+              "width": 223.65625,
+              "height": 40,
+              "top": 328.359375,
+              "right": 582.65625,
+              "bottom": 368.359375,
+              "left": 359
+            },
+            "samples": [
+              {
+                "x": 470.828125,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 365,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 596.65625,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 820.328125,
+              "bottom": 368.359375,
+              "left": 596.65625
+            },
+            "samples": [
+              {
+                "x": 708.4921875,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 602.65625,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 834.328125,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 1058,
+              "bottom": 368.359375,
+              "left": 834.328125
+            },
+            "samples": [
+              {
+                "x": 946.1640625,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 840.328125,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 359,
+              "y": 423.953125,
+              "width": 102.890625,
+              "height": 32,
+              "top": 423.953125,
+              "right": 461.890625,
+              "bottom": 455.953125,
+              "left": 359
+            },
+            "samples": [
+              {
+                "x": 410.4453125,
+                "y": 439.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 365,
+                "y": 429.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 469.890625,
+              "y": 423.953125,
+              "width": 131.421875,
+              "height": 32,
+              "top": 423.953125,
+              "right": 601.3125,
+              "bottom": 455.953125,
+              "left": 469.890625
+            },
+            "samples": [
+              {
+                "x": 535.6015625,
+                "y": 439.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 475.890625,
+                "y": 429.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 359,
+              "y": 461.140625,
+              "width": 699,
+              "height": 39,
+              "top": 461.140625,
+              "right": 1058,
+              "bottom": 500.140625,
+              "left": 359
+            },
+            "samples": [
+              {
+                "x": 708.5,
+                "y": 480.640625,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 365,
+                "y": 467.140625,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 359,
+              "y": 465.140625,
+              "width": 109.46875,
+              "height": 32,
+              "top": 465.140625,
+              "right": 468.46875,
+              "bottom": 497.140625,
+              "left": 359
+            },
+            "samples": [
+              {
+                "x": 413.734375,
+                "y": 481.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 365,
+                "y": 471.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 476.46875,
+              "y": 465.140625,
+              "width": 191.515625,
+              "height": 32,
+              "top": 465.140625,
+              "right": 667.984375,
+              "bottom": 497.140625,
+              "left": 476.46875
+            },
+            "samples": [
+              {
+                "x": 572.2265625,
+                "y": 481.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 482.46875,
+                "y": 471.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 842.484375,
+              "y": 465.125,
+              "width": 102.34375,
+              "height": 32,
+              "top": 465.125,
+              "right": 944.828125,
+              "bottom": 497.125,
+              "left": 842.484375
+            },
+            "samples": [
+              {
+                "x": 893.65625,
+                "y": 481.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 848.484375,
+                "y": 471.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952.828125,
+              "y": 465.125,
+              "width": 105.171875,
+              "height": 32,
+              "top": 465.125,
+              "right": 1058,
+              "bottom": 497.125,
+              "left": 952.828125
+            },
+            "samples": [
+              {
+                "x": 1005.4140625,
+                "y": 481.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 958.828125,
+                "y": 471.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 464.703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 464.703125,
+              "right": 844.3125,
+              "bottom": 496.703125,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 480.703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 470.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 934.3125,
+              "y": 464.703125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 464.703125,
+              "right": 1052.140625,
+              "bottom": 496.703125,
+              "left": 934.3125
+            },
+            "samples": [
+              {
+                "x": 993.2265625,
+                "y": 480.703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 940.3125,
+                "y": 470.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 465.078125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 465.078125,
+              "right": 844.3125,
+              "bottom": 497.078125,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 481.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 471.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 934.3125,
+              "y": 465.078125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 465.078125,
+              "right": 1052.140625,
+              "bottom": 497.078125,
+              "left": 934.3125
+            },
+            "samples": [
+              {
+                "x": 993.2265625,
+                "y": 481.078125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 940.3125,
+                "y": 471.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 465.453125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 465.453125,
+              "right": 844.3125,
+              "bottom": 497.453125,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 481.453125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 471.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 934.3125,
+              "y": 465.453125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 465.453125,
+              "right": 1052.140625,
+              "bottom": 497.453125,
+              "left": 934.3125
+            },
+            "samples": [
+              {
+                "x": 993.2265625,
+                "y": 481.453125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 940.3125,
+                "y": 471.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 464.828125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 464.828125,
+              "right": 844.3125,
+              "bottom": 496.828125,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 480.828125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 470.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 934.3125,
+              "y": 464.828125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 464.828125,
+              "right": 1052.140625,
+              "bottom": 496.828125,
+              "left": 934.3125
+            },
+            "samples": [
+              {
+                "x": 993.2265625,
+                "y": 480.828125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 940.3125,
+                "y": 470.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 160.203125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 844.3125,
+              "bottom": 192.203125,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 934.3125,
+              "y": 160.203125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 1052.140625,
+              "bottom": 192.203125,
+              "left": 934.3125
+            },
+            "samples": [
+              {
+                "x": 993.2265625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 940.3125,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 263.390625,
+              "width": 106.3125,
+              "height": 32,
+              "top": 263.390625,
+              "right": 844.3125,
+              "bottom": 295.390625,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 791.15625,
+                "y": 279.390625,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 744,
+                "y": 269.390625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 346.765625,
+              "width": 320,
+              "height": 72,
+              "top": 346.765625,
+              "right": 1058,
+              "bottom": 418.765625,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 898,
+                "y": 382.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 744,
+                "y": 352.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 738,
+              "y": 426.765625,
+              "width": 117.828125,
+              "height": 32,
+              "top": 426.765625,
+              "right": 855.828125,
+              "bottom": 458.765625,
+              "left": 738
+            },
+            "samples": [
+              {
+                "x": 796.9140625,
+                "y": 442.765625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 744,
+                "y": 432.765625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 380,
+              "y": 645.953125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 645.953125,
+              "right": 486.3125,
+              "bottom": 677.953125,
+              "left": 380
+            },
+            "samples": [
+              {
+                "x": 433.15625,
+                "y": 661.953125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 386,
+                "y": 651.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 380,
+              "y": 677.953125,
+              "width": 153.203125,
+              "height": 32,
+              "top": 677.953125,
+              "right": 533.203125,
+              "bottom": 709.953125,
+              "left": 380
+            },
+            "samples": [
+              {
+                "x": 456.6015625,
+                "y": 693.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 386,
+                "y": 683.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1077,
+              "y": 37,
+              "width": 16,
+              "height": 16,
+              "top": 37,
+              "right": 1093,
+              "bottom": 53,
+              "left": 1077
+            },
+            "samples": [
+              {
+                "x": 1085,
+                "y": 45,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 1083,
+                "y": 43,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "geometry": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 848.65625,
+              "y": 151.078125,
+              "width": 113.34375,
+              "height": 32,
+              "top": 151.078125,
+              "right": 962,
+              "bottom": 183.078125,
+              "left": 848.65625
+            },
+            "samples": [
+              {
+                "x": 905.328125,
+                "y": 167.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 854.65625,
+                "y": 157.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 279,
+              "y": 328.359375,
+              "width": 223.65625,
+              "height": 40,
+              "top": 328.359375,
+              "right": 502.65625,
+              "bottom": 368.359375,
+              "left": 279
+            },
+            "samples": [
+              {
+                "x": 390.828125,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 285,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 516.65625,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 740.328125,
+              "bottom": 368.359375,
+              "left": 516.65625
+            },
+            "samples": [
+              {
+                "x": 628.4921875,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 522.65625,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 754.328125,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 978,
+              "bottom": 368.359375,
+              "left": 754.328125
+            },
+            "samples": [
+              {
+                "x": 866.1640625,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 760.328125,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 279,
+              "y": 414.953125,
+              "width": 102.890625,
+              "height": 32,
+              "top": 414.953125,
+              "right": 381.890625,
+              "bottom": 446.953125,
+              "left": 279
+            },
+            "samples": [
+              {
+                "x": 330.4453125,
+                "y": 430.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 285,
+                "y": 420.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 389.890625,
+              "y": 414.953125,
+              "width": 131.421875,
+              "height": 32,
+              "top": 414.953125,
+              "right": 521.3125,
+              "bottom": 446.953125,
+              "left": 389.890625
+            },
+            "samples": [
+              {
+                "x": 455.6015625,
+                "y": 430.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 395.890625,
+                "y": 420.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 279,
+              "y": 411.140625,
+              "width": 699,
+              "height": 39,
+              "top": 411.140625,
+              "right": 978,
+              "bottom": 450.140625,
+              "left": 279
+            },
+            "samples": [
+              {
+                "x": 628.5,
+                "y": 430.640625,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 285,
+                "y": 417.140625,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 279,
+              "y": 415.140625,
+              "width": 109.46875,
+              "height": 32,
+              "top": 415.140625,
+              "right": 388.46875,
+              "bottom": 447.140625,
+              "left": 279
+            },
+            "samples": [
+              {
+                "x": 333.734375,
+                "y": 431.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 285,
+                "y": 421.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 396.46875,
+              "y": 415.140625,
+              "width": 191.515625,
+              "height": 32,
+              "top": 415.140625,
+              "right": 587.984375,
+              "bottom": 447.140625,
+              "left": 396.46875
+            },
+            "samples": [
+              {
+                "x": 492.2265625,
+                "y": 431.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 402.46875,
+                "y": 421.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 762.484375,
+              "y": 415.125,
+              "width": 102.34375,
+              "height": 32,
+              "top": 415.125,
+              "right": 864.828125,
+              "bottom": 447.125,
+              "left": 762.484375
+            },
+            "samples": [
+              {
+                "x": 813.65625,
+                "y": 431.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 768.484375,
+                "y": 421.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 872.828125,
+              "y": 415.125,
+              "width": 105.171875,
+              "height": 32,
+              "top": 415.125,
+              "right": 978,
+              "bottom": 447.125,
+              "left": 872.828125
+            },
+            "samples": [
+              {
+                "x": 925.4140625,
+                "y": 431.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 878.828125,
+                "y": 421.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 414.703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 414.703125,
+              "right": 764.3125,
+              "bottom": 446.703125,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 430.703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 420.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 854.3125,
+              "y": 414.703125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 414.703125,
+              "right": 972.140625,
+              "bottom": 446.703125,
+              "left": 854.3125
+            },
+            "samples": [
+              {
+                "x": 913.2265625,
+                "y": 430.703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 860.3125,
+                "y": 420.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 415.078125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 415.078125,
+              "right": 764.3125,
+              "bottom": 447.078125,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 431.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 421.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 854.3125,
+              "y": 415.078125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 415.078125,
+              "right": 972.140625,
+              "bottom": 447.078125,
+              "left": 854.3125
+            },
+            "samples": [
+              {
+                "x": 913.2265625,
+                "y": 431.078125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 860.3125,
+                "y": 421.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 415.453125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 415.453125,
+              "right": 764.3125,
+              "bottom": 447.453125,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 431.453125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 421.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 854.3125,
+              "y": 415.453125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 415.453125,
+              "right": 972.140625,
+              "bottom": 447.453125,
+              "left": 854.3125
+            },
+            "samples": [
+              {
+                "x": 913.2265625,
+                "y": 431.453125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 860.3125,
+                "y": 421.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 414.828125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 414.828125,
+              "right": 764.3125,
+              "bottom": 446.828125,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 430.828125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 420.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 854.3125,
+              "y": 414.828125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 414.828125,
+              "right": 972.140625,
+              "bottom": 446.828125,
+              "left": 854.3125
+            },
+            "samples": [
+              {
+                "x": 913.2265625,
+                "y": 430.828125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 860.3125,
+                "y": 420.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 160.203125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 764.3125,
+              "bottom": 192.203125,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 854.3125,
+              "y": 160.203125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 972.140625,
+              "bottom": 192.203125,
+              "left": 854.3125
+            },
+            "samples": [
+              {
+                "x": 913.2265625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 860.3125,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 263.390625,
+              "width": 106.3125,
+              "height": 32,
+              "top": 263.390625,
+              "right": 764.3125,
+              "bottom": 295.390625,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 711.15625,
+                "y": 279.390625,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 664,
+                "y": 269.390625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 346.765625,
+              "width": 320,
+              "height": 72,
+              "top": 346.765625,
+              "right": 978,
+              "bottom": 418.765625,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 818,
+                "y": 382.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 664,
+                "y": 352.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 658,
+              "y": 426.765625,
+              "width": 117.828125,
+              "height": 32,
+              "top": 426.765625,
+              "right": 775.828125,
+              "bottom": 458.765625,
+              "left": 658
+            },
+            "samples": [
+              {
+                "x": 716.9140625,
+                "y": 442.765625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 664,
+                "y": 432.765625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 300,
+              "y": 645.953125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 645.953125,
+              "right": 406.3125,
+              "bottom": 677.953125,
+              "left": 300
+            },
+            "samples": [
+              {
+                "x": 353.15625,
+                "y": 661.953125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 306,
+                "y": 651.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 300,
+              "y": 677.953125,
+              "width": 153.203125,
+              "height": 32,
+              "top": 677.953125,
+              "right": 453.203125,
+              "bottom": 709.953125,
+              "left": 300
+            },
+            "samples": [
+              {
+                "x": 376.6015625,
+                "y": 693.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 306,
+                "y": 683.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 997,
+              "y": 37,
+              "width": 16,
+              "height": 16,
+              "top": 37,
+              "right": 1013,
+              "bottom": 53,
+              "left": 997
+            },
+            "samples": [
+              {
+                "x": 1005,
+                "y": 45,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 1003,
+                "y": 43,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 960,
+      "height": 720,
+      "geometry": {
+        "viewport": {
+          "width": 960,
+          "height": 720
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 688.65625,
+              "y": 151.078125,
+              "width": 113.34375,
+              "height": 32,
+              "top": 151.078125,
+              "right": 802,
+              "bottom": 183.078125,
+              "left": 688.65625
+            },
+            "samples": [
+              {
+                "x": 745.328125,
+                "y": 167.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 694.65625,
+                "y": 157.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 119,
+              "y": 328.359375,
+              "width": 223.65625,
+              "height": 40,
+              "top": 328.359375,
+              "right": 342.65625,
+              "bottom": 368.359375,
+              "left": 119
+            },
+            "samples": [
+              {
+                "x": 230.828125,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 125,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 356.65625,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 580.328125,
+              "bottom": 368.359375,
+              "left": 356.65625
+            },
+            "samples": [
+              {
+                "x": 468.4921875,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 362.65625,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 594.328125,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 818,
+              "bottom": 368.359375,
+              "left": 594.328125
+            },
+            "samples": [
+              {
+                "x": 706.1640625,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 600.328125,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 119,
+              "y": 374.953125,
+              "width": 102.890625,
+              "height": 32,
+              "top": 374.953125,
+              "right": 221.890625,
+              "bottom": 406.953125,
+              "left": 119
+            },
+            "samples": [
+              {
+                "x": 170.4453125,
+                "y": 390.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 125,
+                "y": 380.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 229.890625,
+              "y": 374.953125,
+              "width": 131.421875,
+              "height": 32,
+              "top": 374.953125,
+              "right": 361.3125,
+              "bottom": 406.953125,
+              "left": 229.890625
+            },
+            "samples": [
+              {
+                "x": 295.6015625,
+                "y": 390.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 235.890625,
+                "y": 380.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 119,
+              "y": 371.140625,
+              "width": 699,
+              "height": 39,
+              "top": 371.140625,
+              "right": 818,
+              "bottom": 410.140625,
+              "left": 119
+            },
+            "samples": [
+              {
+                "x": 468.5,
+                "y": 390.640625,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 125,
+                "y": 377.140625,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 119,
+              "y": 375.140625,
+              "width": 109.46875,
+              "height": 32,
+              "top": 375.140625,
+              "right": 228.46875,
+              "bottom": 407.140625,
+              "left": 119
+            },
+            "samples": [
+              {
+                "x": 173.734375,
+                "y": 391.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 125,
+                "y": 381.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 236.46875,
+              "y": 375.140625,
+              "width": 191.515625,
+              "height": 32,
+              "top": 375.140625,
+              "right": 427.984375,
+              "bottom": 407.140625,
+              "left": 236.46875
+            },
+            "samples": [
+              {
+                "x": 332.2265625,
+                "y": 391.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 242.46875,
+                "y": 381.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 602.484375,
+              "y": 375.125,
+              "width": 102.34375,
+              "height": 32,
+              "top": 375.125,
+              "right": 704.828125,
+              "bottom": 407.125,
+              "left": 602.484375
+            },
+            "samples": [
+              {
+                "x": 653.65625,
+                "y": 391.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 608.484375,
+                "y": 381.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712.828125,
+              "y": 375.125,
+              "width": 105.171875,
+              "height": 32,
+              "top": 375.125,
+              "right": 818,
+              "bottom": 407.125,
+              "left": 712.828125
+            },
+            "samples": [
+              {
+                "x": 765.4140625,
+                "y": 391.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 718.828125,
+                "y": 381.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 374.703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 374.703125,
+              "right": 604.3125,
+              "bottom": 406.703125,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 390.703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 380.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 694.3125,
+              "y": 374.703125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 374.703125,
+              "right": 812.140625,
+              "bottom": 406.703125,
+              "left": 694.3125
+            },
+            "samples": [
+              {
+                "x": 753.2265625,
+                "y": 390.703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 700.3125,
+                "y": 380.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 375.078125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 375.078125,
+              "right": 604.3125,
+              "bottom": 407.078125,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 391.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 381.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 694.3125,
+              "y": 375.078125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 375.078125,
+              "right": 812.140625,
+              "bottom": 407.078125,
+              "left": 694.3125
+            },
+            "samples": [
+              {
+                "x": 753.2265625,
+                "y": 391.078125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 700.3125,
+                "y": 381.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 375.453125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 375.453125,
+              "right": 604.3125,
+              "bottom": 407.453125,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 391.453125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 381.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 694.3125,
+              "y": 375.453125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 375.453125,
+              "right": 812.140625,
+              "bottom": 407.453125,
+              "left": 694.3125
+            },
+            "samples": [
+              {
+                "x": 753.2265625,
+                "y": 391.453125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 700.3125,
+                "y": 381.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 374.828125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 374.828125,
+              "right": 604.3125,
+              "bottom": 406.828125,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 390.828125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 380.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 694.3125,
+              "y": 374.828125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 374.828125,
+              "right": 812.140625,
+              "bottom": 406.828125,
+              "left": 694.3125
+            },
+            "samples": [
+              {
+                "x": 753.2265625,
+                "y": 390.828125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 700.3125,
+                "y": 380.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 160.203125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 604.3125,
+              "bottom": 192.203125,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 694.3125,
+              "y": 160.203125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 160.203125,
+              "right": 812.140625,
+              "bottom": 192.203125,
+              "left": 694.3125
+            },
+            "samples": [
+              {
+                "x": 753.2265625,
+                "y": 176.203125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 700.3125,
+                "y": 166.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 263.390625,
+              "width": 106.3125,
+              "height": 32,
+              "top": 263.390625,
+              "right": 604.3125,
+              "bottom": 295.390625,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 551.15625,
+                "y": 279.390625,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 504,
+                "y": 269.390625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 346.765625,
+              "width": 320,
+              "height": 72,
+              "top": 346.765625,
+              "right": 818,
+              "bottom": 418.765625,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 658,
+                "y": 382.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 504,
+                "y": 352.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 498,
+              "y": 426.765625,
+              "width": 117.828125,
+              "height": 32,
+              "top": 426.765625,
+              "right": 615.828125,
+              "bottom": 458.765625,
+              "left": 498
+            },
+            "samples": [
+              {
+                "x": 556.9140625,
+                "y": 442.765625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 504,
+                "y": 432.765625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 140,
+              "y": 638.953125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 638.953125,
+              "right": 246.3125,
+              "bottom": 670.953125,
+              "left": 140
+            },
+            "samples": [
+              {
+                "x": 193.15625,
+                "y": 654.953125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 146,
+                "y": 644.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 140,
+              "y": 493.953125,
+              "width": 153.203125,
+              "height": 32,
+              "top": 493.953125,
+              "right": 293.203125,
+              "bottom": 525.953125,
+              "left": 140
+            },
+            "samples": [
+              {
+                "x": 216.6015625,
+                "y": 509.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 146,
+                "y": 499.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 837,
+              "y": 37,
+              "width": 16,
+              "height": 16,
+              "top": 37,
+              "right": 853,
+              "bottom": 53,
+              "left": 837
+            },
+            "samples": [
+              {
+                "x": 845,
+                "y": 45,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 843,
+                "y": 43,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "geometry": {
+        "viewport": {
+          "width": 1920,
+          "height": 1080
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1168.65625,
+              "y": 151.078125,
+              "width": 113.34375,
+              "height": 32,
+              "top": 151.078125,
+              "right": 1282,
+              "bottom": 183.078125,
+              "left": 1168.65625
+            },
+            "samples": [
+              {
+                "x": 1225.328125,
+                "y": 167.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1174.65625,
+                "y": 157.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 599,
+              "y": 328.359375,
+              "width": 223.65625,
+              "height": 40,
+              "top": 328.359375,
+              "right": 822.65625,
+              "bottom": 368.359375,
+              "left": 599
+            },
+            "samples": [
+              {
+                "x": 710.828125,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 605,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 836.65625,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 1060.328125,
+              "bottom": 368.359375,
+              "left": 836.65625
+            },
+            "samples": [
+              {
+                "x": 948.4921875,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 842.65625,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1074.328125,
+              "y": 328.359375,
+              "width": 223.671875,
+              "height": 40,
+              "top": 328.359375,
+              "right": 1298,
+              "bottom": 368.359375,
+              "left": 1074.328125
+            },
+            "samples": [
+              {
+                "x": 1186.1640625,
+                "y": 348.359375,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 1080.328125,
+                "y": 334.359375,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 599,
+              "y": 423.953125,
+              "width": 102.890625,
+              "height": 32,
+              "top": 423.953125,
+              "right": 701.890625,
+              "bottom": 455.953125,
+              "left": 599
+            },
+            "samples": [
+              {
+                "x": 650.4453125,
+                "y": 439.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 605,
+                "y": 429.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 709.890625,
+              "y": 423.953125,
+              "width": 131.421875,
+              "height": 32,
+              "top": 423.953125,
+              "right": 841.3125,
+              "bottom": 455.953125,
+              "left": 709.890625
+            },
+            "samples": [
+              {
+                "x": 775.6015625,
+                "y": 439.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 715.890625,
+                "y": 429.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 599,
+              "y": 504.140625,
+              "width": 699,
+              "height": 39,
+              "top": 504.140625,
+              "right": 1298,
+              "bottom": 543.140625,
+              "left": 599
+            },
+            "samples": [
+              {
+                "x": 948.5,
+                "y": 523.640625,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 605,
+                "y": 510.140625,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 599,
+              "y": 555.140625,
+              "width": 109.46875,
+              "height": 32,
+              "top": 555.140625,
+              "right": 708.46875,
+              "bottom": 587.140625,
+              "left": 599
+            },
+            "samples": [
+              {
+                "x": 653.734375,
+                "y": 571.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 605,
+                "y": 561.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 716.46875,
+              "y": 555.140625,
+              "width": 191.515625,
+              "height": 32,
+              "top": 555.140625,
+              "right": 907.984375,
+              "bottom": 587.140625,
+              "left": 716.46875
+            },
+            "samples": [
+              {
+                "x": 812.2265625,
+                "y": 571.140625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 722.46875,
+                "y": 561.140625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1082.484375,
+              "y": 555.125,
+              "width": 102.34375,
+              "height": 32,
+              "top": 555.125,
+              "right": 1184.828125,
+              "bottom": 587.125,
+              "left": 1082.484375
+            },
+            "samples": [
+              {
+                "x": 1133.65625,
+                "y": 571.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1088.484375,
+                "y": 561.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1192.828125,
+              "y": 555.125,
+              "width": 105.171875,
+              "height": 32,
+              "top": 555.125,
+              "right": 1298,
+              "bottom": 587.125,
+              "left": 1192.828125
+            },
+            "samples": [
+              {
+                "x": 1245.4140625,
+                "y": 571.125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1198.828125,
+                "y": 561.125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 554.703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 554.703125,
+              "right": 1084.3125,
+              "bottom": 586.703125,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 570.703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 560.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1174.3125,
+              "y": 554.703125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 554.703125,
+              "right": 1292.140625,
+              "bottom": 586.703125,
+              "left": 1174.3125
+            },
+            "samples": [
+              {
+                "x": 1233.2265625,
+                "y": 570.703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1180.3125,
+                "y": 560.703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 555.078125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 555.078125,
+              "right": 1084.3125,
+              "bottom": 587.078125,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 571.078125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 561.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1174.3125,
+              "y": 555.078125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 555.078125,
+              "right": 1292.140625,
+              "bottom": 587.078125,
+              "left": 1174.3125
+            },
+            "samples": [
+              {
+                "x": 1233.2265625,
+                "y": 571.078125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1180.3125,
+                "y": 561.078125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 555.453125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 555.453125,
+              "right": 1084.3125,
+              "bottom": 587.453125,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 571.453125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 561.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1174.3125,
+              "y": 555.453125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 555.453125,
+              "right": 1292.140625,
+              "bottom": 587.453125,
+              "left": 1174.3125
+            },
+            "samples": [
+              {
+                "x": 1233.2265625,
+                "y": 571.453125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1180.3125,
+                "y": 561.453125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 194.828125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 194.828125,
+              "right": 1084.3125,
+              "bottom": 226.828125,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 210.828125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 200.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1174.3125,
+              "y": 194.828125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 194.828125,
+              "right": 1292.140625,
+              "bottom": 226.828125,
+              "left": 1174.3125
+            },
+            "samples": [
+              {
+                "x": 1233.2265625,
+                "y": 210.828125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1180.3125,
+                "y": 200.828125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 336.203125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 336.203125,
+              "right": 1084.3125,
+              "bottom": 368.203125,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 352.203125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 342.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1174.3125,
+              "y": 336.203125,
+              "width": 117.828125,
+              "height": 32,
+              "top": 336.203125,
+              "right": 1292.140625,
+              "bottom": 368.203125,
+              "left": 1174.3125
+            },
+            "samples": [
+              {
+                "x": 1233.2265625,
+                "y": 352.203125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 1180.3125,
+                "y": 342.203125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 439.390625,
+              "width": 106.3125,
+              "height": 32,
+              "top": 439.390625,
+              "right": 1084.3125,
+              "bottom": 471.390625,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1031.15625,
+                "y": 455.390625,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 984,
+                "y": 445.390625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 522.765625,
+              "width": 320,
+              "height": 72,
+              "top": 522.765625,
+              "right": 1298,
+              "bottom": 594.765625,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1138,
+                "y": 558.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 984,
+                "y": 528.765625,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 978,
+              "y": 602.765625,
+              "width": 117.828125,
+              "height": 32,
+              "top": 602.765625,
+              "right": 1095.828125,
+              "bottom": 634.765625,
+              "left": 978
+            },
+            "samples": [
+              {
+                "x": 1036.9140625,
+                "y": 618.765625,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 984,
+                "y": 608.765625,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 620,
+              "y": 821.953125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 821.953125,
+              "right": 726.3125,
+              "bottom": 853.953125,
+              "left": 620
+            },
+            "samples": [
+              {
+                "x": 673.15625,
+                "y": 837.953125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 626,
+                "y": 827.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 620,
+              "y": 853.953125,
+              "width": 153.203125,
+              "height": 32,
+              "top": 853.953125,
+              "right": 773.203125,
+              "bottom": 885.953125,
+              "left": 620
+            },
+            "samples": [
+              {
+                "x": 696.6015625,
+                "y": 869.953125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 626,
+                "y": 859.953125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1317,
+              "y": 37,
+              "width": 16,
+              "height": 16,
+              "top": 37,
+              "right": 1333,
+              "bottom": 53,
+              "left": 1317
+            },
+            "samples": [
+              {
+                "x": 1325,
+                "y": 45,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 1323,
+                "y": 43,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    }
+  ]
+}

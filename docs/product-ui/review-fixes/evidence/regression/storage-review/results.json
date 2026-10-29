@@ -1,0 +1,6 @@
+{
+  "checks": [
+    "Injected inspection removes reviewed checkpoint A; visual selection may fall back but submission stays bound to A and disabled, with no store-persisted passphrase",
+    "Changing the reviewed export path revokes confirmation; no export was executed"
+  ]
+}

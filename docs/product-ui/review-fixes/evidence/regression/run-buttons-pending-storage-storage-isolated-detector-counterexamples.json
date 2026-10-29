@@ -1,0 +1,16 @@
+[
+  {
+    "name": "buttons",
+    "command": "node tests/product-ui-review-buttons.mjs",
+    "started": "2026-10-29T05:52:13.416Z",
+    "finished": "2026-10-29T05:52:56.836Z",
+    "exit": 0
+  },
+  {
+    "name": "pending",
+    "command": "node tests/product-ui-review-pending.mjs",
+    "started": "2026-10-29T05:52:56.838Z",
+    "finished": "2026-10-29T05:54:06.403Z",
+    "exit": 1
+  }
+]

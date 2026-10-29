@@ -49,7 +49,8 @@ export const colloTables = {
     updatedAt: v.number(),
   })
     .index('by_request', ['projectId', 'sender', 'requestId'])
-    .index('by_project', ['projectId', 'updatedAt']),
+    .index('by_project', ['projectId', 'updatedAt'])
+    .index('by_project_status', ['projectId', 'status', 'updatedAt']),
   collo_checkpoint_paths: defineTable({
     projectId: v.id('projects'),
     workspaceId: v.string(),

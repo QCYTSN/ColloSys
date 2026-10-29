@@ -1,0 +1,9 @@
+[
+  {
+    "name": "storage-isolated",
+    "command": "node tests/product-ui-review-storage-state.mjs",
+    "started": "2026-10-29T06:36:04.067Z",
+    "finished": "2026-10-29T06:36:15.821Z",
+    "exit": 0
+  }
+]

@@ -1,0 +1,416 @@
+{
+  "assembledAt": "2026-10-29T06:44:59.121Z",
+  "branch": "codex/product-ui",
+  "head": "0ffc13a6be5ca1f8975d48ca822efdea24eb3d2e",
+  "fingerprint": "f2a15a9f42a149cc5db8803fa80308d3aa9b92b55c22761fa8eb048af7b00eef",
+  "preparedChanges": 156,
+  "sourceMatchesPreparedAndBuilt": true,
+  "managerHealth": 200,
+  "logs": [
+    {
+      "command": "npm run typecheck",
+      "log": ".local/review-typecheck.log",
+      "groups": null,
+      "tail": [
+        "",
+        "> collosys@0.1.0 typecheck",
+        "> tsc --noEmit"
+      ]
+    },
+    {
+      "command": "npm test",
+      "log": ".local/review-tests.log",
+      "groups": 65,
+      "tail": [
+        "ℹ tests 65",
+        "ℹ suites 0",
+        "ℹ pass 65",
+        "ℹ fail 0",
+        "ℹ cancelled 0",
+        "ℹ skipped 0",
+        "ℹ todo 0",
+        "ℹ duration_ms 40395.0846"
+      ]
+    },
+    {
+      "command": "npm run build",
+      "log": ".local/review-build.log",
+      "groups": null,
+      "tail": [
+        "../../../../../dist/codecast-app/assets/lineWorkspaceUrl-HK39yoK1.js                          1,256.32 kB │ gzip: 409.42 kB",
+        "../../../../../dist/codecast-app/assets/index-Coa2WQPb.js                                     3,272.11 kB │ gzip: 955.12 kB",
+        "",
+        "(!) Some chunks are larger than 500 kB after minification. Consider:",
+        "- Using dynamic import() to code-split the application",
+        "- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks",
+        "- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.",
+        "✓ built in 1m 20s"
+      ]
+    },
+    {
+      "command": "npm run typecheck:integration",
+      "log": ".local/review-integration-types.log",
+      "groups": null,
+      "tail": [
+        "",
+        "> collosys@0.1.0 typecheck:integration",
+        "> node scripts/codecast-typecheck.mjs",
+        "",
+        "Codecast integration typecheck passed (58 owned files; actual upstream types)."
+      ]
+    },
+    {
+      "command": "npm run codecast:verify",
+      "log": ".local/review-upstream.log",
+      "groups": null,
+      "tail": [
+        "{",
+        "  \"commit\": \"5dfb04f516122fe4f59a61137219b5a4e2e1f9f8\",",
+        "  \"verified\": 9854,",
+        "  \"windowsLineEndings\": 9437,",
+        "  \"documentedSymlinks\": 2,",
+        "  \"failureCount\": 0,",
+        "  \"failures\": []",
+        "}"
+      ]
+    },
+    {
+      "command": "npm run test:integration",
+      "log": ".local/review-integration.log",
+      "groups": 13,
+      "tail": [
+        "PASS Duplicate retry is acknowledged once; spoofing, sensitive files and outsiders rejected",
+        "PASS Stale restore rejected; confirmed restore backs up A and leaves B/index untouched",
+        "PASS Real Codex-format fixture is explicitly test data and read through the actual adapter",
+        "PASS Original UI restore preview opens real on-disk checkpoint",
+        "PASS Cold short project links outside the active workspace resolve and switch normally",
+        "PASS Ten independent local WebSocket clients receive a real saved-file event",
+        "PASS Signing out invalidates old browser JWT for local access and device minting",
+        "Evidence: D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\acceptance-1793253197397"
+      ]
+    },
+    {
+      "command": "npm run test:backend",
+      "log": ".local/review-backend.log",
+      "groups": 10,
+      "tail": [
+        "PASS Two concurrent 24 MiB uploads produce one durable manifest; streamed download matches the full digest and deletion revokes access",
+        "PASS Delete/recreate and device revocation during streamed upload cannot publish stale backup bytes",
+        "PASS Captured session pages, native task comments, frozen context, idempotent sending and concurrent handoff responses persist consistently",
+        "PASS A moved task prevents acceptance but does not trap the recipient in a permanently pending handoff",
+        "PASS A pre-upgrade multipart receipt is migrated before accepting more parts; duplicate paths fail without corrupting its count",
+        "PASS Old session migration advances across 19 MiB of checkpoint history in bounded transactions without duplicate projection",
+        "PASS Removing a member immediately revokes captured session, handoff and device backup access",
+        "Evidence: D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\backend-completion-1793253327330"
+      ]
+    },
+    {
+      "command": "node tests/codecast-backend-completion.mjs --after-restart .local/codecast-app/backend-completion-1793253327330",
+      "log": ".local/review-backend-restart.log",
+      "groups": 1,
+      "tail": [
+        "PASS Backend restart preserves encrypted bytes, completed receipt, session pagination and accepted handoff",
+        "Evidence: D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\backend-completion-1793253327330"
+      ]
+    },
+    {
+      "command": "npm run test:backend:native",
+      "log": ".local/review-native-backend.log",
+      "groups": 10,
+      "tail": [
+        "PASS assignee membership check does not turn personal sharing into a team rule",
+        "PASS native launch uses task authorization and queued revoked push is dropped before scheduling",
+        "PASS native web, dispatch and CLI reject outside-team assignee; unauthorized subscription denied",
+        "PASS private task launch denied via native web, CLI and dispatch",
+        "PASS membership removal revokes creator, assignee, CLI writes, sync cargo and new comment notifications",
+        "PASS account deletion disables the 51st credential, device-token factory, JWT and team seat",
+        "PASS revoked session dispatch explicitly preserves the retryable outbox contract",
+        "Evidence: D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\native-backend-audit-1793254502903"
+      ]
+    },
+    {
+      "command": "node tests/codecast-desktop.mjs .local/codecast-app/acceptance-1793253197397",
+      "log": ".local/review-desktop.log",
+      "groups": 9,
+      "tail": [
+        "PASS Real password sign-in and original project workbench operate inside the desktop",
+        "PASS Actual Windows folder picker opens and Cancel leaves the directory unselected",
+        "PASS Native directory-picker bridge and explicit sharing consent create a real connector",
+        "PASS Saved file changes render in the desktop and confirmed preview restores actual bytes",
+        "PASS Closing the last native window exits and reopening keeps the signed-in profile",
+        "PASS A directory deep link selects its authorized directory after reopening",
+        "PASS Pending-change close prompt honors Keep open and explicit Close now",
+        "Evidence: D:\\Github_Ku\\ColloSys\\.local\\codecast-app\\desktop-acceptance-1793253822255"
+      ]
+    },
+    {
+      "command": "node tests/product-ui-review-native.mjs",
+      "log": ".local/review-native125.log",
+      "groups": 3,
+      "tail": [
+        "PASS Actual native confirmation stays visible, keyboard-focusable and operable at 125%; cancelled without writing",
+        "PASS Real native clipboard promise resolves and actual clipboard contains this row path",
+        "PASS Native nested handoff source and keyboard auxiliary action fit at 125% without validation/submission"
+      ]
+    }
+  ],
+  "latestRegressionRuns": {
+    "buttons": {
+      "name": "buttons",
+      "command": "node tests/product-ui-review-buttons.mjs",
+      "started": "2026-10-29T06:33:46.672Z",
+      "finished": "2026-10-29T06:34:09.449Z",
+      "exit": 0,
+      "record": "evidence/regression/run-buttons-pending-detector-auth-storage.json"
+    },
+    "pending": {
+      "name": "pending",
+      "command": "node tests/product-ui-review-pending.mjs",
+      "started": "2026-10-29T06:34:09.452Z",
+      "finished": "2026-10-29T06:35:07.834Z",
+      "exit": 0,
+      "record": "evidence/regression/run-buttons-pending-detector-auth-storage.json"
+    },
+    "storage": {
+      "name": "storage",
+      "command": "node tests/product-ui-review-storage.mjs",
+      "started": "2026-10-29T05:54:58.767Z",
+      "finished": "2026-10-29T05:55:38.511Z",
+      "exit": 0,
+      "record": "evidence/regression/run-storage-storage-isolated-detector-counterexamples.json"
+    },
+    "storage-isolated": {
+      "name": "storage-isolated",
+      "command": "node tests/product-ui-review-storage-state.mjs",
+      "started": "2026-10-29T06:36:04.067Z",
+      "finished": "2026-10-29T06:36:15.821Z",
+      "exit": 0,
+      "record": "evidence/regression/run-storage-isolated.json"
+    },
+    "detector": {
+      "name": "detector",
+      "command": "node tests/product-ui-review-detector.mjs",
+      "started": "2026-10-29T06:35:07.837Z",
+      "finished": "2026-10-29T06:35:12.758Z",
+      "exit": 0,
+      "record": "evidence/regression/run-buttons-pending-detector-auth-storage.json"
+    },
+    "counterexamples": {
+      "name": "counterexamples",
+      "command": "node tests/product-ui-overflow-counterexamples.mjs",
+      "started": "2026-10-29T05:55:52.115Z",
+      "finished": "2026-10-29T05:55:53.674Z",
+      "exit": 0,
+      "record": "evidence/regression/run-storage-storage-isolated-detector-counterexamples.json"
+    },
+    "continuity": {
+      "name": "continuity",
+      "command": "node tests/product-ui-craft.mjs",
+      "started": "2026-10-29T06:02:16.750Z",
+      "finished": "2026-10-29T06:03:05.672Z",
+      "exit": 0,
+      "record": "evidence/regression/run-pending-continuity-detail-late-reply-storage-review-handoffs-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "detail": {
+      "name": "detail",
+      "command": "node tests/product-ui-craft-detail.mjs",
+      "started": "2026-10-29T06:03:05.674Z",
+      "finished": "2026-10-29T06:03:14.392Z",
+      "exit": 0,
+      "record": "evidence/regression/run-pending-continuity-detail-late-reply-storage-review-handoffs-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "late-reply": {
+      "name": "late-reply",
+      "command": "node tests/product-ui-craft-revocation.mjs",
+      "started": "2026-10-29T06:03:14.393Z",
+      "finished": "2026-10-29T06:03:27.001Z",
+      "exit": 0,
+      "record": "evidence/regression/run-pending-continuity-detail-late-reply-storage-review-handoffs-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "storage-review": {
+      "name": "storage-review",
+      "command": "node tests/product-ui-craft-storage-race.mjs",
+      "started": "2026-10-29T06:03:27.003Z",
+      "finished": "2026-10-29T06:04:08.478Z",
+      "exit": 0,
+      "record": "evidence/regression/run-pending-continuity-detail-late-reply-storage-review-handoffs-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "handoffs": {
+      "name": "handoffs",
+      "command": "node tests/product-ui-completion-handoffs.mjs",
+      "started": "2026-10-29T06:04:08.480Z",
+      "finished": "2026-10-29T06:04:41.388Z",
+      "exit": 0,
+      "record": "evidence/regression/run-pending-continuity-detail-late-reply-storage-review-handoffs-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "surfaces": {
+      "name": "surfaces",
+      "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+      "started": "2026-10-29T06:10:21.239Z",
+      "finished": "2026-10-29T06:11:09.263Z",
+      "exit": 0,
+      "record": "evidence/regression/run-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "refinement": {
+      "name": "refinement",
+      "command": "node tests/product-ui-refinement.mjs",
+      "started": "2026-10-29T06:11:09.265Z",
+      "finished": "2026-10-29T06:12:18.406Z",
+      "exit": 0,
+      "record": "evidence/regression/run-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "completion": {
+      "name": "completion",
+      "command": "node tests/product-ui-completion.mjs",
+      "started": "2026-10-29T06:12:18.409Z",
+      "finished": "2026-10-29T06:13:10.344Z",
+      "exit": 0,
+      "record": "evidence/regression/run-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "native-surfaces": {
+      "name": "native-surfaces",
+      "command": "node tests/product-ui-completion-surfaces.mjs --native",
+      "started": "2026-10-29T06:13:10.346Z",
+      "finished": "2026-10-29T06:13:55.377Z",
+      "exit": 0,
+      "record": "evidence/regression/run-surfaces-refinement-completion-native-surfaces-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "native-completion": {
+      "name": "native-completion",
+      "command": "node tests/product-ui-completion.mjs --native",
+      "started": "2026-10-29T06:26:56.227Z",
+      "finished": "2026-10-29T06:27:45.211Z",
+      "exit": 0,
+      "record": "evidence/regression/run-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "access": {
+      "name": "access",
+      "command": "node tests/product-ui-refinement-access.mjs",
+      "started": "2026-10-29T06:27:45.213Z",
+      "finished": "2026-10-29T06:28:05.080Z",
+      "exit": 0,
+      "record": "evidence/regression/run-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "auth-continuity": {
+      "name": "auth-continuity",
+      "command": "node tests/product-auth-continuity.mjs",
+      "started": "2026-10-29T06:28:05.082Z",
+      "finished": "2026-10-29T06:28:38.888Z",
+      "exit": 0,
+      "record": "evidence/regression/run-native-completion-access-auth-continuity-auth-storage.json"
+    },
+    "auth-storage": {
+      "name": "auth-storage",
+      "command": "node tests/product-auth-storage.mjs",
+      "started": "2026-10-29T06:35:12.760Z",
+      "finished": "2026-10-29T06:35:14.224Z",
+      "exit": 0,
+      "record": "evidence/regression/run-buttons-pending-detector-auth-storage.json"
+    }
+  },
+  "targetedResults": {
+    "buttons": {
+      "count": 10,
+      "evidence": "Formal page + real six-part legacy checkpoint; read errors explicitly injected at WebSocket response only",
+      "checks": [
+        "empty form, Retry mouse (injected read error)",
+        "empty form, Retry Enter",
+        "valid form, Retry Enter does not send",
+        "empty form, Retry Space and actual query recovery",
+        "empty form, slow Verify and repeated activation",
+        "valid form, Verify Enter completes six-part migration",
+        "actual Send preserves native required validation",
+        "actual valid Send double activation persists exactly once",
+        "Verify Space: actual conflicting paths fail integrity without form validation or send",
+        "Busy fieldset keeps the read-only Inspect changes link usable; returning draft survives old send reply"
+      ]
+    },
+    "pending": {
+      "count": 8,
+      "evidence": "Real local backend and formal page",
+      "checks": [
+        "Two older pending handoffs survive 105 newer handled records, including both recipients",
+        "Formal overview displays the previously omitted records",
+        "Bounded project/status pagination reaches all 37+ pending records once, across recipients",
+        "Other project remains isolated",
+        "Accept, decline and cancel remove the same authoritative pending records reactively",
+        "Keyboard activation opens full participant names from the truncated narrow row; title alone is not counted as proof",
+        "Existing project authorization rejects both indexed queries across ownership",
+        "Formal initial loading with held response is distinct from confirmed empty project; real empty query has hasMore false"
+      ]
+    },
+    "storage": {
+      "count": 10,
+      "evidence": "Formal application with real local services; specified HTTP failures and clipboard promise substituted",
+      "checks": [
+        "B1 real page HTTP failure then success clears matching local error",
+        "B3 actual pin write interleaved with a held pre-write GET cannot roll back the displayed result",
+        "B6 policy commits once; failed re-read stays a read error and focus stays on completion",
+        "Actual encrypted TEST backup persisted through confirmation",
+        "D1 real wrong passphrase has field association/focus; independent read recovery preserves it",
+        "D2 real recovery result keeps actual returned directory and surviving focus at confirmation position",
+        "D1 clipboard controlled promise reports only after settlement, in the correct row, stable width/scroll; keyboard failure exposes selectable full path",
+        "Real invalid export path stays at field; changed target revokes confirmation; successful export shows returned location",
+        "Real backup deletion focuses surviving completion after its row is removed",
+        "Source and independent TEST teammate files remain byte-for-byte unchanged"
+      ]
+    },
+    "storage-isolated": {
+      "count": 16,
+      "evidence": "Actual prepared component with controlled promise transport; not real backend",
+      "checks": [
+        "local success independent of unresolved backup read",
+        "successful local retry clears only its read error",
+        "A slow success cannot overwrite newer B",
+        "A late error cannot replace newer success",
+        "old scope denial cannot clear new directory",
+        "same-scope confirmed denial clears immediately despite hung sibling",
+        "success boundary invalidates reads started DURING the write",
+        "close and reopen ignore late success and denial",
+        "account epoch changes reject old-account completions",
+        "write completion invalidates pre-write snapshots",
+        "inspection failure after committed write is not an operation failure",
+        "committed policy remains successful when read fails",
+        "completion focus remains on surviving visible element",
+        "backup service failure remains local to backups while history stays usable",
+        "expiry received during export review blocks submission with inline review feedback",
+        "service expiry rejection stays in current form and focuses surviving confirmation"
+      ]
+    },
+    "native-125": {
+      "count": 3,
+      "evidence": "Actual visible Windows client, normal desktop framework, isolated TEST profile; native OS captures",
+      "checks": [
+        "Actual native confirmation stays visible, keyboard-focusable and operable at 125%; cancelled without writing",
+        "Real native clipboard promise resolves and actual clipboard contains this row path",
+        "Native nested handoff source and keyboard auxiliary action fit at 125% without validation/submission"
+      ]
+    }
+  },
+  "nativeEnvironment": {
+    "visible": true,
+    "nativeHandle": true,
+    "zoomFactor": 1.25,
+    "displayScale": 2,
+    "bounds": {
+      "x": 7,
+      "y": 55,
+      "width": 1281,
+      "height": 801
+    },
+    "electron": "44.3.0",
+    "chromium": "152.0.7977.78",
+    "cssViewport": {
+      "width": 1025,
+      "height": 641
+    },
+    "devicePixelRatio": 2.5,
+    "cssZoom": "1"
+  },
+  "limitations": [
+    "Manager stopped once during native tests; cause unresolved. Restart and subsequent native/auth checks succeeded.",
+    "Browser static-boot checks skipped this round.",
+    "Recovery expiry timing uses actual component with controlled responses, not a real 24-hour wait.",
+    "No user aesthetic approval, public deployment, cross-platform or exhaustive accessibility certification."
+  ]
+}

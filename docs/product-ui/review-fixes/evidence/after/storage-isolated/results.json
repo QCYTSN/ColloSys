@@ -1,0 +1,85 @@
+{
+  "evidence": "Actual prepared component with controlled promise transport; not real backend",
+  "results": [
+    {
+      "name": "local success independent of unresolved backup read",
+      "passed": true,
+      "actual": "TEST A\n\n7 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nBackup service\n\nReading encrypted backups…\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "successful local retry clears only its read error",
+      "passed": true,
+      "actual": "TEST A\n\n8 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "A slow success cannot overwrite newer B",
+      "passed": true,
+      "actual": "TEST A\n\n22 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "A late error cannot replace newer success",
+      "passed": true,
+      "actual": "TEST A\n\n22 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "old scope denial cannot clear new directory",
+      "passed": true,
+      "actual": "TEST B\n\n22 checkpoints · 0 MiB\n\nTEST source B\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "same-scope confirmed denial clears immediately despite hung sibling",
+      "passed": true,
+      "actual": "Directory access has changed. Close this panel and sign in or request access."
+    },
+    {
+      "name": "success boundary invalidates reads started DURING the write",
+      "passed": true,
+      "actual": "TEST A\n\n44 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\n\nCheckpoint pinned.\n\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "close and reopen ignore late success and denial",
+      "passed": true,
+      "actual": "TEST A\n\n22 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "account epoch changes reject old-account completions",
+      "passed": true,
+      "actual": "TEST A\n\n22 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "write completion invalidates pre-write snapshots",
+      "passed": true,
+      "actual": "TEST A\n\n33 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\n\nCheckpoint pinned.\n\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device.\n\nOperation completed. The directory view could not refresh; refresh storage or reopen the directory to retry."
+    },
+    {
+      "name": "inspection failure after committed write is not an operation failure",
+      "passed": true,
+      "actual": "TEST A\n\n33 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\n\nCheckpoint pinned.\n\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device.\n\nOperation completed. The directory view could not refresh; refresh storage or reopen the directory to retry."
+    },
+    {
+      "name": "committed policy remains successful when read fails",
+      "passed": true,
+      "actual": "TEST A\n\n7 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\n\nTEST post-write read failed Retry local history\n\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nOn this computer\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\n0 / 10 copies · 0 MiB / 1 MiB\n\nNo encrypted copies yet.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device.\n\nRetention policy saved.\n\nTEST checkpoint · 1970/1/1 08:00:00\n\nRefresh storage status"
+    },
+    {
+      "name": "completion focus remains on surviving visible element",
+      "passed": true,
+      "actual": "<div tabindex=\"-1\" class=\"collo-storage-confirm collo-storage-completed\" aria-label=\"Storage operation completed\" style=\"min-height: 178.984px;\"><p role=\"status\"><svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" fill=\"currentColor\" viewBox=\"0 0 256 256\"><path d=\"M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z\"></path></svg> Retention policy saved.</p><p>TEST checkpoint · 1970/1/1 08:00:00</p><button class=\"cc-btn inline-flex items-center justify-center gap-2 whitespace-nowrap font-medium select-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring/60 disabled:pointer-events-none disabled:opacity-50 [&amp;_svg]:pointer-events-none [&amp;_svg]:size-4 [&amp;_svg]:shrink-0 cc-btn-outline border border-input bg-background hover:bg-accent hover:text-accent-foreground h-8 rounded-md px-3 text-xs\" type=\"button\">Refresh storage status</button></div>"
+    },
+    {
+      "name": "backup service failure remains local to backups while history stays usable",
+      "passed": true,
+      "actual": "TEST A\n\n7 checkpoints · 0 MiB\n\nTEST source A\n\nRefresh storage\nLocal history\nIndependent from your project’s Git history\nCheckpoints\nDays\nStorage limit (MiB)\n\nThe two newest checkpoints, pinned checkpoints, pending shares and active restore previews are protected. Cleanup also removes expired recovery copies.\n\nReview policy\nReview cleanup · 0\nCheckpoint\nTEST checkpoint · 1970/1/1 08:00:00 · 1 files\nPin checkpoint\nCreate encrypted backup\nEncrypted backups\nBackup service\n\nBackup service is unavailable. Local checkpoints and recovery remain available.Retry backups\n\nEncrypted before upload. This service is on this machine: a local replica is not off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.\n\nRecovery copies\nSeparate directories · expire after 24 hours\n\nReview these files before exporting. Recovering and exporting never replaces your working directory.\n\nNo recovery copies on this device."
+    },
+    {
+      "name": "expiry received during export review blocks submission with inline review feedback",
+      "passed": true,
+      "actual": "Export recovery copy\n\nChoose a new, non-existing absolute directory outside the source project and managed storage. Existing destinations are rejected.\n\nThis reviewed item or cleanup scope has changed. Cancel and review the current information before continuing.\n\nSource details\nNew export directory\nI confirm this operation and its scope.\nCancel\nExport to this directory"
+    },
+    {
+      "name": "service expiry rejection stays in current form and focuses surviving confirmation",
+      "passed": true,
+      "actual": "Export recovery copy\n\nChoose a new, non-existing absolute directory outside the source project and managed storage. Existing destinations are rejected.\n\nRecovery is unavailable or expired; recover the backup again\n\nSource details\nNew export directory\nI confirm this operation and its scope.\nCancel\nExport to this directory"
+    }
+  ]
+}

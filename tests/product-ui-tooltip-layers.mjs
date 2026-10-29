@@ -43,7 +43,7 @@ const bundle = await build({
   `,
   },
 });
-const out = 'docs/product-ui/craft/evidence/tooltip-contract';
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/tooltip-contract';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',

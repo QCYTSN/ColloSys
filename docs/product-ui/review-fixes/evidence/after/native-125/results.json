@@ -1,0 +1,1985 @@
+{
+  "evidence": "Actual visible Windows client, normal desktop framework, isolated TEST profile; native OS captures",
+  "checks": [
+    "Actual native confirmation stays visible, keyboard-focusable and operable at 125%; cancelled without writing",
+    "Real native clipboard promise resolves and actual clipboard contains this row path",
+    "Native nested handoff source and keyboard auxiliary action fit at 125% without validation/submission"
+  ],
+  "audits": [
+    {
+      "name": "storage confirmation at 125%",
+      "geometry": {
+        "viewport": {
+          "width": 1025,
+          "height": 641
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 724.2562866210938,
+              "y": 150.90000915527344,
+              "width": 113.34375,
+              "height": 32,
+              "top": 150.90000915527344,
+              "right": 837.6000366210938,
+              "bottom": 182.90000915527344,
+              "left": 724.2562866210938
+            },
+            "samples": [
+              {
+                "x": 780.9281616210938,
+                "y": 166.90000915527344,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 730.2562866210938,
+                "y": 156.90000915527344,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 376,
+              "bottom": 367.60000228881836,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 263.5999984741211,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 390,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 614.8000030517578,
+              "bottom": 367.60000228881836,
+              "left": 390
+            },
+            "samples": [
+              {
+                "x": 502.4000015258789,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 396,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 628.7999877929688,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 853.5999908447266,
+              "bottom": 367.60000228881836,
+              "left": 628.7999877929688
+            },
+            "samples": [
+              {
+                "x": 741.1999893188477,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 634.7999877929688,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 335.20001220703125,
+              "width": 102.48125457763672,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 253.6812515258789,
+              "bottom": 367.20001220703125,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 202.44062423706055,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 261.6812438964844,
+              "y": 335.20001220703125,
+              "width": 131.0187530517578,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 392.6999969482422,
+              "bottom": 367.20001220703125,
+              "left": 261.6812438964844
+            },
+            "samples": [
+              {
+                "x": 327.1906204223633,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 267.6812438964844,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 332.6000061035156,
+              "width": 702.4000244140625,
+              "height": 37.20000076293945,
+              "top": 332.6000061035156,
+              "right": 853.6000213623047,
+              "bottom": 369.8000068664551,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 502.40000915527344,
+                "y": 351.20000648498535,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 338.6000061035156,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Unpin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 335.3999938964844,
+              "width": 124.375,
+              "height": 32,
+              "top": 335.3999938964844,
+              "right": 275.5749969482422,
+              "bottom": 367.3999938964844,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 213.3874969482422,
+                "y": 351.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 341.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 283.57501220703125,
+              "y": 335.3999938964844,
+              "width": 191.5124969482422,
+              "height": 32,
+              "top": 335.3999938964844,
+              "right": 475.08750915527344,
+              "bottom": 367.3999938964844,
+              "left": 283.57501220703125
+            },
+            "samples": [
+              {
+                "x": 379.33126068115234,
+                "y": 351.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 289.57501220703125,
+                "y": 341.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 141.1999969482422,
+              "width": 106.3125,
+              "height": 32,
+              "top": 141.1999969482422,
+              "right": 639.9125366210938,
+              "bottom": 173.1999969482422,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 157.1999969482422,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 147.1999969482422,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 141.1999969482422,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 141.1999969482422,
+              "right": 847.3375396728516,
+              "bottom": 173.1999969482422,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 157.1999969482422,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 147.1999969482422,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 282.3999938964844,
+              "width": 106.3125,
+              "height": 32,
+              "top": 282.3999938964844,
+              "right": 639.9125366210938,
+              "bottom": 314.3999938964844,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 298.3999938964844,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 288.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 282.3999938964844,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 282.3999938964844,
+              "right": 847.3375396728516,
+              "bottom": 314.3999938964844,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 298.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 288.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 172,
+              "y": 499,
+              "width": 13,
+              "height": 13,
+              "top": 499,
+              "right": 185,
+              "bottom": 512,
+              "left": 172
+            },
+            "samples": [
+              {
+                "x": 178.5,
+                "y": 505.5,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 178,
+                "y": 505,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Cancel",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 172,
+              "y": 529.2000122070312,
+              "width": 78.8375015258789,
+              "height": 36,
+              "top": 529.2000122070312,
+              "right": 250.8375015258789,
+              "bottom": 565.2000122070312,
+              "left": 172
+            },
+            "samples": [
+              {
+                "x": 211.41875076293945,
+                "y": 547.2000122070312,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 178,
+                "y": 535.2000122070312,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Save policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 258.8374938964844,
+              "y": 529.2000122070312,
+              "width": 106.6312484741211,
+              "height": 36,
+              "top": 529.2000122070312,
+              "right": 365.46874237060547,
+              "bottom": 565.2000122070312,
+              "left": 258.8374938964844
+            },
+            "samples": [
+              {
+                "x": 312.1531181335449,
+                "y": 547.2000122070312,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 264.8374938964844,
+                "y": 535.2000122070312,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 869.6000366210938,
+              "y": 36.79999923706055,
+              "width": 16,
+              "height": 16,
+              "top": 36.79999923706055,
+              "right": 885.6000366210938,
+              "bottom": 52.79999923706055,
+              "left": 869.6000366210938
+            },
+            "samples": [
+              {
+                "x": 877.6000366210938,
+                "y": 44.79999923706055,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 875.6000366210938,
+                "y": 42.79999923706055,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "native copy row at 125%",
+      "geometry": {
+        "viewport": {
+          "width": 1025,
+          "height": 641
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 724.2562866210938,
+              "y": 150.90000915527344,
+              "width": 113.34375,
+              "height": 32,
+              "top": 150.90000915527344,
+              "right": 837.6000366210938,
+              "bottom": 182.90000915527344,
+              "left": 724.2562866210938
+            },
+            "samples": [
+              {
+                "x": 780.9281616210938,
+                "y": 166.90000915527344,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 730.2562866210938,
+                "y": 156.90000915527344,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 376,
+              "bottom": 367.60000228881836,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 263.5999984741211,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 390,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 614.8000030517578,
+              "bottom": 367.60000228881836,
+              "left": 390
+            },
+            "samples": [
+              {
+                "x": 502.4000015258789,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 396,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 628.7999877929688,
+              "y": 328,
+              "width": 224.8000030517578,
+              "height": 39.60000228881836,
+              "top": 328,
+              "right": 853.5999908447266,
+              "bottom": 367.60000228881836,
+              "left": 628.7999877929688
+            },
+            "samples": [
+              {
+                "x": 741.1999893188477,
+                "y": 347.8000011444092,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 634.7999877929688,
+                "y": 334,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 335.20001220703125,
+              "width": 102.48125457763672,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 253.6812515258789,
+              "bottom": 367.20001220703125,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 202.44062423706055,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 261.6812438964844,
+              "y": 335.20001220703125,
+              "width": 131.0187530517578,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 392.6999969482422,
+              "bottom": 367.20001220703125,
+              "left": 261.6812438964844
+            },
+            "samples": [
+              {
+                "x": 327.1906204223633,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 267.6812438964844,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 332.6000061035156,
+              "width": 702.4000244140625,
+              "height": 37.20000076293945,
+              "top": 332.6000061035156,
+              "right": 853.6000213623047,
+              "bottom": 369.8000068664551,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 502.40000915527344,
+                "y": 351.20000648498535,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 338.6000061035156,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Unpin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 151.1999969482422,
+              "y": 335.3999938964844,
+              "width": 124.375,
+              "height": 32,
+              "top": 335.3999938964844,
+              "right": 275.5749969482422,
+              "bottom": 367.3999938964844,
+              "left": 151.1999969482422
+            },
+            "samples": [
+              {
+                "x": 213.3874969482422,
+                "y": 351.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 157.1999969482422,
+                "y": 341.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 283.57501220703125,
+              "y": 335.3999938964844,
+              "width": 191.5124969482422,
+              "height": 32,
+              "top": 335.3999938964844,
+              "right": 475.08750915527344,
+              "bottom": 367.3999938964844,
+              "left": 283.57501220703125
+            },
+            "samples": [
+              {
+                "x": 379.33126068115234,
+                "y": 351.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 289.57501220703125,
+                "y": 341.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 476.3999938964844,
+              "width": 106.3125,
+              "height": 32,
+              "top": 476.3999938964844,
+              "right": 639.9125366210938,
+              "bottom": 508.3999938964844,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 492.3999938964844,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 482.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 476.3999938964844,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 476.3999938964844,
+              "right": 847.3375396728516,
+              "bottom": 508.3999938964844,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 492.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 482.3999938964844,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 335.20001220703125,
+              "width": 106.3125,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 639.9125366210938,
+              "bottom": 367.20001220703125,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 335.20001220703125,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 335.20001220703125,
+              "right": 847.3375396728516,
+              "bottom": 367.20001220703125,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 351.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 341.20001220703125,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 341.6000061035156,
+              "width": 106.3125,
+              "height": 32,
+              "top": 341.6000061035156,
+              "right": 639.9125366210938,
+              "bottom": 373.6000061035156,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 357.6000061035156,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 347.6000061035156,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 341.6000061035156,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 341.6000061035156,
+              "right": 847.3375396728516,
+              "bottom": 373.6000061035156,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 357.6000061035156,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 347.6000061035156,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 533.6000366210938,
+              "y": 482.8000183105469,
+              "width": 106.3125,
+              "height": 32,
+              "top": 482.8000183105469,
+              "right": 639.9125366210938,
+              "bottom": 514.8000183105469,
+              "left": 533.6000366210938
+            },
+            "samples": [
+              {
+                "x": 586.7562866210938,
+                "y": 498.8000183105469,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 539.6000366210938,
+                "y": 488.8000183105469,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 729.9125366210938,
+              "y": 482.8000183105469,
+              "width": 117.42500305175781,
+              "height": 32,
+              "top": 482.8000183105469,
+              "right": 847.3375396728516,
+              "bottom": 514.8000183105469,
+              "left": 729.9125366210938
+            },
+            "samples": [
+              {
+                "x": 788.6250381469727,
+                "y": 498.8000183105469,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 735.9125366210938,
+                "y": 488.8000183105469,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 869.6000366210938,
+              "y": 36.79999923706055,
+              "width": 16,
+              "height": 16,
+              "top": 36.79999923706055,
+              "right": 885.6000366210938,
+              "bottom": 52.79999923706055,
+              "left": 869.6000366210938
+            },
+            "samples": [
+              {
+                "x": 877.6000366210938,
+                "y": 44.79999923706055,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 875.6000366210938,
+                "y": 42.79999923706055,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "name": "native nested handoff at 125%",
+      "geometry": {
+        "viewport": {
+          "width": 1025,
+          "height": 641
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Handoff recipient",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 281.20001220703125,
+              "y": 151.3000030517578,
+              "width": 450.3999938964844,
+              "height": 37.20000076293945,
+              "top": 151.3000030517578,
+              "right": 731.6000061035156,
+              "bottom": 188.50000381469727,
+              "left": 281.20001220703125
+            },
+            "samples": [
+              {
+                "x": 506.40000915527344,
+                "y": 169.90000343322754,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 287.20001220703125,
+                "y": 157.3000030517578,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 281.20001220703125,
+              "y": 231,
+              "width": 450.3999938964844,
+              "height": 39.60000228881836,
+              "top": 231,
+              "right": 731.6000061035156,
+              "bottom": 270.60000228881836,
+              "left": 281.20001220703125
+            },
+            "samples": [
+              {
+                "x": 506.40000915527344,
+                "y": 250.80000114440918,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 287.20001220703125,
+                "y": 237,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Context",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 281.20001220703125,
+              "y": 313.1000061035156,
+              "width": 450.3999938964844,
+              "height": 99.5999984741211,
+              "top": 313.1000061035156,
+              "right": 731.6000061035156,
+              "bottom": 412.7000045776367,
+              "left": 281.20001220703125
+            },
+            "samples": [
+              {
+                "x": 506.40000915527344,
+                "y": 362.9000053405762,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 287.20001220703125,
+                "y": 319.1000061035156,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Next steps",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 281.20001220703125,
+              "y": 455.20001220703125,
+              "width": 450.3999938964844,
+              "height": 79.5999984741211,
+              "top": 455.20001220703125,
+              "right": 731.6000061035156,
+              "bottom": 534.8000106811523,
+              "left": 281.20001220703125
+            },
+            "samples": [
+              {
+                "x": 506.40000915527344,
+                "y": 495.0000114440918,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 287.20001220703125,
+                "y": 461.20001220703125,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "No related taskTEST UnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitleUnbrokenProjectTitle",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 281.20001220703125,
+              "y": 577.2999877929688,
+              "width": 450.3999938964844,
+              "height": 37.20000076293945,
+              "top": 577.2999877929688,
+              "right": 731.6000061035156,
+              "bottom": 614.4999885559082,
+              "left": 281.20001220703125
+            },
+            "samples": [
+              {
+                "x": 506.40000915527344,
+                "y": 595.8999881744385,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 287.20001220703125,
+                "y": 583.2999877929688,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Inspect changes →",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 298,
+              "y": 492.3000183105469,
+              "width": 105.73750305175781,
+              "height": 18,
+              "top": 492.3000183105469,
+              "right": 403.7375030517578,
+              "bottom": 510.3000183105469,
+              "left": 298
+            },
+            "samples": [
+              {
+                "x": 350.8687515258789,
+                "y": 501.3000183105469,
+                "hit": true,
+                "target": "A"
+              },
+              {
+                "x": 304,
+                "y": 498.3000183105469,
+                "hit": true,
+                "target": "A"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Remove source",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 411.7375183105469,
+              "y": 485.3000183105469,
+              "width": 110.13750457763672,
+              "height": 32,
+              "top": 485.3000183105469,
+              "right": 521.8750228881836,
+              "bottom": 517.3000183105469,
+              "left": 411.7375183105469
+            },
+            "samples": [
+              {
+                "x": 466.80627059936523,
+                "y": 501.3000183105469,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 417.7375183105469,
+                "y": 491.3000183105469,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Keep draft",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 501.0874938964844,
+              "y": 556.1000366210938,
+              "width": 102.3125,
+              "height": 36,
+              "top": 556.1000366210938,
+              "right": 603.3999938964844,
+              "bottom": 592.1000366210938,
+              "left": 501.0874938964844
+            },
+            "samples": [
+              {
+                "x": 552.2437438964844,
+                "y": 574.1000366210938,
+                "hit": true,
+                "target": "BUTTON"
+              },
+              {
+                "x": 507.0874938964844,
+                "y": 562.1000366210938,
+                "hit": true,
+                "target": "BUTTON"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 727.6000366210938,
+              "y": 36.79999923706055,
+              "width": 16,
+              "height": 16,
+              "top": 36.79999923706055,
+              "right": 743.6000366210938,
+              "bottom": 52.79999923706055,
+              "left": 727.6000366210938
+            },
+            "samples": [
+              {
+                "x": 735.6000366210938,
+                "y": 44.79999923706055,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 733.6000366210938,
+                "y": 42.79999923706055,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    }
+  ],
+  "network": []
+}

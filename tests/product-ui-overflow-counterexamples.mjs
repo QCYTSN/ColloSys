@@ -20,12 +20,19 @@ try {
       `Missed ${id}`,
     );
   assert.ok(!result.faults.some((f) => f.id === 'valid-ellipsis'));
-  assert.ok(result.legal.some((f) => f.id === 'valid-ellipsis'));
-  const out = 'docs/product-ui/craft/evidence/counterexamples';
+  assert.ok(result.fullTextCandidates.some((f) => f.id === 'valid-ellipsis'));
+  assert.ok(
+    !result.legal.some((f) => f.id === 'valid-ellipsis'),
+    'A title alone is not verified keyboard access',
+  );
+  const out =
+    process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/counterexamples';
   await fs.mkdir(out, { recursive: true });
   await fs.writeFile(out + '/results.json', JSON.stringify(result, null, 2));
   await page.screenshot({ path: out + '/known-failures.png' });
-  console.log('PASS all three known failures detected; exact-title ellipsis remains valid');
+  console.log(
+    'PASS all three known failures detected; title-only ellipsis is an unverified access candidate',
+  );
 } finally {
   await browser.close();
 }

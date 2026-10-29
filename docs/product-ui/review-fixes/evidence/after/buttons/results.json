@@ -1,0 +1,94 @@
+{
+  "base": "0ffc13a",
+  "evidence": "Formal page + real six-part legacy checkpoint; read errors explicitly injected at WebSocket response only",
+  "results": [
+    {
+      "name": "empty form, Retry mouse (injected read error)",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 0,
+        "send": 0,
+        "retry": 2
+      }
+    },
+    {
+      "name": "empty form, Retry Enter",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 0,
+        "send": 0,
+        "retry": 3
+      }
+    },
+    {
+      "name": "valid form, Retry Enter does not send",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 0,
+        "send": 0,
+        "retry": 4
+      }
+    },
+    {
+      "name": "empty form, Retry Space and actual query recovery",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 0,
+        "send": 0,
+        "retry": 5
+      }
+    },
+    {
+      "name": "empty form, slow Verify and repeated activation",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 1,
+        "send": 0,
+        "retry": 5
+      }
+    },
+    {
+      "name": "valid form, Verify Enter completes six-part migration",
+      "passed": true,
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verify": 2,
+        "send": 0,
+        "retry": 5
+      }
+    },
+    {
+      "name": "actual Send preserves native required validation",
+      "passed": true
+    },
+    {
+      "name": "actual valid Send double activation persists exactly once",
+      "passed": true
+    },
+    {
+      "name": "Verify Space: actual conflicting paths fail integrity without form validation or send",
+      "passed": true
+    },
+    {
+      "name": "Busy fieldset keeps the read-only Inspect changes link usable; returning draft survives old send reply",
+      "passed": true
+    }
+  ]
+}

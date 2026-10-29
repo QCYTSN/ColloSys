@@ -1,0 +1,62 @@
+{
+  "viewport": {
+    "width": 1000,
+    "height": 760
+  },
+  "documentOverflow": 0,
+  "faults": [
+    {
+      "category": "geometry",
+      "tag": "BUTTON",
+      "id": "ancestor",
+      "cls": "",
+      "text": "Ancestor clipped action",
+      "reason": "clipped vertically by ancestor",
+      "ancestor": {
+        "tag": "SECTION",
+        "id": "",
+        "cls": "test-box hidden",
+        "text": "Ancestor clipped action"
+      }
+    },
+    {
+      "category": "geometry",
+      "tag": "BUTTON",
+      "id": "offscreen",
+      "cls": "",
+      "text": "Unreachable action",
+      "reason": "action outside vertical viewport without scroll access"
+    },
+    {
+      "category": "geometry",
+      "tag": "BUTTON",
+      "id": "self",
+      "cls": "",
+      "text": "Another clipped action 测试",
+      "reason": "text is vertically clipped by its own surface",
+      "clientHeight": 18,
+      "scrollHeight": 51
+    },
+    {
+      "category": "geometry",
+      "tag": "DIV",
+      "id": "message",
+      "cls": "",
+      "text": "Different status with more lines 中文 mixed text",
+      "reason": "text is vertically clipped by its own surface",
+      "clientHeight": 19,
+      "scrollHeight": 51
+    }
+  ],
+  "legal": [],
+  "fullTextCandidates": [
+    {
+      "tag": "BUTTON",
+      "id": "ellipsis",
+      "cls": "",
+      "text": "Full accessible project title for keyboard and pointer users",
+      "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+      "access": "Full accessible project title for keyboard and pointer users"
+    }
+  ]
+}

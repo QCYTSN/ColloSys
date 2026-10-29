@@ -1,0 +1,17 @@
+{
+  "at": "2026-10-29T06:13:54.951Z",
+  "native": true,
+  "checks": [
+    "Container layout survives sidebar drag extremes with the right rail open",
+    "Anchored project menu flips and fits, then restores keyboard focus",
+    "Settings, page switching, exit and rapid reopening have interruptible feedback",
+    "Text zoom, dark theme and reduced motion remain operable"
+  ],
+  "motion": [
+    {
+      "phase": "closing",
+      "opacity": "0.915988",
+      "animation": "collo-panel-out"
+    }
+  ]
+}

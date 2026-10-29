@@ -118,9 +118,8 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
     paginationOpts: { numItems: 4, cursor: null },
   });
   const workspaces = useQueryNoThrow(colloApi.collo.workspaces, { projectId: id });
-  const handoffs = useQueryNoThrow(colloApi.colloHandoffs.list, {
+  const handoffs = useQueryNoThrow(colloApi.colloHandoffs.awaitingResponse, {
     projectId: id,
-    paginationOpts: { numItems: 10, cursor: null },
   });
   const href = `/projects/${project.short_id || project._id}`;
   const queries = [members, feed, workspaces, handoffs];
@@ -138,7 +137,7 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
   return (
     <aside className="collo-project-overview">
       <h2>{project.title}</h2>
-      {queries.some((q) => q.error) && (
+      {[members, feed, workspaces].some((q) => q.error) && (
         <p role="alert" className="collo-inline-notice">
           Could not refresh this overview. Available information is kept here.
           <Button size="sm" variant="ghost" onClick={retry}>
@@ -205,22 +204,32 @@ function ProjectOverview({ project }: { project: ProjectItem }) {
           </p>
         )}
       </div>
-      {handoffs.data?.page.some((h) => h.status === 'pending') && (
-        <div className="collo-overview-section">
-          <h3>Awaiting response</h3>
-          {handoffs.data.page
-            .filter((h) => h.status === 'pending')
-            .map((h) => (
-              <Link
-                className="collo-recent-row"
-                key={h._id}
-                href={`${href}?tab=handoffs&handoff=${h._id}`}
-              >
-                {h.title}
-              </Link>
-            ))}
-        </div>
-      )}
+      <div className="collo-overview-section" aria-label="Project handoffs awaiting response">
+        <h3>Awaiting response · project</h3>
+        {handoffs.error && (
+          <p role="alert">
+            Pending handoffs could not refresh.{' '}
+            <Button type="button" size="sm" variant="ghost" onClick={handoffs.retry}>
+              Retry pending handoffs
+            </Button>
+          </p>
+        )}
+        {!handoffs.data && !handoffs.error && <p role="status">Loading pending handoffs…</p>}
+        {handoffs.data && !handoffs.error && !handoffs.data.page.length && (
+          <p>No handoffs awaiting response.</p>
+        )}
+        {handoffs.data?.page.map((h) => (
+          <Link
+            className="collo-recent-row"
+            key={h._id}
+            href={`${href}?tab=handoffs&status=pending&handoff=${h._id}`}
+          >
+            {h.title}
+          </Link>
+        ))}
+        {handoffs.data?.hasMore && <p>More handoffs are awaiting response.</p>}
+        <Link href={`${href}?tab=handoffs&status=pending`}>View all pending handoffs →</Link>
+      </div>
       <Link className="collo-open-project" href={`${href}?tab=workspaces`}>
         Open project <ArrowRight size={17} />
       </Link>

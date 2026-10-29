@@ -1,0 +1,37 @@
+[
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-29T06:10:21.239Z",
+    "finished": "2026-10-29T06:11:09.263Z",
+    "exit": 0
+  },
+  {
+    "name": "refinement",
+    "command": "node tests/product-ui-refinement.mjs",
+    "started": "2026-10-29T06:11:09.265Z",
+    "finished": "2026-10-29T06:12:18.406Z",
+    "exit": 0
+  },
+  {
+    "name": "completion",
+    "command": "node tests/product-ui-completion.mjs",
+    "started": "2026-10-29T06:12:18.409Z",
+    "finished": "2026-10-29T06:13:10.344Z",
+    "exit": 0
+  },
+  {
+    "name": "native-surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --native",
+    "started": "2026-10-29T06:13:10.346Z",
+    "finished": "2026-10-29T06:13:55.377Z",
+    "exit": 0
+  },
+  {
+    "name": "native-completion",
+    "command": "node tests/product-ui-completion.mjs --native",
+    "started": "2026-10-29T06:13:55.378Z",
+    "finished": "2026-10-29T06:14:44.379Z",
+    "exit": 1
+  }
+]

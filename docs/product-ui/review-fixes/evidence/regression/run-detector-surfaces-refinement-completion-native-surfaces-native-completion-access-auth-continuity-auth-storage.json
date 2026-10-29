@@ -1,0 +1,16 @@
+[
+  {
+    "name": "detector",
+    "command": "node tests/product-ui-review-detector.mjs",
+    "started": "2026-10-29T06:06:21.547Z",
+    "finished": "2026-10-29T06:06:25.976Z",
+    "exit": 0
+  },
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-29T06:06:25.978Z",
+    "finished": "2026-10-29T06:08:30.384Z",
+    "exit": 1
+  }
+]

@@ -1,0 +1,64 @@
+{
+  "viewport": {
+    "width": 900,
+    "height": 700
+  },
+  "documentOverflow": 2927,
+  "faults": [
+    {
+      "category": "geometry",
+      "tag": "BUTTON",
+      "id": "ellipsis-geometry",
+      "cls": "ellipsis",
+      "text": "A long button with an exact title",
+      "reason": "clipped horizontally by ancestor",
+      "ancestor": {
+        "tag": "SECTION",
+        "id": "",
+        "cls": "clip",
+        "text": "A long button with an exact title"
+      }
+    },
+    {
+      "category": "geometry",
+      "tag": "BUTTON",
+      "id": "vertical-action",
+      "cls": "",
+      "text": "A full height action",
+      "reason": "clipped vertically by ancestor",
+      "ancestor": {
+        "tag": "SECTION",
+        "id": "",
+        "cls": "clip",
+        "text": "A full height action"
+      }
+    },
+    {
+      "category": "geometry",
+      "tag": "SPAN",
+      "id": "span-overflow",
+      "cls": "",
+      "text": "unbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbr",
+      "reason": "outside horizontal viewport"
+    },
+    {
+      "category": "geometry",
+      "tag": "SPAN",
+      "id": "span-overflow",
+      "cls": "",
+      "text": "unbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbrokenunbr",
+      "reason": "text range escapes its containing surface"
+    }
+  ],
+  "legal": [],
+  "fullTextCandidates": [
+    {
+      "tag": "DIV",
+      "id": "valid-ellipsis",
+      "cls": "",
+      "text": "Full text available from this exact title",
+      "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+      "access": "Full text available from this exact title"
+    }
+  ]
+}

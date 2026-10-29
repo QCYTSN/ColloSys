@@ -5,7 +5,7 @@ import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture, eventually } from './product-ui-completion-data.mjs';
 const expect = baseExpect.configure({ timeout: 30000 });
 const f = await completionFixture(),
-  out = 'docs/product-ui/craft/evidence/continuity';
+  out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/continuity';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
@@ -52,7 +52,7 @@ await context.routeWebSocket(/127\.0\.0\.1:3408/, (ws) => {
       }
       if (m.type === 'Transition' && failOverview) {
         m.modifications = m.modifications.map((x) => {
-          if (x.type === 'QueryUpdated' && paths.get(x.queryId) === 'colloHandoffs:list') {
+          if (x.type === 'QueryUpdated' && paths.get(x.queryId) === 'colloHandoffs:awaitingResponse') {
             failOverview = false;
             injected++;
             return {
@@ -141,7 +141,7 @@ try {
       await shot('01-overview-transient');
       await page
         .locator('.collo-project-overview')
-        .getByRole('button', { name: 'Retry', exact: true })
+        .getByRole('button', { name: 'Retry pending handoffs', exact: true })
         .click();
       await expect(page.locator('.collo-project-overview [role=alert]')).toHaveCount(0);
     },

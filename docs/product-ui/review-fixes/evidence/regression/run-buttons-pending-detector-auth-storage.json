@@ -1,0 +1,30 @@
+[
+  {
+    "name": "buttons",
+    "command": "node tests/product-ui-review-buttons.mjs",
+    "started": "2026-10-29T06:33:46.672Z",
+    "finished": "2026-10-29T06:34:09.449Z",
+    "exit": 0
+  },
+  {
+    "name": "pending",
+    "command": "node tests/product-ui-review-pending.mjs",
+    "started": "2026-10-29T06:34:09.452Z",
+    "finished": "2026-10-29T06:35:07.834Z",
+    "exit": 0
+  },
+  {
+    "name": "detector",
+    "command": "node tests/product-ui-review-detector.mjs",
+    "started": "2026-10-29T06:35:07.837Z",
+    "finished": "2026-10-29T06:35:12.758Z",
+    "exit": 0
+  },
+  {
+    "name": "auth-storage",
+    "command": "node tests/product-auth-storage.mjs",
+    "started": "2026-10-29T06:35:12.760Z",
+    "finished": "2026-10-29T06:35:14.224Z",
+    "exit": 0
+  }
+]

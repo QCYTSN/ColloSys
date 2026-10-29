@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture } from './product-ui-completion-data.mjs';
-const expect=baseExpect.configure({timeout:30000}),f=await completionFixture(),out='docs/product-ui/craft/evidence/late-reply';
+const expect=baseExpect.configure({timeout:30000}),f=await completionFixture(),out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/late-reply';
 await fs.mkdir(out,{recursive:true});
 const team=await f.a.client.query('teams:getTeam',{team_id:f.teamId});
 const roster=await f.a.client.query('teams:getTeamMembers',{team_id:f.teamId});

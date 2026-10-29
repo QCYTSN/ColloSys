@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Database, LockKey, ArrowSquareOut, Copy, Check } from '@phosphor-icons/react';
 import { Button } from '../components/ui/button';
 import { localRequest } from './local';
 import { permissionFailure } from './collaborationModel';
-import { authPrincipal } from '../lib/authPrincipal';
+import { authPrincipal, useAuthPrincipal } from '../lib/authPrincipal';
 import type { Checkpoint } from './protocol';
 import type { LocalDirectory } from './workspaceTypes';
 type Policy = { maxCheckpoints: number; maxAgeDays: number; maxDiskMiB: number };
@@ -62,17 +62,20 @@ const actionLabels = {
   delete: 'Delete this backup',
 };
 
-export function DirectoryStorage({
-  token,
-  directory,
-  checkpoints,
-  onChanged,
-}: {
+type StorageProps = {
   token: string | null | undefined;
   directory: LocalDirectory;
   checkpoints: Checkpoint[];
   onChanged?: () => Promise<void>;
-}) {
+};
+export function DirectoryStorage(props: StorageProps) {
+  const principal = useAuthPrincipal();
+  const d = props.directory;
+  return (
+    <StoragePanel key={`${principal.epoch}:${d.projectId}:${d.workspaceId}:${d.url}`} {...props} />
+  );
+}
+function StoragePanel({ token, directory, checkpoints, onChanged }: StorageProps) {
   const [storage, setStorage] = useState<Storage | null>(null),
     [backups, setBackups] = useState<Backups | null>(null);
   const [policy, setPolicy] = useState<Policy>({
@@ -92,74 +95,130 @@ export function DirectoryStorage({
     [confirmed, setConfirmed] = useState(false);
   const [passphrase, setPassphrase] = useState(''),
     [exportPath, setExportPath] = useState('');
-  const [error, setError] = useState(''),
-    [remoteError, setRemoteError] = useState(''),
-    [message, setMessage] = useState('');
+  const [localRead, setLocalRead] = useState({ pending: true, error: '' }),
+    [backupRead, setBackupRead] = useState({ pending: true, error: '' });
+  const [error, setError] = useState<{
+      message: string;
+      field?: 'passphrase' | 'exportPath';
+    } | null>(null),
+    [completion, setCompletion] = useState<{
+      message: string;
+      subject: string;
+      directory?: string;
+      height: number;
+    } | null>(null),
+    [inspectionError, setInspectionError] = useState(''),
+    [pinMessage, setPinMessage] = useState('');
   const [busy, setBusy] = useState(false),
     [denied, setDenied] = useState(false);
   const alive = useRef(true),
     epoch = useRef(authPrincipal.epoch()),
     inFlight = useRef(false),
-    policyDirty = useRef(false);
+    policyDirty = useRef(false),
+    accessDenied = useRef(false),
+    reads = useRef({ local: 0, backup: 0 }),
+    feedbackVersion = useRef(0);
+  const errorId = useId();
   const confirmation = useRef<HTMLFormElement>(null);
+  const completed = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (operation) {
       confirmation.current?.scrollIntoView({ block: 'nearest' });
       confirmation.current?.focus({ preventScroll: true });
     }
   }, [operation?.reviewId]);
+  useEffect(() => {
+    if (error && !busy) {
+      const target =
+        error.field &&
+        confirmation.current?.querySelector<HTMLInputElement>(`[name="${error.field}"]`);
+      (target || confirmation.current)?.focus({ preventScroll: true });
+    }
+  }, [error, busy]);
+  useEffect(() => {
+    if (completion && !busy) {
+      completed.current?.scrollIntoView({ block: 'nearest' });
+      completed.current?.focus({ preventScroll: true });
+    }
+  }, [completion, busy]);
   const current = () => alive.current && epoch.current === authPrincipal.epoch();
   const request = <T,>(route: string, body?: unknown) =>
     localRequest<T>(token, route, body, directory.url);
-  function failure(e: unknown) {
-    if (!current()) return;
-    if (permissionFailure(e)) {
+  function revoke(e: unknown) {
+    if (current() && permissionFailure(e)) {
+      accessDenied.current = true;
+      reads.current.local++;
+      reads.current.backup++;
       setDenied(true);
       setStorage(null);
       setBackups(null);
       setPassphrase('');
       setExportPath('');
       setOperation(null);
+      setCompletion(null);
+      return true;
     }
-    setError(e instanceof Error ? e.message : 'The operation could not be completed.');
+    return false;
   }
-  const refresh = useCallback(async () => {
-    const results = await Promise.allSettled([
-      request<Storage>('/api/storage'),
-      request<Backups>('/api/backups'),
-    ]);
-    if (!current()) return;
-    const [local, remote] = results;
-    if (results.some((r) => r.status === 'rejected' && permissionFailure(r.reason))) {
-      failure(
-        (
-          results.find(
-            (r) => r.status === 'rejected' && permissionFailure(r.reason),
-          ) as PromiseRejectedResult
-        ).reason,
-      );
-      return;
+  function invalidateReads() {
+    reads.current.local++;
+    reads.current.backup++;
+    setLocalRead((r) => ({ ...r, pending: false }));
+    setBackupRead((r) => ({ ...r, pending: false }));
+  }
+  const refreshLocal = useCallback(async () => {
+    if (!current() || accessDenied.current) return;
+    const sequence = ++reads.current.local;
+    const accepts = () => current() && !accessDenied.current && reads.current.local === sequence;
+    setLocalRead((r) => ({ ...r, pending: true }));
+    try {
+      const value = await request<Storage>('/api/storage');
+      if (!accepts()) return;
+      setStorage(value);
+      if (!policyDirty.current) setPolicy(value.policy);
+      setLocalRead({ pending: false, error: '' });
+    } catch (e) {
+      // A real denial in this scope wins even if a newer read has completed.
+      if (revoke(e) || !accepts()) return;
+      setLocalRead({
+        pending: false,
+        error: e instanceof Error ? e.message : 'Local storage could not be read.',
+      });
     }
-    if (local.status === 'fulfilled') {
-      setStorage(local.value);
-      if (!policyDirty.current) setPolicy(local.value.policy);
-    } else failure(local.reason);
-    if (remote.status === 'fulfilled') {
-      setBackups(remote.value);
-      setRemoteError('');
-    } else
-      setRemoteError(
-        'Backup service is unavailable. Local checkpoints and recovery remain available.',
-      );
   }, [token, directory.url]);
+  const refreshBackups = useCallback(async () => {
+    if (!current() || accessDenied.current) return;
+    const sequence = ++reads.current.backup;
+    const accepts = () => current() && !accessDenied.current && reads.current.backup === sequence;
+    setBackupRead((r) => ({ ...r, pending: true }));
+    try {
+      const value = await request<Backups>('/api/backups');
+      if (!accepts()) return;
+      setBackups(value);
+      setBackupRead({ pending: false, error: '' });
+    } catch (e) {
+      if (revoke(e) || !accepts()) return;
+      setBackupRead({
+        pending: false,
+        error: 'Backup service is unavailable. Local checkpoints and recovery remain available.',
+      });
+    }
+  }, [token, directory.url]);
+  const refresh = useCallback(() => {
+    void refreshLocal();
+    void refreshBackups();
+  }, [refreshLocal, refreshBackups]);
   useEffect(() => {
     alive.current = true;
     void refresh();
     return () => {
       alive.current = false;
+      reads.current.local++;
+      reads.current.backup++;
     };
   }, [refresh]);
   function choose(next: Pick<Operation, 'kind' | 'id'> | null) {
+    feedbackVersion.current++;
     const cp = checkpoints.find((c) => c.id === checkpoint);
     const backup = backups?.backups.find((b) => b.id === next?.id);
     setOperation(
@@ -183,33 +242,84 @@ export function DirectoryStorage({
     setExportPath('');
     setConfirmed(false);
     setPassphrase('');
-    setError('');
-    setMessage('');
+    setError(null);
+    setCompletion(null);
+    setInspectionError('');
   }
   async function execute(action: () => Promise<unknown>, success: string) {
-    if (inFlight.current || denied) return false;
+    if (inFlight.current || accessDenied.current) return false;
     inFlight.current = true;
+    invalidateReads();
     setBusy(true);
-    setError('');
-    setMessage('');
+    setError(null);
+    setCompletion(null);
+    setPinMessage('');
+    setInspectionError('');
+    let committed = false;
+    const height = confirmation.current?.getBoundingClientRect().height ?? 0;
     try {
-      await action();
-      if (current()) {
-        setMessage(success);
+      const result = await action();
+      committed = true;
+      if (current() && !accessDenied.current) {
+        invalidateReads();
+        const subject = operation?.subject ?? directory.label;
+        const location =
+          result &&
+          typeof result === 'object' &&
+          'directory' in result &&
+          typeof result.directory === 'string'
+            ? result.directory
+            : undefined;
+        if (operation?.kind === 'policy') policyDirty.current = false;
+        const wasConfirmation = !!operation;
         choose(null);
-        setMessage(success);
-        await refresh();
-        await onChanged?.();
+        if (wasConfirmation)
+          setCompletion({ message: success, subject, directory: location, height });
+        else setPinMessage(success);
+        refresh();
+        const feedback = feedbackVersion.current;
+        // A committed write remains successful even when a subsequent read fails.
+        void onChanged?.().catch((e) => {
+          if (
+            !revoke(e) &&
+            current() &&
+            !accessDenied.current &&
+            feedback === feedbackVersion.current
+          )
+            setInspectionError(
+              'Operation completed. The directory view could not refresh; refresh storage or reopen the directory to retry.',
+            );
+        });
       }
       return true;
     } catch (e) {
-      failure(e);
+      if (current() && !revoke(e) && !accessDenied.current) {
+        const message = e instanceof Error ? e.message : 'The operation could not be completed.';
+        const decryption =
+          operation?.kind === 'recover' &&
+          /unable to authenticate|bad decrypt|unsupported state/i.test(message);
+        const pathError =
+          operation?.kind === 'export' &&
+          /absolute directory|outside the project|destination|already exists|symlink|junction|symbolic link/i.test(
+            message,
+          );
+        setError({
+          message: decryption
+            ? 'Could not decrypt this backup. Check the passphrase; the backup may also be damaged.'
+            : message,
+          field: decryption ? 'passphrase' : pathError ? 'exportPath' : undefined,
+        });
+      }
       return false;
     } finally {
       inFlight.current = false;
       if (current()) {
         setBusy(false);
         setPassphrase('');
+        if (!committed && !accessDenied.current) {
+          // Failed writes still need fresh availability without clearing their error.
+          refresh();
+        }
       }
     }
   }
@@ -280,191 +390,243 @@ export function DirectoryStorage({
           <p>
             {storage
               ? `${storage.count} checkpoints · ${size(storage.bytes)}`
-              : 'Reading local storage…'}
+              : localRead.error
+                ? 'Local storage unavailable'
+                : 'Reading local storage…'}
           </p>
           <p title={directory.root}>{directory.root}</p>
         </div>
-        <Button size="sm" variant="ghost" disabled={busy} onClick={refresh}>
-          Refresh storage
+        <Button
+          type="button"
+          size="sm"
+          className="collo-pending-button"
+          variant="ghost"
+          disabled={busy || localRead.pending}
+          aria-busy={localRead.pending}
+          onClick={refresh}
+        >
+          <span
+            style={{ visibility: localRead.pending ? 'hidden' : 'visible' }}
+            aria-hidden={localRead.pending}
+          >
+            Refresh storage
+          </span>
+          {localRead.pending && <span className="collo-pending-label">Refreshing…</span>}
         </Button>
       </div>
-      {error && (
-        <p className="collo-inline-notice" role="alert">
-          {error}
-        </p>
-      )}
-      {message && (
-        <p className="collo-inline-notice" role="status">
-          <Check size={16} />
-          {message}
-        </p>
-      )}
-      {storage && (
-        <>
-          <section>
-            <header>
-              <h3>Local history</h3>
-              <span>Independent from your project’s Git history</span>
-            </header>
-            <div className="collo-policy-fields">
-              {(
-                [
-                  ['maxCheckpoints', 'Checkpoints', 2, 10000],
-                  ['maxAgeDays', 'Days', 1, 3650],
-                  ['maxDiskMiB', 'Storage limit (MiB)', 64, 102400],
-                ] as const
-              ).map(([key, label, min, max]) => (
-                <label key={key}>
-                  {label}
-                  <input
-                    disabled={busy}
-                    type="number"
-                    min={min}
-                    max={max}
-                    value={policy[key]}
-                    onChange={(e) => {
-                      if (operation?.kind === 'policy') choose(null);
-                      policyDirty.current = true;
-                      setPolicy((p) => ({ ...p, [key]: Number(e.target.value) }));
-                    }}
-                  />
-                </label>
-              ))}
-            </div>
-            <p>
-              The two newest checkpoints, pinned checkpoints, pending shares and active restore
-              previews are protected. Cleanup also removes expired recovery copies.
+      <>
+        <section>
+          <header>
+            <h3>Local history</h3>
+            <span>Independent from your project’s Git history</span>
+          </header>
+          {localRead.pending && (
+            <p role="status">
+              {storage
+                ? 'Refreshing local history. Showing the last read.'
+                : 'Reading local history…'}
             </p>
-            <div className="collo-inline-actions">
+          )}
+          {localRead.error && (
+            <p className="collo-inline-notice" role="alert">
+              {localRead.error}{' '}
               <Button
+                type="button"
+                variant="ghost"
                 size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => choose({ kind: 'policy' })}
+                disabled={busy || localRead.pending}
+                onClick={refreshLocal}
               >
-                Review policy
+                Retry local history
               </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => choose({ kind: 'clean' })}
-              >
-                Review cleanup · {storage.remove.length}
-              </Button>
-            </div>
-            <label className="collo-storage-checkpoint">
-              Checkpoint
-              <select
-                disabled={busy}
-                aria-label="Storage checkpoint"
-                value={checkpoint}
-                onChange={(e) => {
-                  if (operation?.kind === 'create') choose(null);
-                  setCheckpoint(e.target.value);
-                }}
-              >
-                {checkpoints.map((c) => (
-                  <option key={c.id} value={c.id} disabled={c.integrity === 'invalid'}>
-                    {c.label} · {new Date(c.createdAt).toLocaleString()} · {c.fileCount} files
-                  </option>
+            </p>
+          )}
+          {storage && (
+            <>
+              <div className="collo-policy-fields">
+                {(
+                  [
+                    ['maxCheckpoints', 'Checkpoints', 2, 10000],
+                    ['maxAgeDays', 'Days', 1, 3650],
+                    ['maxDiskMiB', 'Storage limit (MiB)', 64, 102400],
+                  ] as const
+                ).map(([key, label, min, max]) => (
+                  <label key={key}>
+                    {label}
+                    <input
+                      disabled={busy}
+                      type="number"
+                      min={min}
+                      max={max}
+                      value={policy[key]}
+                      onChange={(e) => {
+                        if (operation?.kind === 'policy') choose(null);
+                        policyDirty.current = true;
+                        setPolicy((p) => ({ ...p, [key]: Number(e.target.value) }));
+                      }}
+                    />
+                  </label>
                 ))}
-              </select>
-            </label>
-            <div className="collo-inline-actions">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy || !checkpoint}
-                onClick={() =>
-                  execute(
-                    () =>
-                      request('/api/storage/pin', {
-                        checkpointId: checkpoint,
-                        pinned: !storage.pinned.includes(checkpoint),
-                      }),
-                    storage.pinned.includes(checkpoint)
-                      ? 'Checkpoint unpinned.'
-                      : 'Checkpoint pinned.',
-                  )
-                }
-              >
-                {storage.pinned.includes(checkpoint) ? 'Unpin checkpoint' : 'Pin checkpoint'}
-              </Button>
-              <Button
-                size="sm"
-                disabled={busy || !checkpoint || !!remoteError}
-                onClick={() => choose({ kind: 'create' })}
-              >
-                <LockKey size={15} />
-                Create encrypted backup
-              </Button>
-            </div>
-          </section>
-          <section>
-            <header>
-              <h3>Encrypted backups</h3>
-              <span>
-                {backups?.location === 'local-convex-storage'
-                  ? 'On this computer'
-                  : 'Backup service'}
-              </span>
-            </header>
-            <p>
-              Encrypted before upload. This service is on this machine: a local replica is not
-              off-machine disaster recovery. Keep your passphrase separately; it cannot be
-              recovered.
-            </p>
-            {backups && (
-              <p>
-                {backups.quota.usedCount} / {backups.quota.maxCount} copies ·{' '}
-                {size(backups.quota.usedBytes)} / {size(backups.quota.maxBytes)}
-              </p>
-            )}
-            {remoteError && (
-              <p role="alert">
-                {remoteError}
-                <Button variant="ghost" size="sm" onClick={refresh}>
-                  Retry backups
-                </Button>
-              </p>
-            )}
-            {backups?.backups.length === 0 && <p>No encrypted copies yet.</p>}
-            {backups?.backups.map((b) => (
-              <div className="collo-storage-row" key={b.id} data-backup-id={b.id}>
-                <div>
-                  <strong>
-                    {new Date(b.created_at).toLocaleString()} · {size(b.size)}
-                  </strong>
-                  <p title={b.checkpoint_id}>{b.checkpoint_id}</p>
-                  <small>
-                    {b.status} ·{' '}
-                    {b.workspaceId === directory.workspaceId
-                      ? directory.label
-                      : 'Another directory in this project'}
-                  </small>
-                </div>
-                <div className="collo-inline-actions">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={busy || b.status !== 'complete'}
-                    onClick={() => choose({ kind: 'recover', id: b.id })}
-                  >
-                    Recover copy
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    disabled={busy}
-                    onClick={() => choose({ kind: 'delete', id: b.id })}
-                  >
-                    Delete backup
-                  </Button>
-                </div>
               </div>
-            ))}
-          </section>
+              <p>
+                The two newest checkpoints, pinned checkpoints, pending shares and active restore
+                previews are protected. Cleanup also removes expired recovery copies.
+              </p>
+              <div className="collo-inline-actions">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => choose({ kind: 'policy' })}
+                >
+                  Review policy
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => choose({ kind: 'clean' })}
+                >
+                  Review cleanup · {storage.remove.length}
+                </Button>
+              </div>
+              <label className="collo-storage-checkpoint">
+                Checkpoint
+                <select
+                  disabled={busy}
+                  aria-label="Storage checkpoint"
+                  value={checkpoint}
+                  onChange={(e) => {
+                    if (operation?.kind === 'create') choose(null);
+                    setCheckpoint(e.target.value);
+                  }}
+                >
+                  {checkpoints.map((c) => (
+                    <option key={c.id} value={c.id} disabled={c.integrity === 'invalid'}>
+                      {c.label} · {new Date(c.createdAt).toLocaleString()} · {c.fileCount} files
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="collo-inline-actions">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || !checkpoint}
+                  onClick={() =>
+                    execute(
+                      () =>
+                        request('/api/storage/pin', {
+                          checkpointId: checkpoint,
+                          pinned: !storage.pinned.includes(checkpoint),
+                        }),
+                      storage.pinned.includes(checkpoint)
+                        ? 'Checkpoint unpinned.'
+                        : 'Checkpoint pinned.',
+                    )
+                  }
+                >
+                  {storage.pinned.includes(checkpoint) ? 'Unpin checkpoint' : 'Pin checkpoint'}
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={busy || !checkpoint || !!backupRead.error || !backups}
+                  onClick={() => choose({ kind: 'create' })}
+                >
+                  <LockKey size={15} />
+                  Create encrypted backup
+                </Button>
+              </div>
+              {pinMessage && (
+                <p className="collo-inline-notice" role="status">
+                  {pinMessage}
+                </p>
+              )}
+              {!operation && error && <p role="alert">{error.message}</p>}
+            </>
+          )}
+        </section>
+        <section>
+          <header>
+            <h3>Encrypted backups</h3>
+            <span>
+              {backups?.location === 'local-convex-storage' ? 'On this computer' : 'Backup service'}
+            </span>
+          </header>
+          {backupRead.pending && (
+            <p role="status">
+              {backups
+                ? 'Refreshing backups. Showing the last read.'
+                : 'Reading encrypted backups…'}
+            </p>
+          )}
+          {backupRead.error && (
+            <p className="collo-inline-notice" role="alert">
+              {backupRead.error}
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={busy || backupRead.pending}
+                onClick={refreshBackups}
+              >
+                Retry backups
+              </Button>
+            </p>
+          )}
+          <p>
+            Encrypted before upload. This service is on this machine: a local replica is not
+            off-machine disaster recovery. Keep your passphrase separately; it cannot be recovered.
+          </p>
+          {backups && (
+            <p>
+              {backups.quota.usedCount} / {backups.quota.maxCount} copies ·{' '}
+              {size(backups.quota.usedBytes)} / {size(backups.quota.maxBytes)}
+            </p>
+          )}
+          {backups?.backups.length === 0 && <p>No encrypted copies yet.</p>}
+          {backups?.backups.map((b) => (
+            <div className="collo-storage-row" key={b.id} data-backup-id={b.id}>
+              <div>
+                <strong>
+                  {new Date(b.created_at).toLocaleString()} · {size(b.size)}
+                </strong>
+                <p title={b.checkpoint_id}>{b.checkpoint_id}</p>
+                <small>
+                  {b.status} ·{' '}
+                  {b.workspaceId === directory.workspaceId
+                    ? directory.label
+                    : 'Another directory in this project'}
+                </small>
+              </div>
+              <div className="collo-inline-actions">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={busy || b.status !== 'complete'}
+                  onClick={() => choose({ kind: 'recover', id: b.id })}
+                >
+                  Recover copy
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => choose({ kind: 'delete', id: b.id })}
+                >
+                  Delete backup
+                </Button>
+              </div>
+            </div>
+          ))}
+        </section>
+        {storage && (
           <section>
             <header>
               <h3>Recovery copies</h3>
@@ -487,25 +649,9 @@ export function DirectoryStorage({
                   <small>Expires {new Date(r.expiresAt).toLocaleString()}</small>
                 </div>
                 <div className="collo-inline-actions">
+                  <CopyPath key={r.directory} directory={r.directory} />
                   <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={async () => {
-                      try {
-                        await navigator.clipboard.writeText(r.directory);
-                        if (current()) {
-                          setError('');
-                          setMessage('Recovery path copied.');
-                        }
-                      } catch {
-                        if (current())
-                          setError('Could not copy the path. Select and copy the path shown here.');
-                      }
-                    }}
-                  >
-                    Copy path
-                  </Button>
-                  <Button
+                    type="button"
                     size="sm"
                     variant="outline"
                     disabled={busy || r.status !== 'ready' || r.expiresAt <= Date.now()}
@@ -518,8 +664,8 @@ export function DirectoryStorage({
               </div>
             ))}
           </section>
-        </>
-      )}
+        )}
+      </>
       {operation && (
         <form
           ref={confirmation}
@@ -527,6 +673,7 @@ export function DirectoryStorage({
           className="collo-storage-confirm"
           onSubmit={submit}
           aria-label="Confirm storage operation"
+          aria-describedby={error && !error.field ? errorId : undefined}
         >
           <h3>
             {
@@ -553,6 +700,11 @@ export function DirectoryStorage({
                       ? 'Decrypt this backup into a new temporary recovery directory. Your project will not be changed.'
                       : `Encrypt “${operation.subject}” from ${directory.label} and save the copy on this computer. Your working directory stays unchanged.`}
           </p>
+          {error && !error.field && (
+            <p id={errorId} className="collo-inline-notice" role="alert">
+              {error.message}
+            </p>
+          )}
           {!reviewValid && (
             <p role="alert">
               This reviewed item or cleanup scope has changed. Cancel and review the current
@@ -569,6 +721,10 @@ export function DirectoryStorage({
             <label>
               Backup passphrase
               <input
+                name="passphrase"
+                aria-label="Backup passphrase"
+                aria-invalid={error?.field === 'passphrase' || undefined}
+                aria-describedby={error?.field === 'passphrase' ? errorId : undefined}
                 disabled={busy}
                 type="password"
                 autoComplete="off"
@@ -579,12 +735,21 @@ export function DirectoryStorage({
                 onChange={(e) => setPassphrase(e.target.value)}
                 placeholder="At least 16 characters"
               />
+              {error?.field === 'passphrase' && (
+                <span id={errorId} role="alert">
+                  {error.message}
+                </span>
+              )}
             </label>
           )}
           {operation.kind === 'export' && (
             <label>
               New export directory
               <input
+                name="exportPath"
+                aria-label="New export directory"
+                aria-invalid={error?.field === 'exportPath' || undefined}
+                aria-describedby={error?.field === 'exportPath' ? errorId : undefined}
                 disabled={busy}
                 required
                 value={exportPath}
@@ -595,6 +760,11 @@ export function DirectoryStorage({
                 }}
                 placeholder="D:\\Recovery\\new-directory"
               />
+              {error?.field === 'exportPath' && (
+                <span id={errorId} role="alert">
+                  {error.message}
+                </span>
+              )}
             </label>
           )}
           <label className="collo-confirm-check">
@@ -623,6 +793,96 @@ export function DirectoryStorage({
             </Button>
           </div>
         </form>
+      )}
+      {completion && (
+        <div
+          ref={completed}
+          tabIndex={-1}
+          className="collo-storage-confirm collo-storage-completed"
+          style={{ minHeight: completion.height }}
+          aria-label="Storage operation completed"
+        >
+          <p role="status">
+            <Check size={16} /> {completion.message}
+          </p>
+          <p>{completion.subject}</p>
+          {completion.directory && (
+            <>
+              <p className="collo-path">{completion.directory}</p>
+              <CopyPath key={completion.directory} directory={completion.directory} />
+            </>
+          )}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={refresh}
+            disabled={localRead.pending || busy}
+          >
+            Refresh storage status
+          </Button>
+        </div>
+      )}
+      {inspectionError && (
+        <p className="collo-inline-notice" role="status">
+          {inspectionError}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function CopyPath({ directory }: { directory: string }) {
+  const [state, setState] = useState<'idle' | 'copying' | 'copied' | 'failed'>('idle');
+  const active = useRef(true),
+    pending = useRef(false),
+    epoch = useRef(authPrincipal.epoch());
+  const id = useId();
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+    };
+  }, []);
+  return (
+    <div className="collo-path-copy">
+      <Button
+        type="button"
+        size="sm"
+        variant="ghost"
+        className="collo-pending-button"
+        disabled={state === 'copying'}
+        aria-describedby={state === 'failed' ? id : undefined}
+        onClick={async () => {
+          if (pending.current) return;
+          pending.current = true;
+          setState('copying');
+          try {
+            await navigator.clipboard.writeText(directory);
+            if (active.current && epoch.current === authPrincipal.epoch()) setState('copied');
+          } catch {
+            if (active.current && epoch.current === authPrincipal.epoch()) setState('failed');
+          } finally {
+            pending.current = false;
+          }
+        }}
+      >
+        <Copy size={15} />
+        <span>Copy path</span>
+      </Button>
+      <span className="collo-copy-feedback" role="status">
+        {state === 'copying' ? 'Copying…' : state === 'copied' ? 'Path copied.' : ''}
+      </span>
+      {state === 'failed' && (
+        <label id={id}>
+          Could not copy. Select this complete path and copy it manually.
+          <textarea
+            aria-label="Complete recovery path"
+            readOnly
+            value={directory}
+            onFocus={(e) => e.currentTarget.select()}
+          />
+        </label>
       )}
     </div>
   );

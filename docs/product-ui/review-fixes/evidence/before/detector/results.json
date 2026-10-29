@@ -1,0 +1,42 @@
+{
+  "scope": "Synthetic detector counterexamples and legal controls; not application defect screenshots",
+  "detection": {
+    "ancestor": true,
+    "self": false,
+    "message": false,
+    "offscreen": false
+  },
+  "geometry": {
+    "viewport": {
+      "width": 1000,
+      "height": 760
+    },
+    "documentOverflow": 0,
+    "faults": [
+      {
+        "tag": "BUTTON",
+        "id": "ancestor",
+        "cls": "",
+        "text": "Ancestor clipped action",
+        "reason": "clipped vertically by ancestor",
+        "ancestor": {
+          "tag": "SECTION",
+          "id": "",
+          "cls": "test-box hidden",
+          "text": "Ancestor clipped action"
+        }
+      }
+    ],
+    "legal": [
+      {
+        "tag": "BUTTON",
+        "id": "ellipsis",
+        "cls": "",
+        "text": "Full accessible project title for keyboard and pointer users",
+        "reason": "truncated text has an exact full-text title",
+        "access": "Full accessible project title for keyboard and pointer users"
+      }
+    ]
+  },
+  "interactive": null
+}

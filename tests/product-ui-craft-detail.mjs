@@ -4,7 +4,7 @@ import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture } from './product-ui-completion-data.mjs';
 const expect = baseExpect.configure({ timeout: 30000 });
 const f = await completionFixture(),
-  out = 'docs/product-ui/craft/evidence/detail-continuity';
+  out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/detail-continuity';
 await fs.mkdir(out, { recursive: true });
 const events = await f.a.client.query('collo:feed', {
   projectId: f.projectId,

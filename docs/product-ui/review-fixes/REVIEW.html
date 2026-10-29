@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ColloSys · 0ffc13a 定点修复证据</title>
+<style>
+body{margin:0;background:#f5f4f1;color:#252521;font:15px/1.6 system-ui,sans-serif}main{max-width:1500px;margin:auto;padding:32px}h1{font-size:26px}h2{font-size:20px;margin-top:38px}p{max-width:900px;color:#585852}a{color:#22594c}nav{display:flex;gap:20px;flex-wrap:wrap}.pair,.gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px}figure{margin:0;background:white;border:1px solid #dddcd6;border-radius:10px;overflow:hidden}figcaption{padding:12px 16px}img,video{display:block;width:100%;height:auto}small{display:block;color:#666;padding:0 16px 12px}video{max-height:560px;background:#1e1e1e}@media(max-width:800px){main{padding:18px}.pair,.gallery{grid-template-columns:1fr}}:focus-visible{outline:3px solid #287865;outline-offset:3px}
+</style>
+<main>
+<h1>ColloSys · 定点修复证据</h1>
+<p>这里只浏览本轮实际图片和录像。完整结果、失败尝试与未解决项见 <a href="EXECUTION.md">集中执行记录</a>。正式产品仍由 <code>npm start</code> 打开独立桌面窗口。</p>
+<nav><a href="#pairs">正式页面前后</a><a href="#native">真实原生125%</a><a href="#video">操作录像</a><a href="#isolated">隔离与合成证据</a></nav>
+<div id="pairs"></div>
+<h2 id="native">真实 Windows 窗口 · 125% Electron 缩放</h2>
+<p>Windows显示缩放200%，DPR2.5，实际CSS区域1025×641。<a href="evidence/after/native-125/environment.json">环境记录</a>。这些是实际窗口捕获；不是浏览器截图外加边框。</p>
+<div class="gallery" id="native-images"></div>
+<h2 id="video">正式应用浏览器操作录像</h2>
+<p>录像包含真实本地数据与操作；指定的网络故障/慢响应/剪贴板失败使用测试拦截，详见集中记录。原生证据是上方窗口截图与真实动作断言，此处不冒称原生屏幕录像。</p>
+<div class="gallery" id="videos"></div>
+<h2 id="isolated">真实组件隔离与合成检测器</h2>
+<p>下面两类材料都不是完整后端验收。组件测试使用实际准备产物与可控响应；检测器页面故意保留坏布局，比较的是能否识别错误。</p>
+<div class="gallery" id="isolated-images"></div>
+</main>
+<script>
+const image=(src,label)=>{const f=document.createElement('figure'),a=document.createElement('a'),img=document.createElement('img'),c=document.createElement('figcaption');a.href=src;img.src=src;img.alt=label;img.loading='lazy';c.textContent=label;a.append(img);f.append(a,c);return f;};
+const pairs=[
+ ['R1 · 嵌套交接表单','evidence/before/r1-empty-verify.png','基线：未观察到意外 invalid/submit；另有 Retry 不重新订阅问题','evidence/after/buttons/retry-form.png','修复后：Retry 正常恢复；保留真实提交与校验'],
+ ['R2 · 读取恢复','evidence/before/r2-stale-read-error.png','基线：本地读取成功后旧错误仍在','evidence/after/storage/local-read-recovered.png','修复后：对应读取错误清除'],
+ ['R3 · 更早的待回应交接','evidence/before/r3-missing-old-pending.png','基线：105条更新的已处理交接遮蔽旧pending','evidence/after/pending/old-pending-found.png','修复后：索引查询找回两个收件人方向的旧pending'],
+ ['R4 · 复制位置反馈','evidence/before/r4-feedback-outside-task.png','基线：顶部反馈在视口外','evidence/after/storage/row-copy-feedback.png','修复后：同一行显示复制完成'],
+ ['R4 · 错误与完成位置','evidence/after/storage/wrong-passphrase-local-error.png','修复后：口令错误在当前字段附近','evidence/after/storage/recovery-completed-in-place.png','修复后：确认位置显示实际恢复目录'],
+ ['R3 · 读取状态','evidence/after/pending/pending-loading.png','实际页面：等待查询响应','evidence/after/pending/pending-empty.png','实际页面：服务器确认没有待回应项']
+];
+for(const [title,b,bl,a,al] of pairs){const h=document.createElement('h2'),d=document.createElement('div');h.textContent=title;d.className='pair';d.append(image(b,bl),image(a,al));document.querySelector('#pairs').append(h,d);}
+for(const [file,label] of [['storage-confirm-window','确认和取消'],['storage-copy-window','真实系统剪贴板复制'],['handoff-window','交接辅助操作']])document.querySelector('#native-images').append(image('evidence/after/native-125/'+file+'.png',label));
+for(const [src,label] of [['evidence/before/before.webm','修复前 · 正式页 R1–R4'],['evidence/after/buttons/buttons.webm','修复后 · 重试/校验/发送/忙碌导航'],['evidence/after/pending/pending.webm','修复后 · 待回应、分页、处理、加载与空态'],['evidence/after/storage/storage.webm','修复后 · 实际加密、恢复、导出、删除与反馈']]){const f=document.createElement('figure'),v=document.createElement('video'),c=document.createElement('figcaption');v.src=src;v.controls=true;v.preload='metadata';v.setAttribute('aria-label',label);c.textContent=label;f.append(v,c);document.querySelector('#videos').append(f);}
+for(const [src,label] of [['evidence/after/storage-isolated/committed-write-read-failure.png','真实组件隔离：写成功，后续读取失败'],['evidence/after/storage-isolated/expired-review.png','真实组件隔离：审阅期间副本到期'],['evidence/after/storage-isolated/expired-service-response.png','真实组件隔离：服务返回副本过期'],['evidence/after/detector/counterexamples.png','合成HTML：裁切、遮挡、离屏与合法控件']])document.querySelector('#isolated-images').append(image(src,label));
+</script>
+</html>

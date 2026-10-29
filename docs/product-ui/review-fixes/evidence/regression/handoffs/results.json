@@ -1,0 +1,24 @@
+{
+  "at": "2026-10-29T06:04:40.348Z",
+  "checks": [
+    "Verified checkpoint has a real handoff entry and readable full provenance",
+    "Transport service failure keeps an open draft; retry preserves every field and source",
+    "Temporary offline state and closing/reopening the form preserve the draft",
+    "Recipient inspects the checkpoint and accepts without applying source files",
+    "Decline and sender cancellation follow real revision-checked mutations",
+    "Real membership revocation immediately removes an open draft and cached context"
+  ],
+  "injectedServiceFailures": 1,
+  "overflow": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "documentOverflow": 0,
+      "faults": [],
+      "legal": [],
+      "fullTextCandidates": []
+    }
+  ]
+}

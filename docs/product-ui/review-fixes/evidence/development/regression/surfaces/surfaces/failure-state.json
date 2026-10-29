@@ -1,0 +1,32 @@
+{
+  "url": "/projects/pj-mvrodlro",
+  "context": {
+    "pane": null,
+    "presentation": "split"
+  },
+  "initialized": true,
+  "rail": {
+    "x": 1425,
+    "y": 59,
+    "width": 0,
+    "height": 826,
+    "top": 59,
+    "right": 1425,
+    "bottom": 885,
+    "left": 1425
+  },
+  "panels": [
+    {
+      "id": "main",
+      "width": 1169
+    },
+    {
+      "id": "sidebar",
+      "width": 270
+    },
+    {
+      "id": "right-content",
+      "width": 1150
+    }
+  ]
+}

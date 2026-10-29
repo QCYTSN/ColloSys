@@ -1,0 +1,46 @@
+{
+  "at": "2026-10-29T05:30:06.188Z",
+  "base": "0ffc13a",
+  "results": [
+    {
+      "id": "R1",
+      "evidence": "Formal nested handoff form, real six-part old checkpoint and real verify mutation",
+      "expected": "no invalid/submit; exactly one verify; no send",
+      "actual": {
+        "invalid": 0,
+        "submit": 0,
+        "focused": null,
+        "verifyCalls": 1,
+        "sendCalls": 0
+      },
+      "reproduced": false
+    },
+    {
+      "id": "R3",
+      "evidence": "Real database: two old pending records for different recipients, followed by 105 actually handled records",
+      "actual": {
+        "oldPendingVisible": false,
+        "handled": 105
+      },
+      "reproduced": true
+    },
+    {
+      "id": "R2",
+      "evidence": "Formal storage page, explicit local HTTP503 followed by real successful read",
+      "actual": {
+        "oldReadErrorVisible": true
+      },
+      "reproduced": true
+    },
+    {
+      "id": "R4",
+      "evidence": "Formal lower recovery row; successful clipboard promise substituted for deterministic capture",
+      "actual": {
+        "top": -291.828125,
+        "panelTop": 20,
+        "visible": false
+      },
+      "reproduced": true
+    }
+  ]
+}

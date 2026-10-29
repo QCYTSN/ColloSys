@@ -1,0 +1,51 @@
+[
+  {
+    "name": "pending",
+    "command": "node tests/product-ui-review-pending.mjs",
+    "started": "2026-10-29T06:01:21.659Z",
+    "finished": "2026-10-29T06:02:16.747Z",
+    "exit": 0
+  },
+  {
+    "name": "continuity",
+    "command": "node tests/product-ui-craft.mjs",
+    "started": "2026-10-29T06:02:16.750Z",
+    "finished": "2026-10-29T06:03:05.672Z",
+    "exit": 0
+  },
+  {
+    "name": "detail",
+    "command": "node tests/product-ui-craft-detail.mjs",
+    "started": "2026-10-29T06:03:05.674Z",
+    "finished": "2026-10-29T06:03:14.392Z",
+    "exit": 0
+  },
+  {
+    "name": "late-reply",
+    "command": "node tests/product-ui-craft-revocation.mjs",
+    "started": "2026-10-29T06:03:14.393Z",
+    "finished": "2026-10-29T06:03:27.001Z",
+    "exit": 0
+  },
+  {
+    "name": "storage-review",
+    "command": "node tests/product-ui-craft-storage-race.mjs",
+    "started": "2026-10-29T06:03:27.003Z",
+    "finished": "2026-10-29T06:04:08.478Z",
+    "exit": 0
+  },
+  {
+    "name": "handoffs",
+    "command": "node tests/product-ui-completion-handoffs.mjs",
+    "started": "2026-10-29T06:04:08.480Z",
+    "finished": "2026-10-29T06:04:41.388Z",
+    "exit": 0
+  },
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-29T06:04:41.390Z",
+    "finished": "2026-10-29T06:04:54.266Z",
+    "exit": 1
+  }
+]

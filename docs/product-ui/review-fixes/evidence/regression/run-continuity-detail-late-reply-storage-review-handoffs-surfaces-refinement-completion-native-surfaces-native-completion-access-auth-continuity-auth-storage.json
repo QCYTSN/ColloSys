@@ -1,0 +1,9 @@
+[
+  {
+    "name": "continuity",
+    "command": "node tests/product-ui-craft.mjs",
+    "started": "2026-10-29T05:56:44.177Z",
+    "finished": "2026-10-29T05:56:53.826Z",
+    "exit": 1
+  }
+]

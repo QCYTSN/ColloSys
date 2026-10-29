@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture, eventually } from './product-ui-completion-data.mjs';
-const expect=baseExpect.configure({timeout:30000}),f=await completionFixture(),out='docs/product-ui/craft/evidence/visual';
+const expect=baseExpect.configure({timeout:30000}),f=await completionFixture(),out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/visual';
 await fs.mkdir(out,{recursive:true});
 const browser=await chromium.launch({executablePath:'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
 const context=await browser.newContext({viewport:{width:1440,height:900},permissions:['clipboard-read','clipboard-write']});

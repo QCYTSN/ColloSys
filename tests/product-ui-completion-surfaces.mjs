@@ -4,7 +4,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { chromium, _electron as electron, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture } from './product-ui-completion-data.mjs';
-import { inspectOverflow } from './product-ui-overflow.mjs';
+import { inspectOverflow, inspectActions } from './product-ui-overflow.mjs';
 const native = process.argv.includes('--native'),
   expect = baseExpect.configure({ timeout: 30000 });
 const out = path.resolve(
@@ -29,6 +29,12 @@ async function shot(name) {
 }
 async function audit(name, selector) {
   const r = await inspectOverflow(page, selector);
+  // Probe the active surface's key affordances. The Keyboard page contains
+  // hundreds of virtualized shortcut editors; it is not a stable action list.
+  const actionSelector = selector === '.collo-settings-surface'
+    ? '.collo-settings-nav button,.collo-settings-top button,.collo-settings-top input,input[placeholder="Your name"],button.cc-btn-cyan,button[role="switch"]'
+    : 'button:enabled,input:enabled,select:enabled,textarea:enabled,a[href]';
+  const actions = await inspectActions(page, page.locator(selector).first().locator(actionSelector).filter({visible:true}));
   environments.push({
     name,
     ...(await page.evaluate(() => ({
@@ -50,10 +56,11 @@ async function audit(name, selector) {
       : {}),
   });
   await fs.writeFile(path.join(out, 'environment.json'), JSON.stringify(environments, null, 2));
-  audits.push({ name, ...r });
+  audits.push({ name, ...r, actions });
   await fs.writeFile(path.join(out, 'overflow.json'), JSON.stringify(audits, null, 2));
   assert.deepEqual(r.faults, [], name);
   assert.equal(r.documentOverflow, 0, name);
+  assert.deepEqual(actions.faults, [], name + ' actionability');
 }
 async function login(p, credentials = account.a) {
   await p.locator('#email').fill(credentials.email);

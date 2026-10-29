@@ -1,0 +1,23 @@
+PASS empty form, Retry mouse (injected read error) {"invalid":0,"submit":0,"focused":null,"verify":0,"send":0,"retry":1}
+PASS empty form, Retry Enter {"invalid":0,"submit":0,"focused":null,"verify":0,"send":0,"retry":1}
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+ExpectError: expect(locator).toBeVisible() failed
+
+Locator: getByRole('dialog', { name: 'New handoff' }).getByRole('button', { name: 'Verify checkpoint', exact: true })
+Expected: visible
+Timeout: 30000ms
+Error: element(s) not found
+
+Call log:
+  - Expect "toBeVisible" getByRole('dialog', { name: 'New handoff' }).getByRole('button', { name: 'Verify checkpoint', exact: true }) with timeout 30000ms
+  - waiting for getByRole('dialog', { name: 'New handoff' }).getByRole('button', { name: 'Verify checkpoint', exact: true })
+
+    at captureRawStack (D:\Github_Ku\ColloSys\node_modules\playwright-core\lib\coreBundle.js:9282:17)
+    at callMatcherAsStep (D:\Github_Ku\ColloSys\node_modules\playwright\lib\matchers\expect.js:13316:57)
+    at Object.toBeVisible (D:\Github_Ku\ColloSys\node_modules\playwright\lib\matchers\expect.js:13308:23)
+    at D:\Github_Ku\ColloSys\tests\product-ui-review-buttons.mjs:24:101 {
+  matcherResult: {
+    message: 'expect(locator).toBeVisible() failed\n' +

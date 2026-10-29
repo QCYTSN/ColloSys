@@ -1,0 +1,30 @@
+[
+  {
+    "name": "storage",
+    "command": "node tests/product-ui-review-storage.mjs",
+    "started": "2026-10-29T05:54:58.767Z",
+    "finished": "2026-10-29T05:55:38.511Z",
+    "exit": 0
+  },
+  {
+    "name": "storage-isolated",
+    "command": "node tests/product-ui-review-storage-state.mjs",
+    "started": "2026-10-29T05:55:38.513Z",
+    "finished": "2026-10-29T05:55:47.415Z",
+    "exit": 0
+  },
+  {
+    "name": "detector",
+    "command": "node tests/product-ui-review-detector.mjs",
+    "started": "2026-10-29T05:55:47.417Z",
+    "finished": "2026-10-29T05:55:52.114Z",
+    "exit": 0
+  },
+  {
+    "name": "counterexamples",
+    "command": "node tests/product-ui-overflow-counterexamples.mjs",
+    "started": "2026-10-29T05:55:52.115Z",
+    "finished": "2026-10-29T05:55:53.674Z",
+    "exit": 0
+  }
+]

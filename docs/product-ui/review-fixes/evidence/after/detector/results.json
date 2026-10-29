@@ -1,0 +1,269 @@
+{
+  "scope": "Synthetic detector counterexamples and legal controls; not application defect screenshots",
+  "detection": {
+    "ancestor": true,
+    "self": true,
+    "message": true,
+    "offscreen": true
+  },
+  "geometry": {
+    "viewport": {
+      "width": 1000,
+      "height": 760
+    },
+    "documentOverflow": 0,
+    "faults": [
+      {
+        "category": "geometry",
+        "tag": "BUTTON",
+        "id": "ancestor",
+        "cls": "",
+        "text": "Ancestor clipped action",
+        "reason": "clipped vertically by ancestor",
+        "ancestor": {
+          "tag": "SECTION",
+          "id": "",
+          "cls": "test-box hidden",
+          "text": "Ancestor clipped action"
+        }
+      },
+      {
+        "category": "geometry",
+        "tag": "BUTTON",
+        "id": "offscreen",
+        "cls": "",
+        "text": "Unreachable action",
+        "reason": "action outside vertical viewport without scroll access"
+      },
+      {
+        "category": "geometry",
+        "tag": "BUTTON",
+        "id": "self",
+        "cls": "",
+        "text": "自身裁切 action",
+        "reason": "text is vertically clipped by its own surface",
+        "clientHeight": 14,
+        "scrollHeight": 42
+      },
+      {
+        "category": "geometry",
+        "tag": "DIV",
+        "id": "message",
+        "cls": "",
+        "text": "多行状态需要完整显示 Mixed-language status has a second line and more content.",
+        "reason": "text is vertically clipped by its own surface",
+        "clientHeight": 28,
+        "scrollHeight": 86
+      }
+    ],
+    "legal": [],
+    "fullTextCandidates": [
+      {
+        "tag": "BUTTON",
+        "id": "ellipsis",
+        "cls": "",
+        "text": "Full accessible project title for keyboard and pointer users",
+        "reason": "title matches text; keyboard/full-content access still requires interaction verification",
+        "access": "Full accessible project title for keyboard and pointer users"
+      }
+    ]
+  },
+  "interactive": {
+    "faults": [
+      {
+        "id": "offscreen",
+        "text": "Unreachable action",
+        "excluded": false,
+        "disabled": false,
+        "category": "reachability",
+        "reason": "locator.click: Timeout 1500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#offscreen,#covered,#svg,#decoration,#reachable,#ellipsis,#closed').first()\u001b[22m\n\u001b[2m    - locator resolved to <button id=\"offscreen\">Unreachable action</button>\u001b[22m\n\u001b[2m  - attempting click action (trial run)\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - element is outside of the viewport\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - element is outside of the viewport\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    3 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - element is outside of the viewport\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n",
+        "rect": {
+          "x": 20,
+          "y": 900,
+          "width": 136.640625,
+          "height": 22,
+          "top": 900,
+          "right": 156.640625,
+          "bottom": 922,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 88.3203125,
+            "y": 911,
+            "hit": false
+          },
+          {
+            "x": 26,
+            "y": 906,
+            "hit": false
+          }
+        ],
+        "inViewport": false
+      },
+      {
+        "id": "covered",
+        "text": "Covered action",
+        "excluded": false,
+        "disabled": false,
+        "category": "hit-testing",
+        "reason": "locator.click: Timeout 1500ms exceeded.\nCall log:\n\u001b[2m  - waiting for locator('#offscreen,#covered,#svg,#decoration,#reachable,#ellipsis,#closed').nth(1)\u001b[22m\n\u001b[2m    - locator resolved to <button id=\"covered\">Covered action</button>\u001b[22m\n\u001b[2m  - attempting click action (trial run)\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"overlay\"></div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m    - waiting 20ms\u001b[22m\n\u001b[2m    2 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"overlay\"></div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m      - waiting 100ms\u001b[22m\n\u001b[2m    3 × waiting for element to be visible, enabled and stable\u001b[22m\n\u001b[2m      - element is visible, enabled and stable\u001b[22m\n\u001b[2m      - scrolling into view if needed\u001b[22m\n\u001b[2m      - done scrolling\u001b[22m\n\u001b[2m      - <div class=\"overlay\"></div> intercepts pointer events\u001b[22m\n\u001b[2m    - retrying click action (trial run)\u001b[22m\n\u001b[2m      - waiting 500ms\u001b[22m\n",
+        "rect": {
+          "x": 20,
+          "y": 118,
+          "width": 120,
+          "height": 40,
+          "top": 118,
+          "right": 140,
+          "bottom": 158,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 80,
+            "y": 138,
+            "hit": false,
+            "target": "DIV"
+          },
+          {
+            "x": 26,
+            "y": 124,
+            "hit": false,
+            "target": "DIV"
+          }
+        ],
+        "inViewport": true
+      }
+    ],
+    "checks": [
+      {
+        "id": "svg",
+        "text": "SVG child",
+        "excluded": false,
+        "disabled": false,
+        "category": "reachable and actionable",
+        "rect": {
+          "x": 20,
+          "y": 172,
+          "width": 120,
+          "height": 40,
+          "top": 172,
+          "right": 140,
+          "bottom": 212,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 80,
+            "y": 192,
+            "hit": true,
+            "target": "path"
+          },
+          {
+            "x": 26,
+            "y": 178,
+            "hit": true,
+            "target": "BUTTON"
+          }
+        ],
+        "inViewport": true
+      },
+      {
+        "id": "decoration",
+        "text": "Decorated action",
+        "excluded": false,
+        "disabled": false,
+        "category": "reachable and actionable",
+        "rect": {
+          "x": 20,
+          "y": 226,
+          "width": 121.84375,
+          "height": 40,
+          "top": 226,
+          "right": 141.84375,
+          "bottom": 266,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 80.921875,
+            "y": 246,
+            "hit": true,
+            "target": "BUTTON"
+          },
+          {
+            "x": 26,
+            "y": 232,
+            "hit": true,
+            "target": "BUTTON"
+          }
+        ],
+        "inViewport": true
+      },
+      {
+        "id": "reachable",
+        "text": "Scroll to reach me",
+        "excluded": false,
+        "disabled": false,
+        "category": "reachable and actionable",
+        "rect": {
+          "x": 20,
+          "y": 328,
+          "width": 128.828125,
+          "height": 22,
+          "top": 328,
+          "right": 148.828125,
+          "bottom": 350,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 84.4140625,
+            "y": 339,
+            "hit": true,
+            "target": "BUTTON"
+          },
+          {
+            "x": 26,
+            "y": 334,
+            "hit": true,
+            "target": "BUTTON"
+          }
+        ],
+        "inViewport": true
+      },
+      {
+        "id": "ellipsis",
+        "text": "Full accessible project title for keyboard and pointer users",
+        "excluded": false,
+        "disabled": false,
+        "category": "reachable and actionable",
+        "rect": {
+          "x": 20,
+          "y": 364,
+          "width": 150,
+          "height": 22,
+          "top": 364,
+          "right": 170,
+          "bottom": 386,
+          "left": 20
+        },
+        "samples": [
+          {
+            "x": 95,
+            "y": 375,
+            "hit": true,
+            "target": "BUTTON"
+          },
+          {
+            "x": 26,
+            "y": 370,
+            "hit": true,
+            "target": "BUTTON"
+          }
+        ],
+        "inViewport": true
+      }
+    ]
+  }
+}

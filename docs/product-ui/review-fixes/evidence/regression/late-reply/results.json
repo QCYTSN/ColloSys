@@ -1,0 +1,4 @@
+{
+  "passed": true,
+  "check": "Real TEST membership revoked while mutation response was held; reply released during denial; regrant and retry reopen an editable new draft"
+}

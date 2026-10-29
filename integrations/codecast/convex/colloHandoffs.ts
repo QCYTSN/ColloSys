@@ -201,19 +201,39 @@ export const respond = mutation({
   },
 });
 const publicRow = ({ request, ...row }: any) => row;
-export const list = query({
-  args: { projectId: v.id('projects'), paginationOpts: paginationOptsValidator },
+// A reactive paginated page can grow as inserts enter its retained range.
+// The overview needs a strict small bound and an accurate overflow sentinel.
+export const awaitingResponse = query({
+  args: { projectId: v.id('projects') },
   handler: async (ctx, args) => {
     const viewer = await user(ctx);
     await project(ctx, viewer._id, args.projectId);
-    const page = await ctx.db
-      .query('collo_handoffs')
-      .withIndex('by_project', (q) => q.eq('projectId', args.projectId))
-      .order('desc')
-      .paginate({
-        ...args.paginationOpts,
-        numItems: Math.max(1, Math.min(30, args.paginationOpts.numItems)),
-      });
+    const rows = await ctx.db.query('collo_handoffs')
+      .withIndex('by_project_status', q => q.eq('projectId', args.projectId).eq('status', 'pending'))
+      .order('desc').take(5);
+    return { page: rows.slice(0, 4).map(publicRow), hasMore: rows.length > 4 };
+  },
+});
+export const list = query({
+  args: {
+    projectId: v.id('projects'),
+    status: v.optional(v.literal('pending')),
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const viewer = await user(ctx);
+    await project(ctx, viewer._id, args.projectId);
+    const source = ctx.db.query('collo_handoffs');
+    const scoped =
+      args.status === 'pending'
+        ? source.withIndex('by_project_status', (q) =>
+            q.eq('projectId', args.projectId).eq('status', 'pending'),
+          )
+        : source.withIndex('by_project', (q) => q.eq('projectId', args.projectId));
+    const page = await scoped.order('desc').paginate({
+      ...args.paginationOpts,
+      numItems: Math.max(1, Math.min(30, args.paginationOpts.numItems)),
+    });
     return { ...page, page: page.page.map(publicRow) };
   },
 });
