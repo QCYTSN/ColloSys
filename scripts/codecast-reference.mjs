@@ -5,10 +5,13 @@ import { createWriteStream } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomBytes, generateKeyPairSync } from 'node:crypto';
 import { createServer, request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { connect as connectSocket } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { acquireApplicationLock } from './codecast-runtime-lock.mjs';
 import { buildFingerprint } from './codecast-build-inputs.mjs';
+import { readProductOAuthSettings, oauthEnvironmentNames, oauthNetworkHosts } from './product-oauth-config.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const appMode = process.argv.includes('--app');
@@ -63,6 +66,8 @@ const key = spawnSync(
 if (key.status !== 0) throw new Error(`Local key generation failed: ${key.stderr}`);
 const adminKey = key.stdout.trim();
 const children = [];
+const oauthChanges = appMode ? await readProductOAuthSettings(data) : [];
+let oauthHosts = new Set();
 // The reference needs no external action fetches. Block them before any
 // upstream schedules or UI actions can turn into external requests.
 const actionProxy = createServer((req, res) => {
@@ -70,6 +75,13 @@ const actionProxy = createServer((req, res) => {
   try {
     url = new URL(req.url);
   } catch {}
+  if (url?.protocol === 'https:' && !url.username && !url.password && (!url.port || url.port === '443') && oauthHosts.has(url.hostname)) {
+    const upstreamRequest = httpsRequest(url, { method: req.method, headers: { ...req.headers, host: url.host } }, response => {
+      res.writeHead(response.statusCode || 502, response.headers); response.pipe(res);
+    });
+    upstreamRequest.on('error', () => { if (!res.headersSent) res.writeHead(502); res.end(); });
+    upstreamRequest.setTimeout(15000, () => upstreamRequest.destroy()); req.pipe(upstreamRequest); return;
+  }
   // Convex also routes JWT discovery through this proxy. Only its own local
   // public identity documents are needed; arbitrary local URLs stay blocked.
   if (
@@ -99,8 +111,17 @@ const actionProxy = createServer((req, res) => {
   res.writeHead(403, { 'Content-Type': 'text/plain' });
   res.end('External actions are disabled in the local reference.');
 });
-actionProxy.on('connect', (_req, socket) => {
-  socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n');
+actionProxy.on('connect', (req, socket, head) => {
+  const match = /^([a-z0-9.-]+):443$/.exec(req.url || '');
+  if (!match || !oauthHosts.has(match[1])) { socket.end('HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n'); return; }
+  const upstreamSocket = connectSocket({ host: match[1], port: 443 }, () => {
+    socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+    if (head.length) upstreamSocket.write(head);
+    socket.pipe(upstreamSocket); upstreamSocket.pipe(socket);
+  });
+  upstreamSocket.setTimeout(20000, () => upstreamSocket.destroy());
+  upstreamSocket.on('error', () => socket.destroy()); socket.on('error', () => upstreamSocket.destroy());
+  socket.on('close', () => upstreamSocket.destroy());
 });
 function start(command, args, cwd, childEnv, name) {
   const output = createWriteStream(path.join(data, `${name}.log`), { flags: 'a' });
@@ -223,7 +244,7 @@ try {
       client.query('_system/cli/queryEnvironmentVariables:get', { name }),
     ),
   );
-  const changes = [{ name: 'SITE_URL', value: webUrl }];
+  const changes = [{ name: 'SITE_URL', value: webUrl }, ...oauthChanges];
   if (existing.some((value) => !value)) {
     const pair = generateKeyPairSync('rsa', { modulusLength: 2048 });
     const jwk = pair.publicKey.export({ format: 'jwk' });
@@ -246,6 +267,12 @@ try {
     body: JSON.stringify({ changes }),
   });
   if (!configured.ok) throw new Error(`Local auth configuration failed: ${configured.status}`);
+  const configuredOAuth = await Promise.all(oauthEnvironmentNames.map(name => client.query('_system/cli/queryEnvironmentVariables:get', { name })));
+  oauthHosts = oauthNetworkHosts({ github: !!configuredOAuth[0] && !!configuredOAuth[1], google: !!configuredOAuth[2] && !!configuredOAuth[3] });
+  // Existing email recovery remains opt-in through its backend-only setting.
+  if (await client.query('_system/cli/queryEnvironmentVariables:get', { name: 'RESEND_API_KEY' })) oauthHosts.add('api.resend.com');
+  // Values never enter renderer env, output, diagnostic JSON or command args.
+  console.log(`ColloSys sign-in configuration: GitHub ${configuredOAuth[0] && configuredOAuth[1] ? 'available' : 'not configured'}; Google ${configuredOAuth[2] && configuredOAuth[3] ? 'available' : 'not configured'}.`);
   console.log('Preparing full upstream functions on the isolated loopback backend.');
   const cli = path.join(upstream, 'packages/convex/node_modules/convex/bin/main.js');
   const push = start(

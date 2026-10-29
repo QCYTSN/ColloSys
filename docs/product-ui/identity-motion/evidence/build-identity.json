@@ -1,0 +1,18 @@
+{
+  "source": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f",
+  "prepared": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f",
+  "built": {
+    "version": 1,
+    "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+    "dirty": true,
+    "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+  },
+  "running": {
+    "version": 1,
+    "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+    "dirty": true,
+    "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+  },
+  "checkedAt": "2026-10-29T11:49:30.373Z",
+  "entry": "npm start, default native profile"
+}

@@ -42,6 +42,6 @@ if (process.exitCode === 0) {
     throw new Error('Codecast inputs changed during the build; run the command again.');
   await writeFile(
     path.join(root, 'dist/codecast-app/collo-build.json'),
-    JSON.stringify({ fingerprint: inputFingerprint }),
+    await readFile(path.join(root, '.local/codecast-app/product-public/collo-build.json'), 'utf8'),
   );
 }

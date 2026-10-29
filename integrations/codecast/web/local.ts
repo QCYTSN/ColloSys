@@ -2,11 +2,7 @@
 const manager = 'http://127.0.0.1:3411';
 export const LOCAL_INSPECTION_INTERVAL_MS = 30_000;
 export async function chooseDirectory(token: string | null | undefined) {
-  const desktop = (
-    window as unknown as {
-      __CODECAST_ELECTRON__?: { call?: (name: string) => Promise<{ path: string | null }> };
-    }
-  ).__CODECAST_ELECTRON__;
+  const desktop = window.__COLLOSYS_DESKTOP__;
   return desktop?.call
     ? desktop.call('chooseDirectory')
     : localRequest<{ path: string | null }>(token, '/api/roots/choose', {});

@@ -7,8 +7,11 @@ import { assertNotRunning } from './codecast-runtime-lock.mjs';
 import { buildFingerprint } from './codecast-build-inputs.mjs';
 import { prepareDesktop } from './codecast-desktop-prepare.mjs';
 import { prepareBrand } from './codecast-brand.mjs';
+import { productEntrypoints } from '../integrations/codecast/owned-entrypoints.mjs';
+import { productBuildIdentity } from './product-build-identity.mjs';
 await assertNotRunning();
 const inputFingerprint = await buildFingerprint();
+const buildIdentity = productBuildIdentity(inputFingerprint);
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const source = path.join(root, 'third_party/codecast/upstream');
@@ -65,6 +68,8 @@ for (const patch of patches) {
   await writeFile(target, content.replace(patch.before, patch.after));
 }
 const additions = [
+  ['product-contracts.ts', 'packages/web/collo/productContracts.ts'],
+  ['product-contracts.ts', 'packages/convex/convex/colloContracts.ts'],
   ...[
     'collo.ts',
     'colloSchema.ts',
@@ -78,6 +83,11 @@ const additions = [
     'colloCheckpoints.ts',
     'colloNativeAccess.ts',
     'colloCrons.ts',
+    'colloAuthSession.ts',
+    'colloIdentity.ts',
+    'colloAuthRelay.ts',
+    'colloProjectIdentity.ts',
+    'colloDirectories.ts',
   ].map((file) => [`convex/${file}`, `packages/convex/convex/${file}`]),
   ...[
     'LocalWorkspaces.tsx',
@@ -87,6 +97,23 @@ const additions = [
     'ProductHeader.tsx',
     'ProductProjects.tsx',
     'ProductAuth.tsx',
+    'ProductAuthRoot.tsx',
+    'ProductSignOut.ts',
+    'ProductStartup.tsx',
+    'ProductOAuth.tsx',
+    'ProductDesktopBridge.ts',
+    'ProductAuthScene.tsx',
+    'product-auth.css',
+    'ProductAppearance.tsx',
+    'appearance-runtime.mjs',
+    'appearance-runtime.d.mts',
+    'product-appearance.css',
+    'ProjectIdentity.tsx',
+    'productProjectService.ts',
+    'product-project-identity.css',
+    'ProductControlTriggers.tsx',
+    'product-controls.css',
+    'productAuthPolicy.ts',
     'CheckpointSource.tsx',
     'DirectoryStorage.tsx',
     'useProductQuery.ts',
@@ -134,6 +161,9 @@ for (const [from, to] of additions) {
   await mkdir(path.dirname(path.join(destination, to)), { recursive: true });
   await copyFile(path.join(root, 'integrations/codecast', from), path.join(destination, to));
 }
+for (const [file, content] of Object.entries(productEntrypoints))
+  await writeFile(path.join(destination, file), content);
+await writeFile(path.join(destination, 'packages/web/collo/productBuild.ts'), `export const productBuild = ${JSON.stringify(buildIdentity)} as const;\n`);
 // Product assets only. The full source remains available for reference, but
 // upstream marketing, install scripts and domain verification are not shipped.
 const publicPrefix = 'packages/web/public/';
@@ -143,6 +173,7 @@ try { if ((await lstat(publicDir)).isSymbolicLink()) throw new Error('Linked ass
 // This exact directory contains generated public assets only, never user data.
 await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
+await writeFile(path.join(publicDir, 'collo-build.json'), JSON.stringify(buildIdentity));
 const productAssets = new Set([
   'agents',
   'mod-host.html',
@@ -189,6 +220,8 @@ const touched = [
   ...new Set([
     ...patches.map((p) => p.file),
     ...additions.map((a) => a[1]),
+    ...Object.keys(productEntrypoints),
+    'packages/web/collo/productBuild.ts',
     'packages/convex/convex/colloProtocol.ts',
     'packages/web/collo/protocol.ts',
     'packages/web/collo/productBrand.ts',

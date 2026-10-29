@@ -5,6 +5,7 @@ import { internal } from './_generated/api';
 // Original hosted-agent, model, email and external polling schedules remain in
 // the pinned source; enabling them needs a separate feature and budget review.
 export const collaborationCrons = cronJobs();
+collaborationCrons.interval('expire desktop sign-in requests', { minutes: 15 }, (internal as any).colloAuthRelay.sweep, {});
 collaborationCrons.interval(
   'recover pending sync delivery',
   { minutes: 1 },

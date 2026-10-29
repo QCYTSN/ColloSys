@@ -1,0 +1,98 @@
+.collo-appearance-settings {
+  padding: 20px 0;
+}
+.collo-appearance-settings h2 {
+  font-size: 16px;
+  font-weight: 600;
+}
+.collo-appearance-settings > p {
+  color: var(--collo-secondary);
+  font-size: 12px;
+  margin: 7px 0 20px;
+}
+.collo-appearance-settings h3 {
+  font-size: 12px;
+  margin: 22px 0 12px;
+}
+.collo-appearance-modes {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.collo-appearance-modes > button {
+  padding: 8px;
+  border: 1px solid var(--collo-line);
+  border-radius: 10px;
+  text-align: left;
+}
+.collo-appearance-modes > button[aria-pressed='true'] {
+  border-color: var(--collo-accent);
+  background: var(--collo-accent-soft);
+}
+.collo-appearance-modes > button > span:last-child {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  padding: 10px 2px 2px;
+}
+.collo-appearance-modes > button > span:last-child > svg:last-child {
+  margin-left: auto;
+}
+.collo-appearance-sample {
+  background: var(--preview-tool);
+  border: 1px solid var(--preview-line);
+  display: flex;
+  height: 72px;
+  border-radius: 5px;
+  padding: 6px;
+  gap: 6px;
+}
+.collo-appearance-sample > i {
+  width: 22%;
+  background: var(--preview-line);
+  border-radius: 2px;
+}
+.collo-appearance-sample > span {
+  flex: 1;
+  background: var(--preview-bg);
+  padding: 10px 6px;
+  display: grid;
+  gap: 6px;
+  border-radius: 2px;
+}
+.collo-appearance-sample b {
+  background: var(--preview-line);
+  height: 4px;
+  width: 80%;
+}
+.collo-appearance-sample b:first-child {
+  background: var(--preview-accent);
+  width: 50%;
+}
+.collo-appearance-accents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.collo-appearance-accents button {
+  border: 1px solid var(--collo-line);
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 11px;
+  font-size: 12px;
+}
+.collo-appearance-accents button[aria-pressed='true'] {
+  border-color: var(--collo-accent);
+}
+.collo-appearance-accents i {
+  width: 19px;
+  height: 19px;
+  border-radius: 50%;
+  background: var(--preview-accent);
+  display: grid;
+  place-items: center;
+  color: white;
+}

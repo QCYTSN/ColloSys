@@ -11,6 +11,10 @@ export async function buildFingerprint() {
     'scripts/codecast-prepare.mjs',
     'scripts/codecast-brand.mjs',
     'scripts/codecast-desktop-prepare.mjs',
+    'scripts/product-build-identity.mjs',
+    'scripts/product-oauth-config.mjs',
+    'scripts/codecast-reference.mjs',
+    'scripts/codecast-start.mjs',
   ];
   async function visit(directory) {
     for (const entry of await readdir(path.join(root, directory), { withFileTypes: true })) {

@@ -1,31 +1,55 @@
 import { Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import { useConvexAuth } from 'convex/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeSlash, ArrowRight } from '@phosphor-icons/react';
 import { Logo } from './ProductLogo';
 import { AppLoader } from './ProductLoader';
-import { useLocalAuth } from '../lib/localAuth';
-import { useEmailAuth } from '../hooks/useEmailAuth';
+import { useProductStartup, StartupRecovery } from './ProductStartup';
+import { applicationDestination } from './productAuthPolicy';
+import { ProductOAuthButtons, type OAuthPhase } from './ProductOAuth';
+import { ProductAuthScene } from './ProductAuthScene';
+import { useEmailAuth, useResetRequest, useResetConfirm } from '../hooks/useEmailAuth';
+import { makeFunctionReference } from 'convex/server';
+import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { EmailVerificationForm } from '../components/EmailVerificationForm';
 import { Button } from '../components/ui/button';
-import { useCodecastSignOut } from '../hooks/useCodecastSignOut';
+import { useProductSignOut } from './ProductSignOut';
 
-function AuthSurface({ children }: { children: ReactNode }) {
+function AuthSurface({ children, state = 'idle' }: { children: ReactNode; state?: string }) {
+  const [focused, setFocused] = useState(false);
   return (
     <main className="collo-auth-layout">
-      <header className="collo-auth-brand">
-        <Logo />
-        <span className="collo-auth-edition">Team workspace</span>
-      </header>
-      <section className="collo-auth-work">
-        <div className="collo-auth-content">
-          <span className="collo-auth-kicker">YOUR WORK, IN CONTEXT</span>
-          {children}
+      <section className="collo-auth-visual">
+        <header className="collo-auth-brand">
+          <Logo />
+          <span className="collo-auth-edition">A space to work together</span>
+        </header>
+        <ProductAuthScene state={state === 'idle' && focused ? 'focused' : state} />
+        <div className="collo-auth-scene-caption">
+          <span className="collo-auth-kicker">A LITTLE CONTEXT GOES A LONG WAY</span>
+          <h2>
+            Independent work.
+            <br />
+            Shared understanding.
+          </h2>
+          <p>
+            Keep the conversation, the changes
+            <br />
+            and the next step together.
+          </p>
         </div>
+        <span className="collo-auth-scene-foot">Made for small teams doing thoughtful work.</span>
+      </section>
+      <section
+        className="collo-auth-work"
+        onFocusCapture={(event) => {
+          if ((event.target as HTMLElement).tagName === 'INPUT') setFocused(true);
+        }}
+        onBlurCapture={() => setFocused(false)}
+      >
+        <div className="collo-auth-content">{children}</div>
         <footer>
-          <strong>Independent directories. Shared understanding.</strong>
-          <span>Conversations, checkpoints and handoffs, together.</span>
+          <span>Your files stay in your own directory.</span>
         </footer>
       </section>
     </main>
@@ -33,30 +57,25 @@ function AuthSurface({ children }: { children: ReactNode }) {
 }
 
 function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
-  const { isAuthenticated, isLoading } = useConvexAuth();
-  const localAuthed = useLocalAuth();
+  const startup = useProductStartup();
   const router = useRouter(),
     params = useSearchParams();
-  const target = params.get('return_to');
-  // Reject protocol-relative and backslash-normalized external destinations.
-  const redirectTo =
-    target?.startsWith('/') && !target.startsWith('//') && !target.includes('\\')
-      ? target
-      : '/projects';
+  const redirectTo = applicationDestination(params.get('return_to'));
   const auth = useEmailAuth(flow, redirectTo);
   const recovering = params.get('recover') === '1';
-  const signOut = useCodecastSignOut();
+  const signOut = useProductSignOut();
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
   const signup = flow === 'signUp';
   const [visible, setVisible] = useState(false);
+  const [oauthPhase, setOAuthPhase] = useState<OAuthPhase>('idle');
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (auth.error) errorRef.current?.focus();
   }, [auth.error]);
   useEffect(() => {
-    if (!recovering && (localAuthed || (!isLoading && isAuthenticated))) router.replace(redirectTo);
-  }, [localAuthed, isLoading, isAuthenticated, redirectTo, router, recovering]);
+    if (!recovering && startup.canRead) router.replace(redirectTo);
+  }, [startup.canRead, redirectTo, router, recovering]);
   if (recovering)
     return (
       <AuthSurface>
@@ -89,9 +108,11 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
                 try {
                   await signOut();
                   window.location.replace('/login');
-                } catch {
+                } catch (error) {
                   setRecoveryError(
-                    'Sign-out did not finish. Try again to securely clear this session.',
+                    error instanceof Error
+                      ? error.message
+                      : 'Could not finish sign-out. Please try again.',
                   );
                   setRecoveryBusy(false);
                 }
@@ -103,8 +124,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
         </div>
       </AuthSurface>
     );
-  if (localAuthed || isLoading || isAuthenticated)
-    return <AppLoader label="Restoring your workspace" />;
+  if (startup.phase !== 'signed-out') return <StartupRecovery />;
   if (auth.pendingVerification)
     return (
       <AuthSurface>
@@ -116,7 +136,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
       </AuthSurface>
     );
   return (
-    <AuthSurface>
+    <AuthSurface state={oauthPhase}>
       <div className="collo-auth-step" key={flow}>
         <h1>{signup ? 'Create your account' : 'Welcome back'}</h1>
         <p>
@@ -126,6 +146,10 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
               ? 'A place to keep your team in context.'
               : 'Sign in to pick up where your team left off.'}
         </p>
+        <ProductOAuthButtons destination={redirectTo} onPhase={setOAuthPhase} />
+        <div className="collo-auth-divider">
+          <span>or continue with email</span>
+        </div>
         <form onSubmit={auth.submit} aria-busy={auth.loading}>
           <label htmlFor="email">Email</label>
           <input
@@ -188,7 +212,11 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
               {auth.error}
             </p>
           )}
-          <Button type="submit" disabled={auth.loading} className="collo-auth-submit">
+          <Button
+            type="submit"
+            disabled={auth.loading || oauthPhase === 'starting' || oauthPhase === 'waiting'}
+            className="collo-auth-submit"
+          >
             {auth.loading
               ? signup
                 ? 'Creating account…'
@@ -199,6 +227,13 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
             {!auth.loading && <ArrowRight size={17} />}
           </Button>
         </form>
+        {!signup && (
+          <p className="collo-auth-switch">
+            <Link href={`/forgot-password?return_to=${encodeURIComponent(redirectTo)}`}>
+              Forgot password?
+            </Link>
+          </p>
+        )}
         <p className="collo-auth-switch">
           {signup ? 'Already have an account?' : 'New to ColloSys?'}{' '}
           <Link
@@ -208,9 +243,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
           </Link>
         </p>
         {signup && (
-          <p className="collo-auth-local">
-            This account belongs to this ColloSys service. Email delivery is not configured.
-          </p>
+          <p className="collo-auth-local">This account belongs to this ColloSys service.</p>
         )}
       </div>
     </AuthSurface>
@@ -228,5 +261,130 @@ export function ProductSignup() {
     <Suspense fallback={<AppLoader />}>
       <AuthForm flow="signUp" />
     </Suspense>
+  );
+}
+
+const recoveryConfig = makeFunctionReference<
+  'query',
+  Record<string, never>,
+  { emailRecovery: boolean }
+>('auth:signInProviders');
+export function ProductForgotPassword() {
+  const params = useSearchParams(),
+    destination = applicationDestination(params.get('return_to'));
+  const recovery = useResetRequest(),
+    config = useQueryNoThrow(recoveryConfig, {});
+  return (
+    <AuthSurface>
+      <div className="collo-auth-step">
+        <h1>{recovery.sent ? 'Check your email' : 'Reset your password'}</h1>
+        <p>
+          {recovery.sent
+            ? 'Use the code from this service to choose a new password.'
+            : 'Keep your account and its work. Request a recovery code from your ColloSys service.'}
+        </p>
+        {!config.data?.emailRecovery && (
+          <p role="alert" className="collo-auth-error">
+            {config.error
+              ? 'The service could not check email recovery. Try again when connected.'
+              : config.data
+                ? 'Email recovery is not configured for this service. Ask its owner to enable email delivery. No code has been sent.'
+                : 'Checking email recovery…'}
+          </p>
+        )}
+        {recovery.sent ? (
+          <p className="collo-auth-switch">
+            <Link
+              href={`/reset-password?email=${encodeURIComponent(recovery.email)}&return_to=${encodeURIComponent(destination)}`}
+            >
+              Enter recovery code
+            </Link>
+          </p>
+        ) : (
+          <form onSubmit={recovery.submit}>
+            <label htmlFor="recovery-email">Email</label>
+            <input
+              id="recovery-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={recovery.email}
+              onChange={(e) => recovery.setEmail(e.target.value)}
+            />
+            {recovery.error && (
+              <p role="alert" className="collo-auth-error">
+                {recovery.error}
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="collo-auth-submit"
+              disabled={recovery.loading || !config.data?.emailRecovery}
+            >
+              {recovery.loading ? 'Requesting code…' : 'Send recovery code'}
+            </Button>
+          </form>
+        )}
+        <p className="collo-auth-switch">
+          <Link href={`/login?return_to=${encodeURIComponent(destination)}`}>Back to sign in</Link>
+        </p>
+      </div>
+    </AuthSurface>
+  );
+}
+export function ProductResetPassword() {
+  const params = useSearchParams(),
+    destination = applicationDestination(params.get('return_to'));
+  const recovery = useResetConfirm(params.get('email') || '', () => location.assign(destination));
+  return (
+    <AuthSurface>
+      <div className="collo-auth-step">
+        <h1>Choose a new password</h1>
+        <p>Enter the recovery code sent by your ColloSys service.</p>
+        <form onSubmit={recovery.submit}>
+          <label htmlFor="recovery-code">Recovery code</label>
+          <input
+            id="recovery-code"
+            autoComplete="one-time-code"
+            required
+            value={recovery.code}
+            onChange={(e) => recovery.setCode(e.target.value)}
+          />
+          <label htmlFor="new-password">New password</label>
+          <input
+            id="new-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={recovery.newPassword}
+            onChange={(e) => recovery.setNewPassword(e.target.value)}
+          />
+          <label htmlFor="confirm-password">Confirm password</label>
+          <input
+            id="confirm-password"
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            value={recovery.confirmPassword}
+            onChange={(e) => recovery.setConfirmPassword(e.target.value)}
+          />
+          {recovery.error && (
+            <p role="alert" className="collo-auth-error">
+              {recovery.error}
+            </p>
+          )}
+          <Button type="submit" className="collo-auth-submit" disabled={recovery.loading}>
+            {recovery.loading ? 'Updating password…' : 'Update password'}
+          </Button>
+        </form>
+        <p className="collo-auth-switch">
+          <Link href={`/forgot-password?return_to=${encodeURIComponent(destination)}`}>
+            Request another code
+          </Link>
+        </p>
+      </div>
+    </AuthSurface>
   );
 }

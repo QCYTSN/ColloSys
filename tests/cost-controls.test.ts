@@ -18,7 +18,7 @@ test('actual Convex cron export retains collaboration maintenance without hosted
       windowsHide: true,
     }),
   );
-  assert.equal(report.schedules.current.jobs, 8);
+  assert.equal(report.schedules.current.jobs, 9);
   assert.ok(report.schedules.current.monthlyEntries < 60_000);
   assert.ok(report.schedules.original.monthlyEntries > 700_000);
   for (const required of [
@@ -26,6 +26,7 @@ test('actual Convex cron export retains collaboration maintenance without hosted
     'cliAuth:sweepExpired',
     'syncLogPrune:pruneSyncActions',
     'colloBackups:collectOrphans',
+    'colloAuthRelay:sweep',
   ])
     assert.ok(report.schedules.functions.includes(required));
   assert.ok(

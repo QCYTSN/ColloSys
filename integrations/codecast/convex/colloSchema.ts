@@ -4,6 +4,12 @@ import { v } from 'convex/values';
 // Extension tables inherit access from the actual Codecast project, never
 // from a caller-supplied member or the project's routing team_id.
 export const colloTables = {
+  collo_identity_proofs: defineTable({ userId: v.id('users'), provider: v.union(v.literal('github'), v.literal('google')), verifiedAt: v.number() }).index('by_identity', ['userId', 'provider']),
+  collo_auth_attempts: defineTable({
+    version: v.literal(1), attemptId: v.string(), claimHash: v.string(), provider: v.union(v.literal('github'), v.literal('google')),
+    createdAt: v.number(), expiresAt: v.number(), status: v.union(v.literal('pending'), v.literal('authorized'), v.literal('cancelled'), v.literal('consumed')),
+    userId: v.optional(v.id('users')), sessionId: v.optional(v.id('authSessions')),
+  }).index('by_attempt', ['attemptId']).index('by_expiry', ['expiresAt']),
   collo_event_aliases: defineTable({
     projectId: v.id('projects'),
     eventId: v.string(),
@@ -80,6 +86,8 @@ export const colloTables = {
     maxCount: v.number(),
   }).index('by_project', ['projectId']),
   collo_workspaces: defineTable({
+    directoryVersion: v.optional(v.literal(1)),
+    directoryId: v.optional(v.string()),
     workspaceId: v.string(),
     projectId: v.id('projects'),
     userId: v.id('users'),

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "native-window",
+    "command": "node tests/product-identity-native.mjs",
+    "started": "2026-10-29T11:36:59.328Z",
+    "finished": "2026-10-29T11:37:14.641Z",
+    "exit": 0
+  },
+  {
+    "name": "account-cycles",
+    "command": "node tests/product-auth-continuity.mjs",
+    "started": "2026-10-29T11:37:14.644Z",
+    "finished": "2026-10-29T11:37:42.390Z",
+    "exit": 0
+  }
+]

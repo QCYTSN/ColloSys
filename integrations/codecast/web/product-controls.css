@@ -1,0 +1,75 @@
+/* Pressed, open and selected are independent states, driven by real controls. */
+[data-collo-trigger] {
+  transition:
+    background-color 140ms,
+    border-color 140ms,
+    box-shadow 140ms,
+    transform 90ms;
+}
+[data-collo-trigger]:active:not(:disabled):not([aria-disabled='true']) {
+  transform: scale(0.98);
+}
+[data-collo-trigger][data-state='open'] {
+  background-color: var(--collo-selected);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--collo-accent) 40%, transparent);
+}
+[data-collo-trigger]:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: 2px;
+}
+[data-collo-trigger] [data-collo-chevron] {
+  transition: transform 160ms ease;
+}
+[data-collo-trigger][data-state='open'] [data-collo-chevron] {
+  transform: rotate(180deg);
+}
+[data-collo-floating][data-state='closed'],
+.collo-menu-surface[data-state='closed'],
+.collo-dialog-surface[data-state='closed'],
+.collo-dialog-backdrop[data-state='closed'] {
+  pointer-events: none;
+}
+.cc-btn:active:not(:disabled),
+.collo-icon-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.collo-appearance-modes > button,
+.collo-appearance-accents button,
+.collo-identity-icons button,
+.collo-identity-tones button {
+  transition:
+    background-color 130ms,
+    border-color 130ms,
+    transform 90ms;
+}
+.collo-appearance-modes > button:active,
+.collo-appearance-accents button:active,
+.collo-identity-icons button:active:not(:disabled),
+.collo-identity-tones button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.collo-appearance-modes > button:focus-visible,
+.collo-appearance-accents button:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-collo-trigger],
+  .collo-appearance-modes > button,
+  .collo-appearance-accents button,
+  .collo-identity-icons button,
+  .collo-identity-tones button {
+    transition:
+      background-color 80ms,
+      border-color 80ms;
+  }
+  [data-collo-trigger]:active:not(:disabled),
+  .cc-btn:active:not(:disabled),
+  .collo-icon-button:active:not(:disabled) {
+    transform: none;
+    outline: 1px solid var(--collo-accent);
+  }
+  [data-collo-trigger] [data-collo-chevron] {
+    transition: none;
+  }
+}

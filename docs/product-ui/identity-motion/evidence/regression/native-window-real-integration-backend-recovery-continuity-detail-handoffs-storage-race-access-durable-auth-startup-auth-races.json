@@ -1,0 +1,16 @@
+[
+  {
+    "name": "native-window",
+    "command": "node tests/product-identity-native.mjs",
+    "started": "2026-10-29T11:09:31.216Z",
+    "finished": "2026-10-29T11:09:45.039Z",
+    "exit": 0
+  },
+  {
+    "name": "real-integration",
+    "command": "node tests/codecast-integration.mjs",
+    "started": "2026-10-29T11:09:45.044Z",
+    "finished": "2026-10-29T11:09:47.187Z",
+    "exit": 1
+  }
+]

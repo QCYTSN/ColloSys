@@ -16,8 +16,10 @@ import type { Id } from '@codecast/convex/convex/_generated/dataModel';
 import { ProjectCreate } from './ProjectCreate';
 import { MemberFace } from './MemberFace';
 import { Button } from '../components/ui/button';
+import { ProjectIdentityMark, ProjectIdentityEditor } from './ProjectIdentity';
+import { readProjectIdentity } from './productContracts';
 
-const signature = (p: ProjectItem) => `${p.title}|${p.status}|${p.updated_at}|${p.description}`;
+const signature = (p: ProjectItem) => `${p.title}|${p.status}|${p.updated_at}|${p.description}|${p.identityRevision}|${p.identity?.icon}|${p.identity?.tone}|${p.icon}|${p.color}`;
 export function ProductProjects() {
   useSyncProjects();
   const projects = useWorkspaceCollection<ProjectItem>('projects', signature);
@@ -71,7 +73,7 @@ export function ProductProjects() {
                   aria-pressed={selected?._id === p._id}
                   aria-label={`Preview ${p.title}`}
                 >
-                  <FolderSimple size={21} weight="duotone" />
+                  <ProjectIdentityMark identity={readProjectIdentity(p)} />
                   <span>
                     <strong title={p.title}>{p.title}</strong>
                     <small
@@ -82,6 +84,7 @@ export function ProductProjects() {
                   </span>
                 </button>
                 <span className="collo-project-status">{p.status || 'Active'}</span>
+                <ProjectIdentityEditor project={p} />
                 <Link
                   className="collo-icon-button"
                   aria-label={`Open ${p.title}`}

@@ -1,0 +1,7 @@
+{
+  "checks": [
+    "Actual SDK refresh response, held after real server response, released after sibling logout cannot restore JWT or workspace",
+    "Controlled offline cold load needs consent for matching unexpired verified identity; saved local workspace remains readable"
+  ],
+  "boundary": "Real password sessions and SDK. Controlled delay of real refresh response and controlled backend disconnection; no provider mocks."
+}

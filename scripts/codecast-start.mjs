@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureDesktopRuntime } from './codecast-desktop-runtime.mjs';
+import { buildFingerprint } from './codecast-build-inputs.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 try {
   await access(path.join(root, '.local/codecast-runtime/bin/convex-local-backend.exe'));
@@ -31,6 +32,10 @@ try {
   running = ready.ok;
 } catch {}
 if (running) {
+  const response = await fetch('http://127.0.0.1:3407/collo-build.json', { signal: AbortSignal.timeout(2000) });
+  const identity = response.ok ? await response.json() : null;
+  if (!identity || identity.fingerprint !== await buildFingerprint())
+    throw new Error('The open ColloSys window is running older resources. Close it, then start ColloSys again to prepare the current source.');
   // The shell's original single-instance lock focuses an already open window.
   // Attaching to debug services never takes ownership of their shutdown.
   const env = { ...process.env };

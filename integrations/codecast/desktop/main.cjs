@@ -7,6 +7,7 @@ const productVersion = require('../../../package.json').version;
 const data = path.join(root, '.local/codecast-app');
 const origin = 'http://127.0.0.1:3407';
 const { app, BrowserWindow, Menu, ipcMain, dialog, session } = electron;
+const hasWindowMenu = process.platform === 'darwin';
 const profile = process.env.COLLOSYS_DESKTOP_PROFILE || 'default';
 if (!/^(default|test-[a-f0-9-]{36})$/.test(profile)) throw new Error('Invalid desktop profile');
 const entryUrl =
@@ -23,6 +24,16 @@ delete process.env.COLLOSYS_CLAIM_PROTOCOL;
 // the same lock when it initializes below.
 app.setPath('userData', process.env.COLLOSYS_USER_DATA);
 if (!app.requestSingleInstanceLock()) app.exit(0);
+// This non-secret native preference is a projection of the renderer's one
+// appearance setting. It never moves or duplicates the user profile/database.
+const appearancePath = path.join(process.env.COLLOSYS_USER_DATA, 'collosys-appearance-v1.json');
+let initialMode = 'system';
+try {
+  const saved = JSON.parse(fs.readFileSync(appearancePath, 'utf8'));
+  if (saved.version === 1 && ['light', 'dark', 'system'].includes(saved.mode)) initialMode = saved.mode;
+} catch { /* First start or damaged preference follows the OS. */ }
+electron.nativeTheme.themeSource = initialMode;
+const nativeBackground = () => electron.nativeTheme.shouldUseDarkColors ? '#202127' : '#ffffff';
 const pair = fs.readFileSync(path.join(data, 'browser-pairing'), 'utf8').trim();
 if (!/^[a-f0-9]{64}$/.test(pair)) throw new Error('Invalid local pairing state');
 const framework = path.join(data, 'desktop-framework');
@@ -33,6 +44,22 @@ function trusted(event) {
   if (!frame || frame.parent || new URL(frame.url).origin !== origin)
     throw new Error('Untrusted desktop request');
 }
+ipcMain.handle('collosys:auth:start:v1', async (event, request) => {
+  trusted(event);
+  if (!request || request.version !== 1 || !/^[a-f0-9-]{36}$/.test(request.attemptId) || !['github', 'google'].includes(request.provider)) throw new Error('Invalid sign-in request');
+  // No renderer-supplied URL, protocol or host crosses this boundary.
+  await electron.shell.openExternal(`${origin}/auth/desktop?attempt=${encodeURIComponent(request.attemptId)}`);
+});
+ipcMain.handle('collosys:appearance:v1', (event, request) => {
+  trusted(event);
+  if (!request || request.version !== 1 || !['dark', 'light', 'system'].includes(request.mode) || !['dark', 'light'].includes(request.theme) || !['#202127', '#ffffff'].includes(request.background)) throw new Error('Invalid appearance');
+  electron.nativeTheme.themeSource = request.mode;
+  for (const window of BrowserWindow.getAllWindows()) window.setBackgroundColor(request.background);
+  fs.mkdirSync(path.dirname(appearancePath), { recursive: true });
+  const temporary = appearancePath + '.tmp';
+  fs.writeFileSync(temporary, JSON.stringify({ version: 1, mode: request.mode }));
+  fs.renameSync(temporary, appearancePath);
+});
 const guardedIpc = new Proxy(ipcMain, {
   get(target, property) {
     if (property === 'handle')
@@ -62,6 +89,7 @@ function ProductWindow(options) {
     title: brand.name,
     titleBarStyle: 'default',
     frame: true,
+    autoHideMenuBar: !hasWindowMenu,
     webPreferences: {
       ...options.webPreferences,
       preload: path.join(framework, 'preload.cjs'),
@@ -69,6 +97,16 @@ function ProductWindow(options) {
       contextIsolation: true,
       nodeIntegration: false,
     },
+  });
+  if (!hasWindowMenu) { window.setMenu(null); window.setMenuBarVisibility(false); }
+  window.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
+    const key = input.key.toLowerCase(), contents = window.webContents;
+    const edits = { c: 'copy', x: 'cut', v: 'paste', a: 'selectAll', z: input.shift ? 'redo' : 'undo', y: 'redo' };
+    if (edits[key] && !input.alt) { event.preventDefault(); contents[edits[key]](); }
+    else if (['+', '=', '-', '0'].includes(key)) { event.preventDefault(); contents.setZoomFactor(key === '0' ? 1 : Math.max(0.5, Math.min(2, contents.getZoomFactor() + (key === '-' ? -0.1 : 0.1)))); }
+    else if (key === ',') { event.preventDefault(); desktop.navigateMain('/settings'); }
+    else if (key === 'q') { event.preventDefault(); app.quit(); }
   });
   window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
@@ -147,7 +185,7 @@ function nativeMenu() {
 }
 const productMenu = new Proxy(Menu, {
   get(target, property) {
-    if (property === 'setApplicationMenu') return () => Menu.setApplicationMenu(nativeMenu());
+    if (property === 'setApplicationMenu') return () => Menu.setApplicationMenu(hasWindowMenu ? nativeMenu() : null);
     return Reflect.get(target, property);
   },
 });
@@ -172,14 +210,14 @@ desktop = createDesktopApp(
     protocol: 'collosys',
     envPrefix: 'COLLOSYS',
     urls: { prod: entryUrl },
-    bridgeGlobal: '__CODECAST_ELECTRON__',
+    bridgeGlobal: '__COLLOSYS_DESKTOP__',
     events: {
-      navigate: 'codecast-navigate',
-      newSession: '__CODECAST_NEW_SESSION',
+      navigate: 'collosys:navigate:v1',
+      newSession: '__COLLOSYS_NEW_SESSION_V1',
       htmlClass: 'electron-desktop',
     },
     assets: { icon: path.join(root, 'dist/codecast-app', brand.desktopIcon) },
-    window: { width: 1440, height: 960, minWidth: 900, minHeight: 640, backgroundColor: '#f4f5f7' },
+    window: { width: 1440, height: 960, minWidth: 900, minHeight: 640, backgroundColor: nativeBackground() },
     update: { enabled: false },
     web: { cache: false },
     palette: null,
@@ -214,7 +252,7 @@ desktop = createDesktopApp(
           (contents, permission) =>
             !!contents && allowed.has(permission) && new URL(contents.getURL()).origin === origin,
         );
-        Menu.setApplicationMenu(nativeMenu());
+        Menu.setApplicationMenu(hasWindowMenu ? nativeMenu() : null);
         console.log('ColloSys desktop window ready.');
       },
     },

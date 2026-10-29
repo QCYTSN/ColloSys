@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "checks": [
+    "Unintentional localStorage loss still recovers the durable value",
+    "An IndexedDB read started before explicit logout cannot restore the removed value",
+    "A queued durable write cannot outlive logout",
+    "An older purge cannot delete a newer explicit sign-in value",
+    "Refresh rotation preserves the existing durable recovery behavior",
+    "Explicit logout removes refresh recovery too"
+  ],
+  "at": "2026-10-29T11:30:49.979Z"
+}

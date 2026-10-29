@@ -8,6 +8,7 @@ import type { Id } from './_generated/dataModel';
 
 import { fail, user, project, device } from './colloAccess';
 import { indexMessage } from './colloSessions';
+import { directoryFields } from './colloDirectories';
 const MAX_CHECKPOINT_FILES = 20_000;
 const MAX_CHECKPOINT_PARTS = MAX_CHECKPOINT_FILES + 1;
 const CHECKPOINT_PAGE_BYTES = 1024 * 1024;
@@ -119,10 +120,12 @@ export const register = internalMutation({
       .unique();
     if (old && (old.userId !== grant.userId || old.projectId !== args.projectId))
       return fail(403, 'Workspace owner mismatch');
-    if (old) await ctx.db.patch(old._id, { label: args.label, updatedAt: Date.now() });
+    if (old) await ctx.db.patch(old._id, { ...directoryFields(old), label: args.label, updatedAt: Date.now() });
     else
       await ctx.db.insert('collo_workspaces', {
         workspaceId: args.id,
+        directoryVersion: 1,
+        directoryId: args.id,
         projectId: args.projectId,
         userId: grant.userId,
         label: args.label,

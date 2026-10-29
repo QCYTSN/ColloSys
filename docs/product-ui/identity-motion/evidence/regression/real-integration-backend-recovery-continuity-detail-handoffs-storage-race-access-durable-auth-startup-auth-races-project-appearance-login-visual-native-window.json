@@ -1,0 +1,9 @@
+[
+  {
+    "name": "project-appearance",
+    "command": "node tests/product-identity-flows.mjs --production",
+    "started": "2026-10-29T11:21:33.816Z",
+    "finished": "2026-10-29T11:21:36.539Z",
+    "exit": 1
+  }
+]

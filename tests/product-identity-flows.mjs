@@ -1,0 +1,112 @@
+import fs from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
+import { chromium, expect as baseExpect } from '@playwright/test';
+import { account, signIn } from './product-ui-refinement-data.mjs';
+const mode = process.argv.includes('--production') ? 'production' : 'development';
+const out = `docs/product-ui/identity-motion/evidence/flows-${mode}`;
+await fs.mkdir(out, { recursive: true });
+const a = await signIn(account.a), b = await signIn(account.b);
+const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, recordVideo: { dir: '.local/identity-flow-videos', size: { width: 1440, height: 900 } } });
+const page = await context.newPage(), expect = baseExpect.configure({ timeout: 60000 }), checks = [], errors = [];
+page.on('pageerror', e => errors.push(e.message));
+const check = async (name, run) => { await run(); checks.push(name); console.log('PASS', name); };
+const projectTitle = `TEST identity ${randomUUID().slice(0, 8)}`;
+let project;
+try {
+  await page.goto('http://127.0.0.1:3407/login', { timeout: 120000 });
+  await expect(page.locator('#email')).toBeVisible();
+  await page.locator('#email').fill(account.a.email); await page.locator('#password').fill(account.a.password); await page.locator('form button[type=submit]').click();
+  await expect(page.locator('.collo-projects')).toBeVisible();
+  await check('Create submits name, icon and color atomically to the real backend', async () => {
+    await page.getByRole('button', { name: 'New project', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'New project', exact: true });
+    await dialog.getByLabel('Project name', { exact: true }).fill(projectTitle);
+    await dialog.getByRole('radio', { name: 'Rocket', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Moss', exact: true }).click();
+    await page.screenshot({ path: out + '/project-draft.png' });
+    await dialog.getByRole('button', { name: 'Create project', exact: true }).click();
+    await expect(page.locator('[data-project-page]')).toBeVisible();
+    const reference = new URL(page.url()).pathname.split('/')[2];
+    project = await a.client.query('collo:projectByRef', { reference });
+    assert.equal(project.title, projectTitle); assert.deepEqual(project.identity, { version: 1, icon: 'rocket', tone: 'moss' }); assert.equal(project.identityRevision, 1);
+    await expect(page.locator('.collo-project-header [data-icon=rocket][data-tone=moss]')).toBeVisible();
+  });
+  await check('Cancel keeps persisted identity; editing and reload retain one selected mark', async () => {
+    const trigger = page.getByRole('button', { name: `Edit identity of ${projectTitle}`, exact: true });
+    await trigger.click();
+    let dialog = page.getByRole('dialog', { name: 'Project identity', exact: true });
+    await dialog.getByRole('radio', { name: 'Planet', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Clay', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    assert.deepEqual((await a.client.query('projects:webGet', { id: project._id })).identity, project.identity);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    dialog = page.getByRole('dialog', { name: 'Project identity', exact: true });
+    await expect(dialog.getByRole('radio', { name: 'Rocket', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await dialog.getByRole('radio', { name: 'Planet', exact: true }).click(); await dialog.getByRole('button', { name: 'Clay', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply identity', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    await expect(page.locator('.collo-project-header [data-icon=planet][data-tone=clay]')).toBeVisible();
+    await page.reload();
+    await expect(page.locator('.collo-project-header [data-icon=planet][data-tone=clay]')).toBeVisible();
+    await page.screenshot({ path: out + '/project-persisted.png' });
+  });
+  await check('Invalid choices, stale revisions and cross-account writes are rejected', async () => {
+    const personal = await a.client.mutation('projects:webCreate', { title: 'TEST identity permission', workspace: 'personal' });
+    await assert.rejects(b.client.mutation('colloProjectIdentity:update', { projectId: personal.id, expectedRevision: 1, identity: { version: 1, icon: 'leaf', tone: 'moss' } }));
+    await assert.rejects(a.client.mutation('colloProjectIdentity:update', { projectId: project._id, expectedRevision: 0, identity: { version: 1, icon: 'leaf', tone: 'moss' } }));
+    await assert.rejects(a.client.mutation('colloProjectIdentity:update', { projectId: project._id, expectedRevision: 2, identity: { version: 1, icon: '<svg onload=alert(1)>', tone: 'moss' } }));
+    const unchanged = await a.client.query('projects:webGet', { id: project._id });
+    assert.deepEqual(unchanged.identity, { version: 1, icon: 'planet', tone: 'clay' });
+  });
+  await check('Shared trigger exposes pressed/open state, Esc restores focus', async () => {
+    const trigger = page.getByRole('button', { name: 'Project details', exact: true });
+    const box = await trigger.boundingBox(); await page.mouse.move(box.x + 12, box.y + 12); await page.mouse.down();
+    await expect.poll(() => trigger.evaluate(e => getComputedStyle(e).transform)).not.toBe('none');
+    await page.mouse.up(); await expect(trigger).toHaveAttribute('data-state', 'open');
+    await expect(page.locator('.collo-project-property-menu')).toBeVisible();
+    await page.screenshot({ path: out + '/trigger-open.png' });
+    await page.keyboard.press('Escape'); await expect(trigger).toBeFocused(); await expect(trigger).toHaveAttribute('data-state', 'closed');
+  });
+  await check('Keyboard selection and a real concurrent save retain draft and support retry', async () => {
+    await page.getByRole('button', { name: `Edit identity of ${projectTitle}`, exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: 'Project identity', exact: true });
+    await dialog.getByRole('radio', { name: 'Planet', exact: true }).focus(); await page.keyboard.press('ArrowRight');
+    await expect(dialog.getByRole('radio', { name: 'Flask', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await a.client.mutation('colloProjectIdentity:update', { projectId: project._id, expectedRevision: 2, identity: { version: 1, icon: 'books', tone: 'iris' } });
+    await dialog.getByRole('button', { name: 'Apply identity', exact: true }).click(); await expect(dialog.getByRole('alert')).toContainText('Your choices are kept');
+    await expect(dialog.getByRole('radio', { name: 'Flask', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await page.screenshot({ path: out + '/identity-concurrent-save.png' });
+    await dialog.getByRole('button', { name: 'Reload latest identity', exact: true }).click(); await expect(dialog.getByRole('radio', { name: 'Books', exact: true })).toHaveAttribute('aria-checked', 'true');
+    await dialog.getByRole('radio', { name: 'Planet', exact: true }).click(); await dialog.getByRole('button', { name: 'Clay', exact: true }).click();
+    await dialog.getByRole('button', { name: 'Apply identity', exact: true }).click(); await expect(dialog).toHaveCount(0);
+    await expect(page.locator('.collo-project-header [data-icon=planet][data-tone=clay]')).toBeVisible();
+  });
+  await check('Appearance changes bootstrap, system response and another window', async () => {
+    await page.locator('.collo-settings-button').click();
+    await expect(page.locator('.collo-appearance-settings')).toBeVisible();
+    await page.getByRole('button', { name: 'System', exact: true }).click();
+    await page.emulateMedia({ colorScheme: 'dark' }); await expect(page.locator('html')).toHaveClass(/dark/);
+    await page.getByRole('button', { name: 'Light', exact: true }).click(); await expect(page.locator('html')).toHaveClass(/light/);
+    await page.getByRole('button', { name: 'Lake', exact: true }).click();
+    await expect(page.locator('html')).toHaveAttribute('data-collo-appearance', 'light:blue');
+    await page.screenshot({ path: out + '/appearance.png' });
+    const other = await context.newPage(); await other.goto('http://127.0.0.1:3407/projects'); await expect(other.locator('.collo-projects')).toBeVisible();
+    await expect(other.locator('html')).toHaveAttribute('data-collo-appearance', 'light:blue');
+    await page.getByRole('button', { name: 'Dark', exact: true }).click(); await expect(other.locator('html')).toHaveAttribute('data-collo-appearance', 'dark:blue');
+    const accentMatches = await page.getByRole('button', { name: 'Lake', exact: true }).locator('i').evaluate(e => {
+      const probe = document.createElement('i'); probe.style.color = 'var(--collo-accent)'; document.body.append(probe);
+      const same = getComputedStyle(e).backgroundColor === getComputedStyle(probe).color; probe.remove(); return same;
+    });
+    assert.ok(accentMatches, 'Dark accent preview must use the same resolved color as the application');
+    await other.reload(); await expect(other.locator('html')).toHaveAttribute('data-collo-appearance', 'dark:blue'); await other.close();
+    assert.deepEqual((await a.client.query('projects:webGet', { id: project._id })).identity, { version: 1, icon: 'planet', tone: 'clay' });
+  });
+} finally {
+  await page.screenshot({ path: out + '/last-state.png' }).catch(() => {});
+  const video = page.video(); await context.close(); await video.saveAs(out + '/flow.webm'); await browser.close();
+  await fs.writeFile(out + '/results.json', JSON.stringify({ mode, checks, errors, viewport: { width: 1440, height: 900, dpr: 1 }, projectId: project?._id }, null, 2));
+}
+assert.equal(errors.length, 0, errors.join('\n'));

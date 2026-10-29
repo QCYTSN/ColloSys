@@ -1,0 +1,149 @@
+{
+  "checks": [
+    "Actual Windows native frame: no application/menu bar, maximize/unmaximize, 125%/150% webContents zoom, Ctrl+0 and native editing shortcuts",
+    "Real renderer IPC rejects arbitrary URL and unsupported contract version",
+    "Ctrl+, opens real settings; light/dark updates native background and saved native appearance survives relaunch"
+  ],
+  "states": [
+    {
+      "name": "normal-light",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "system",
+      "background": "#FFFFFF"
+    },
+    {
+      "name": "maximized",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": true,
+      "zoom": 1,
+      "bounds": {
+        "x": -7,
+        "y": -7,
+        "width": 1454,
+        "height": 866
+      },
+      "displayScale": 2,
+      "nativeTheme": "system",
+      "background": "#FFFFFF"
+    },
+    {
+      "name": "native-zoom-125",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1.25,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "system",
+      "background": "#FFFFFF"
+    },
+    {
+      "name": "native-zoom-150",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1.5,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "system",
+      "background": "#FFFFFF"
+    },
+    {
+      "name": "settings-dark",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "dark",
+      "background": "#202127"
+    },
+    {
+      "name": "settings-light",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "light",
+      "background": "#FFFFFF"
+    },
+    {
+      "name": "reopened-dark",
+      "visible": true,
+      "title": "ColloSys",
+      "nativeHandle": true,
+      "applicationMenu": false,
+      "menuVisible": false,
+      "maximized": false,
+      "zoom": 1,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2,
+      "nativeTheme": "dark",
+      "background": "#202127"
+    }
+  ],
+  "build": {
+    "version": 1,
+    "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+    "dirty": true,
+    "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+  },
+  "limits": "Windows native Electron tested. Zoom is actual webContents 1.25/1.5; displayScale records OS DPI. OS DPI setting was not changed. No provider credentials, so real external OAuth round trip remains unverified."
+}

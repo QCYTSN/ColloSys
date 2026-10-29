@@ -24,6 +24,7 @@ const localFonts = [["Regular", 400], ["Medium", 500], ["SemiBold", 600], ["Bold
     `@font-face{font-family:'Fraunces';font-style:${style};font-weight:100 900;font-display:swap;src:url('/@fs/${path.resolve(here, `fonts/${face}.ttf`).replaceAll("\\", "/")}') format('truetype');}`
   ).join("");
 const backend = process.env.COLLOSYS_CODECAST_BACKEND;
+const productBuild = appMode ? JSON.parse(readFileSync(path.resolve(here, '../../../.local/codecast-app/product-public/collo-build.json'), 'utf8')) : null;
 if (!backend || new URL(backend).hostname !== "127.0.0.1") {
   throw new Error("An explicit loopback Codecast backend is required.");
 }
@@ -51,7 +52,8 @@ export default defineConfig({
     "import.meta.env.VITE_SENTRY_DSN": '""',
     "import.meta.env.VITE_GOOGLE_ADS_SEND_TO": '""',
     "import.meta.env.VITE_CODECAST_INGEST_KEY": '""',
-    __CODECAST_BUILD__: JSON.stringify({ sha: "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8", mode: "local-reference", builtAt: "2026-10-23" }),
+    __COLLOSYS_BUILD__: JSON.stringify(productBuild),
+    __CODECAST_BUILD__: JSON.stringify(productBuild ? { ...productBuild, sha: productBuild.commit, mode: 'collosys-local' } : { sha: "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8", mode: "local-reference" }),
   },
   plugins: [
     react(), appMode ? {
@@ -95,7 +97,10 @@ export default defineConfig({
     ...Object.fromEntries(Object.entries(sharedResolve.alias).map(([key, value]) => [key, appMode && path.isAbsolute(value) ? value.replace(originalRoot, webRoot) : value])),
     // Dependency junctions point at the immutable install. Product auth must
     // resolve the prepared source so owned storage patches reach the bundle.
-    ...(appMode ? { "@platform/auth/web": path.resolve(webRoot, '../../platform/packages/auth/src/web/index.ts') } : {}),
+    ...(appMode ? {
+      "@platform/auth/web": path.resolve(webRoot, '../../platform/packages/auth/src/web/index.ts'),
+      "@collosys/auth-runtime": path.resolve(originalRoot, '../convex/node_modules/@convex-dev/auth/dist/react/client.js'),
+    } : {}),
   } },
   css: { postcss: webRoot },
   cacheDir: path.join(webRoot, appMode ? "node_modules/.vite-collo-app" : "node_modules/.vite-collo"),

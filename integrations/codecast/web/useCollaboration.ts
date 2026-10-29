@@ -7,6 +7,7 @@ import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { useServerAuthState } from '../hooks/useServerAuthSettled';
 import { authPrincipal, useAuthPrincipal } from '../lib/authPrincipal';
 import { clearProjectViews } from './productViewState';
+import type { DirectorySummary } from './productContracts';
 import {
   assembleCheckpoint,
   bridgeHead,
@@ -91,7 +92,7 @@ export function useCollaboration(projectId: string, currentEventId: string | nul
         }
       : 'skip',
   );
-  const roster = useQueryNoThrow((api as any).collo.workspaces, allowed ? { projectId } : 'skip');
+  const roster = useQueryNoThrow((api as any).colloDirectories.list, allowed ? { projectId } : 'skip');
   const detail = useQueryNoThrow(
     (api as any).collo.eventById,
     allowed && currentEventId ? { projectId, eventId: currentEventId } : 'skip',
@@ -182,9 +183,12 @@ export function useCollaboration(projectId: string, currentEventId: string | nul
   useEffect(() => {
     if (!roster.data || !workspace || !isLive() || refused) return;
     const store = useInboxStore.getState();
-    const rows: WorkspaceRow[] = roster.data.map((row: WorkspaceRow) => ({
-      ...row,
-      _id: cacheId(projectId, row.workspaceId),
+    const rows: WorkspaceRow[] = roster.data.map((row: DirectorySummary) => ({
+      workspaceId: row.directoryId,
+      userId: row.ownerId,
+      label: row.label,
+      own: row.ownedByViewer,
+      _id: cacheId(projectId, row.directoryId),
       projectId,
       workspace,
     }));

@@ -1,0 +1,446 @@
+{
+  "trace": "docs/product-ui/identity-motion/evidence/before/production/runtime-trace.json.gz",
+  "inclusiveTimelineMs": [
+    [
+      "RunTask",
+      [
+        169262,
+        51975.0209999801,
+        419.399
+      ]
+    ],
+    [
+      "FunctionCall",
+      [
+        14845,
+        5751.99400000002,
+        247.743
+      ]
+    ],
+    [
+      "GPUTask",
+      [
+        1441,
+        2789.764999999996,
+        28.087
+      ]
+    ],
+    [
+      "EventDispatch",
+      [
+        3610,
+        2241.5769999999975,
+        212.712
+      ]
+    ],
+    [
+      "BackgroundJSStreamManager::RunScriptStreamingTask",
+      [
+        810,
+        1313.6919999999989,
+        131.853
+      ]
+    ],
+    [
+      "v8.parseOnBackground",
+      [
+        810,
+        1301.9939999999992,
+        131.845
+      ]
+    ],
+    [
+      "Paint",
+      [
+        11318,
+        1258.308999999983,
+        5.388
+      ]
+    ],
+    [
+      "UpdateLayoutTree",
+      [
+        1542,
+        1128.7390000000016,
+        35.528
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundParsing",
+      [
+        880,
+        992.1119999999999,
+        131.836
+      ]
+    ],
+    [
+      "Layout",
+      [
+        450,
+        636.7250000000003,
+        40.414
+      ]
+    ],
+    [
+      "V8.GC_SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL",
+      [
+        153,
+        400.30099999999993,
+        5.355
+      ]
+    ],
+    [
+      "PrePaint",
+      [
+        6040,
+        391.3210000000016,
+        2.367
+      ]
+    ],
+    [
+      "v8.evaluateModule",
+      [
+        60,
+        318.5470000000001,
+        63.807
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundWaiting",
+      [
+        70,
+        303.59800000000007,
+        30.816
+      ]
+    ],
+    [
+      "V8.GC_MC_BACKGROUND_MARKING",
+      [
+        53,
+        284.10400000000004,
+        11.157
+      ]
+    ],
+    [
+      "FireAnimationFrame",
+      [
+        2125,
+        251.50300000000038,
+        1.871
+      ]
+    ],
+    [
+      "Layerize",
+      [
+        1741,
+        232.33099999999968,
+        1.739
+      ]
+    ],
+    [
+      "Commit",
+      [
+        1961,
+        223.45999999999987,
+        4.204
+      ]
+    ],
+    [
+      "RasterTask",
+      [
+        1861,
+        223.0929999999998,
+        1.568
+      ]
+    ],
+    [
+      "TimerFire",
+      [
+        145,
+        206.42099999999982,
+        36.144
+      ]
+    ],
+    [
+      "v8.produceModuleCache",
+      [
+        193,
+        118.11300000000014,
+        31.106
+      ]
+    ],
+    [
+      "MinorGC",
+      [
+        17,
+        95.02900000000001,
+        9.986
+      ]
+    ]
+  ],
+  "inclusiveFunctionsMs": [
+    [
+      " http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      [
+        1422,
+        2301.2319999999963,
+        247.743
+      ]
+    ],
+    [
+      "Au http://127.0.0.1:3407/assets/client-BNkvYu7a.js:9",
+      [
+        563,
+        2066.126000000001,
+        223.068
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-DlttVSaU.js:1",
+      [
+        202,
+        317.01100000000014,
+        210.525
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1439",
+      [
+        12,
+        109.515,
+        10.817
+      ]
+    ],
+    [
+      "fd http://127.0.0.1:3407/assets/client-BNkvYu7a.js:25",
+      [
+        1028,
+        101.49900000000041,
+        6.44
+      ]
+    ],
+    [
+      "a http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1515",
+      [
+        3,
+        95.683,
+        33.404
+      ]
+    ],
+    [
+      "sample :6",
+      [
+        1741,
+        91.19300000000032,
+        1.131
+      ]
+    ],
+    [
+      "t.onmessage http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:63",
+      [
+        186,
+        58.467,
+        6.691
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:44",
+      [
+        956,
+        56.390000000000086,
+        4.008
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-B1KyGc9i.js:1",
+      [
+        387,
+        54.95299999999999,
+        0.438
+      ]
+    ],
+    [
+      "jc http://127.0.0.1:3407/assets/client-BNkvYu7a.js:25",
+      [
+        2995,
+        48.237000000000265,
+        0.97
+      ]
+    ],
+    [
+      "listener :8178",
+      [
+        302,
+        45.28600000000003,
+        2.785
+      ]
+    ],
+    [
+      "nd http://127.0.0.1:3407/assets/client-BNkvYu7a.js:25",
+      [
+        1310,
+        37.84200000000003,
+        0.506
+      ]
+    ],
+    [
+      "C1 http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      [
+        2,
+        35.448,
+        35.326
+      ]
+    ],
+    [
+      "je http://127.0.0.1:3407/assets/react-resizable-panels-B1KyGc9i.js:1",
+      [
+        82,
+        28.117,
+        1.57
+      ]
+    ],
+    [
+      "k http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1336",
+      [
+        12,
+        27.924,
+        27.524
+      ]
+    ],
+    [
+      "kl http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:44",
+      [
+        227,
+        27.813,
+        0.546
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/boot-wh8dodQh.js:5",
+      [
+        9,
+        27.012999999999998,
+        15.82
+      ]
+    ],
+    [
+      "n8 http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:82",
+      [
+        27,
+        22.672,
+        1.331
+      ]
+    ],
+    [
+      "raf :7521",
+      [
+        100,
+        17.34,
+        1.066
+      ]
+    ]
+  ],
+  "cpuLeafSamples": [
+    [
+      "B1 http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      777
+    ],
+    [
+      "Pm http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1336",
+      280
+    ],
+    [
+      " http://127.0.0.1:3407/assets/ConversationView-DPqbmswY.js:25",
+      263
+    ],
+    [
+      "Ul http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      232
+    ],
+    [
+      "qn http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      226
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:62",
+      223
+    ],
+    [
+      "o http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1515",
+      203
+    ],
+    [
+      "$w http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:40",
+      155
+    ],
+    [
+      "_1 http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      153
+    ],
+    [
+      "gc http://127.0.0.1:3407/assets/page-C39ndzqN.js:1",
+      149
+    ],
+    [
+      "Gt http://127.0.0.1:3407/assets/page-C39ndzqN.js:1",
+      132
+    ],
+    [
+      "getMaxScrollOffset http://127.0.0.1:3407/assets/index-DlttVSaU.js:1",
+      114
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-HK39yoK1.js:44",
+      108
+    ],
+    [
+      "Qa http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      108
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1336",
+      105
+    ],
+    [
+      "Nn http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      103
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-Boa-cbhs.js:2",
+      96
+    ],
+    [
+      "al http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      94
+    ],
+    [
+      "c http://127.0.0.1:3407/assets/index-Coa2WQPb.js:1501",
+      94
+    ],
+    [
+      "um http://127.0.0.1:3407/assets/DashboardLayout-BskgrWKS.js:30",
+      94
+    ],
+    [
+      "Kt http://127.0.0.1:3407/assets/client-BNkvYu7a.js:24",
+      92
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-B1KyGc9i.js:1",
+      84
+    ],
+    [
+      "Gh http://127.0.0.1:3407/assets/client-BNkvYu7a.js:25",
+      84
+    ],
+    [
+      " http://127.0.0.1:3407/assets/DashboardLayout-BskgrWKS.js:30",
+      83
+    ],
+    [
+      "v http://127.0.0.1:3407/assets/DashboardLayout-BskgrWKS.js:16",
+      72
+    ]
+  ],
+  "note": "Inclusive timeline durations overlap and cannot be summed as CPU time. CPU samples are sampled leaf frames, not exact timings."
+}

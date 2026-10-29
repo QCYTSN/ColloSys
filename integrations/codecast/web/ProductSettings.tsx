@@ -7,6 +7,7 @@ import { Button } from '../components/ui/button';
 import { Logo } from './ProductLogo';
 import { AgentBadge } from './AgentBadge';
 import { productBrand } from './productBrand';
+import { productBuild } from './productBuild';
 import { isPaired, localRequest } from './local';
 import type { LocalDirectory } from './workspaceTypes';
 
@@ -40,6 +41,7 @@ export function ProductAbout() {
         </div>
       </section>
       <footer className="collo-about-credit">{productBrand.attribution}</footer>
+      <details className="collo-build-details"><summary>Build diagnostics</summary><dl><dt>Commit</dt><dd>{productBuild.commit}</dd><dt>Source</dt><dd>{productBuild.dirty ? 'Local changes included' : 'Committed source'}</dd><dt>Resource fingerprint</dt><dd>{productBuild.fingerprint}</dd></dl></details>
     </div>
   );
 }

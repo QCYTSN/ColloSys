@@ -1,0 +1,405 @@
+{
+  "at": "2026-10-29T11:28:57.955Z",
+  "checks": [
+    "Overview query failure preserves successful sections and retry restores the failed query",
+    "Slow handoff submission locks the reviewed draft and cannot clear a later form",
+    "New URL source intent survives the previous pending submission",
+    "Normal close follows actual CSS duration; quick reopen and cancellation retain valid detail",
+    "Programmatic left and right panel toggles share intermediate geometry",
+    "Changing a reviewed policy or checkpoint requires a new review",
+    "Recovery route remains reachable with an existing identity and clears durable sign-in explicitly"
+  ],
+  "metrics": [
+    {
+      "auth": {
+        "weight": "500",
+        "size": "30px",
+        "tracking": "-1.05px",
+        "family": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif"
+      }
+    },
+    {
+      "panel": "sidebar",
+      "frames": [
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 207.40625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 170.125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 106.609375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 52.703125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 42.15625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 27.09375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 13.484375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 5.96875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 3.046875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 1.234375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0.28125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        }
+      ]
+    },
+    {
+      "panel": "session-list",
+      "frames": [
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 52.65625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 155.9375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 197.796875,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 291.59375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 313.40625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 321.375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 333.140625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 337.46875,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 343.953125,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 348.203125,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 349.6875,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 351.640625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 352.203125,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

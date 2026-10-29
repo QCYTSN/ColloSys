@@ -1,0 +1,346 @@
+{
+  "build": {
+    "source": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f",
+    "prepared": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f",
+    "built": {
+      "version": 1,
+      "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+      "dirty": true,
+      "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+    },
+    "running": {
+      "version": 1,
+      "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+      "dirty": true,
+      "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+    }
+  },
+  "environment": {
+    "platform": "win32",
+    "release": "10.0.26200",
+    "cpu": "Intel(R) Core(TM) Ultra 5 125H",
+    "node": "v24.15.0",
+    "browser": "Chrome 156",
+    "electron": "44.3.0",
+    "browserViewport": "1440 x 900 CSS, DPR 1",
+    "nativeDisplayScale": 2
+  },
+  "required": {
+    "typecheck": "passed",
+    "unitTests": "69/69",
+    "build": "passed, 1m44s; existing warnings retained",
+    "preparedIntegration": "77 owned files passed",
+    "immutableUpstream": "9854 files, 0 failures"
+  },
+  "suites": [
+    {
+      "name": "Project identity and appearance",
+      "command": "node tests/product-identity-flows.mjs --production",
+      "status": "implemented and verified",
+      "boundary": "actual production + backend",
+      "evidence": "docs/product-ui/identity-motion/evidence/flows-production/results.json",
+      "checks": [
+        "Create submits name, icon and color atomically to the real backend",
+        "Cancel keeps persisted identity; editing and reload retain one selected mark",
+        "Invalid choices, stale revisions and cross-account writes are rejected",
+        "Shared trigger exposes pressed/open state, Esc restores focus",
+        "Keyboard selection and a real concurrent save retain draft and support retry",
+        "Appearance changes bootstrap, system response and another window"
+      ]
+    },
+    {
+      "name": "Login layouts",
+      "command": "node tests/product-identity-visual.mjs --production",
+      "status": "implemented and verified",
+      "boundary": "actual production; missing-provider and field errors",
+      "evidence": "docs/product-ui/identity-motion/evidence/login-production/results.json",
+      "checks": [
+        "1920/1440/1280/960/390 light and dark: form operable, no horizontal overflow, wide layout has substantive left scene",
+        "Actual missing provider configuration and actual invalid password errors remain in the formal form",
+        "Reduced-motion disables scene animation"
+      ]
+    },
+    {
+      "name": "Windows frame and shortcuts",
+      "command": "node tests/product-identity-native.mjs",
+      "status": "implemented and verified",
+      "boundary": "actual Windows Electron",
+      "evidence": "docs/product-ui/identity-motion/evidence/native/results.json",
+      "checks": [
+        "Actual Windows native frame: no application/menu bar, maximize/unmaximize, 125%/150% webContents zoom, Ctrl+0 and native editing shortcuts",
+        "Real renderer IPC rejects arbitrary URL and unsupported contract version",
+        "Ctrl+, opens real settings; light/dark updates native background and saved native appearance survives relaunch"
+      ]
+    },
+    {
+      "name": "Startup gate",
+      "command": "node tests/product-identity-startup.mjs",
+      "status": "implemented and verified",
+      "boundary": "actual backend plus controlled slow transport",
+      "evidence": "docs/product-ui/identity-motion/evidence/startup/results.json",
+      "checks": [
+        "Unsigned deep link retains path, query and anchor without mounting protected UI",
+        "Untrusted or expired local token cannot expose workspace content",
+        "Untrusted or expired local token cannot expose workspace content",
+        "A stale durable token cannot reopen an explicitly signed-out device",
+        "Slow identity service has recovery controls and no protected flash (controlled transport)",
+        "Real server session revocation hides already mounted workspace immediately on query update",
+        "Forged and expired OAuth callback show a retryable failure with no workspace"
+      ]
+    },
+    {
+      "name": "Refresh/sign-out and cold offline",
+      "command": "node tests/product-identity-auth-races.mjs",
+      "status": "implemented and verified",
+      "boundary": "real SDK + controlled transport",
+      "evidence": "docs/product-ui/identity-motion/evidence/auth-races/results.json",
+      "checks": [
+        "Actual SDK refresh response, held after real server response, released after sibling logout cannot restore JWT or workspace",
+        "Controlled offline cold load needs consent for matching unexpired verified identity; saved local workspace remains readable"
+      ]
+    },
+    {
+      "name": "Relay and migrations",
+      "command": "node tests/product-identity-security.mjs",
+      "status": "implemented and verified",
+      "boundary": "real backend; seeded external verification proof",
+      "evidence": "docs/product-ui/identity-motion/evidence/security/results.json",
+      "checks": [
+        "Missing provider configuration is rejected by the real backend",
+        "Fresh provider proof required; anonymous approval and unapproved claims rejected",
+        "One authorized claim issues a real same-account ColloSys session; replay/wrong secret fail",
+        "Cancelled, expired and fabricated requests cannot yield sessions",
+        "Revoking the authorizing session prevents a later desktop claim",
+        "Directory migration preserves IDs and references; repeated execution does not rewrite rows",
+        "Existing project identity migration is idempotent and rejects cross-account mutation",
+        "An interrupted directory migration rolls back earlier writes in the same real transaction"
+      ]
+    },
+    {
+      "name": "Account cycles",
+      "command": "node tests/product-auth-continuity.mjs",
+      "status": "implemented and verified",
+      "boundary": "three real A/B/A and sibling sign-out cycles",
+      "evidence": "docs/product-ui/identity-motion/evidence/regression/account-cycles/results.json",
+      "checks": [
+        "Real logout cycle 1: both windows clear, reloading stays signed out",
+        "Real logout cycle 2: both windows clear, reloading stays signed out",
+        "Real logout cycle 3: both windows clear, reloading stays signed out"
+      ]
+    },
+    {
+      "name": "Real integration",
+      "command": "node tests/codecast-integration.mjs",
+      "status": "implemented and verified",
+      "boundary": "real backend + independent on-disk roots",
+      "evidence": ".local/codecast-app/acceptance-1793273174186/result.json",
+      "checks": [
+        "Product entry and former website URLs reach local sign-in without marketing pages",
+        "Real Codecast accounts, team and shared project",
+        "Two real directories connected using scoped device credentials",
+        "Manual additions, modifications and deletions reach the other member",
+        "Original password login and project Workspaces tab render for both members",
+        "Pause queues real edits; restart keeps queue and reconnect replays",
+        "Duplicate retry is acknowledged once; spoofing, sensitive files and outsiders rejected",
+        "Stale restore rejected; confirmed restore backs up A and leaves B/index untouched",
+        "Real Codex-format fixture is explicitly test data and read through the actual adapter",
+        "Original UI restore preview opens real on-disk checkpoint",
+        "Cold short project links outside the active workspace resolve and switch normally",
+        "Ten independent local WebSocket clients receive a real saved-file event",
+        "Signing out invalidates old browser JWT for local access and device minting"
+      ]
+    },
+    {
+      "name": "Backup and recovery",
+      "command": "node tests/codecast-backend-completion.mjs",
+      "status": "implemented and verified",
+      "boundary": "real encrypted bytes + isolated TEST records",
+      "evidence": ".local/codecast-app/backend-completion-1793273232033/result.json",
+      "checks": [
+        "Real connector encrypts a captured checkpoint, Convex persists verified bytes, retries deduplicate and teammate/outsider reads fail",
+        "Wrong key fails; encrypted recovery exports to a new registered directory while both original working directories remain unchanged",
+        "Concurrent quota reservations allow one final slot, same-ID retries do not charge twice, corrupted bytes never become complete",
+        "Two concurrent 24 MiB uploads produce one durable manifest; streamed download matches the full digest and deletion revokes access",
+        "Delete/recreate and device revocation during streamed upload cannot publish stale backup bytes",
+        "Captured session pages, native task comments, frozen context, idempotent sending and concurrent handoff responses persist consistently",
+        "A moved task prevents acceptance but does not trap the recipient in a permanently pending handoff",
+        "A pre-upgrade multipart receipt is migrated before accepting more parts; duplicate paths fail without corrupting its count",
+        "Old session migration advances across 19 MiB of checkpoint history in bounded transactions without duplicate projection",
+        "Removing a member immediately revokes captured session, handoff and device backup access"
+      ]
+    },
+    {
+      "name": "Native authorization",
+      "command": "npm run test:backend:native",
+      "status": "implemented and verified",
+      "boundary": "actual prepared service and policy cases",
+      "evidence": ".local/codecast-app/native-backend-audit-1793273612046/result.json",
+      "checks": [
+        "owned patches match pinned source and parse as TypeScript (not a full typecheck)",
+        "removed team owner and assignee denied; personal explicit grants preserved",
+        "deleted account bearer verification and setup exchange fail closed",
+        "assignee membership check does not turn personal sharing into a team rule",
+        "native launch uses task authorization and queued revoked push is dropped before scheduling",
+        "native web, dispatch and CLI reject outside-team assignee; unauthorized subscription denied",
+        "private task launch denied via native web, CLI and dispatch",
+        "membership removal revokes creator, assignee, CLI writes, sync cargo and new comment notifications",
+        "account deletion disables the 51st credential, device-token factory, JWT and team seat",
+        "revoked session dispatch explicitly preserves the retryable outbox contract"
+      ]
+    },
+    {
+      "name": "Native directory and restoration",
+      "command": "node tests/codecast-desktop.mjs .local/codecast-app/acceptance-1793273174186",
+      "status": "implemented and verified",
+      "boundary": "actual native picker, byte restore, close and reopen",
+      "evidence": ".local/codecast-app/desktop-acceptance-1793273895357/result.json",
+      "checks": [
+        "Real independent Windows window uses original desktop bridge with OS sandbox and isolation",
+        "Desktop rejects screen capture, off-origin navigation and non-main-frame IPC",
+        "Real password sign-in and original project workbench operate inside the desktop",
+        "Actual Windows folder picker opens and Cancel leaves the directory unselected",
+        "Native directory-picker bridge and explicit sharing consent create a real connector",
+        "Saved file changes render in the desktop and confirmed preview restores actual bytes",
+        "Closing the last native window exits and reopening keeps the signed-in profile",
+        "A directory deep link selects its authorized directory after reopening",
+        "Pending-change close prompt honors Keep open and explicit Close now"
+      ]
+    },
+    {
+      "name": "Persistence after actual service restart",
+      "command": "node tests/codecast-backend-completion.mjs --after-restart .local/codecast-app/backend-completion-1793273232033",
+      "status": "implemented and verified",
+      "evidence": ".local/codecast-app/backend-completion-1793273232033/restart-result.json",
+      "checks": [
+        "Backend restart preserves encrypted bytes, completed receipt, session pagination and accepted handoff"
+      ]
+    },
+    {
+      "name": "Development login and labelled state preview",
+      "command": "node tests/product-identity-visual.mjs",
+      "status": "verified, provider waiting state is simulation only",
+      "evidence": "docs/product-ui/identity-motion/evidence/login-development/results.json",
+      "checks": [
+        "1920/1440/1280/960/390 light and dark: form operable, no horizontal overflow, wide layout has substantive left scene",
+        "Actual missing provider configuration and actual invalid password errors remain in the formal form",
+        "DEV ONLY controlled waiting/cancel component preview; no external provider authentication occurred",
+        "Reduced-motion disables scene animation"
+      ]
+    }
+  ],
+  "retainedRegression": [
+    {
+      "name": "project-appearance",
+      "command": "node tests/product-identity-flows.mjs --production",
+      "started": "2026-10-29T11:25:29.993Z",
+      "finished": "2026-10-29T11:25:54.143Z",
+      "exit": 0
+    },
+    {
+      "name": "login-visual",
+      "command": "node tests/product-identity-visual.mjs --production",
+      "started": "2026-10-29T11:25:54.145Z",
+      "finished": "2026-10-29T11:25:58.875Z",
+      "exit": 0
+    },
+    {
+      "name": "native-window",
+      "command": "node tests/product-identity-native.mjs",
+      "started": "2026-10-29T11:25:58.878Z",
+      "finished": "2026-10-29T11:26:13.647Z",
+      "exit": 0
+    },
+    {
+      "name": "real-integration",
+      "command": "node tests/codecast-integration.mjs",
+      "started": "2026-10-29T11:26:13.649Z",
+      "finished": "2026-10-29T11:27:11.931Z",
+      "exit": 0
+    },
+    {
+      "name": "backend-recovery",
+      "command": "node tests/codecast-backend-completion.mjs",
+      "started": "2026-10-29T11:27:11.933Z",
+      "finished": "2026-10-29T11:28:06.657Z",
+      "exit": 0
+    },
+    {
+      "name": "continuity",
+      "command": "node tests/product-ui-craft.mjs",
+      "started": "2026-10-29T11:28:06.658Z",
+      "finished": "2026-10-29T11:28:58.587Z",
+      "exit": 0
+    },
+    {
+      "name": "detail",
+      "command": "node tests/product-ui-craft-detail.mjs",
+      "started": "2026-10-29T11:28:58.589Z",
+      "finished": "2026-10-29T11:29:07.871Z",
+      "exit": 0
+    },
+    {
+      "name": "handoffs",
+      "command": "node tests/product-ui-completion-handoffs.mjs",
+      "started": "2026-10-29T11:29:07.873Z",
+      "finished": "2026-10-29T11:29:46.297Z",
+      "exit": 0
+    },
+    {
+      "name": "storage-race",
+      "command": "node tests/product-ui-craft-storage-race.mjs",
+      "started": "2026-10-29T11:29:46.300Z",
+      "finished": "2026-10-29T11:30:27.738Z",
+      "exit": 0
+    },
+    {
+      "name": "access",
+      "command": "node tests/product-ui-refinement-access.mjs",
+      "started": "2026-10-29T11:30:27.740Z",
+      "finished": "2026-10-29T11:30:48.799Z",
+      "exit": 0
+    },
+    {
+      "name": "durable-auth",
+      "command": "node tests/product-auth-storage.mjs",
+      "started": "2026-10-29T11:30:48.801Z",
+      "finished": "2026-10-29T11:30:50.301Z",
+      "exit": 0
+    },
+    {
+      "name": "startup",
+      "command": "node tests/product-identity-startup.mjs",
+      "started": "2026-10-29T11:30:50.303Z",
+      "finished": "2026-10-29T11:31:18.023Z",
+      "exit": 0
+    },
+    {
+      "name": "auth-races",
+      "command": "node tests/product-identity-auth-races.mjs",
+      "started": "2026-10-29T11:31:18.025Z",
+      "finished": "2026-10-29T11:31:42.738Z",
+      "exit": 0
+    }
+  ],
+  "providerPolicy": {
+    "command": "npx --no-install esbuild tests/product-identity-provider-policy.mjs --bundle --platform=node --format=esm --outfile=.local/identity-provider-policy.mjs; node .local/identity-provider-policy.mjs",
+    "checks": 4,
+    "status": "synthetic provider data with actual installed policy",
+    "evidence": ".local/identity-provider-policy.log"
+  },
+  "externalProviders": {
+    "github": "implemented, no client credentials, real provider flow unverified",
+    "google": "implemented, no client credentials, real provider flow unverified"
+  },
+  "captionPointerDrag": {
+    "status": "unverified",
+    "reason": "OS foreground/target-window requirement was not satisfied; native pointer test aborted. See local test log. No other window was clicked."
+  },
+  "limits": [
+    "OS DPI was not changed",
+    "Multiple physical monitors not tested",
+    "Current service and desktop origins remain loopback only",
+    "Aesthetic acceptance remains separate",
+    "Performance results are measured separately; no blanket 100ms/60fps claim"
+  ],
+  "performance": "evidence/performance-comparison.json"
+}

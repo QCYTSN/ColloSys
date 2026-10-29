@@ -1,0 +1,4 @@
+{
+  "status": "unverified",
+  "reason": "OS foreground/target-window requirement was not satisfied; native pointer test aborted. See local test log. No other window was clicked."
+}

@@ -33,7 +33,7 @@ export async function prepareDesktop() {
   // Bundle the actual upstream bridge so it works with Electron's OS sandbox;
   // no renderer gets Node or a generic IPC transport.
   await build({
-    entryPoints: [path.join(destination, 'src/preload.js')],
+    entryPoints: [path.join(root, 'integrations/codecast/desktop/preload.cjs')],
     outfile: path.join(destination, 'preload.cjs'),
     bundle: true,
     platform: 'node',
@@ -57,7 +57,7 @@ export async function prepareDesktop() {
             .update(await readFile(configFile))
             .digest('hex'),
         },
-        preload: 'Original preload and bridge bundled with esbuild for sandboxed renderers',
+        preload: 'Owned product preload reuses the original bridge once, with versioned auth/appearance IPC and a read-only legacy alias',
       },
       null,
       2,

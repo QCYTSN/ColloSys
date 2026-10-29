@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "1920/1440/1280/960/390 light and dark: form operable, no horizontal overflow, wide layout has substantive left scene",
+    "Actual missing provider configuration and actual invalid password errors remain in the formal form",
+    "Reduced-motion disables scene animation"
+  ],
+  "build": {
+    "version": 1,
+    "commit": "c48ce92fac30778181a30b2fde51144c4b2ac624",
+    "dirty": true,
+    "fingerprint": "f613f7df01ab27e34819ed40b0ae4715c4f0fcd35332fff6457759207f847f2f"
+  }
+}

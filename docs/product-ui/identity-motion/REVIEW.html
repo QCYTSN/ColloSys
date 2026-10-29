@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>ColloSys · 本轮运行证据</title
+  ><style>
+    body {
+      margin: 0;
+      background: #f1f1f4;
+      color: #262830;
+      font:
+        15px/1.7 system-ui,
+        sans-serif;
+    }
+    main {
+      max-width: 1200px;
+      margin: auto;
+      padding: 32px;
+    }
+    h1 {
+      font-size: 28px;
+    }
+    nav {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 24px;
+    }
+    button,
+    a {
+      color: inherit;
+    }
+    button {
+      padding: 8px 14px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      background: white;
+      cursor: pointer;
+    }
+    button[aria-pressed='true'] {
+      background: #7568b6;
+      color: white;
+    }
+    img,
+    video {
+      display: block;
+      max-width: 100%;
+      border-radius: 9px;
+      background: white;
+    }
+    figcaption {
+      padding: 16px 0;
+    }
+    small {
+      color: #565c68;
+    }
+    section {
+      margin-bottom: 32px;
+    }
+    a {
+      margin-right: 14px;
+    }
+  </style>
+  <main>
+    <h1>ColloSys · 启动、身份与交互</h1>
+    <p>
+      这些是现有产品的运行截图与录屏。提供商凭据尚未配置；标为“组件预览”的画面不能证明 OAuth
+      登录成功。功能测试与视觉判断分别验收。
+    </p>
+    <nav id="choices"></nav>
+    <figure>
+      <img id="still" alt="当前选择的实际运行截图" />
+      <figcaption id="caption"></figcaption>
+    </figure>
+    <section>
+      <h2>连续流程</h2>
+      <label
+        >录屏
+        <select id="videos">
+          <option value="evidence/after/production/flow.webm">
+            生产：冷启动、登录、下拉、长会话、Diff
+          </option>
+          <option value="evidence/flows-production/flow.webm">
+            生产：项目图标颜色、保存刷新、主题和多窗口
+          </option>
+          <option value="evidence/login-production/states.webm">
+            生产：登录布局、主题、实际错误状态
+          </option>
+          <option value="evidence/login-development/states.webm">
+            开发：含明确标记的等待/取消组件预览
+          </option>
+          <option value="evidence/regression/account-cycles/continuity.webm">
+            真实登录/退出与跨窗口连续性
+          </option>
+        </select></label
+      ><video id="video" controls preload="none" src="evidence/after/production/flow.webm"></video>
+    </section>
+    <section>
+      <h2>可核对的记录</h2>
+      <p>
+        <a href="EXECUTION.md">执行与验收记录</a><a href="MIGRATION.md">迁移及兼容边界</a
+        ><a href="evidence/performance-comparison.json">前后性能指标</a
+        ><a href="evidence/native/results.json">真实 Windows 验证</a
+        ><a href="evidence/security/results.json">授权领取和迁移测试</a>
+      </p>
+      <small
+        >录屏中的 TEST 账号、项目、消息和目录仅为隔离验收数据。原生截图来自目标 Windows
+        窗口；125%/150% 指真实 Electron 页面缩放，OS DPI 单独记录。</small
+      >
+    </section>
+  </main>
+  <script>
+    const choices = [
+      [
+        '登录 · 浅色',
+        'evidence/login-production/light-1440.png',
+        '正式生产入口，1440 × 900 CSS 像素。',
+      ],
+      [
+        '登录 · 深色',
+        'evidence/login-production/dark-1440.png',
+        '深色主题使用同一份外观偏好和初始化。',
+      ],
+      ['窄窗口', 'evidence/login-production/light-390.png', '窄窗口折叠装饰场景；表单保持可用。'],
+      [
+        '配置缺失',
+        'evidence/login-production/provider-unavailable.png',
+        '真实服务返回未配置，邮箱密码路径仍可用。',
+      ],
+      [
+        '等待预览',
+        'evidence/login-development/waiting-component-preview.png',
+        '仅开发组件状态预览；未发生外部提供商认证。',
+      ],
+      [
+        '项目标识',
+        'evidence/flows-production/project-draft.png',
+        '真实创建表单：图标、名称、颜色一次提交。',
+      ],
+      [
+        '保存冲突',
+        'evidence/flows-production/identity-concurrent-save.png',
+        '真实后端并发修订冲突，保留草稿并支持重新加载。',
+      ],
+      ['应用外观', 'evidence/flows-production/appearance.png', '真实设置页和持久化主题/强调色。'],
+      [
+        'Windows',
+        'evidence/native/normal-light-window.png',
+        '实际 Windows 原生窗口；无传统 File/Edit 菜单栏。',
+      ],
+      [
+        '原生 150%',
+        'evidence/native/native-zoom-150-window.png',
+        '实际 Electron webContents zoom=1.5，非浏览器 DPR 冒充。',
+      ],
+    ];
+    const nav = document.querySelector('#choices');
+    function choose(i) {
+      document.querySelector('#still').src = choices[i][1];
+      document.querySelector('#caption').textContent = choices[i][2];
+      [...nav.children].forEach((b, n) => b.setAttribute('aria-pressed', String(n === i)));
+    }
+    choices.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.textContent = c[0];
+      b.onclick = () => choose(i);
+      nav.append(b);
+    });
+    choose(0);
+    document.querySelector('#videos').onchange = (e) => {
+      const v = document.querySelector('#video');
+      v.src = e.target.value;
+      v.load();
+    };
+  </script>
+</html>

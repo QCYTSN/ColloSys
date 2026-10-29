@@ -1,0 +1,93 @@
+[
+  {
+    "name": "project-appearance",
+    "command": "node tests/product-identity-flows.mjs --production",
+    "started": "2026-10-29T11:25:29.993Z",
+    "finished": "2026-10-29T11:25:54.143Z",
+    "exit": 0
+  },
+  {
+    "name": "login-visual",
+    "command": "node tests/product-identity-visual.mjs --production",
+    "started": "2026-10-29T11:25:54.145Z",
+    "finished": "2026-10-29T11:25:58.875Z",
+    "exit": 0
+  },
+  {
+    "name": "native-window",
+    "command": "node tests/product-identity-native.mjs",
+    "started": "2026-10-29T11:25:58.878Z",
+    "finished": "2026-10-29T11:26:13.647Z",
+    "exit": 0
+  },
+  {
+    "name": "real-integration",
+    "command": "node tests/codecast-integration.mjs",
+    "started": "2026-10-29T11:26:13.649Z",
+    "finished": "2026-10-29T11:27:11.931Z",
+    "exit": 0
+  },
+  {
+    "name": "backend-recovery",
+    "command": "node tests/codecast-backend-completion.mjs",
+    "started": "2026-10-29T11:27:11.933Z",
+    "finished": "2026-10-29T11:28:06.657Z",
+    "exit": 0
+  },
+  {
+    "name": "continuity",
+    "command": "node tests/product-ui-craft.mjs",
+    "started": "2026-10-29T11:28:06.658Z",
+    "finished": "2026-10-29T11:28:58.587Z",
+    "exit": 0
+  },
+  {
+    "name": "detail",
+    "command": "node tests/product-ui-craft-detail.mjs",
+    "started": "2026-10-29T11:28:58.589Z",
+    "finished": "2026-10-29T11:29:07.871Z",
+    "exit": 0
+  },
+  {
+    "name": "handoffs",
+    "command": "node tests/product-ui-completion-handoffs.mjs",
+    "started": "2026-10-29T11:29:07.873Z",
+    "finished": "2026-10-29T11:29:46.297Z",
+    "exit": 0
+  },
+  {
+    "name": "storage-race",
+    "command": "node tests/product-ui-craft-storage-race.mjs",
+    "started": "2026-10-29T11:29:46.300Z",
+    "finished": "2026-10-29T11:30:27.738Z",
+    "exit": 0
+  },
+  {
+    "name": "access",
+    "command": "node tests/product-ui-refinement-access.mjs",
+    "started": "2026-10-29T11:30:27.740Z",
+    "finished": "2026-10-29T11:30:48.799Z",
+    "exit": 0
+  },
+  {
+    "name": "durable-auth",
+    "command": "node tests/product-auth-storage.mjs",
+    "started": "2026-10-29T11:30:48.801Z",
+    "finished": "2026-10-29T11:30:50.301Z",
+    "exit": 0
+  },
+  {
+    "name": "startup",
+    "command": "node tests/product-identity-startup.mjs",
+    "started": "2026-10-29T11:30:50.303Z",
+    "finished": "2026-10-29T11:31:18.023Z",
+    "exit": 0
+  },
+  {
+    "name": "auth-races",
+    "command": "node tests/product-identity-auth-races.mjs",
+    "started": "2026-10-29T11:31:18.025Z",
+    "finished": "2026-10-29T11:31:42.738Z",
+    "exit": 0
+  }
+]

@@ -48,6 +48,7 @@ for (const [folder, owned] of [
           paths: {
             ...parsed.options.paths,
             '@platform/auth/web': [path.join(source, 'platform/packages/auth/src/web/index.ts')],
+            '@collosys/auth-runtime': [path.join(root, 'third_party/codecast/upstream/packages/convex/node_modules/@convex-dev/auth/dist/react/client.d.ts')],
           },
         }
       : {}),

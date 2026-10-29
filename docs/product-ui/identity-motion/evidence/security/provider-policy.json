@@ -1,0 +1,9 @@
+{
+  "checks": [
+    "Installed provider config keeps login-only scopes, state/PKCE and Google nonce",
+    "Exact service callback allowlist rejects external, credential, fragment and unrelated routes",
+    "Previously verified provider subject retains its account despite changed email/display name; provider tokens are not persisted",
+    "Verified email alone cannot merge accounts; removed provider account cannot be revived"
+  ],
+  "boundary": "Synthetic provider callback/profile inputs and fake DB; actual installed product implementation. Not real OAuth verification."
+}
