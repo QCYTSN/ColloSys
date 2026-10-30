@@ -1,3 +1,5 @@
+> Historical design record. The current formal-product design contract is `docs/product-ui/DESIGN.md` (Unified Design v1, 2026-10-30). Earlier palettes, layout experiments and preview-only gates do not govern this round.
+
 # 核心工作区修订记录
 
 ## 基线与边界

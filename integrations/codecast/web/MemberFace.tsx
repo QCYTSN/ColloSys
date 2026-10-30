@@ -8,7 +8,7 @@ export function MemberFace({ id, name, size = 26 }: { id: string; name: string; 
   const fallback = (
     <span
       className={`collo-member-face tone-${tone}`}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.43) }}
+      style={{ width: size, height: size, fontSize: Math.max(12, Math.round(size * 0.43)) }}
       title={name}
     >
       {name.trim().slice(0, 1).toLocaleUpperCase()}

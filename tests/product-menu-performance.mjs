@@ -7,7 +7,10 @@ const arg = (name, fallback) =>
   process.argv.find((x) => x.startsWith(`--${name}=`))?.slice(name.length + 3) ?? fallback;
 const phase = arg('phase', 'before'),
   mode = arg('mode', 'production');
-const out = path.resolve(`docs/product-ui/menu-motion/evidence/${phase}/${mode}`);
+const out = path.resolve(
+  `${process.env.COLLOSYS_MEASUREMENT_ROOT || 'docs/product-ui/menu-motion/evidence'}/${phase}/${mode}`,
+);
+const currentMenus = phase === 'after' || process.env.COLLOSYS_CURRENT_MENU_BASELINE === '1';
 await fs.mkdir(out, { recursive: true });
 const fixture = await denseFixture();
 let seeded = false;
@@ -133,12 +136,11 @@ for (let round = 1; round <= 3; round++) {
       const trigger =
         name === 'Display' ? display : page.getByTitle('Active', { exact: true }).first();
       await trigger.evaluate((el, name) => (el.dataset.measure = name), name);
-      const selector =
-        phase === 'before'
-          ? `[data-measure="${name}"] + div`
-          : name === 'Active'
-            ? '.collo-preset-menu[data-state="open"]'
-            : '.collo-display-panel[data-state="open"]';
+      const selector = !currentMenus
+        ? `[data-measure="${name}"] + div`
+        : name === 'Active'
+          ? '.collo-preset-menu[data-state="open"]'
+          : '.collo-display-panel[data-state="open"]';
       for (let i = 0; i < 11; i++) {
         await page.evaluate((spec) => (window.__armed = spec), { name, cold: i === 0, selector });
         await trigger.click();
@@ -152,7 +154,7 @@ for (let round = 1; round <= 3; round++) {
         await expect(page.locator(selector)).toHaveCount(0);
       }
     }
-    if (phase === 'after') {
+    if (currentMenus) {
       for (let i = 0; i < 10; i++) {
         await display.click();
         const parent = page.locator('.collo-display-panel[data-state=open]');

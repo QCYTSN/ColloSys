@@ -48,7 +48,7 @@ export function ProductTabDropdown({
     <Dropdown.Root modal={false}>
       <ProductDropdownTrigger asChild>
         <ListTrigger ref={anchor.ref} title={label} aria-label={label}>
-          {Icon && <Icon size={15} aria-hidden />}
+          {Icon && <Icon size={16} aria-hidden />}
           <span className={collapse}>{label}</span>
           {!!active?.count && (
             <span className={`collo-list-count ${collapse}`}>{active.count}</span>
@@ -205,7 +205,7 @@ export function ProductDisplayMenu({
     <Popover.Root open={open} onOpenChange={setOpen}>
       <ProductPopoverTrigger asChild>
         <ListTrigger ref={anchor.ref} title="Display options" aria-label="Display options">
-          <SlidersHorizontal size={15} aria-hidden />
+          <SlidersHorizontal size={16} aria-hidden />
           <span className="cq-header-collapse">Display</span>
           <Caret />
         </ListTrigger>
@@ -270,7 +270,7 @@ export function ProductDisplayMenu({
                   title={directionLabel}
                   aria-label={directionLabel}
                 >
-                  <Direction size={15} aria-hidden />
+                  <Direction size={16} aria-hidden />
                 </ListTrigger>
               )}
             </div>
@@ -284,7 +284,7 @@ export function ProductDisplayMenu({
                 setOpen(false);
               }}
             >
-              <LinkSimple size={15} aria-hidden />
+              <LinkSimple size={16} aria-hidden />
               Copy link to this view
             </button>
           )}
@@ -326,9 +326,9 @@ export function ProductAddFilterMenu({
           data-filter-active={active || undefined}
         >
           {variant === 'header' ? (
-            <FunnelSimple size={15} aria-hidden />
+            <FunnelSimple size={16} aria-hidden />
           ) : (
-            <Plus size={15} aria-hidden />
+            <Plus size={16} aria-hidden />
           )}
           <span className={variant === 'header' ? 'cq-header-collapse' : 'cq-addfilter-label'}>
             Filter
@@ -414,7 +414,7 @@ export function ProductSegmentedDropdown({
             title={active?.title ?? active?.label}
             aria-label={active?.label ?? active?.title ?? 'Choose view'}
           >
-            {Icon && <Icon size={15} />}
+            {Icon && <Icon size={16} />}
             {active?.label}
             <Caret />
           </ListTrigger>
@@ -444,7 +444,7 @@ export function ProductSegmentedDropdown({
                     title={i.title}
                     textValue={i.label ?? i.title}
                   >
-                    {I && <I size={15} />}
+                    {I && <I size={16} />}
                     <span className="collo-option-label">{i.label ?? i.title}</span>
                     {!!i.count && <span className="collo-list-count">{i.count}</span>}
                     <Tick />

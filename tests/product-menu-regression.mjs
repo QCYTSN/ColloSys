@@ -3,7 +3,8 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { build } from 'esbuild';
-const root = 'docs/product-ui/menu-motion/evidence/regression';
+const root =
+  process.env.COLLOSYS_REGRESSION_ROOT || 'docs/product-ui/menu-motion/evidence/regression';
 await fs.mkdir(root, { recursive: true });
 const suites = [
   ['menus', ['tests/product-menu-acceptance.mjs', '--production']],

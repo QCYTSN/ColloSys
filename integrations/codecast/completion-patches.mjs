@@ -7,6 +7,11 @@ const read = (file) =>
   ).replaceAll('\r\n', '\n');
 const patch = (file, before, after) => ({ file: base + file, before, after });
 export const completionPatches = [
+  patch(
+    'components/DashboardLayout.tsx',
+    '              maxSize="50%"',
+    '              maxSize={`${Math.min(50, 280 / productPanelWidths.nav * 100)}%`}',
+  ),
   // '/' is now the workbench, not the old public homepage. Once the mature
   // durable sign-out has purged credentials, start a fresh login document so
   // a lagging server-auth render cannot return to the protected shell.
@@ -36,7 +41,7 @@ export const completionPatches = [
   patch(
     'components/DashboardLayout.tsx',
     '              minSize={180}',
-    '              minSize={`${Math.min(50, 180 / productPanelWidths.nav * 100)}%`}',
+    '              minSize={`${Math.min(50, 208 / productPanelWidths.nav * 100)}%`}',
   ),
   patch(
     'components/DashboardLayout.tsx',
@@ -74,7 +79,7 @@ export const completionPatches = [
     // group in the pinned library. Correct only the physically invalid width.
     const available = productPanelWidths.nav - (showSessionList ? 640 : 400);
     const sidebar = sidebarElRef.current;
-    if (sidebar && available >= 180 && sidebar.clientWidth > available + 1) {
+    if (sidebar && available >= 208 && sidebar.clientWidth > available + 1) {
       sidebarPanelRef.current?.resize(\`\${available}px\`);
     }
   }, [productPanelWidths.nav, productPanelWidths.rail, showSessionList]);

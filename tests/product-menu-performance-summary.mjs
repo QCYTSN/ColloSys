@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-const root = 'docs/product-ui/menu-motion/evidence';
+const root = process.env.COLLOSYS_MEASUREMENT_ROOT || 'docs/product-ui/menu-motion/evidence';
 const pct = (a, p) => (a.length ? [...a].sort((a, b) => a - b)[Math.ceil(a.length * p) - 1] : null);
 const stats = (a) => ({
   n: a.length,

@@ -19,7 +19,7 @@ const phase = flag('phase', 'before'),
   mode = flag('mode', 'production'),
   origin = flag('origin', 'http://127.0.0.1:3407');
 const out = path.resolve(
-  `docs/product-ui/menu-motion/evidence/${phase}/${mode}/flows/round-${flag('round', '1')}`,
+  `${process.env.COLLOSYS_MEASUREMENT_ROOT || 'docs/product-ui/menu-motion/evidence'}/${phase}/${mode}/flows/round-${flag('round', '1')}`,
 );
 await fs.mkdir(out, { recursive: true });
 const fixture = await denseFixture(),

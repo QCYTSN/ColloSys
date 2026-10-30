@@ -1,0 +1,3 @@
+PASS Revocation removes the real reader, open draft and scoped UI hints in both windows
+PASS Restored membership can retry and read through a fresh authorized query
+PASS Sign-out and account switch do not retain reader position or unsent draft

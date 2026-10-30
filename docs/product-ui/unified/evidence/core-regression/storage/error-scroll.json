@@ -1,0 +1,96 @@
+{
+  "calls": [
+    {
+      "target": "FORM",
+      "role": null,
+      "before": 0,
+      "top": 1773,
+      "options": {
+        "block": "nearest"
+      },
+      "at": 4455.800000011921,
+      "after": 1135
+    },
+    {
+      "target": "DIV",
+      "role": null,
+      "before": 1130,
+      "top": 635,
+      "options": {
+        "block": "nearest"
+      },
+      "at": 4909.199999988079,
+      "after": 1130
+    },
+    {
+      "target": "FORM",
+      "role": null,
+      "before": 129,
+      "top": 1574,
+      "options": {
+        "block": "nearest"
+      },
+      "at": 6182.199999988079,
+      "after": 1172
+    },
+    {
+      "target": "DIV",
+      "role": null,
+      "before": 1237,
+      "top": 528,
+      "options": {
+        "block": "nearest"
+      },
+      "at": 7638.300000011921,
+      "after": 1237
+    },
+    {
+      "target": "FORM",
+      "role": null,
+      "before": 1175,
+      "top": 641,
+      "options": {
+        "block": "nearest"
+      },
+      "at": 8338.399999976158,
+      "after": 1285
+    },
+    {
+      "target": "LABEL",
+      "role": null,
+      "before": 1350,
+      "top": 675,
+      "options": {
+        "block": "nearest",
+        "behavior": "instant"
+      },
+      "at": 9098.800000011921,
+      "after": 1350
+    },
+    {
+      "target": "LABEL",
+      "role": null,
+      "before": 1319,
+      "top": 842,
+      "options": {
+        "block": "nearest",
+        "behavior": "instant"
+      },
+      "at": 9339,
+      "after": 1396
+    },
+    {
+      "target": "LABEL",
+      "role": null,
+      "before": 1396,
+      "top": 734,
+      "options": {
+        "block": "nearest",
+        "behavior": "instant"
+      },
+      "at": 9400.100000023842,
+      "after": 1396
+    }
+  ],
+  "focused": "passphrase"
+}

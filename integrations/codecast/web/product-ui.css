@@ -1,53 +1,20 @@
-@font-face {
-  font-family: 'Google Sans';
-  src: url('/collo-design/GoogleSans.ttf') format('truetype');
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: swap;
-}
-:root {
-  --collo-radius: 9px;
-  --collo-shadow: 0 2px 6px #20233006, 0 12px 38px #2023300e;
-  --collo-accent-soft: color-mix(in srgb, var(--sol-violet) 11%, var(--sol-bg));
-  --font-sans: 'Google Sans', 'Microsoft YaHei UI', sans-serif;
-  --collo-content: var(--sol-bg);
-  --collo-tool: var(--sol-bg-alt);
-  --collo-selected: color-mix(in srgb, var(--sol-violet) 8%, var(--sol-bg));
-  --collo-floating: var(--collo-content);
-  --collo-floating-filter: none;
-  --collo-edge: color-mix(in srgb, var(--sol-text) 12%, transparent);
-  --collo-float-shadow: 0 3px 8px #1517210c, 0 18px 48px #15172118;
-  --collo-z-hint: 140;
-  --collo-z-menu: 210;
-  --collo-z-menu-hint: 220;
-  --collo-ink: var(--sol-text);
-  --collo-secondary: var(--sol-text-muted);
-  --collo-tertiary: var(--sol-text-dim);
-  --collo-line: var(--sol-border);
-  --collo-action: var(--sol-text);
-  --collo-on-action: var(--sol-bg);
-  --collo-link: var(--sol-link);
-  --collo-accent: var(--sol-violet);
-  --collo-danger: var(--sol-red);
-  --collo-positive: var(--sol-green);
-  --collo-warning: var(--sol-amber);
-  --collo-control-edge: color-mix(in srgb, var(--sol-text) 23%, var(--sol-bg));
-  --collo-radius-control: 8px;
-  --collo-radius-compact: 7px;
-  --collo-radius-surface: 12px;
-  --collo-radius-dialog: 14px;
-  --collo-radius-tag: 5px;
-  --collo-motion-panel: 200ms cubic-bezier(0.2, 0.7, 0.2, 1);
-}
 [data-product='collosys'] {
-  --font-ui: 'Google Sans', 'Microsoft YaHei UI', sans-serif;
-  --font-serif: var(--font-ui);
+  --font-ui: var(--collo-font-ui);
+  --font-serif: var(--collo-font-ui);
+  font-synthesis: none;
+  font-optical-sizing: none;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 html[data-product='collosys'] body {
-  font-family: var(--font-ui, var(--font-sans));
-  font-size: 14px;
-  line-height: 1.5;
-  -webkit-font-smoothing: antialiased;
+  font: var(--collo-type-body);
+  background: var(--collo-app);
+  color: var(--collo-ink);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 html[data-product='collosys'] :is(button, input, select, textarea) {
   font-family: var(--font-ui);
@@ -55,20 +22,17 @@ html[data-product='collosys'] :is(button, input, select, textarea) {
 html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   font-family: var(--font-mono, 'Cascadia Code', Consolas, monospace);
 }
-:where(html[data-product='collosys'] h1, html[data-product='collosys'] h2) {
-  font-family: var(--font-ui);
-  letter-spacing: -0.025em;
-  font-weight: 600;
-}
 .collo-logo {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
   white-space: nowrap;
   color: var(--collo-ink);
-  font-size: 18px;
-  font-weight: 650;
-  letter-spacing: -0.55px;
+  font: var(--collo-type-brand-wordmark);
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
+  gap: 8px;
+  letter-spacing: -0.02em;
 }
 .collo-mark {
   display: block;
@@ -80,11 +44,13 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 20px;
   color: var(--collo-secondary);
   vertical-align: middle;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-agent-icon {
   width: 16px;
@@ -101,14 +67,20 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   padding: 8px 4px 24px;
 }
 .collo-settings-page h3 {
-  font-size: 15px;
-  font-weight: 600;
   margin-bottom: 7px;
+  font: var(--collo-type-section-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-settings-page p {
   color: var(--collo-secondary);
-  line-height: 1.75;
-  font-size: 14px;
+  font: var(--collo-type-body);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-about-brand {
   display: flex;
@@ -119,18 +91,26 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 }
 .collo-version,
 .collo-tag {
-  font-size: 11px;
   color: var(--collo-secondary);
   background: var(--collo-tool);
   padding: 3px 8px;
   border-radius: var(--collo-radius-tag);
   border: 1px solid var(--collo-line);
   white-space: nowrap;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-settings-lede {
-  font-size: 20px !important;
-  color: var(--collo-ink) !important;
-  margin-bottom: 30px;
+  font: var(--collo-type-object-title);
+  color: var(--collo-ink);
+  margin-bottom: 24px;
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-settings-section {
   display: flex;
@@ -150,11 +130,11 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   padding-top: 22px;
 }
 .collo-connection-source {
-  padding: 22px;
   background: var(--collo-tool);
   border: 1px solid var(--collo-line);
-  border-radius: 11px;
-  margin-bottom: 28px;
+  padding: 24px;
+  border-radius: var(--collo-radius-surface);
+  margin-bottom: 24px;
 }
 .collo-connection-source > .collo-tag {
   float: right;
@@ -186,13 +166,20 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   gap: 5px;
 }
 .collo-directory-link strong {
-  font-size: 13px;
-  font-weight: 500;
+  font: var(--collo-type-nav-list-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-directory-link small {
-  font: 11px var(--font-mono);
   color: var(--collo-tertiary);
   overflow-wrap: anywhere;
+  font: var(--collo-type-code);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-text-link {
   display: inline-flex;
@@ -203,17 +190,21 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   margin-top: 20px;
 }
 .collo-inline-notice {
-  padding: 15px;
   background: var(--collo-tool);
   border-radius: 8px;
-  font-size: 13px !important;
+  font: var(--collo-type-body);
+  padding: 16px;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-session-list {
   max-width: 1080px;
   margin: 0 auto;
-  padding: 26px 32px;
   height: 100%;
   overflow: auto;
+  padding: 24px;
 }
 .collo-sessions-scope {
   display: flex;
@@ -238,17 +229,32 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   max-width: 320px;
   border: 1px solid var(--collo-line);
 }
+.collo-data-row {
+  min-height: 44px;
+  padding: 10px 12px;
+  gap: 12px;
+}
+.collo-task-title {
+  font: var(--collo-type-nav-list-title);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
 .collo-session-row {
   display: flex;
   align-items: center;
-  gap: 13px;
   width: 100%;
   text-align: left;
-  padding: 18px 12px;
   border-bottom: 1px solid var(--collo-line);
-  border-radius: 8px;
   color: var(--collo-ink);
-  margin: 3px 0;
+  min-height: 64px;
+  padding: 12px;
+  gap: 12px;
+  margin: 0;
+  border-radius: var(--collo-radius-control);
 }
 .collo-session-row:hover {
   background: var(--collo-tool);
@@ -269,26 +275,76 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 .collo-session-summary {
   display: flex;
   flex-direction: column;
-  gap: 5px;
   flex: 1;
   min-width: 0;
+  gap: 2px;
 }
 .collo-session-summary strong {
-  font-size: 15px;
-  font-weight: 500;
   overflow-wrap: anywhere;
+  font: var(--collo-type-nav-list-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-session-summary > span {
-  font-size: 12px;
   color: var(--collo-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-session-row time {
-  font-size: 12px;
   color: var(--collo-tertiary);
   white-space: nowrap;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+}
+.collo-reading-split {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+.collo-reading-group {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.collo-reading-pane {
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+.collo-reading-switch {
+  display: flex;
+  justify-content: center;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--collo-line);
+}
+.collo-reading-split[data-mode='reading'] .collo-reading-group > [id='diff-panel'],
+.collo-reading-split[data-mode='code'] .collo-reading-group > [id='content-panel'] {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+.collo-reading-split:not([data-mode='split']) .collo-reading-group > [data-separator] {
+  display: none;
+}
+.collo-reading-split:not([data-mode='split']) .collo-reading-group > [data-panel] {
+  flex: 1 1 100% !important;
 }
 .collo-captured-reader {
   display: flex;
@@ -297,6 +353,42 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   min-height: 0;
   background: var(--collo-content);
   border-left: 1px solid var(--collo-line);
+}
+/* One readable axis for the mature conversation renderer and captured header. */
+[data-cc-conversation] .conv-col {
+  max-width: 768px;
+  padding-inline: 24px;
+}
+[data-cc-conversation] [data-sv-feed] .prose {
+  max-width: 720px;
+  margin-inline: auto;
+  font: var(--collo-type-body);
+  color: var(--collo-ink);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+[data-cc-conversation] [data-sv-feed] pre,
+[data-cc-conversation] [data-sv-feed] code {
+  font: var(--collo-type-code);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+[data-cc-conversation] [data-sv-composer] {
+  padding-block: 16px;
+}
+[data-cc-conversation] [data-sv-composer] textarea {
+  font: var(--collo-type-body);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+[data-cc-conversation] .conv-col > [data-sv-sticky] {
+  border-radius: var(--collo-radius-surface);
 }
 .collo-activity-filters {
   display: flex;
@@ -310,22 +402,29 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 22px 32px 18px;
+  padding: 12px 24px 8px;
+  gap: 16px;
 }
 .collo-workspace-heading h2 {
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.3;
-  margin-bottom: 6px;
+  font: var(--collo-type-section-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  margin-bottom: 0;
 }
 .collo-workspace-heading p {
-  font-size: 13px;
   color: var(--collo-secondary);
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-workspace-tabs {
-  padding: 0 32px 16px;
-  gap: 18px;
+  padding: 4px 24px;
+  gap: 12px;
+  min-height: 40px;
   flex-wrap: wrap;
 }
 .collo-workspace-tabs > div:first-child {
@@ -338,17 +437,21 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   flex-shrink: 0;
 }
 .collo-member-filter {
-  border: 1px solid var(--collo-line);
   background: var(--collo-content);
-  font-size: 12px;
   max-width: 220px;
-  padding: 5px 10px;
-  height: 32px;
-  line-height: 20px;
   transition:
     border-color 120ms,
     box-shadow 120ms;
   color: var(--collo-secondary);
+  font: var(--collo-type-button);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: var(--collo-radius-control);
 }
 .collo-event-member {
   max-width: 240px;
@@ -367,23 +470,23 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 }
 .collo-member-face.tone-0 {
   background: #ece5f7;
-  color: #766391;
+  color: #67527d;
 }
 .collo-member-face.tone-1 {
   background: #e1ede7;
-  color: #527762;
+  color: #3d604a;
 }
 .collo-member-face.tone-2 {
   background: #f4e5dd;
-  color: #a16b4e;
+  color: #815238;
 }
 .collo-member-face.tone-3 {
   background: #e3e9f5;
-  color: #5f76a0;
+  color: #435d86;
 }
 .collo-member-face.tone-4 {
   background: #f1e5eb;
-  color: #95687e;
+  color: #78475e;
 }
 .collo-task-context {
   display: flex;
@@ -424,10 +527,12 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 .collo-reader-heading {
   display: flex;
   align-items: center;
-  gap: 14px;
   justify-content: space-between;
-  padding: 16px 24px;
   border-bottom: 1px solid var(--collo-line);
+  padding: 16px 0;
+  width: min(720px, calc(100% - 48px));
+  margin-inline: auto;
+  gap: 12px;
 }
 .collo-reader-heading > div {
   display: flex;
@@ -437,12 +542,16 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   flex-wrap: wrap;
 }
 .collo-reader-owner {
-  font-size: 12px;
   color: var(--collo-secondary);
   max-width: 240px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-reader-pagination,
 .collo-list-pagination {
@@ -454,6 +563,8 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 .collo-reader-pagination {
   justify-content: center;
   border-top: 1px solid var(--collo-line);
+  width: min(720px, calc(100% - 48px));
+  margin-inline: auto;
 }
 .collo-empty {
   min-height: 260px;
@@ -470,26 +581,35 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   color: var(--collo-accent);
 }
 .collo-empty h3 {
-  font-size: 18px;
   color: var(--collo-ink);
-  font-weight: 500;
+  font: var(--collo-type-object-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
 }
 .collo-empty p {
-  font-size: 13px;
   max-width: 350px;
-  line-height: 1.7;
+  font: var(--collo-type-body);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-handoff-detail {
   height: 100%;
   overflow: auto;
-  max-width: 850px;
   margin: 0 auto;
-  padding: 36px 40px;
+  max-width: 768px;
+  padding: 24px;
 }
 .collo-handoff-detail h2 {
-  font-size: 25px;
-  font-weight: 500;
   margin: 18px 0 12px;
+  font: var(--collo-type-object-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
 }
 .collo-handoff-people {
   display: flex;
@@ -501,20 +621,26 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
   flex-wrap: wrap;
 }
 .collo-handoff-detail section {
-  margin-top: 30px;
   border-top: 1px solid var(--collo-line);
   padding-top: 24px;
+  margin-top: 24px;
 }
 .collo-handoff-detail h3 {
-  font-size: 13px;
-  font-weight: 600;
   margin-bottom: 12px;
+  font: var(--collo-type-section-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-handoff-detail section p {
-  font-size: 14px;
-  line-height: 1.85;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+  font: var(--collo-type-body);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-handoff-links {
   display: flex;
@@ -550,29 +676,35 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
 }
 .collo-handoff-form label {
   display: block;
-  font-size: 13px;
-  font-weight: 500;
   margin-top: 16px;
+  font: var(--collo-type-control-label);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
 }
 .collo-handoff-form :is(input, textarea, select) {
   display: block;
   width: 100%;
   margin-top: 7px;
-  padding: 9px 12px;
   background: var(--collo-content);
-  border: 1px solid var(--collo-line);
   border-radius: 8px;
-  font-weight: 400;
-  font-size: 13px;
-  line-height: 20px;
   transition:
     border-color 120ms,
     box-shadow 120ms;
   resize: vertical;
+  font: var(--collo-type-button);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  min-height: 36px;
+  border: 1px solid var(--collo-control-edge);
+  padding: 7px 12px;
 }
 @media (max-width: 900px) {
   .collo-session-list {
-    padding: 24px 20px;
+    padding: 24px;
   }
   .collo-handoff-detail {
     padding: 24px;
@@ -581,7 +713,9 @@ html[data-product='collosys'] :is(pre, code, kbd, .font-mono) {
     padding: 14px;
   }
 }
-:where([data-product='collosys'] :is(input:not([type='checkbox']):not([type='range']), textarea, select)) {
+:where(
+  [data-product='collosys'] :is(input:not([type='checkbox']):not([type='range']), textarea, select)
+) {
   border-radius: 8px;
   accent-color: var(--collo-link);
   background-color: var(--collo-content);
@@ -603,39 +737,6 @@ html:not(.dark)[data-product='collosys'] {
 }
 [data-product='collosys'] button:disabled {
   cursor: not-allowed;
-}
-[data-product='collosys'] .collo-auth {
-  background: var(--collo-tool);
-  position: relative;
-}
-.collo-auth > div {
-  max-width: 420px;
-}
-.collo-auth .collo-logo {
-  font-size: 27px;
-  gap: 13px;
-}
-.collo-auth form {
-  margin-top: 0;
-}
-.collo-auth form button[type='submit'] {
-  background: var(--collo-ink);
-  border: 1px solid var(--collo-ink);
-  box-shadow: inset 0 1px 0 #ffffff2b;
-  border-radius: 9px;
-  color: var(--collo-content);
-}
-.collo-auth form button[type='submit']:hover {
-  background: var(--collo-secondary);
-}
-.collo-auth .backdrop-blur-sm {
-  background: var(--collo-content);
-  padding: 32px;
-  border-radius: 16px;
-  box-shadow: var(--collo-shadow);
-}
-.collo-auth a {
-  color: var(--collo-link);
 }
 @media (prefers-reduced-motion: reduce) {
   [data-product='collosys'] button {

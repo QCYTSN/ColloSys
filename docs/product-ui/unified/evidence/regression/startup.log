@@ -1,0 +1,7 @@
+PASS Unsigned deep link retains path, query and anchor without mounting protected UI
+PASS Untrusted or expired local token cannot expose workspace content
+PASS Untrusted or expired local token cannot expose workspace content
+PASS A stale durable token cannot reopen an explicitly signed-out device
+PASS Slow identity service has recovery controls and no protected flash (controlled transport)
+PASS Real server session revocation hides already mounted workspace immediately on query update
+PASS Forged and expired OAuth callback show a retryable failure with no workspace

@@ -1,0 +1,290 @@
+{
+  "meta": {
+    "name": "ColloSys Unified Design v1",
+    "kind": "proposed-product-specification",
+    "referenceCommit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "units": "CSS px except otherwise stated",
+    "notClaudeTokens": true,
+    "usage": "Reference data. Adapt into the existing owned token and theme source, not a second runtime theme engine. All negative letter spacing applies to Latin-only controlled headings; Chinese/mixed headings default to natural spacing."
+  },
+  "color": {
+    "light": {
+      "surface-app": "#F0F2EE",
+      "surface-content": "#FFFFFF",
+      "surface-subtle": "#F6F7F3",
+      "surface-floating": "#FFFFFF",
+      "text-primary": "#252C29",
+      "text-secondary": "#536059",
+      "text-tertiary": "#626F66",
+      "border-divider": "#D9DFD9",
+      "border-control": "#7F8C83",
+      "action-primary": "#2B443A",
+      "action-primary-hover": "#22372F",
+      "on-primary": "#FFFFFF",
+      "accent": "#466C5F",
+      "selection-bg": "#E4EDE6",
+      "selection-ink": "#294B3B",
+      "danger": "#B63D46",
+      "success": "#286747",
+      "warning": "#805C18"
+    },
+    "dark": {
+      "surface-app": "#1B211D",
+      "surface-content": "#232B25",
+      "surface-subtle": "#2A342D",
+      "surface-floating": "#2A342D",
+      "text-primary": "#F0F2ED",
+      "text-secondary": "#B6C1B9",
+      "text-tertiary": "#97A49B",
+      "border-divider": "#3C4A40",
+      "border-control": "#7D9082",
+      "action-primary": "#D7E5DB",
+      "action-primary-hover": "#E8F0EA",
+      "on-primary": "#17231C",
+      "accent": "#9FC6B3",
+      "selection-bg": "#344A3D",
+      "selection-ink": "#D1E9D9",
+      "danger": "#F09AA1",
+      "success": "#91CBA8",
+      "warning": "#E4C382"
+    }
+  },
+  "space": [
+    2,
+    4,
+    8,
+    12,
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64
+  ],
+  "radius": {
+    "tag": 4,
+    "control": 8,
+    "menu": 12,
+    "surface": 12,
+    "dialog": 16
+  },
+  "stroke": {
+    "default": 1,
+    "focus": 2
+  },
+  "font": {
+    "ui": "Google Sans",
+    "cjk": "Noto Sans SC",
+    "editorial": "Newsreader",
+    "mono": "existing Cascadia Code/Consolas chain",
+    "googleSansAxes": {
+      "textOpsz": 17,
+      "titleOpsz": 18,
+      "GRAD": 0,
+      "verifyActualFile": true
+    },
+    "roles": {
+      "brand-wordmark": {
+        "family": "ui",
+        "size": 18,
+        "lineHeight": 24,
+        "weight": 600,
+        "letterSpacingEm": -0.02
+      },
+      "auth-art-title": {
+        "family": "editorial",
+        "size": 36,
+        "lineHeight": 42,
+        "weight": 450,
+        "letterSpacingEm": -0.015
+      },
+      "auth-form-title": {
+        "family": "ui",
+        "size": 28,
+        "lineHeight": 36,
+        "weight": 600,
+        "letterSpacingEm": -0.02
+      },
+      "page-title": {
+        "family": "ui",
+        "size": 24,
+        "lineHeight": 32,
+        "weight": 600,
+        "letterSpacingEm": -0.02
+      },
+      "object-title": {
+        "family": "ui",
+        "size": 20,
+        "lineHeight": 28,
+        "weight": 600,
+        "letterSpacingEm": -0.015
+      },
+      "section-title": {
+        "family": "ui",
+        "size": 16,
+        "lineHeight": 24,
+        "weight": 600,
+        "letterSpacingEm": 0
+      },
+      "nav-list-title": {
+        "family": "ui",
+        "size": 14,
+        "lineHeight": 20,
+        "weight": 500,
+        "letterSpacingEm": 0
+      },
+      "body": {
+        "family": "ui",
+        "size": 15,
+        "lineHeight": 24,
+        "weight": 400,
+        "letterSpacingEm": 0
+      },
+      "button": {
+        "family": "ui",
+        "size": 14,
+        "lineHeight": 20,
+        "weight": 500,
+        "letterSpacingEm": 0
+      },
+      "control-label": {
+        "family": "ui",
+        "size": 13,
+        "lineHeight": 18,
+        "weight": 500,
+        "letterSpacingEm": 0
+      },
+      "menu-item": {
+        "family": "ui",
+        "size": 13,
+        "lineHeight": 18,
+        "weight": 400,
+        "letterSpacingEm": 0
+      },
+      "meta": {
+        "family": "ui",
+        "size": 12,
+        "lineHeight": 18,
+        "weight": 400,
+        "letterSpacingEm": 0
+      },
+      "code": {
+        "family": "mono",
+        "size": 13,
+        "lineHeight": 20,
+        "weight": 400,
+        "letterSpacingEm": 0
+      }
+    }
+  },
+  "layout": {
+    "topbar": 48,
+    "workTabs": 32,
+    "sidebar": {
+      "default": 232,
+      "min": 208,
+      "max": 280
+    },
+    "outerGutter": 12,
+    "pagePadding": 24,
+    "widePagePadding": 32,
+    "objectHeader": 56,
+    "contextToolbar": 40,
+    "readerMaxWidth": 720,
+    "projectContextDefaultWidth": 320,
+    "projectListMinWidth": 520,
+    "projectColumnGap": 24,
+    "projectCollapseAtContainerWidth": 900
+  },
+  "control": {
+    "button": {
+      "height": 36,
+      "paddingInline": 14,
+      "icon": 16,
+      "gap": 8
+    },
+    "trigger": {
+      "height": 32,
+      "paddingInline": 10,
+      "icon": 16
+    },
+    "authButton": {
+      "height": 44,
+      "paddingInline": 16
+    },
+    "iconButton": {
+      "width": 32,
+      "height": 32,
+      "icon": 18
+    },
+    "input": {
+      "height": 36,
+      "paddingInline": 12
+    },
+    "authInput": {
+      "height": 44,
+      "paddingInline": 14
+    },
+    "menu": {
+      "width": 224,
+      "padding": 4,
+      "rowMinHeight": 34
+    },
+    "displayPanel": {
+      "width": 320,
+      "padding": 16,
+      "labelColumn": 80,
+      "rowGap": 12
+    }
+  },
+  "shadow": {
+    "secondaryButton": "0 1px 1px rgb(22 34 27 / .06)",
+    "menu": "0 1px 2px rgb(22 34 27 / .06), 0 8px 24px rgb(22 34 27 / .10)",
+    "dialog": "0 8px 24px rgb(22 34 27 / .10), 0 24px 64px rgb(22 34 27 / .16)"
+  },
+  "motion": {
+    "easeOut": "cubic-bezier(.2,.8,.2,1)",
+    "easeExit": "cubic-bezier(.4,0,1,1)",
+    "easeState": "cubic-bezier(.4,0,.2,1)",
+    "hoverMs": 100,
+    "pressMs": 70,
+    "releaseMs": 130,
+    "menuInMs": 160,
+    "menuOutMs": 100,
+    "tabMs": 160,
+    "detailInMs": 180,
+    "detailOutMs": 140,
+    "panelMs": 200,
+    "dragMs": 0,
+    "dialogInMs": 180,
+    "dialogOutMs": 140,
+    "feedbackMs": 120,
+    "pressY": 0.7,
+    "menuEnterOffset": 4,
+    "menuExitOffset": 2
+  },
+  "art": {
+    "direction": "original flat abstract waterside landscape; not a character or 3D sculpture",
+    "palette": {
+      "ground": "#EDF0E8",
+      "far": "#D6E0D7",
+      "water": "#7B969B",
+      "shore": "#BC9670",
+      "structure": "#344D48",
+      "light": "#C39448"
+    },
+    "viewBox": [
+      0,
+      0,
+      800,
+      600
+    ],
+    "idleReflectionAmplitude": 9,
+    "idleReflectionPeriodMs": 8000,
+    "focusShift": 6,
+    "focusMs": 220,
+    "waitingPeriodMs": 1800,
+    "wholeImageTransform": false
+  }
+}

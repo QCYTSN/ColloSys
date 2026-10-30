@@ -1,0 +1,12 @@
+
+> collosys@0.1.0 codecast:verify
+> node scripts/verify-codecast-source.mjs
+
+{
+  "commit": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+  "verified": 9854,
+  "windowsLineEndings": 9437,
+  "documentedSymlinks": 2,
+  "failureCount": 0,
+  "failures": []
+}

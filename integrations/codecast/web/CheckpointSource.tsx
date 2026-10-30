@@ -12,6 +12,7 @@ type SourceProps = {
   projectId: string;
   source: CheckpointReference;
   compose?: boolean;
+  compact?: boolean;
   onRemove?: () => void;
   receipt?: ReturnType<typeof useProductQuery<typeof colloApi.collo.checkpointParts>>;
 };
@@ -28,6 +29,7 @@ function Source({
   projectId,
   source,
   compose = false,
+  compact = false,
   onRemove,
   receipt: suppliedReceipt,
 }: SourceProps) {
@@ -67,9 +69,8 @@ function Source({
             : !ready
               ? 'Some checkpoint parts have not arrived. Wait for sharing to finish.'
               : 'Complete shared checkpoint. Full files remain on the source device.';
-  return (
-    <section className="collo-source-card" data-checkpoint-source data-ready={ready}>
-      <span className="collo-eyebrow">CHECKPOINT SOURCE</span>
+  const identity = (
+    <>
       <strong>{first?.kind === 'checkpoint' ? first.payload.label : 'Saved checkpoint'}</strong>
       {first && (
         <p>
@@ -84,6 +85,26 @@ function Source({
           Directory {source.workspaceId}
         </p>
       </details>
+    </>
+  );
+  return (
+    <section
+      className="collo-source-card"
+      data-checkpoint-source
+      data-ready={ready}
+      data-compact={compact}
+    >
+      {compact ? (
+        <details className="collo-source-id">
+          <summary>Checkpoint source</summary>
+          {identity}
+        </details>
+      ) : (
+        <>
+          <span className="collo-source-label">Checkpoint source</span>
+          {identity}
+        </>
+      )}
       <p>{reason}</p>
       {error && <p role="alert">{error}</p>}
       <div className="collo-inline-actions">

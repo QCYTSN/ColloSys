@@ -1,0 +1,13 @@
+{
+  "build": {
+    "version": 1,
+    "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "dirty": true,
+    "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+  },
+  "states": 52,
+  "lowContrast": [],
+  "smallText": [],
+  "overflow": [],
+  "method": "Computed text color composited through actual ancestor backgrounds/opacity. SVG and disabled text excluded; not pixel OCR or every possible product state."
+}

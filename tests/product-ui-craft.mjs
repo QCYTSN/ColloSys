@@ -103,7 +103,7 @@ try {
       family: s.fontFamily,
     };
   });
-  assert.equal(h.weight, '500');
+  assert.equal(h.weight, '600');
   metrics.push({ auth: h });
   await page.locator('#email').fill(account.a.email);
   await page.locator('#password').fill(account.a.password);

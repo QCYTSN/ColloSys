@@ -1,0 +1,65 @@
+[
+  {
+    "tag": "SPAN",
+    "class": "",
+    "top": 802,
+    "bottom": 820,
+    "height": 18,
+    "scroll": 0,
+    "overflow": "visible"
+  },
+  {
+    "tag": "LABEL",
+    "class": "",
+    "top": 734,
+    "bottom": 820,
+    "height": 86,
+    "scroll": 0,
+    "overflow": "visible"
+  },
+  {
+    "tag": "FORM",
+    "class": "collo-storage-confirm",
+    "top": 584,
+    "bottom": 929,
+    "height": 345,
+    "scroll": 0,
+    "overflow": "visible"
+  },
+  {
+    "tag": "DIV",
+    "class": "collo-storage",
+    "top": 109,
+    "bottom": 851,
+    "height": 742,
+    "scroll": 1396,
+    "overflow": "auto"
+  },
+  {
+    "tag": "DIV",
+    "class": "collo-dialog-surface collo-storage-dialog",
+    "top": 24,
+    "bottom": 876,
+    "height": 852,
+    "scroll": 0,
+    "overflow": "hidden"
+  },
+  {
+    "tag": "BODY",
+    "class": "",
+    "top": 0,
+    "bottom": 900,
+    "height": 900,
+    "scroll": 0,
+    "overflow": "hidden"
+  },
+  {
+    "tag": "HTML",
+    "class": "light",
+    "top": 0,
+    "bottom": 900,
+    "height": 900,
+    "scroll": 0,
+    "overflow": "visible"
+  }
+]

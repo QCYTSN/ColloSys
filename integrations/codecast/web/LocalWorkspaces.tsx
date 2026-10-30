@@ -56,7 +56,7 @@ function Files({ files, scope }: FilesProps) {
   // data can only belong to the same currently authorized checkpoint.
   const ready = useDeferredValue<FileChange[] | null>(files, null);
   return (
-    <div aria-busy={ready !== files}>
+    <div className="collo-files-slot" aria-busy={ready !== files}>
       {ready ? (
         <FileContent files={ready} scope={scope} />
       ) : (
@@ -317,27 +317,6 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
       data-pane={pane}
       data-has-detail={!!current}
     >
-      {!current && (
-        <div className="collo-workspace-heading">
-          <div>
-            <h2>{pane === 'history' ? 'My directories' : 'Team activity'}</h2>
-            <p>
-              {pane === 'history'
-                ? 'Your saved work and local recovery.'
-                : 'Saved changes and captured conversations, in one place.'}
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy || !isPaired()}
-            onClick={() => setConnectOpen(true)}
-          >
-            <Plus />
-            Connect directory
-          </Button>
-        </div>
-      )}
       <div
         className={`collo-directory-toolbar flex flex-wrap items-center gap-3 border-b border-sol-border px-5 py-3 ${pane === 'activity' ? 'hidden' : ''}`}
       >
@@ -456,6 +435,15 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
         <span className="ml-auto text-xs text-sol-text-dim">
           {workspaces.length} shared {workspaces.length === 1 ? 'workspace' : 'workspaces'}
         </span>
+        <Button
+          size="sm"
+          variant="outline"
+          disabled={busy || !isPaired()}
+          onClick={() => setConnectOpen(true)}
+        >
+          <Plus />
+          Connect directory
+        </Button>
       </div>
       {collaboration.error && (
         <div
@@ -764,6 +752,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                         </details>
                         <CheckpointSource
                           projectId={projectId}
+                          compact
                           source={{
                             workspaceId: selectedEvent.workspaceId,
                             checkpointId: selectedEvent.payload.checkpointId,

@@ -6,6 +6,7 @@ import { IntentTitle } from '../components/initiatives/IntentHeader';
 import type { ProjectItem } from '../store/inboxStore';
 import { ProjectIdentityEditor, ProjectIdentityMark } from './ProjectIdentity';
 import { readProjectIdentity } from './productContracts';
+import { ListTrigger } from './ProductControlTriggers';
 export interface ProductProjectHeaderProps {
   back: { href: string; label: string };
   title: string;
@@ -42,7 +43,14 @@ export function ProductProjectHeader({
         <Link href={back.href} className="collo-icon-button" aria-label={back.label}>
           <ArrowLeft size={18} />
         </Link>
-        {project ? <ProjectIdentityEditor project={project} trigger={<ProjectIdentityMark identity={readProjectIdentity(project)} />} /> : glyph}
+        {project ? (
+          <ProjectIdentityEditor
+            project={project}
+            trigger={<ProjectIdentityMark identity={readProjectIdentity(project)} />}
+          />
+        ) : (
+          glyph
+        )}
         <div className="collo-project-title">
           <IntentTitle
             title={title}
@@ -54,8 +62,10 @@ export function ProductProjectHeader({
           />
         </div>
         <Popover>
-          <PopoverTrigger className="collo-project-properties">
-            Project details <CaretDown size={14} data-collo-chevron />
+          <PopoverTrigger asChild>
+            <ListTrigger className="collo-project-properties">
+              Project details <CaretDown size={16} data-collo-chevron />
+            </ListTrigger>
           </PopoverTrigger>
           <PopoverContent align="end" className="collo-menu-surface collo-project-property-menu">
             {idChip}

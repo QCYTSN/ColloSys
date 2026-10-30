@@ -1,8 +1,10 @@
 import { readFileSync } from 'node:fs';
-import { readAppearance, applyAppearance } from './web/appearance-runtime.mjs';
-export const bootCss = readFileSync(new URL('./web/product-boot.css', import.meta.url), 'utf8');
+import { readAppearance, applyAppearance, designTokens } from './web/appearance-runtime.mjs';
+import { designStyles } from './design-styles.mjs';
+export const bootCss =
+  designStyles() + readFileSync(new URL('./web/product-boot.css', import.meta.url), 'utf8');
 export function productHtml(themes) {
   return `<!doctype html><html lang="en" data-product="collosys"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>ColloSys</title><link rel="icon" href="/favicon.ico"><script>
-  (function(){var themes=${JSON.stringify(themes)};var choice=(${readAppearance.toString()})();(${applyAppearance.toString()})(choice,themes);window.__COLLOSYS_APPEARANCE__=choice;window.__ccDefaultColorTheme=themes})();
+  (function(){var themes=${JSON.stringify(themes)};var choice=(${readAppearance.toString()})();(${applyAppearance.toString()})(choice,themes,undefined,${JSON.stringify(designTokens)});window.__COLLOSYS_APPEARANCE__=choice;window.__ccDefaultColorTheme=themes})();
   </script><style>${bootCss}</style></head><body><div id="root"></div><div id="boot-shell" class="collo-loading collo-loading-screen" role="status" aria-label="Initializing ColloSys"><div class="collo-loading-brand"><span class="collo-boot-logo"><img src="/collo-brand/mark-64.png" width="30" height="30" alt="">ColloSys</span><div class="collo-loading-caption"><span class="collo-loading-dot"></span>Initializing ColloSys</div><div id="boot-retry" hidden><p>ColloSys could not finish starting.</p><button onclick="location.reload()">Retry loading</button><a href="/login?recover=1">Sign-in recovery</a></div></div></div><script>(function(){var root=document.getElementById('root');var timer=setTimeout(function(){var retry=document.getElementById('boot-retry');if(retry&&!root.hasChildNodes())retry.hidden=false},10000);var observer=new MutationObserver(function(){if(!root.hasChildNodes())return;clearTimeout(timer);var shell=document.getElementById('boot-shell');if(shell)shell.remove();observer.disconnect()});observer.observe(root,{childList:true})})();</script><script type="module" src="/src/main.tsx"></script></body></html>`;
 }

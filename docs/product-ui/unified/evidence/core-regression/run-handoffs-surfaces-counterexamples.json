@@ -1,0 +1,23 @@
+[
+  {
+    "name": "counterexamples",
+    "command": "node tests/product-ui-overflow-counterexamples.mjs",
+    "started": "2026-10-30T13:47:18.601Z",
+    "finished": "2026-10-30T13:47:19.665Z",
+    "exit": 0
+  },
+  {
+    "name": "handoffs",
+    "command": "node tests/product-ui-completion-handoffs.mjs",
+    "started": "2026-10-30T13:47:19.667Z",
+    "finished": "2026-10-30T13:47:47.008Z",
+    "exit": 0
+  },
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-30T13:47:47.009Z",
+    "finished": "2026-10-30T13:48:23.136Z",
+    "exit": 1
+  }
+]

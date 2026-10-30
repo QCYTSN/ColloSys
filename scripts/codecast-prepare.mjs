@@ -1,4 +1,13 @@
-import { readFile, writeFile, mkdir, copyFile, lstat, symlink, readdir, rm } from 'node:fs/promises';
+import {
+  readFile,
+  writeFile,
+  mkdir,
+  copyFile,
+  lstat,
+  symlink,
+  readdir,
+  rm,
+} from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
@@ -9,6 +18,7 @@ import { prepareDesktop } from './codecast-desktop-prepare.mjs';
 import { prepareBrand } from './codecast-brand.mjs';
 import { productEntrypoints } from '../integrations/codecast/owned-entrypoints.mjs';
 import { productBuildIdentity } from './product-build-identity.mjs';
+import { designStyles } from '../integrations/codecast/design-styles.mjs';
 await assertNotRunning();
 const inputFingerprint = await buildFingerprint();
 const buildIdentity = productBuildIdentity(inputFingerprint);
@@ -68,6 +78,8 @@ for (const patch of patches) {
   await writeFile(target, content.replace(patch.before, patch.after));
 }
 const additions = [
+  ['web/product-button.css', 'packages/web/components/ui/button.css'],
+  ['assets/auth/waterside.svg', 'packages/web/collo/waterside.svg'],
   ['product-contracts.ts', 'packages/web/collo/productContracts.ts'],
   ['product-contracts.ts', 'packages/convex/convex/colloContracts.ts'],
   ...[
@@ -107,14 +119,16 @@ const additions = [
     'ProductAppearance.tsx',
     'appearance-runtime.mjs',
     'appearance-runtime.d.mts',
+    'design-tokens.json',
     'product-appearance.css',
     'ProjectIdentity.tsx',
     'productProjectService.ts',
     'product-project-identity.css',
     'ProductControlTriggers.tsx',
+    'ProductReadingSplit.tsx',
     'product-controls.css',
     'ProductListMenus.tsx',
-  'ProductTime.ts',
+    'ProductTime.ts',
     'ProductFilters.tsx',
     'product-list-menus.css',
     'product-auth-scene.css',
@@ -168,24 +182,37 @@ for (const [from, to] of additions) {
 }
 for (const [file, content] of Object.entries(productEntrypoints))
   await writeFile(path.join(destination, file), content);
-await writeFile(path.join(destination, 'packages/web/collo/productBuild.ts'), `export const productBuild = ${JSON.stringify(buildIdentity)} as const;\n`);
+await writeFile(
+  path.join(destination, 'packages/web/collo/product-ui.css'),
+  designStyles() +
+    (await readFile(path.join(root, 'integrations/codecast/web/product-ui.css'), 'utf8')),
+);
+await writeFile(
+  path.join(destination, 'packages/web/collo/productBuild.ts'),
+  `export const productBuild = ${JSON.stringify(buildIdentity)} as const;\n`,
+);
 // Product assets only. The full source remains available for reference, but
 // upstream marketing, install scripts and domain verification are not shipped.
 const publicPrefix = 'packages/web/public/';
 const publicDir = path.resolve(root, '.local/codecast-app/product-public');
-if (publicDir !== path.join(root, '.local', 'codecast-app', 'product-public')) throw new Error('Unexpected asset output');
-try { if ((await lstat(publicDir)).isSymbolicLink()) throw new Error('Linked asset output is not allowed'); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+if (publicDir !== path.join(root, '.local', 'codecast-app', 'product-public'))
+  throw new Error('Unexpected asset output');
+try {
+  if ((await lstat(publicDir)).isSymbolicLink())
+    throw new Error('Linked asset output is not allowed');
+} catch (e) {
+  if (e.code !== 'ENOENT') throw e;
+}
 // This exact directory contains generated public assets only, never user data.
 await rm(publicDir, { recursive: true, force: true });
 await mkdir(publicDir, { recursive: true });
 await writeFile(path.join(publicDir, 'collo-build.json'), JSON.stringify(buildIdentity));
-const productAssets = new Set([
-  'agents',
-  'mod-host.html',
-  'mod-host.js',
-]);
+const productAssets = new Set(['agents', 'mod-host.html', 'mod-host.js']);
 await prepareBrand(root, publicDir, destination);
-await writeFile(path.join(destination, 'packages/web/components/Logo.tsx'), 'export { Logo, LogoMark, LogoIcon } from "../collo/ProductLogo";\n');
+await writeFile(
+  path.join(destination, 'packages/web/components/Logo.tsx'),
+  'export { Logo, LogoMark, LogoIcon } from "../collo/ProductLogo";\n',
+);
 for (const { file } of ordinary) {
   if (!file.startsWith(publicPrefix)) continue;
   const relative = file.slice(publicPrefix.length);
@@ -206,7 +233,7 @@ const publicAuth = path.join(root, '.local/codecast-app/product-public/collo-aut
 await mkdir(publicAuth, { recursive: true });
 for (const entry of await readdir(authAssets, { withFileTypes: true })) {
   if (!entry.isFile()) throw new Error('Auth assets must be ordinary files');
-  if (!/\.(webp|svg)$/.test(entry.name)) continue;
+  if (!/\.svg$/.test(entry.name)) continue; // Historical Fold is retained but no longer shipped.
   await copyFile(path.join(authAssets, entry.name), path.join(publicAuth, entry.name));
 }
 const protocol = path

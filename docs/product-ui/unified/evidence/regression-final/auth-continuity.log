@@ -1,0 +1,3 @@
+PASS Real logout cycle 1: both windows clear, reloading stays signed out
+PASS Real logout cycle 2: both windows clear, reloading stays signed out
+PASS Real logout cycle 3: both windows clear, reloading stays signed out

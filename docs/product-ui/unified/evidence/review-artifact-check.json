@@ -1,0 +1,8 @@
+{
+  "recordedAt": "2026-10-30T14:26:04.451Z",
+  "localLinksChecked": 33,
+  "comparisonPairs": 11,
+  "maskToggle": true,
+  "pageErrors": [],
+  "method": "Actual local-file review-page rendering; image loading and comparison selector, static asset paths and mask toggle. This checks the handoff artifact, not product behavior."
+}

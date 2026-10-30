@@ -2,7 +2,7 @@
 // of the same TEST account would change another test's active project context.
 import fs from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-const root = 'docs/product-ui/review-fixes/evidence/regression';
+const root = process.env.COLLOSYS_REGRESSION_ROOT || 'docs/product-ui/review-fixes/evidence/regression';
 await fs.mkdir(root, { recursive: true });
 const suites = [
   ['buttons', 'tests/product-ui-review-buttons.mjs'],

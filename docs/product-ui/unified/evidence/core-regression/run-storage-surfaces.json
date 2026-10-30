@@ -1,0 +1,16 @@
+[
+  {
+    "name": "storage",
+    "command": "node tests/product-ui-review-storage.mjs",
+    "started": "2026-10-30T14:02:34.241Z",
+    "finished": "2026-10-30T14:03:05.215Z",
+    "exit": 0
+  },
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-30T14:03:05.217Z",
+    "finished": "2026-10-30T14:03:48.573Z",
+    "exit": 0
+  }
+]

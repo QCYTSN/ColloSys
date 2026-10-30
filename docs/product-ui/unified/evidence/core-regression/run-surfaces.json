@@ -1,0 +1,9 @@
+[
+  {
+    "name": "surfaces",
+    "command": "node tests/product-ui-completion-surfaces.mjs --skip-static-boot",
+    "started": "2026-10-30T13:58:47.090Z",
+    "finished": "2026-10-30T13:59:58.087Z",
+    "exit": 1
+  }
+]

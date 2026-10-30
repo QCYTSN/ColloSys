@@ -1,0 +1,10 @@
+{
+  "recordedAt": "2026-10-30T14:26:03.687Z",
+  "files": 436,
+  "bytes": 236410785,
+  "textFiles": 92,
+  "compressedTraces": 6,
+  "large": [],
+  "findings": [],
+  "scope": "All files under this unified handoff; configured local pairing/instance/env and TEST account secrets compared without printing values. JWT/key patterns scanned in text and decompressed traces. No image/video OCR or arbitrary unknown-secret guarantee."
+}

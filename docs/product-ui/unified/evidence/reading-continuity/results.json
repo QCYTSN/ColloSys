@@ -1,0 +1,95 @@
+{
+  "records": [
+    {
+      "width": 1064,
+      "nodes": [
+        {
+          "same": true,
+          "top": 333,
+          "draft": "中文 draft survives resizing",
+          "width": 420
+        },
+        {
+          "same": true,
+          "top": 555,
+          "draft": "selected file state",
+          "width": 640
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 960,
+      "nodes": [
+        {
+          "same": true,
+          "top": 333,
+          "draft": "中文 draft survives resizing",
+          "width": 960
+        },
+        {
+          "same": true,
+          "top": 555,
+          "draft": "selected file state",
+          "width": 960
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 1280,
+      "nodes": [
+        {
+          "same": true,
+          "top": 333,
+          "draft": "中文 draft survives resizing",
+          "width": 510.40625
+        },
+        {
+          "same": true,
+          "top": 555,
+          "draft": "selected file state",
+          "width": 765.59375
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 800,
+      "nodes": [
+        {
+          "same": true,
+          "top": 333,
+          "draft": "中文 draft survives resizing",
+          "width": 800
+        },
+        {
+          "same": true,
+          "top": 555,
+          "draft": "selected file state",
+          "width": 800
+        }
+      ],
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "nodes": [
+        {
+          "same": true,
+          "top": 333,
+          "draft": "中文 draft survives resizing",
+          "width": 574.40625
+        },
+        {
+          "same": true,
+          "top": 555,
+          "draft": "selected file state",
+          "width": 861.59375
+        }
+      ],
+      "overflow": false
+    }
+  ],
+  "scope": "Actual ProductReadingSplit + actual panels and segmented control; stateful test children; unrelated ShortcutTooltip is pass-through. Formal persisted conversation/Diff tested separately."
+}

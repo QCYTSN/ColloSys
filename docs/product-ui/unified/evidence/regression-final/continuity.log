@@ -1,0 +1,7 @@
+PASS Overview query failure preserves successful sections and retry restores the failed query
+PASS Slow handoff submission locks the reviewed draft and cannot clear a later form
+PASS New URL source intent survives the previous pending submission
+PASS Normal close follows actual CSS duration; quick reopen and cancellation retain valid detail
+PASS Programmatic left and right panel toggles share intermediate geometry
+PASS Changing a reviewed policy or checkpoint requires a new review
+PASS Recovery route remains reachable with an existing identity and clears durable sign-in explicitly

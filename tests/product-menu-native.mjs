@@ -5,7 +5,8 @@ import { randomUUID } from 'node:crypto';
 import { _electron as electron, expect as baseExpect } from '@playwright/test';
 import { account } from './product-ui-refinement-data.mjs';
 const expect = baseExpect.configure({ timeout: 60000 });
-const out = 'docs/product-ui/menu-motion/evidence/native-menus';
+const out =
+  process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/menu-motion/evidence/native-menus';
 await fs.mkdir(out, { recursive: true });
 const env = { ...process.env, COLLOSYS_DESKTOP_PROFILE: 'test-' + randomUUID() };
 delete env.ELECTRON_RUN_AS_NODE;

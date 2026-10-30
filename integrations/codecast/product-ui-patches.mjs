@@ -50,6 +50,11 @@ const iconPatches = iconFiles.flatMap((file) =>
   ),
 );
 export const productUiPatches = [
+  patch(
+    'components/DashboardLayout.tsx',
+    '(resolveVisualStyle(s.clientState.ui) === "minimal" ? { sidebar: 18, main: 82 } : DEFAULT_LAYOUT)',
+    'DEFAULT_LAYOUT',
+  ),
   ...iconPatches,
   patch(
     'components/ThemeProvider.tsx',
@@ -218,7 +223,7 @@ export const productUiPatches = [
   patch(
     'components/DashboardLayout.tsx',
     'const DEFAULT_LAYOUT = { sidebar: 25, main: 75 };',
-    'import { ProductHeader } from "../collo/ProductHeader";\nconst DEFAULT_LAYOUT = { sidebar: 17, main: 83 };',
+    'import { ProductHeader } from "../collo/ProductHeader";\nconst initialSidebar = 232 / (typeof window === "undefined" ? 1440 : window.innerWidth) * 100;\nconst DEFAULT_LAYOUT = { sidebar: initialSidebar, main: 100-initialSidebar };',
   ),
   patch(
     'components/DashboardLayout.tsx',

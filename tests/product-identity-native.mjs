@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { _electron as electron, expect as baseExpect } from '@playwright/test';
 import { account } from './product-ui-refinement-data.mjs';
+const designTokens = JSON.parse(await fs.readFile('integrations/codecast/web/design-tokens.json', 'utf8'));
 const expect = baseExpect.configure({ timeout: 60000 }), out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/identity-motion/evidence/native';
 await fs.mkdir(out, { recursive: true });
 const profile = 'test-' + randomUUID(), env = { ...process.env, COLLOSYS_DESKTOP_PROFILE: profile };
@@ -70,8 +71,8 @@ try {
   await expect(page.locator('.collo-build-details')).toContainText(build.fingerprint);
   await page.getByText('Build diagnostics', { exact: true }).click();
   await page.getByRole('button', { name: 'Profile & appearance', exact: true }).click();
-  await page.getByRole('button', { name: 'Dark', exact: true }).click(); await expect.poll(async () => (await state()).background.toLowerCase()).toBe('#202127'); await shot('settings-dark');
-  await page.getByRole('button', { name: 'Light', exact: true }).click(); await expect.poll(async () => (await state()).background.toLowerCase()).toBe('#ffffff'); await shot('settings-light');
+  await page.getByRole('button', { name: 'Dark', exact: true }).click(); await expect.poll(async () => (await state()).background.toLowerCase()).toBe(designTokens.color.dark['surface-app'].toLowerCase()); await shot('settings-dark');
+  await page.getByRole('button', { name: 'Light', exact: true }).click(); await expect.poll(async () => (await state()).background.toLowerCase()).toBe(designTokens.color.light['surface-app'].toLowerCase()); await shot('settings-light');
   await page.getByRole('button', { name: 'Dark', exact: true }).click();
   await app.close(); app = await launch(); page = await app.firstWindow(); await expect(page.locator('.collo-topbar')).toBeVisible();
   await expect.poll(async () => (await state()).nativeTheme).toBe('dark'); await shot('reopened-dark');

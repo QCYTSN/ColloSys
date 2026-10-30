@@ -135,3 +135,6 @@ export const MessageCircleQuestion = icon(P.ChatCircleDots),
   ListPlus = icon(P.ListPlus),
   Pencil = icon(P.PencilSimple),
   UserRound = icon(P.User);
+
+export const Network = icon(P.Graph),
+  Target = icon(P.Target);

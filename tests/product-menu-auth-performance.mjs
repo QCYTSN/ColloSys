@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { chromium, expect } from '@playwright/test';
 const mode = process.argv.includes('--development') ? 'development' : 'production';
-const out = `docs/product-ui/menu-motion/evidence/after/${mode}/auth-performance.json`;
+const root = process.env.COLLOSYS_MEASUREMENT_ROOT || 'docs/product-ui/menu-motion/evidence';
+const out = `${root}/after/${mode}/auth-performance.json`;
 const rounds = [];
 for (let round = 1; round <= 3; round++) {
   const browser = await chromium.launch({

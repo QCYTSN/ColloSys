@@ -335,11 +335,11 @@ try {
     await page.getByRole('button', { name: 'Profile & appearance', exact: true }).click();
     await audit('settings-zoom', '.collo-settings-surface');
     await shot('07-zoom-settings');
-    await page.getByRole('switch', { name: 'Dark mode', exact: true }).check();
+    await page.getByRole('button', { name: 'Dark', exact: true }).click();
     await page.locator('.collo-settings-body').evaluate((e) => (e.scrollTop = 0));
     await expect(page.locator('html')).toHaveClass(/dark/);
     await shot('08-dark');
-    await page.getByRole('switch', { name: 'Dark mode', exact: true }).uncheck();
+    await page.getByRole('button', { name: 'Light', exact: true }).click();
     await page.keyboard.press('Escape');
     if (app)
       await app.evaluate(({ BrowserWindow }) =>

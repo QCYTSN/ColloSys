@@ -1,0 +1,16 @@
+[
+  {
+    "name": "buttons",
+    "command": "node tests/product-ui-review-buttons.mjs",
+    "started": "2026-10-30T13:44:58.090Z",
+    "finished": "2026-10-30T13:45:17.128Z",
+    "exit": 0
+  },
+  {
+    "name": "storage",
+    "command": "node tests/product-ui-review-storage.mjs",
+    "started": "2026-10-30T13:45:17.129Z",
+    "finished": "2026-10-30T13:45:32.306Z",
+    "exit": 1
+  }
+]

@@ -1,0 +1,310 @@
+{
+  "method": "Read-only aggregate of retained round-3 main-renderer trace slices. Nested categories overlap and totals must not be added. This is not causal isolation or a sampled CPU stack profile.",
+  "results": [
+    {
+      "phase": "before",
+      "round": 3,
+      "types": {
+        "RunTask": {
+          "n": 31037,
+          "totalMs": 9791.404000000004,
+          "p95": 0.799,
+          "max": 285.068
+        },
+        "FunctionCall": {
+          "n": 15922,
+          "totalMs": 4640.735000000003,
+          "p95": 0.374,
+          "max": 284.743
+        },
+        "EventDispatch": {
+          "n": 3792,
+          "totalMs": 1518.86,
+          "p95": 0.513,
+          "max": 128.537
+        },
+        "FireAnimationFrame": {
+          "n": 1974,
+          "totalMs": 497.86399999999935,
+          "p95": 0.366,
+          "max": 284.796
+        },
+        "UpdateLayoutTree": {
+          "n": 1547,
+          "totalMs": 821.7869999999998,
+          "p95": 1.589,
+          "max": 22.078
+        },
+        "Layout": {
+          "n": 483,
+          "totalMs": 444.0440000000001,
+          "p95": 2.053,
+          "max": 21.056
+        },
+        "Paint": {
+          "n": 12346,
+          "totalMs": 1011.5140000000067,
+          "p95": 0.232,
+          "max": 4.838
+        },
+        "CompositeLayers": {
+          "n": 0,
+          "totalMs": 0
+        }
+      },
+      "longest": [
+        {
+          "name": "FireAnimationFrame",
+          "ms": 284.796
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 284.743,
+          "function": "sample",
+          "url": ""
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 195.722,
+          "function": "Au",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 128.537,
+          "event": "scroll"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 127.187,
+          "function": "",
+          "url": "index-CO5vQU8o.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 125.805,
+          "function": "Au",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 118.525,
+          "function": "Au",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 116.363,
+          "function": "Au",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 114.83,
+          "function": "",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 67.6,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 64.081,
+          "event": "click"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 61.456,
+          "function": "",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 59.334,
+          "event": "visibilitychange"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 58.828,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 58.769,
+          "event": "click"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 58.76,
+          "function": "",
+          "url": "client-BmIlFmnY.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 58.19,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 57.007,
+          "event": "click"
+        }
+      ]
+    },
+    {
+      "phase": "after",
+      "round": 3,
+      "types": {
+        "RunTask": {
+          "n": 32320,
+          "totalMs": 9251.568000000007,
+          "p95": 0.844,
+          "max": 285.424
+        },
+        "FunctionCall": {
+          "n": 16352,
+          "totalMs": 3983.178000000004,
+          "p95": 0.365,
+          "max": 166.466
+        },
+        "EventDispatch": {
+          "n": 3922,
+          "totalMs": 1379.124,
+          "p95": 0.406,
+          "max": 98.719
+        },
+        "FireAnimationFrame": {
+          "n": 1965,
+          "totalMs": 220.00699999999998,
+          "p95": 0.419,
+          "max": 1.491
+        },
+        "UpdateLayoutTree": {
+          "n": 1589,
+          "totalMs": 802.8089999999999,
+          "p95": 1.455,
+          "max": 22.044
+        },
+        "Layout": {
+          "n": 524,
+          "totalMs": 434.4359999999999,
+          "p95": 1.977,
+          "max": 15.828
+        },
+        "Paint": {
+          "n": 13179,
+          "totalMs": 868.4150000000052,
+          "p95": 0.196,
+          "max": 3.083
+        },
+        "CompositeLayers": {
+          "n": 0,
+          "totalMs": 0
+        }
+      },
+      "longest": [
+        {
+          "name": "FunctionCall",
+          "ms": 166.466,
+          "function": "Au",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 118.398,
+          "function": "Au",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 110.941,
+          "function": "Au",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 107.805,
+          "function": "Au",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 107.351,
+          "function": "",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 98.719,
+          "event": "scroll"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 96.795,
+          "function": "",
+          "url": "index-CQJYWp_d.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 68.463,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 62.467,
+          "event": "click"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 61.896,
+          "function": "",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 61.283,
+          "event": "visibilitychange"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 56.777,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 56.109,
+          "event": "click"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 56.084,
+          "function": "",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 53.252,
+          "event": "click"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 52.221,
+          "event": "click"
+        },
+        {
+          "name": "FunctionCall",
+          "ms": 51.937,
+          "function": "",
+          "url": "client-CvhLMRCy.js"
+        },
+        {
+          "name": "EventDispatch",
+          "ms": 50.874,
+          "event": "click"
+        }
+      ]
+    }
+  ]
+}

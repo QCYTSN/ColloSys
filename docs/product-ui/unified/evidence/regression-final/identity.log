@@ -1,0 +1,6 @@
+PASS Create submits name, icon and color atomically to the real backend
+PASS Cancel keeps persisted identity; editing and reload retain one selected mark
+PASS Invalid choices, stale revisions and cross-account writes are rejected
+PASS Shared trigger exposes pressed/open state, Esc restores focus
+PASS Keyboard selection and a real concurrent save retain draft and support retry
+PASS Appearance changes bootstrap, system response and another window

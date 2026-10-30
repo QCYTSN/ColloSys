@@ -1,0 +1,31 @@
+[
+  {
+    "name": "menus",
+    "args": [
+      "tests/product-menu-acceptance.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T14:05:21.462Z",
+    "finished": "2026-10-30T14:05:56.391Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native-menus",
+    "args": [
+      "tests/product-menu-native.mjs"
+    ],
+    "started": "2026-10-30T14:05:56.392Z",
+    "finished": "2026-10-30T14:06:15.944Z",
+    "exitCode": 0
+  },
+  {
+    "name": "login",
+    "args": [
+      "tests/product-menu-auth-visual.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T14:06:15.945Z",
+    "finished": "2026-10-30T14:06:33.072Z",
+    "exitCode": 0
+  }
+]

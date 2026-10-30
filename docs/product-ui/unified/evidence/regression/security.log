@@ -1,0 +1,8 @@
+PASS Missing provider configuration is rejected by the real backend
+PASS Fresh provider proof required; anonymous approval and unapproved claims rejected
+PASS One authorized claim issues a real same-account ColloSys session; replay/wrong secret fail
+PASS Cancelled, expired and fabricated requests cannot yield sessions
+PASS Revoking the authorizing session prevents a later desktop claim
+PASS Directory migration preserves IDs and references; repeated execution does not rewrite rows
+PASS Existing project identity migration is idempotent and rejects cross-account mutation
+PASS An interrupted directory migration rolls back earlier writes in the same real transaction

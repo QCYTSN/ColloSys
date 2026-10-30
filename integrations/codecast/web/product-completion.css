@@ -7,13 +7,13 @@
 @import './product-auth-scene.css';
 /* Storage belongs to directory history, with explicit, scoped confirmations. */
 .collo-storage-dialog {
-  width: min(780px, calc(100vw - 40px));
   max-width: none;
-  max-height: calc(100dvh - 40px);
   display: flex;
   flex-direction: column;
-  gap: 18px;
   overflow: hidden;
+  width: min(720px, calc(100vw - 48px));
+  max-height: calc(100dvh - 48px);
+  gap: 16px;
 }
 .collo-storage {
   overflow: auto;
@@ -22,8 +22,12 @@
   padding-right: 8px;
   scrollbar-gutter: stable;
   container: storage / inline-size;
-  font-size: 13px;
-  line-height: 1.6;
+  font: var(--collo-type-body);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage-summary {
   display: flex;
@@ -58,8 +62,12 @@
   margin-bottom: 12px;
 }
 .collo-storage h3 {
-  font-size: 15px;
-  font-weight: 600;
+  font: var(--collo-type-section-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage header span,
 .collo-storage p,
@@ -80,19 +88,28 @@
   flex-direction: column;
   gap: 7px;
   min-width: 0;
-  font-size: 12px;
+  font: var(--collo-type-control-label);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage input:not([type='checkbox']),
 .collo-storage select {
-  padding: 9px 11px;
-  border: 1px solid var(--collo-line);
-  border-radius: 7px;
   background: var(--collo-content);
   color: var(--collo-ink);
   width: 100%;
   min-width: 0;
-  font-size: 13px;
-  line-height: 20px;
+  min-height: 36px;
+  font: var(--collo-type-button);
+  padding: 7px 12px;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: var(--collo-radius-control);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage input:focus-visible,
 .collo-storage select:focus-visible {
@@ -115,22 +132,36 @@
   min-width: 0;
 }
 .collo-storage-row strong {
-  font-size: 13px;
-  font-weight: 500;
+  font: var(--collo-type-nav-list-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage-row p {
-  font-size: 11px;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage-row small {
-  font-size: 11px;
+  font: var(--collo-type-meta);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-storage-confirm {
   margin: 16px 0 6px;
-  padding: 20px;
   border: 1px solid var(--collo-accent);
   background: var(--collo-selected);
-  border-radius: 10px;
   animation: collo-reveal 140ms ease-out;
+  border-radius: var(--collo-radius-surface);
+  padding: 24px;
 }
 .collo-storage-confirm label {
   margin: 15px 0;

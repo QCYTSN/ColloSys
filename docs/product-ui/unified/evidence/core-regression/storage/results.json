@@ -1,0 +1,3941 @@
+{
+  "evidence": "Formal application with real local services; specified HTTP failures and clipboard promise substituted",
+  "checks": [
+    "B1 real page HTTP failure then success clears matching local error",
+    "B3 actual pin write interleaved with a held pre-write GET cannot roll back the displayed result",
+    "B6 policy commits once; failed re-read stays a read error and focus stays on completion",
+    "Actual encrypted TEST backup persisted through confirmation",
+    "D1 real wrong passphrase has field association/focus; independent read recovery preserves it",
+    "D2 real recovery result keeps actual returned directory and surviving focus at confirmation position",
+    "D1 clipboard controlled promise reports only after settlement, in the correct row, stable width/scroll; keyboard failure exposes selectable full path",
+    "Real invalid export path stays at field; changed target revokes confirmation; successful export shows returned location",
+    "Real backup deletion focuses surviving completion after its row is removed",
+    "Source and independent TEST teammate files remain byte-for-byte unchanged"
+  ],
+  "writes": {
+    "/api/storage/pin": 1,
+    "/api/storage/policy": 1,
+    "/api/backups/create": 1,
+    "/api/backups/recover": 2,
+    "/api/backups/export": 2,
+    "/api/backups/delete": 1
+  },
+  "audits": [
+    {
+      "width": 1440,
+      "height": 900,
+      "geometry": {
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 881.765625,
+              "y": 165.5,
+              "width": 134.234375,
+              "height": 36,
+              "top": 165.5,
+              "right": 1016,
+              "bottom": 201.5,
+              "left": 881.765625
+            },
+            "samples": [
+              {
+                "x": 948.8828125,
+                "y": 183.5,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 887.765625,
+                "y": 171.5,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 385,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 591.328125,
+              "bottom": 398,
+              "left": 385
+            },
+            "samples": [
+              {
+                "x": 488.1640625,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 391,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 605.328125,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 811.65625,
+              "bottom": 398,
+              "left": 605.328125
+            },
+            "samples": [
+              {
+                "x": 708.4921875,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 611.328125,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 825.65625,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 1031.984375,
+              "bottom": 398,
+              "left": 825.65625
+            },
+            "samples": [
+              {
+                "x": 928.8203125,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 831.65625,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 385,
+              "y": 460,
+              "width": 119.703125,
+              "height": 36,
+              "top": 460,
+              "right": 504.703125,
+              "bottom": 496,
+              "left": 385
+            },
+            "samples": [
+              {
+                "x": 444.8515625,
+                "y": 478,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 391,
+                "y": 466,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 512.703125,
+              "y": 460,
+              "width": 153,
+              "height": 36,
+              "top": 460,
+              "right": 665.703125,
+              "bottom": 496,
+              "left": 512.703125
+            },
+            "samples": [
+              {
+                "x": 589.203125,
+                "y": 478,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 518.703125,
+                "y": 466,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 385,
+              "y": 462,
+              "width": 647,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 385
+            },
+            "samples": [
+              {
+                "x": 708.5,
+                "y": 480,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 391,
+                "y": 468,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 385,
+              "y": 462,
+              "width": 127.375,
+              "height": 36,
+              "top": 462,
+              "right": 512.375,
+              "bottom": 498,
+              "left": 385
+            },
+            "samples": [
+              {
+                "x": 448.6875,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 391,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 520.375,
+              "y": 462,
+              "width": 221.4375,
+              "height": 36,
+              "top": 462,
+              "right": 741.8125,
+              "bottom": 498,
+              "left": 520.375
+            },
+            "samples": [
+              {
+                "x": 631.09375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 526.375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 780.234375,
+              "y": 462,
+              "width": 119.0625,
+              "height": 36,
+              "top": 462,
+              "right": 899.296875,
+              "bottom": 498,
+              "left": 780.234375
+            },
+            "samples": [
+              {
+                "x": 839.765625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 786.234375,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 907.296875,
+              "y": 462,
+              "width": 124.703125,
+              "height": 36,
+              "top": 462,
+              "right": 1032,
+              "bottom": 498,
+              "left": 907.296875
+            },
+            "samples": [
+              {
+                "x": 969.6484375,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 913.296875,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 462,
+              "width": 122.03125,
+              "height": 36,
+              "top": 462,
+              "right": 834.03125,
+              "bottom": 498,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 773.015625,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 718,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 462,
+              "width": 133.140625,
+              "height": 36,
+              "top": 462,
+              "right": 845.140625,
+              "bottom": 498,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 778.5703125,
+                "y": 480,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 718,
+                "y": 468,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 109,
+              "width": 122.03125,
+              "height": 36,
+              "top": 109,
+              "right": 834.03125,
+              "bottom": 145,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 773.015625,
+                "y": 127,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 718,
+                "y": 115,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 247,
+              "width": 122.03125,
+              "height": 36,
+              "top": 247,
+              "right": 834.03125,
+              "bottom": 283,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 773.015625,
+                "y": 265,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 718,
+                "y": 253,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 332,
+              "width": 320,
+              "height": 72,
+              "top": 332,
+              "right": 1032,
+              "bottom": 404,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 872,
+                "y": 368,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 718,
+                "y": 338,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 712,
+              "y": 412,
+              "width": 133.140625,
+              "height": 36,
+              "top": 412,
+              "right": 845.140625,
+              "bottom": 448,
+              "left": 712
+            },
+            "samples": [
+              {
+                "x": 778.5703125,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 718,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 410,
+              "y": 652,
+              "width": 122.03125,
+              "height": 36,
+              "top": 652,
+              "right": 532.03125,
+              "bottom": 688,
+              "left": 410
+            },
+            "samples": [
+              {
+                "x": 471.015625,
+                "y": 670,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 416,
+                "y": 658,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 410,
+              "y": 688,
+              "width": 178.40625,
+              "height": 36,
+              "top": 688,
+              "right": 588.40625,
+              "bottom": 724,
+              "left": 410
+            },
+            "samples": [
+              {
+                "x": 499.203125,
+                "y": 706,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 416,
+                "y": 694,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1047,
+              "y": 41,
+              "width": 16,
+              "height": 16,
+              "top": 41,
+              "right": 1063,
+              "bottom": 57,
+              "left": 1047
+            },
+            "samples": [
+              {
+                "x": 1055,
+                "y": 49,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 1053,
+                "y": 47,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "geometry": {
+        "viewport": {
+          "width": 1280,
+          "height": 800
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 801.765625,
+              "y": 165.5,
+              "width": 134.234375,
+              "height": 36,
+              "top": 165.5,
+              "right": 936,
+              "bottom": 201.5,
+              "left": 801.765625
+            },
+            "samples": [
+              {
+                "x": 868.8828125,
+                "y": 183.5,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 807.765625,
+                "y": 171.5,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 305,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 511.328125,
+              "bottom": 398,
+              "left": 305
+            },
+            "samples": [
+              {
+                "x": 408.1640625,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 311,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 525.328125,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 731.65625,
+              "bottom": 398,
+              "left": 525.328125
+            },
+            "samples": [
+              {
+                "x": 628.4921875,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 531.328125,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 745.65625,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 951.984375,
+              "bottom": 398,
+              "left": 745.65625
+            },
+            "samples": [
+              {
+                "x": 848.8203125,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 751.65625,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 305,
+              "y": 412,
+              "width": 119.703125,
+              "height": 36,
+              "top": 412,
+              "right": 424.703125,
+              "bottom": 448,
+              "left": 305
+            },
+            "samples": [
+              {
+                "x": 364.8515625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 311,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 432.703125,
+              "y": 412,
+              "width": 153,
+              "height": 36,
+              "top": 412,
+              "right": 585.703125,
+              "bottom": 448,
+              "left": 432.703125
+            },
+            "samples": [
+              {
+                "x": 509.203125,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 438.703125,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 305,
+              "y": 412,
+              "width": 647,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 305
+            },
+            "samples": [
+              {
+                "x": 628.5,
+                "y": 430,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 311,
+                "y": 418,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 305,
+              "y": 412,
+              "width": 127.375,
+              "height": 36,
+              "top": 412,
+              "right": 432.375,
+              "bottom": 448,
+              "left": 305
+            },
+            "samples": [
+              {
+                "x": 368.6875,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 311,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 440.375,
+              "y": 412,
+              "width": 221.4375,
+              "height": 36,
+              "top": 412,
+              "right": 661.8125,
+              "bottom": 448,
+              "left": 440.375
+            },
+            "samples": [
+              {
+                "x": 551.09375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 446.375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 700.234375,
+              "y": 412,
+              "width": 119.0625,
+              "height": 36,
+              "top": 412,
+              "right": 819.296875,
+              "bottom": 448,
+              "left": 700.234375
+            },
+            "samples": [
+              {
+                "x": 759.765625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 706.234375,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 827.296875,
+              "y": 412,
+              "width": 124.703125,
+              "height": 36,
+              "top": 412,
+              "right": 952,
+              "bottom": 448,
+              "left": 827.296875
+            },
+            "samples": [
+              {
+                "x": 889.6484375,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 833.296875,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 412,
+              "width": 122.03125,
+              "height": 36,
+              "top": 412,
+              "right": 754.03125,
+              "bottom": 448,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 693.015625,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 638,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 412,
+              "width": 133.140625,
+              "height": 36,
+              "top": 412,
+              "right": 765.140625,
+              "bottom": 448,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 698.5703125,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 638,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 109,
+              "width": 122.03125,
+              "height": 36,
+              "top": 109,
+              "right": 754.03125,
+              "bottom": 145,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 693.015625,
+                "y": 127,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 638,
+                "y": 115,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 247,
+              "width": 122.03125,
+              "height": 36,
+              "top": 247,
+              "right": 754.03125,
+              "bottom": 283,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 693.015625,
+                "y": 265,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 638,
+                "y": 253,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 332,
+              "width": 320,
+              "height": 72,
+              "top": 332,
+              "right": 952,
+              "bottom": 404,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 792,
+                "y": 368,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 638,
+                "y": 338,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 632,
+              "y": 412,
+              "width": 133.140625,
+              "height": 36,
+              "top": 412,
+              "right": 765.140625,
+              "bottom": 448,
+              "left": 632
+            },
+            "samples": [
+              {
+                "x": 698.5703125,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 638,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 330,
+              "y": 652,
+              "width": 122.03125,
+              "height": 36,
+              "top": 652,
+              "right": 452.03125,
+              "bottom": 688,
+              "left": 330
+            },
+            "samples": [
+              {
+                "x": 391.015625,
+                "y": 670,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 336,
+                "y": 658,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 330,
+              "y": 688,
+              "width": 178.40625,
+              "height": 36,
+              "top": 688,
+              "right": 508.40625,
+              "bottom": 724,
+              "left": 330
+            },
+            "samples": [
+              {
+                "x": 419.203125,
+                "y": 706,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 336,
+                "y": 694,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 967,
+              "y": 41,
+              "width": 16,
+              "height": 16,
+              "top": 41,
+              "right": 983,
+              "bottom": 57,
+              "left": 967
+            },
+            "samples": [
+              {
+                "x": 975,
+                "y": 49,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 973,
+                "y": 47,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 960,
+      "height": 720,
+      "geometry": {
+        "viewport": {
+          "width": 960,
+          "height": 720
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 641.765625,
+              "y": 165.5,
+              "width": 134.234375,
+              "height": 36,
+              "top": 165.5,
+              "right": 776,
+              "bottom": 201.5,
+              "left": 641.765625
+            },
+            "samples": [
+              {
+                "x": 708.8828125,
+                "y": 183.5,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 647.765625,
+                "y": 171.5,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 145,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 351.328125,
+              "bottom": 398,
+              "left": 145
+            },
+            "samples": [
+              {
+                "x": 248.1640625,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 151,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 365.328125,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 571.65625,
+              "bottom": 398,
+              "left": 365.328125
+            },
+            "samples": [
+              {
+                "x": 468.4921875,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 371.328125,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 585.65625,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 791.984375,
+              "bottom": 398,
+              "left": 585.65625
+            },
+            "samples": [
+              {
+                "x": 688.8203125,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 591.65625,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 145,
+              "y": 372,
+              "width": 119.703125,
+              "height": 36,
+              "top": 372,
+              "right": 264.703125,
+              "bottom": 408,
+              "left": 145
+            },
+            "samples": [
+              {
+                "x": 204.8515625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 151,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 272.703125,
+              "y": 372,
+              "width": 153,
+              "height": 36,
+              "top": 372,
+              "right": 425.703125,
+              "bottom": 408,
+              "left": 272.703125
+            },
+            "samples": [
+              {
+                "x": 349.203125,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 278.703125,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 145,
+              "y": 372,
+              "width": 647,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 145
+            },
+            "samples": [
+              {
+                "x": 468.5,
+                "y": 390,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 151,
+                "y": 378,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 145,
+              "y": 372,
+              "width": 127.375,
+              "height": 36,
+              "top": 372,
+              "right": 272.375,
+              "bottom": 408,
+              "left": 145
+            },
+            "samples": [
+              {
+                "x": 208.6875,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 151,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 280.375,
+              "y": 372,
+              "width": 221.4375,
+              "height": 36,
+              "top": 372,
+              "right": 501.8125,
+              "bottom": 408,
+              "left": 280.375
+            },
+            "samples": [
+              {
+                "x": 391.09375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 286.375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 540.234375,
+              "y": 372,
+              "width": 119.0625,
+              "height": 36,
+              "top": 372,
+              "right": 659.296875,
+              "bottom": 408,
+              "left": 540.234375
+            },
+            "samples": [
+              {
+                "x": 599.765625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 546.234375,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 667.296875,
+              "y": 372,
+              "width": 124.703125,
+              "height": 36,
+              "top": 372,
+              "right": 792,
+              "bottom": 408,
+              "left": 667.296875
+            },
+            "samples": [
+              {
+                "x": 729.6484375,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 673.296875,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 372,
+              "width": 122.03125,
+              "height": 36,
+              "top": 372,
+              "right": 594.03125,
+              "bottom": 408,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 533.015625,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 478,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 372,
+              "width": 133.140625,
+              "height": 36,
+              "top": 372,
+              "right": 605.140625,
+              "bottom": 408,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 538.5703125,
+                "y": 390,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 478,
+                "y": 378,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 109,
+              "width": 122.03125,
+              "height": 36,
+              "top": 109,
+              "right": 594.03125,
+              "bottom": 145,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 533.015625,
+                "y": 127,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 478,
+                "y": 115,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 247,
+              "width": 122.03125,
+              "height": 36,
+              "top": 247,
+              "right": 594.03125,
+              "bottom": 283,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 533.015625,
+                "y": 265,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 478,
+                "y": 253,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 332,
+              "width": 320,
+              "height": 72,
+              "top": 332,
+              "right": 792,
+              "bottom": 404,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 632,
+                "y": 368,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 478,
+                "y": 338,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 472,
+              "y": 412,
+              "width": 133.140625,
+              "height": 36,
+              "top": 412,
+              "right": 605.140625,
+              "bottom": 448,
+              "left": 472
+            },
+            "samples": [
+              {
+                "x": 538.5703125,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 478,
+                "y": 418,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 170,
+              "y": 635,
+              "width": 122.03125,
+              "height": 36,
+              "top": 635,
+              "right": 292.03125,
+              "bottom": 671,
+              "left": 170
+            },
+            "samples": [
+              {
+                "x": 231.015625,
+                "y": 653,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 176,
+                "y": 641,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 170,
+              "y": 505,
+              "width": 178.40625,
+              "height": 36,
+              "top": 505,
+              "right": 348.40625,
+              "bottom": 541,
+              "left": 170
+            },
+            "samples": [
+              {
+                "x": 259.203125,
+                "y": 523,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 176,
+                "y": 511,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 807,
+              "y": 41,
+              "width": 16,
+              "height": 16,
+              "top": 41,
+              "right": 823,
+              "bottom": 57,
+              "left": 807
+            },
+            "samples": [
+              {
+                "x": 815,
+                "y": 49,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 813,
+                "y": 47,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "geometry": {
+        "viewport": {
+          "width": 1920,
+          "height": 1080
+        },
+        "documentOverflow": 0,
+        "faults": [],
+        "legal": [],
+        "fullTextCandidates": []
+      },
+      "actions": {
+        "faults": [],
+        "checks": [
+          {
+            "id": "",
+            "text": "Refresh storage",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1121.765625,
+              "y": 165.5,
+              "width": 134.234375,
+              "height": 36,
+              "top": 165.5,
+              "right": 1256,
+              "bottom": 201.5,
+              "left": 1121.765625
+            },
+            "samples": [
+              {
+                "x": 1188.8828125,
+                "y": 183.5,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1127.765625,
+                "y": 171.5,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 625,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 831.328125,
+              "bottom": 398,
+              "left": 625
+            },
+            "samples": [
+              {
+                "x": 728.1640625,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 631,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 845.328125,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 1051.65625,
+              "bottom": 398,
+              "left": 845.328125
+            },
+            "samples": [
+              {
+                "x": 948.4921875,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 851.328125,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1065.65625,
+              "y": 362,
+              "width": 206.328125,
+              "height": 36,
+              "top": 362,
+              "right": 1271.984375,
+              "bottom": 398,
+              "left": 1065.65625
+            },
+            "samples": [
+              {
+                "x": 1168.8203125,
+                "y": 380,
+                "hit": true,
+                "target": "INPUT"
+              },
+              {
+                "x": 1071.65625,
+                "y": 368,
+                "hit": true,
+                "target": "INPUT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review policy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 625,
+              "y": 460,
+              "width": 119.703125,
+              "height": 36,
+              "top": 460,
+              "right": 744.703125,
+              "bottom": 496,
+              "left": 625
+            },
+            "samples": [
+              {
+                "x": 684.8515625,
+                "y": 478,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 631,
+                "y": 466,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Review cleanup · 0",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 752.703125,
+              "y": 460,
+              "width": 153,
+              "height": 36,
+              "top": 460,
+              "right": 905.703125,
+              "bottom": 496,
+              "left": 752.703125
+            },
+            "samples": [
+              {
+                "x": 829.203125,
+                "y": 478,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 758.703125,
+                "y": 466,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Storage checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 625,
+              "y": 543,
+              "width": 647,
+              "height": 36,
+              "top": 543,
+              "right": 1272,
+              "bottom": 579,
+              "left": 625
+            },
+            "samples": [
+              {
+                "x": 948.5,
+                "y": 561,
+                "hit": true,
+                "target": "SELECT"
+              },
+              {
+                "x": 631,
+                "y": 549,
+                "hit": true,
+                "target": "SELECT"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Pin checkpoint",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 625,
+              "y": 552,
+              "width": 127.375,
+              "height": 36,
+              "top": 552,
+              "right": 752.375,
+              "bottom": 588,
+              "left": 625
+            },
+            "samples": [
+              {
+                "x": 688.6875,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 631,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Create encrypted backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 760.375,
+              "y": 552,
+              "width": 221.4375,
+              "height": 36,
+              "top": 552,
+              "right": 981.8125,
+              "bottom": 588,
+              "left": 760.375
+            },
+            "samples": [
+              {
+                "x": 871.09375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 766.375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Recover copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1020.234375,
+              "y": 552,
+              "width": 119.0625,
+              "height": 36,
+              "top": 552,
+              "right": 1139.296875,
+              "bottom": 588,
+              "left": 1020.234375
+            },
+            "samples": [
+              {
+                "x": 1079.765625,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1026.234375,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Delete backup",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1147.296875,
+              "y": 552,
+              "width": 124.703125,
+              "height": 36,
+              "top": 552,
+              "right": 1272,
+              "bottom": 588,
+              "left": 1147.296875
+            },
+            "samples": [
+              {
+                "x": 1209.6484375,
+                "y": 570,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 1153.296875,
+                "y": 558,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 117,
+              "width": 122.03125,
+              "height": 36,
+              "top": 117,
+              "right": 1074.03125,
+              "bottom": 153,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1013.015625,
+                "y": 135,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 958,
+                "y": 123,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 161,
+              "width": 133.140625,
+              "height": 36,
+              "top": 161,
+              "right": 1085.140625,
+              "bottom": 197,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1018.5703125,
+                "y": 179,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 958,
+                "y": 167,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 284,
+              "width": 122.03125,
+              "height": 36,
+              "top": 284,
+              "right": 1074.03125,
+              "bottom": 320,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1013.015625,
+                "y": 302,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 958,
+                "y": 290,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 424,
+              "width": 122.03125,
+              "height": 36,
+              "top": 424,
+              "right": 1074.03125,
+              "bottom": 460,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1013.015625,
+                "y": 442,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 958,
+                "y": 430,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Complete recovery path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 509,
+              "width": 320,
+              "height": 72,
+              "top": 509,
+              "right": 1272,
+              "bottom": 581,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1112,
+                "y": 545,
+                "hit": true,
+                "target": "TEXTAREA"
+              },
+              {
+                "x": 958,
+                "y": 515,
+                "hit": true,
+                "target": "TEXTAREA"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Export copy",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 952,
+              "y": 589,
+              "width": 133.140625,
+              "height": 36,
+              "top": 589,
+              "right": 1085.140625,
+              "bottom": 625,
+              "left": 952
+            },
+            "samples": [
+              {
+                "x": 1018.5703125,
+                "y": 607,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 958,
+                "y": 595,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Copy path",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 650,
+              "y": 829,
+              "width": 122.03125,
+              "height": 36,
+              "top": 829,
+              "right": 772.03125,
+              "bottom": 865,
+              "left": 650
+            },
+            "samples": [
+              {
+                "x": 711.015625,
+                "y": 847,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 656,
+                "y": 835,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Refresh storage status",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 650,
+              "y": 865,
+              "width": 178.40625,
+              "height": 36,
+              "top": 865,
+              "right": 828.40625,
+              "bottom": 901,
+              "left": 650
+            },
+            "samples": [
+              {
+                "x": 739.203125,
+                "y": 883,
+                "hit": true,
+                "target": "SPAN"
+              },
+              {
+                "x": 656,
+                "y": 871,
+                "hit": true,
+                "target": "SPAN"
+              }
+            ],
+            "inViewport": true
+          },
+          {
+            "id": "",
+            "text": "Close",
+            "excluded": false,
+            "disabled": false,
+            "category": "reachable and actionable",
+            "rect": {
+              "x": 1287,
+              "y": 41,
+              "width": 16,
+              "height": 16,
+              "top": 41,
+              "right": 1303,
+              "bottom": 57,
+              "left": 1287
+            },
+            "samples": [
+              {
+                "x": 1295,
+                "y": 49,
+                "hit": true,
+                "target": "path"
+              },
+              {
+                "x": 1293,
+                "y": 47,
+                "hit": true,
+                "target": "path"
+              }
+            ],
+            "inViewport": true
+          }
+        ]
+      }
+    }
+  ]
+}

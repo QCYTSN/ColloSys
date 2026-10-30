@@ -1,0 +1,5332 @@
+{
+  "phase": "after",
+  "mode": "production",
+  "method": "Three independent Chrome processes and contexts; same persisted 201-task project and account. Each after context signs in through the real form; before used a saved authenticated context. Sign-in is excluded from the menu timing, which starts after page readiness. First open per entry per process is cold renderer/menu (OS cache is not cleared); ten further opens per entry are warm. Input timestamps are captured in-page on actual pointerdown. Feedback/operable/stable/animation-settled are browser frame observations, not physical presentation. No locator round-trip time is used as latency. Outside click closes both baseline and new panels. Headless measurements do not establish native frame rate.",
+  "taskCount": 201,
+  "fixtureProject": "sd7prmbcqq7g1c4e15smr5nfq58h3dam",
+  "results": [
+    {
+      "round": 1,
+      "environment": {
+        "dpr": 1,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "visualScale": 1,
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+      },
+      "build": {
+        "version": 1,
+        "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+        "dirty": true,
+        "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+      },
+      "initialText": "ColloSys\nCtrl\n/\nT\nTEST refinement 99ed4a04\nProjects\nTasks\nConversations\nTeam\nConnections\nSettings\nColloSys\n0.1.0\nTEST dense reading · 团队上下文与长会话\nProject details\nTasks\nActivity\nConversations\nHandoffs\nTimeline\nAbout\nProject tasks\nActive\n135\nFilter\nDisplay\nCtrl\nK\nIN PROGRESS\n(67)\nct-243\nTEST menu density 200\n8h\nct-240\nTEST menu density 197\n8h\nct-237\nTEST menu density 194\n8h\nct-234\nTEST menu density 191\n8h\nct-231\nTEST menu density 188\n8h\nct-228\nTEST menu density 185\n8h\nct-225\nTEST menu density 182\n8h\nct-222\nTEST menu density 179\n8h\nct-219\nTEST menu density 176\n8h\nct-216\nTEST menu density 173\n8h\nct-213\nTEST menu density 170\n8h\nct-210\nTEST menu density 167\n8h\nct-207\nTEST menu density 164\n8h\nct-204\nTEST menu density 161\n8h\nct-201\nTEST menu density 158\n8h\nct-198\nTEST menu density 155\n8h\nct-195\nTEST menu density 152\n8h\nct-192\nTEST menu density 149\n8h\nct-189\nTEST menu density 146\n8h\nct-186\nTEST menu density 143\n8h\nct-183\nTEST menu density 140\n8h\nct-180\nTEST menu density 137\n8h\nct-177\nTEST menu density 134\n8h\nct-174\nTEST menu density 131\n8h\nct-171\nTEST menu density 128\n8h\nct-168\nTEST menu density 125\n8h\nct-165\nTEST menu density 122\n8h\n+1\nStatus\nNo active sessions\nKILLED",
+      "metrics": {
+        "actions": [
+          {
+            "name": "Active",
+            "cold": true,
+            "start": 3035.800000011921,
+            "eventTimestamp": 3031.800000011921,
+            "feedbackOpportunity": 26.5,
+            "operableOpportunity": 26.5,
+            "stableOpportunity": 209.5,
+            "animationSettled": 209.5999999642372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3509.199999988079,
+            "eventTimestamp": 3507.600000023842,
+            "feedbackOpportunity": 19.900000035762787,
+            "operableOpportunity": 19.900000035762787,
+            "stableOpportunity": 203.10000002384186,
+            "animationSettled": 203.10000002384186
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3925.800000011921,
+            "eventTimestamp": 3924.399999976158,
+            "feedbackOpportunity": 19.69999998807907,
+            "operableOpportunity": 19.69999998807907,
+            "stableOpportunity": 202.69999998807907,
+            "animationSettled": 202.69999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4332.699999988079,
+            "eventTimestamp": 4331.100000023842,
+            "feedbackOpportunity": 13.100000023841858,
+            "operableOpportunity": 13.100000023841858,
+            "stableOpportunity": 196,
+            "animationSettled": 196
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4733.399999976158,
+            "eventTimestamp": 4731.800000011921,
+            "feedbackOpportunity": 20.600000023841858,
+            "operableOpportunity": 20.600000023841858,
+            "stableOpportunity": 203.4000000357628,
+            "animationSettled": 203.5
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5141.399999976158,
+            "eventTimestamp": 5140,
+            "feedbackOpportunity": 20.700000047683716,
+            "operableOpportunity": 20.700000047683716,
+            "stableOpportunity": 203.70000004768372,
+            "animationSettled": 203.70000004768372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5541.5,
+            "eventTimestamp": 5540.100000023842,
+            "feedbackOpportunity": 20.69999998807907,
+            "operableOpportunity": 20.69999998807907,
+            "stableOpportunity": 203.69999998807907,
+            "animationSettled": 203.69999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5959.699999988079,
+            "eventTimestamp": 5957.600000023842,
+            "feedbackOpportunity": 11.800000011920929,
+            "operableOpportunity": 11.800000011920929,
+            "stableOpportunity": 194.30000001192093,
+            "animationSettled": 194.4000000357628
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6384.100000023842,
+            "eventTimestamp": 6382.600000023842,
+            "feedbackOpportunity": 20,
+            "operableOpportunity": 20,
+            "stableOpportunity": 202.79999995231628,
+            "animationSettled": 202.79999995231628
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6800.5,
+            "eventTimestamp": 6799,
+            "feedbackOpportunity": 20.399999976158142,
+            "operableOpportunity": 20.399999976158142,
+            "stableOpportunity": 203.19999998807907,
+            "animationSettled": 203.19999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 7216.600000023842,
+            "eventTimestamp": 7215.300000011921,
+            "feedbackOpportunity": 21.099999964237213,
+            "operableOpportunity": 21.099999964237213,
+            "stableOpportunity": 204,
+            "animationSettled": 204
+          },
+          {
+            "name": "Display",
+            "cold": true,
+            "start": 7632.800000011921,
+            "eventTimestamp": 7631.399999976158,
+            "feedbackOpportunity": 22,
+            "operableOpportunity": 22,
+            "stableOpportunity": 204.19999998807907,
+            "animationSettled": 204.19999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8110.300000011921,
+            "eventTimestamp": 8108.100000023842,
+            "feedbackOpportunity": 18.69999998807907,
+            "operableOpportunity": 18.69999998807907,
+            "stableOpportunity": 201.5,
+            "animationSettled": 201.5
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8532.600000023842,
+            "eventTimestamp": 8531.300000011921,
+            "feedbackOpportunity": 21.19999998807907,
+            "operableOpportunity": 21.19999998807907,
+            "stableOpportunity": 204.19999998807907,
+            "animationSettled": 204.19999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8940.699999988079,
+            "eventTimestamp": 8939.5,
+            "feedbackOpportunity": 21.600000023841858,
+            "operableOpportunity": 21.600000023841858,
+            "stableOpportunity": 204.69999998807907,
+            "animationSettled": 204.69999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9342.199999988079,
+            "eventTimestamp": 9340.699999988079,
+            "feedbackOpportunity": 20,
+            "operableOpportunity": 20,
+            "stableOpportunity": 203.10000002384186,
+            "animationSettled": 203.10000002384186
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9749.699999988079,
+            "eventTimestamp": 9748.300000011921,
+            "feedbackOpportunity": 12.5,
+            "operableOpportunity": 12.5,
+            "stableOpportunity": 195.4000000357628,
+            "animationSettled": 195.4000000357628
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10149.600000023842,
+            "eventTimestamp": 10148.199999988079,
+            "feedbackOpportunity": 20.899999976158142,
+            "operableOpportunity": 20.899999976158142,
+            "stableOpportunity": 204.0999999642372,
+            "animationSettled": 204.0999999642372
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10559.100000023842,
+            "eventTimestamp": 10557.800000011921,
+            "feedbackOpportunity": 20,
+            "operableOpportunity": 20,
+            "stableOpportunity": 202.89999997615814,
+            "animationSettled": 202.89999997615814
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10975.399999976158,
+            "eventTimestamp": 10974,
+            "feedbackOpportunity": 20.30000001192093,
+            "operableOpportunity": 20.30000001192093,
+            "stableOpportunity": 203.10000002384186,
+            "animationSettled": 203.20000004768372
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11392.899999976158,
+            "eventTimestamp": 11391.199999988079,
+            "feedbackOpportunity": 11.100000023841858,
+            "operableOpportunity": 11.100000023841858,
+            "stableOpportunity": 194.10000002384186,
+            "animationSettled": 194.10000002384186
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11808.100000023842,
+            "eventTimestamp": 11806.899999976158,
+            "feedbackOpportunity": 21,
+            "operableOpportunity": 21,
+            "stableOpportunity": 203.89999997615814,
+            "animationSettled": 203.89999997615814
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 12635.600000023842,
+            "eventTimestamp": 12632.699999988079,
+            "feedbackOpportunity": 16,
+            "operableOpportunity": 16,
+            "stableOpportunity": 26.799999952316284,
+            "animationSettled": 26.799999952316284
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13075.300000011921,
+            "eventTimestamp": 13073.100000023842,
+            "feedbackOpportunity": 9.399999976158142,
+            "operableOpportunity": 9.399999976158142,
+            "stableOpportunity": 28.69999998807907,
+            "animationSettled": 28.80000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13683.699999988079,
+            "eventTimestamp": 13681.399999976158,
+            "feedbackOpportunity": 9.300000011920929,
+            "operableOpportunity": 9.300000011920929,
+            "stableOpportunity": 28.69999998807907,
+            "animationSettled": 28.69999998807907
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14260.199999988079,
+            "eventTimestamp": 14257.699999988079,
+            "feedbackOpportunity": 10.800000011920929,
+            "operableOpportunity": 10.800000011920929,
+            "stableOpportunity": 27.19999998807907,
+            "animationSettled": 27.30000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14850.600000023842,
+            "eventTimestamp": 14848.100000023842,
+            "feedbackOpportunity": 9,
+            "operableOpportunity": 9,
+            "stableOpportunity": 28,
+            "animationSettled": 28
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 15425.899999976158,
+            "eventTimestamp": 15423.5,
+            "feedbackOpportunity": 8.900000035762787,
+            "operableOpportunity": 8.900000035762787,
+            "stableOpportunity": 27.700000047683716,
+            "animationSettled": 27.80000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 16008.5,
+            "eventTimestamp": 16006.199999988079,
+            "feedbackOpportunity": 9.199999988079071,
+            "operableOpportunity": 9.199999988079071,
+            "stableOpportunity": 28.5,
+            "animationSettled": 28.600000023841858
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 16583.69999998808,
+            "eventTimestamp": 16581.399999976158,
+            "feedbackOpportunity": 8.5,
+            "operableOpportunity": 8.5,
+            "stableOpportunity": 28.19999998807907,
+            "animationSettled": 28.30000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17167.69999998808,
+            "eventTimestamp": 17165,
+            "feedbackOpportunity": 9.699999988079071,
+            "operableOpportunity": 9.699999988079071,
+            "stableOpportunity": 27.69999998807907,
+            "animationSettled": 27.69999998807907
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17766.899999976158,
+            "eventTimestamp": 17764.69999998808,
+            "feedbackOpportunity": 8.600000023841858,
+            "operableOpportunity": 8.600000023841858,
+            "stableOpportunity": 28.5,
+            "animationSettled": 28.5
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 3031.800000011921,
+            "duration": 72,
+            "interactionId": 7595
+          },
+          {
+            "name": "pointerup",
+            "start": 3031.800000011921,
+            "duration": 72,
+            "interactionId": 7595
+          },
+          {
+            "name": "click",
+            "start": 3031.800000011921,
+            "duration": 72,
+            "interactionId": 7595
+          },
+          {
+            "name": "pointerdown",
+            "start": 3478,
+            "duration": 16,
+            "interactionId": 7602
+          },
+          {
+            "name": "pointerup",
+            "start": 3478.100000023842,
+            "duration": 16,
+            "interactionId": 7602
+          },
+          {
+            "name": "click",
+            "start": 3478.100000023842,
+            "duration": 16,
+            "interactionId": 7602
+          },
+          {
+            "name": "pointerdown",
+            "start": 3507.600000023842,
+            "duration": 24,
+            "interactionId": 7609
+          },
+          {
+            "name": "pointerup",
+            "start": 3507.600000023842,
+            "duration": 24,
+            "interactionId": 7609
+          },
+          {
+            "name": "click",
+            "start": 3507.600000023842,
+            "duration": 24,
+            "interactionId": 7609
+          },
+          {
+            "name": "pointerdown",
+            "start": 3902.5,
+            "duration": 16,
+            "interactionId": 7616
+          },
+          {
+            "name": "pointerup",
+            "start": 3902.5,
+            "duration": 16,
+            "interactionId": 7616
+          },
+          {
+            "name": "click",
+            "start": 3902.5,
+            "duration": 16,
+            "interactionId": 7616
+          },
+          {
+            "name": "pointerdown",
+            "start": 3924.399999976158,
+            "duration": 24,
+            "interactionId": 7623
+          },
+          {
+            "name": "pointerup",
+            "start": 3924.5,
+            "duration": 24,
+            "interactionId": 7623
+          },
+          {
+            "name": "click",
+            "start": 3924.5,
+            "duration": 24,
+            "interactionId": 7623
+          },
+          {
+            "name": "pointerdown",
+            "start": 4303.300000011921,
+            "duration": 16,
+            "interactionId": 7630
+          },
+          {
+            "name": "pointerup",
+            "start": 4303.399999976158,
+            "duration": 16,
+            "interactionId": 7630
+          },
+          {
+            "name": "click",
+            "start": 4303.399999976158,
+            "duration": 16,
+            "interactionId": 7630
+          },
+          {
+            "name": "pointerdown",
+            "start": 4331.100000023842,
+            "duration": 16,
+            "interactionId": 7637
+          },
+          {
+            "name": "pointerup",
+            "start": 4331.100000023842,
+            "duration": 16,
+            "interactionId": 7637
+          },
+          {
+            "name": "click",
+            "start": 4331.100000023842,
+            "duration": 16,
+            "interactionId": 7637
+          },
+          {
+            "name": "pointerdown",
+            "start": 4708.699999988079,
+            "duration": 16,
+            "interactionId": 7644
+          },
+          {
+            "name": "pointerup",
+            "start": 4708.699999988079,
+            "duration": 16,
+            "interactionId": 7644
+          },
+          {
+            "name": "click",
+            "start": 4708.699999988079,
+            "duration": 16,
+            "interactionId": 7644
+          },
+          {
+            "name": "pointerdown",
+            "start": 4731.800000011921,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "pointerup",
+            "start": 4731.800000011921,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "click",
+            "start": 4731.800000011921,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "pointerdown",
+            "start": 5114.600000023842,
+            "duration": 16,
+            "interactionId": 7658
+          },
+          {
+            "name": "pointerup",
+            "start": 5114.699999988079,
+            "duration": 16,
+            "interactionId": 7658
+          },
+          {
+            "name": "click",
+            "start": 5114.699999988079,
+            "duration": 16,
+            "interactionId": 7658
+          },
+          {
+            "name": "pointerdown",
+            "start": 5140,
+            "duration": 24,
+            "interactionId": 7665
+          },
+          {
+            "name": "pointerup",
+            "start": 5140.100000023842,
+            "duration": 24,
+            "interactionId": 7665
+          },
+          {
+            "name": "click",
+            "start": 5140.100000023842,
+            "duration": 24,
+            "interactionId": 7665
+          },
+          {
+            "name": "pointerdown",
+            "start": 5509.300000011921,
+            "duration": 16,
+            "interactionId": 7672
+          },
+          {
+            "name": "pointerup",
+            "start": 5509.300000011921,
+            "duration": 16,
+            "interactionId": 7672
+          },
+          {
+            "name": "click",
+            "start": 5509.300000011921,
+            "duration": 16,
+            "interactionId": 7672
+          },
+          {
+            "name": "pointerdown",
+            "start": 5540.100000023842,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "pointerup",
+            "start": 5540.199999988079,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "click",
+            "start": 5540.199999988079,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "pointerdown",
+            "start": 5930.199999988079,
+            "duration": 16,
+            "interactionId": 7686
+          },
+          {
+            "name": "pointerup",
+            "start": 5930.199999988079,
+            "duration": 16,
+            "interactionId": 7686
+          },
+          {
+            "name": "click",
+            "start": 5930.199999988079,
+            "duration": 16,
+            "interactionId": 7686
+          },
+          {
+            "name": "pointerdown",
+            "start": 5957.600000023842,
+            "duration": 16,
+            "interactionId": 7693
+          },
+          {
+            "name": "pointerup",
+            "start": 5957.699999988079,
+            "duration": 16,
+            "interactionId": 7693
+          },
+          {
+            "name": "click",
+            "start": 5957.699999988079,
+            "duration": 16,
+            "interactionId": 7693
+          },
+          {
+            "name": "pointerdown",
+            "start": 6351.199999988079,
+            "duration": 16,
+            "interactionId": 7700
+          },
+          {
+            "name": "pointerup",
+            "start": 6351.199999988079,
+            "duration": 16,
+            "interactionId": 7700
+          },
+          {
+            "name": "click",
+            "start": 6351.199999988079,
+            "duration": 16,
+            "interactionId": 7700
+          },
+          {
+            "name": "pointerdown",
+            "start": 6382.600000023842,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "pointerup",
+            "start": 6382.699999988079,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "click",
+            "start": 6382.699999988079,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "pointerdown",
+            "start": 6768.399999976158,
+            "duration": 16,
+            "interactionId": 7714
+          },
+          {
+            "name": "pointerup",
+            "start": 6768.399999976158,
+            "duration": 16,
+            "interactionId": 7714
+          },
+          {
+            "name": "click",
+            "start": 6768.399999976158,
+            "duration": 16,
+            "interactionId": 7714
+          },
+          {
+            "name": "pointerdown",
+            "start": 6799,
+            "duration": 24,
+            "interactionId": 7721
+          },
+          {
+            "name": "pointerup",
+            "start": 6799,
+            "duration": 24,
+            "interactionId": 7721
+          },
+          {
+            "name": "click",
+            "start": 6799,
+            "duration": 24,
+            "interactionId": 7721
+          },
+          {
+            "name": "pointerdown",
+            "start": 7190.100000023842,
+            "duration": 16,
+            "interactionId": 7728
+          },
+          {
+            "name": "pointerup",
+            "start": 7190.199999988079,
+            "duration": 16,
+            "interactionId": 7728
+          },
+          {
+            "name": "click",
+            "start": 7190.199999988079,
+            "duration": 16,
+            "interactionId": 7728
+          },
+          {
+            "name": "pointerdown",
+            "start": 7215.300000011921,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "pointerup",
+            "start": 7215.399999976158,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "click",
+            "start": 7215.399999976158,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "pointerdown",
+            "start": 7596.199999988079,
+            "duration": 16,
+            "interactionId": 7742
+          },
+          {
+            "name": "pointerup",
+            "start": 7596.199999988079,
+            "duration": 16,
+            "interactionId": 7742
+          },
+          {
+            "name": "click",
+            "start": 7596.199999988079,
+            "duration": 16,
+            "interactionId": 7742
+          },
+          {
+            "name": "pointerdown",
+            "start": 7631.399999976158,
+            "duration": 32,
+            "interactionId": 7749
+          },
+          {
+            "name": "pointerup",
+            "start": 7631.399999976158,
+            "duration": 32,
+            "interactionId": 7749
+          },
+          {
+            "name": "click",
+            "start": 7631.399999976158,
+            "duration": 32,
+            "interactionId": 7749
+          },
+          {
+            "name": "pointerdown",
+            "start": 8069.100000023842,
+            "duration": 16,
+            "interactionId": 7756
+          },
+          {
+            "name": "pointerup",
+            "start": 8069.300000011921,
+            "duration": 16,
+            "interactionId": 7756
+          },
+          {
+            "name": "click",
+            "start": 8069.300000011921,
+            "duration": 16,
+            "interactionId": 7756
+          },
+          {
+            "name": "pointerdown",
+            "start": 8108.100000023842,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "pointerup",
+            "start": 8108.199999988079,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "click",
+            "start": 8108.199999988079,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "pointerdown",
+            "start": 8507,
+            "duration": 16,
+            "interactionId": 7770
+          },
+          {
+            "name": "pointerup",
+            "start": 8507.100000023842,
+            "duration": 16,
+            "interactionId": 7770
+          },
+          {
+            "name": "click",
+            "start": 8507.100000023842,
+            "duration": 16,
+            "interactionId": 7770
+          },
+          {
+            "name": "pointerdown",
+            "start": 8531.300000011921,
+            "duration": 24,
+            "interactionId": 7777
+          },
+          {
+            "name": "pointerup",
+            "start": 8531.300000011921,
+            "duration": 24,
+            "interactionId": 7777
+          },
+          {
+            "name": "click",
+            "start": 8531.300000011921,
+            "duration": 24,
+            "interactionId": 7777
+          },
+          {
+            "name": "pointerdown",
+            "start": 8914.100000023842,
+            "duration": 16,
+            "interactionId": 7784
+          },
+          {
+            "name": "pointerup",
+            "start": 8914.199999988079,
+            "duration": 16,
+            "interactionId": 7784
+          },
+          {
+            "name": "click",
+            "start": 8914.199999988079,
+            "duration": 16,
+            "interactionId": 7784
+          },
+          {
+            "name": "pointerdown",
+            "start": 8939.5,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "pointerup",
+            "start": 8939.5,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "click",
+            "start": 8939.5,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "pointerdown",
+            "start": 9340.699999988079,
+            "duration": 24,
+            "interactionId": 7805
+          },
+          {
+            "name": "pointerup",
+            "start": 9340.899999976158,
+            "duration": 24,
+            "interactionId": 7805
+          },
+          {
+            "name": "click",
+            "start": 9340.899999976158,
+            "duration": 24,
+            "interactionId": 7805
+          },
+          {
+            "name": "pointerdown",
+            "start": 9720.800000011921,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "pointerup",
+            "start": 9720.899999976158,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "click",
+            "start": 9720.899999976158,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "pointerdown",
+            "start": 9748.300000011921,
+            "duration": 16,
+            "interactionId": 7819
+          },
+          {
+            "name": "pointerup",
+            "start": 9748.399999976158,
+            "duration": 16,
+            "interactionId": 7819
+          },
+          {
+            "name": "click",
+            "start": 9748.399999976158,
+            "duration": 16,
+            "interactionId": 7819
+          },
+          {
+            "name": "pointerdown",
+            "start": 10124.600000023842,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "pointerup",
+            "start": 10124.800000011921,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "click",
+            "start": 10124.800000011921,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "pointerdown",
+            "start": 10148.199999988079,
+            "duration": 24,
+            "interactionId": 7833
+          },
+          {
+            "name": "pointerup",
+            "start": 10148.199999988079,
+            "duration": 24,
+            "interactionId": 7833
+          },
+          {
+            "name": "click",
+            "start": 10148.199999988079,
+            "duration": 24,
+            "interactionId": 7833
+          },
+          {
+            "name": "pointerdown",
+            "start": 10532.399999976158,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "pointerup",
+            "start": 10532.399999976158,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "click",
+            "start": 10532.399999976158,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "pointerdown",
+            "start": 10557.800000011921,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "pointerup",
+            "start": 10557.800000011921,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "click",
+            "start": 10557.800000011921,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "pointerdown",
+            "start": 10943.100000023842,
+            "duration": 16,
+            "interactionId": 7854
+          },
+          {
+            "name": "pointerup",
+            "start": 10943.199999988079,
+            "duration": 16,
+            "interactionId": 7854
+          },
+          {
+            "name": "click",
+            "start": 10943.199999988079,
+            "duration": 16,
+            "interactionId": 7854
+          },
+          {
+            "name": "pointerdown",
+            "start": 10974,
+            "duration": 24,
+            "interactionId": 7861
+          },
+          {
+            "name": "pointerup",
+            "start": 10974.100000023842,
+            "duration": 24,
+            "interactionId": 7861
+          },
+          {
+            "name": "click",
+            "start": 10974.100000023842,
+            "duration": 24,
+            "interactionId": 7861
+          },
+          {
+            "name": "pointerdown",
+            "start": 11361.5,
+            "duration": 16,
+            "interactionId": 7868
+          },
+          {
+            "name": "pointerup",
+            "start": 11361.600000023842,
+            "duration": 16,
+            "interactionId": 7868
+          },
+          {
+            "name": "click",
+            "start": 11361.600000023842,
+            "duration": 16,
+            "interactionId": 7868
+          },
+          {
+            "name": "pointerdown",
+            "start": 11391.199999988079,
+            "duration": 16,
+            "interactionId": 7875
+          },
+          {
+            "name": "pointerup",
+            "start": 11391.199999988079,
+            "duration": 16,
+            "interactionId": 7875
+          },
+          {
+            "name": "click",
+            "start": 11391.199999988079,
+            "duration": 16,
+            "interactionId": 7875
+          },
+          {
+            "name": "pointerdown",
+            "start": 11783.100000023842,
+            "duration": 16,
+            "interactionId": 7882
+          },
+          {
+            "name": "pointerup",
+            "start": 11783.100000023842,
+            "duration": 16,
+            "interactionId": 7882
+          },
+          {
+            "name": "click",
+            "start": 11783.100000023842,
+            "duration": 16,
+            "interactionId": 7882
+          },
+          {
+            "name": "pointerdown",
+            "start": 11806.899999976158,
+            "duration": 24,
+            "interactionId": 7889
+          },
+          {
+            "name": "pointerup",
+            "start": 11807,
+            "duration": 24,
+            "interactionId": 7889
+          },
+          {
+            "name": "click",
+            "start": 11807,
+            "duration": 24,
+            "interactionId": 7889
+          },
+          {
+            "name": "pointerdown",
+            "start": 12172.600000023842,
+            "duration": 16,
+            "interactionId": 7896
+          },
+          {
+            "name": "pointerup",
+            "start": 12172.600000023842,
+            "duration": 16,
+            "interactionId": 7896
+          },
+          {
+            "name": "click",
+            "start": 12172.600000023842,
+            "duration": 16,
+            "interactionId": 7896
+          },
+          {
+            "name": "pointerdown",
+            "start": 12198.300000011921,
+            "duration": 24,
+            "interactionId": 7903
+          },
+          {
+            "name": "pointerup",
+            "start": 12198.300000011921,
+            "duration": 24,
+            "interactionId": 7903
+          },
+          {
+            "name": "click",
+            "start": 12198.300000011921,
+            "duration": 24,
+            "interactionId": 7903
+          },
+          {
+            "name": "pointerdown",
+            "start": 12407.199999988079,
+            "duration": 24,
+            "interactionId": 7910
+          },
+          {
+            "name": "pointerup",
+            "start": 12407.300000011921,
+            "duration": 24,
+            "interactionId": 7910
+          },
+          {
+            "name": "click",
+            "start": 12407.300000011921,
+            "duration": 24,
+            "interactionId": 7910
+          },
+          {
+            "name": "pointerdown",
+            "start": 12632.699999988079,
+            "duration": 32,
+            "interactionId": 7917
+          },
+          {
+            "name": "pointerup",
+            "start": 12632.699999988079,
+            "duration": 32,
+            "interactionId": 7917
+          },
+          {
+            "name": "click",
+            "start": 12632.699999988079,
+            "duration": 32,
+            "interactionId": 7917
+          },
+          {
+            "name": "keydown",
+            "start": 12776.800000011921,
+            "duration": 24,
+            "interactionId": 7924
+          },
+          {
+            "name": "keyup",
+            "start": 12782.399999976158,
+            "duration": 32,
+            "interactionId": 7924
+          },
+          {
+            "name": "pointerdown",
+            "start": 12806.800000011921,
+            "duration": 32,
+            "interactionId": 7931
+          },
+          {
+            "name": "pointerup",
+            "start": 12806.899999976158,
+            "duration": 32,
+            "interactionId": 7931
+          },
+          {
+            "name": "click",
+            "start": 12806.899999976158,
+            "duration": 32,
+            "interactionId": 7931
+          },
+          {
+            "name": "pointerdown",
+            "start": 12831.899999976158,
+            "duration": 32,
+            "interactionId": 7938
+          },
+          {
+            "name": "pointerup",
+            "start": 12832,
+            "duration": 32,
+            "interactionId": 7938
+          },
+          {
+            "name": "click",
+            "start": 12832,
+            "duration": 32,
+            "interactionId": 7938
+          },
+          {
+            "name": "pointerdown",
+            "start": 13073.100000023842,
+            "duration": 24,
+            "interactionId": 7945
+          },
+          {
+            "name": "pointerup",
+            "start": 13073.100000023842,
+            "duration": 24,
+            "interactionId": 7945
+          },
+          {
+            "name": "click",
+            "start": 13073.100000023842,
+            "duration": 24,
+            "interactionId": 7945
+          },
+          {
+            "name": "keydown",
+            "start": 13197.699999988079,
+            "duration": 24,
+            "interactionId": 7952
+          },
+          {
+            "name": "keyup",
+            "start": 13200.699999988079,
+            "duration": 16,
+            "interactionId": 7952
+          },
+          {
+            "name": "pointerdown",
+            "start": 13225.199999988079,
+            "duration": 16,
+            "interactionId": 7959
+          },
+          {
+            "name": "pointerup",
+            "start": 13225.199999988079,
+            "duration": 16,
+            "interactionId": 7959
+          },
+          {
+            "name": "click",
+            "start": 13225.199999988079,
+            "duration": 16,
+            "interactionId": 7959
+          },
+          {
+            "name": "pointerdown",
+            "start": 13449.399999976158,
+            "duration": 32,
+            "interactionId": 7966
+          },
+          {
+            "name": "pointerup",
+            "start": 13449.5,
+            "duration": 32,
+            "interactionId": 7966
+          },
+          {
+            "name": "click",
+            "start": 13449.5,
+            "duration": 32,
+            "interactionId": 7966
+          },
+          {
+            "name": "pointerdown",
+            "start": 13681.399999976158,
+            "duration": 24,
+            "interactionId": 7973
+          },
+          {
+            "name": "pointerup",
+            "start": 13681.399999976158,
+            "duration": 24,
+            "interactionId": 7973
+          },
+          {
+            "name": "click",
+            "start": 13681.399999976158,
+            "duration": 24,
+            "interactionId": 7973
+          },
+          {
+            "name": "keydown",
+            "start": 13806.199999988079,
+            "duration": 24,
+            "interactionId": 7980
+          },
+          {
+            "name": "keyup",
+            "start": 13809.5,
+            "duration": 16,
+            "interactionId": 7980
+          },
+          {
+            "name": "pointerdown",
+            "start": 13831.699999988079,
+            "duration": 16,
+            "interactionId": 7987
+          },
+          {
+            "name": "pointerup",
+            "start": 13831.699999988079,
+            "duration": 16,
+            "interactionId": 7987
+          },
+          {
+            "name": "click",
+            "start": 13831.699999988079,
+            "duration": 16,
+            "interactionId": 7987
+          },
+          {
+            "name": "pointerdown",
+            "start": 14040,
+            "duration": 32,
+            "interactionId": 7994
+          },
+          {
+            "name": "pointerup",
+            "start": 14040,
+            "duration": 32,
+            "interactionId": 7994
+          },
+          {
+            "name": "click",
+            "start": 14040,
+            "duration": 32,
+            "interactionId": 7994
+          },
+          {
+            "name": "pointerdown",
+            "start": 14257.699999988079,
+            "duration": 24,
+            "interactionId": 8001
+          },
+          {
+            "name": "pointerup",
+            "start": 14257.699999988079,
+            "duration": 24,
+            "interactionId": 8001
+          },
+          {
+            "name": "click",
+            "start": 14257.699999988079,
+            "duration": 24,
+            "interactionId": 8001
+          },
+          {
+            "name": "keydown",
+            "start": 14388.399999976158,
+            "duration": 24,
+            "interactionId": 8008
+          },
+          {
+            "name": "keyup",
+            "start": 14392.199999988079,
+            "duration": 16,
+            "interactionId": 8008
+          },
+          {
+            "name": "pointerdown",
+            "start": 14415.199999988079,
+            "duration": 24,
+            "interactionId": 8015
+          },
+          {
+            "name": "pointerup",
+            "start": 14415.300000011921,
+            "duration": 24,
+            "interactionId": 8015
+          },
+          {
+            "name": "click",
+            "start": 14415.300000011921,
+            "duration": 24,
+            "interactionId": 8015
+          },
+          {
+            "name": "pointerdown",
+            "start": 14615.100000023842,
+            "duration": 24,
+            "interactionId": 8022
+          },
+          {
+            "name": "pointerup",
+            "start": 14615.199999988079,
+            "duration": 24,
+            "interactionId": 8022
+          },
+          {
+            "name": "click",
+            "start": 14615.199999988079,
+            "duration": 24,
+            "interactionId": 8022
+          },
+          {
+            "name": "pointerdown",
+            "start": 14848.100000023842,
+            "duration": 24,
+            "interactionId": 8029
+          },
+          {
+            "name": "pointerup",
+            "start": 14848.199999988079,
+            "duration": 24,
+            "interactionId": 8029
+          },
+          {
+            "name": "click",
+            "start": 14848.199999988079,
+            "duration": 24,
+            "interactionId": 8029
+          },
+          {
+            "name": "keydown",
+            "start": 14975.699999988079,
+            "duration": 16,
+            "interactionId": 8036
+          },
+          {
+            "name": "keyup",
+            "start": 14978.800000011921,
+            "duration": 16,
+            "interactionId": 8036
+          },
+          {
+            "name": "pointerdown",
+            "start": 14998.100000023842,
+            "duration": 16,
+            "interactionId": 8043
+          },
+          {
+            "name": "pointerup",
+            "start": 14998.100000023842,
+            "duration": 16,
+            "interactionId": 8043
+          },
+          {
+            "name": "click",
+            "start": 14998.100000023842,
+            "duration": 16,
+            "interactionId": 8043
+          },
+          {
+            "name": "pointerdown",
+            "start": 15206.399999976158,
+            "duration": 24,
+            "interactionId": 8050
+          },
+          {
+            "name": "pointerup",
+            "start": 15206.5,
+            "duration": 24,
+            "interactionId": 8050
+          },
+          {
+            "name": "click",
+            "start": 15206.5,
+            "duration": 24,
+            "interactionId": 8050
+          },
+          {
+            "name": "pointerdown",
+            "start": 15423.5,
+            "duration": 24,
+            "interactionId": 8057
+          },
+          {
+            "name": "pointerup",
+            "start": 15423.600000023842,
+            "duration": 24,
+            "interactionId": 8057
+          },
+          {
+            "name": "click",
+            "start": 15423.600000023842,
+            "duration": 24,
+            "interactionId": 8057
+          },
+          {
+            "name": "keydown",
+            "start": 15552.199999988079,
+            "duration": 16,
+            "interactionId": 8064
+          },
+          {
+            "name": "keyup",
+            "start": 15555.899999976158,
+            "duration": 16,
+            "interactionId": 8064
+          },
+          {
+            "name": "pointerdown",
+            "start": 15581.600000023842,
+            "duration": 16,
+            "interactionId": 8071
+          },
+          {
+            "name": "pointerup",
+            "start": 15581.699999988079,
+            "duration": 16,
+            "interactionId": 8071
+          },
+          {
+            "name": "click",
+            "start": 15581.699999988079,
+            "duration": 16,
+            "interactionId": 8071
+          },
+          {
+            "name": "pointerdown",
+            "start": 15781.600000023842,
+            "duration": 24,
+            "interactionId": 8078
+          },
+          {
+            "name": "pointerup",
+            "start": 15781.699999988079,
+            "duration": 24,
+            "interactionId": 8078
+          },
+          {
+            "name": "click",
+            "start": 15781.699999988079,
+            "duration": 24,
+            "interactionId": 8078
+          },
+          {
+            "name": "pointerdown",
+            "start": 16006.199999988079,
+            "duration": 24,
+            "interactionId": 8085
+          },
+          {
+            "name": "pointerup",
+            "start": 16006.300000011921,
+            "duration": 24,
+            "interactionId": 8085
+          },
+          {
+            "name": "click",
+            "start": 16006.300000011921,
+            "duration": 24,
+            "interactionId": 8085
+          },
+          {
+            "name": "keydown",
+            "start": 16130.399999976158,
+            "duration": 24,
+            "interactionId": 8092
+          },
+          {
+            "name": "keyup",
+            "start": 16133.300000011921,
+            "duration": 24,
+            "interactionId": 8092
+          },
+          {
+            "name": "pointerdown",
+            "start": 16157,
+            "duration": 16,
+            "interactionId": 8099
+          },
+          {
+            "name": "pointerup",
+            "start": 16157,
+            "duration": 16,
+            "interactionId": 8099
+          },
+          {
+            "name": "click",
+            "start": 16157,
+            "duration": 16,
+            "interactionId": 8099
+          },
+          {
+            "name": "pointerdown",
+            "start": 16356.800000011921,
+            "duration": 24,
+            "interactionId": 8106
+          },
+          {
+            "name": "pointerup",
+            "start": 16356.800000011921,
+            "duration": 24,
+            "interactionId": 8106
+          },
+          {
+            "name": "click",
+            "start": 16356.800000011921,
+            "duration": 24,
+            "interactionId": 8106
+          },
+          {
+            "name": "pointerdown",
+            "start": 16581.399999976158,
+            "duration": 24,
+            "interactionId": 8113
+          },
+          {
+            "name": "pointerup",
+            "start": 16581.399999976158,
+            "duration": 24,
+            "interactionId": 8113
+          },
+          {
+            "name": "click",
+            "start": 16581.399999976158,
+            "duration": 24,
+            "interactionId": 8113
+          },
+          {
+            "name": "keydown",
+            "start": 16706.30000001192,
+            "duration": 24,
+            "interactionId": 8120
+          },
+          {
+            "name": "keyup",
+            "start": 16709.100000023842,
+            "duration": 16,
+            "interactionId": 8120
+          },
+          {
+            "name": "pointerdown",
+            "start": 16731.899999976158,
+            "duration": 16,
+            "interactionId": 8127
+          },
+          {
+            "name": "pointerup",
+            "start": 16732,
+            "duration": 16,
+            "interactionId": 8127
+          },
+          {
+            "name": "click",
+            "start": 16732,
+            "duration": 16,
+            "interactionId": 8127
+          },
+          {
+            "name": "pointerdown",
+            "start": 16939.899999976158,
+            "duration": 24,
+            "interactionId": 8134
+          },
+          {
+            "name": "pointerup",
+            "start": 16940,
+            "duration": 24,
+            "interactionId": 8134
+          },
+          {
+            "name": "click",
+            "start": 16940,
+            "duration": 24,
+            "interactionId": 8134
+          },
+          {
+            "name": "pointerdown",
+            "start": 17165,
+            "duration": 24,
+            "interactionId": 8141
+          },
+          {
+            "name": "pointerup",
+            "start": 17165.100000023842,
+            "duration": 24,
+            "interactionId": 8141
+          },
+          {
+            "name": "click",
+            "start": 17165.100000023842,
+            "duration": 24,
+            "interactionId": 8141
+          },
+          {
+            "name": "keydown",
+            "start": 17295.399999976158,
+            "duration": 24,
+            "interactionId": 8148
+          },
+          {
+            "name": "keyup",
+            "start": 17300,
+            "duration": 16,
+            "interactionId": 8148
+          },
+          {
+            "name": "pointerdown",
+            "start": 17323.5,
+            "duration": 24,
+            "interactionId": 8155
+          },
+          {
+            "name": "pointerup",
+            "start": 17323.5,
+            "duration": 24,
+            "interactionId": 8155
+          },
+          {
+            "name": "click",
+            "start": 17323.5,
+            "duration": 24,
+            "interactionId": 8155
+          },
+          {
+            "name": "pointerdown",
+            "start": 17531.600000023842,
+            "duration": 24,
+            "interactionId": 8162
+          },
+          {
+            "name": "pointerup",
+            "start": 17531.600000023842,
+            "duration": 24,
+            "interactionId": 8162
+          },
+          {
+            "name": "click",
+            "start": 17531.600000023842,
+            "duration": 24,
+            "interactionId": 8162
+          },
+          {
+            "name": "pointerdown",
+            "start": 17764.69999998808,
+            "duration": 24,
+            "interactionId": 8169
+          },
+          {
+            "name": "pointerup",
+            "start": 17764.69999998808,
+            "duration": 24,
+            "interactionId": 8169
+          },
+          {
+            "name": "click",
+            "start": 17764.69999998808,
+            "duration": 24,
+            "interactionId": 8169
+          }
+        ],
+        "longTasks": [
+          {
+            "start": 538.6999999880791,
+            "duration": 68
+          },
+          {
+            "start": 1339.5,
+            "duration": 50
+          }
+        ]
+      }
+    },
+    {
+      "round": 2,
+      "environment": {
+        "dpr": 1,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "visualScale": 1,
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+      },
+      "build": {
+        "version": 1,
+        "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+        "dirty": true,
+        "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+      },
+      "initialText": "ColloSys\nCtrl\n/\nT\nTEST refinement 99ed4a04\nProjects\nTasks\nConversations\nTeam\nConnections\nSettings\nColloSys\n0.1.0\nTEST dense reading · 团队上下文与长会话\nProject details\nTasks\nActivity\nConversations\nHandoffs\nTimeline\nAbout\nProject tasks\nActive\n135\nFilter\nDisplay\nCtrl\nK\nIN PROGRESS\n(67)\nct-243\nTEST menu density 200\n8h\nct-240\nTEST menu density 197\n8h\nct-237\nTEST menu density 194\n8h\nct-234\nTEST menu density 191\n8h\nct-231\nTEST menu density 188\n8h\nct-228\nTEST menu density 185\n8h\nct-225\nTEST menu density 182\n8h\nct-222\nTEST menu density 179\n8h\nct-219\nTEST menu density 176\n8h\nct-216\nTEST menu density 173\n8h\nct-213\nTEST menu density 170\n8h\nct-210\nTEST menu density 167\n8h\nct-207\nTEST menu density 164\n8h\nct-204\nTEST menu density 161\n8h\nct-201\nTEST menu density 158\n8h\nct-198\nTEST menu density 155\n8h\nct-195\nTEST menu density 152\n8h\nct-192\nTEST menu density 149\n8h\nct-189\nTEST menu density 146\n8h\nct-186\nTEST menu density 143\n8h\nct-183\nTEST menu density 140\n8h\nct-180\nTEST menu density 137\n8h\nct-177\nTEST menu density 134\n8h\nct-174\nTEST menu density 131\n8h\nct-171\nTEST menu density 128\n8h\nct-168\nTEST menu density 125\n8h\nct-165\nTEST menu density 122\n8h\n+1\nStatus\nNo active sessions\nKILLED",
+      "metrics": {
+        "actions": [
+          {
+            "name": "Active",
+            "cold": true,
+            "start": 2984.800000011921,
+            "eventTimestamp": 2980.199999988079,
+            "feedbackOpportunity": 34.09999996423721,
+            "operableOpportunity": 34.09999996423721,
+            "stableOpportunity": 216.89999997615814,
+            "animationSettled": 216.89999997615814
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3455.899999976158,
+            "eventTimestamp": 3454.399999976158,
+            "feedbackOpportunity": 12.900000035762787,
+            "operableOpportunity": 12.900000035762787,
+            "stableOpportunity": 196.10000002384186,
+            "animationSettled": 196.10000002384186
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3864.300000011921,
+            "eventTimestamp": 3862.899999976158,
+            "feedbackOpportunity": 21.099999964237213,
+            "operableOpportunity": 21.099999964237213,
+            "stableOpportunity": 204.19999998807907,
+            "animationSettled": 204.19999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4281.100000023842,
+            "eventTimestamp": 4279.699999988079,
+            "feedbackOpportunity": 21.399999976158142,
+            "operableOpportunity": 21.399999976158142,
+            "stableOpportunity": 204.19999998807907,
+            "animationSettled": 204.19999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4689.199999988079,
+            "eventTimestamp": 4687.899999976158,
+            "feedbackOpportunity": 21.400000035762787,
+            "operableOpportunity": 21.400000035762787,
+            "stableOpportunity": 204.30000001192093,
+            "animationSettled": 204.30000001192093
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5099.5,
+            "eventTimestamp": 5097.5,
+            "feedbackOpportunity": 19.399999976158142,
+            "operableOpportunity": 19.399999976158142,
+            "stableOpportunity": 202.19999998807907,
+            "animationSettled": 202.19999998807907
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5514.5,
+            "eventTimestamp": 5513,
+            "feedbackOpportunity": 20.80000001192093,
+            "operableOpportunity": 20.80000001192093,
+            "stableOpportunity": 204.10000002384186,
+            "animationSettled": 204.10000002384186
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5923.699999988079,
+            "eventTimestamp": 5922,
+            "feedbackOpportunity": 20.30000001192093,
+            "operableOpportunity": 20.30000001192093,
+            "stableOpportunity": 203.30000001192093,
+            "animationSettled": 203.30000001192093
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6332.100000023842,
+            "eventTimestamp": 6330,
+            "feedbackOpportunity": 20.099999964237213,
+            "operableOpportunity": 20.099999964237213,
+            "stableOpportunity": 202.89999997615814,
+            "animationSettled": 203
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6731.600000023842,
+            "eventTimestamp": 6730,
+            "feedbackOpportunity": 20.599999964237213,
+            "operableOpportunity": 20.599999964237213,
+            "stableOpportunity": 203.5999999642372,
+            "animationSettled": 203.5999999642372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 7148,
+            "eventTimestamp": 7146.600000023842,
+            "feedbackOpportunity": 20.899999976158142,
+            "operableOpportunity": 20.899999976158142,
+            "stableOpportunity": 204,
+            "animationSettled": 204.10000002384186
+          },
+          {
+            "name": "Display",
+            "cold": true,
+            "start": 7565.199999988079,
+            "eventTimestamp": 7563.800000011921,
+            "feedbackOpportunity": 20.400000035762787,
+            "operableOpportunity": 20.400000035762787,
+            "stableOpportunity": 203.4000000357628,
+            "animationSettled": 203.5
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8039.899999976158,
+            "eventTimestamp": 8038.399999976158,
+            "feedbackOpportunity": 12.200000047683716,
+            "operableOpportunity": 12.200000047683716,
+            "stableOpportunity": 195.30000001192093,
+            "animationSettled": 195.30000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8447.899999976158,
+            "eventTimestamp": 8446.600000023842,
+            "feedbackOpportunity": 20.80000001192093,
+            "operableOpportunity": 20.80000001192093,
+            "stableOpportunity": 203.80000001192093,
+            "animationSettled": 203.80000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8856.199999988079,
+            "eventTimestamp": 8854.699999988079,
+            "feedbackOpportunity": 12.5,
+            "operableOpportunity": 12.5,
+            "stableOpportunity": 195.69999998807907,
+            "animationSettled": 195.69999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9274.600000023842,
+            "eventTimestamp": 9273,
+            "feedbackOpportunity": 27.599999964237213,
+            "operableOpportunity": 27.69999998807907,
+            "stableOpportunity": 210.5999999642372,
+            "animationSettled": 210.69999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9681.199999988079,
+            "eventTimestamp": 9679.800000011921,
+            "feedbackOpportunity": 21.100000023841858,
+            "operableOpportunity": 21.100000023841858,
+            "stableOpportunity": 203.80000001192093,
+            "animationSettled": 203.80000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10089.600000023842,
+            "eventTimestamp": 10088.300000011921,
+            "feedbackOpportunity": 21.099999964237213,
+            "operableOpportunity": 21.099999964237213,
+            "stableOpportunity": 203.89999997615814,
+            "animationSettled": 203.89999997615814
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10500,
+            "eventTimestamp": 10497.899999976158,
+            "feedbackOpportunity": 11.399999976158142,
+            "operableOpportunity": 11.399999976158142,
+            "stableOpportunity": 193.89999997615814,
+            "animationSettled": 193.89999997615814
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10898.5,
+            "eventTimestamp": 10897.199999988079,
+            "feedbackOpportunity": 20.600000023841858,
+            "operableOpportunity": 20.69999998807907,
+            "stableOpportunity": 203.19999998807907,
+            "animationSettled": 203.30000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11307,
+            "eventTimestamp": 11305.600000023842,
+            "feedbackOpportunity": 20.100000023841858,
+            "operableOpportunity": 20.100000023841858,
+            "stableOpportunity": 203.19999998807907,
+            "animationSettled": 203.30000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11714.800000011921,
+            "eventTimestamp": 11713.399999976158,
+            "feedbackOpportunity": 12.699999988079071,
+            "operableOpportunity": 12.699999988079071,
+            "stableOpportunity": 195.30000001192093,
+            "animationSettled": 195.39999997615814
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 12549.600000023842,
+            "eventTimestamp": 12547.100000023842,
+            "feedbackOpportunity": 14.799999952316284,
+            "operableOpportunity": 14.899999976158142,
+            "stableOpportunity": 27.899999976158142,
+            "animationSettled": 28
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13090.600000023842,
+            "eventTimestamp": 13088.199999988079,
+            "feedbackOpportunity": 9.399999976158142,
+            "operableOpportunity": 9.399999976158142,
+            "stableOpportunity": 28.19999998807907,
+            "animationSettled": 28.19999998807907
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13665.5,
+            "eventTimestamp": 13663.199999988079,
+            "feedbackOpportunity": 9.199999988079071,
+            "operableOpportunity": 9.199999988079071,
+            "stableOpportunity": 28.5,
+            "animationSettled": 28.5
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14249.800000011921,
+            "eventTimestamp": 14247.399999976158,
+            "feedbackOpportunity": 9.099999964237213,
+            "operableOpportunity": 9.099999964237213,
+            "stableOpportunity": 27.399999976158142,
+            "animationSettled": 27.399999976158142
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14824.199999988079,
+            "eventTimestamp": 14821.600000023842,
+            "feedbackOpportunity": 8.699999988079071,
+            "operableOpportunity": 8.699999988079071,
+            "stableOpportunity": 27.80000001192093,
+            "animationSettled": 27.900000035762787
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 15415.5,
+            "eventTimestamp": 15413.300000011921,
+            "feedbackOpportunity": 9.300000011920929,
+            "operableOpportunity": 9.300000011920929,
+            "stableOpportunity": 28.19999998807907,
+            "animationSettled": 28.19999998807907
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 15998.600000023842,
+            "eventTimestamp": 15996.199999988079,
+            "feedbackOpportunity": 9.099999964237213,
+            "operableOpportunity": 9.099999964237213,
+            "stableOpportunity": 28.299999952316284,
+            "animationSettled": 28.399999976158142
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 16591.100000023842,
+            "eventTimestamp": 16588.100000023842,
+            "feedbackOpportunity": 12.5,
+            "operableOpportunity": 12.5,
+            "stableOpportunity": 27.5,
+            "animationSettled": 27.599999964237213
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17165.399999976158,
+            "eventTimestamp": 17163.19999998808,
+            "feedbackOpportunity": 9.300000011920929,
+            "operableOpportunity": 9.300000011920929,
+            "stableOpportunity": 28.400000035762787,
+            "animationSettled": 28.5
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17773.80000001192,
+            "eventTimestamp": 17771.5,
+            "feedbackOpportunity": 9.399999976158142,
+            "operableOpportunity": 9.399999976158142,
+            "stableOpportunity": 28.19999998807907,
+            "animationSettled": 28.19999998807907
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 2980.199999988079,
+            "duration": 72,
+            "interactionId": 4772
+          },
+          {
+            "name": "pointerup",
+            "start": 2980.300000011921,
+            "duration": 72,
+            "interactionId": 4772
+          },
+          {
+            "name": "click",
+            "start": 2980.300000011921,
+            "duration": 72,
+            "interactionId": 4772
+          },
+          {
+            "name": "pointerdown",
+            "start": 3428.800000011921,
+            "duration": 24,
+            "interactionId": 4779
+          },
+          {
+            "name": "pointerup",
+            "start": 3428.899999976158,
+            "duration": 24,
+            "interactionId": 4779
+          },
+          {
+            "name": "click",
+            "start": 3428.899999976158,
+            "duration": 24,
+            "interactionId": 4779
+          },
+          {
+            "name": "pointerdown",
+            "start": 3454.399999976158,
+            "duration": 16,
+            "interactionId": 4786
+          },
+          {
+            "name": "pointerup",
+            "start": 3454.5,
+            "duration": 16,
+            "interactionId": 4786
+          },
+          {
+            "name": "click",
+            "start": 3454.5,
+            "duration": 16,
+            "interactionId": 4786
+          },
+          {
+            "name": "pointerdown",
+            "start": 3834,
+            "duration": 16,
+            "interactionId": 4793
+          },
+          {
+            "name": "pointerup",
+            "start": 3834.199999988079,
+            "duration": 16,
+            "interactionId": 4793
+          },
+          {
+            "name": "click",
+            "start": 3834.199999988079,
+            "duration": 16,
+            "interactionId": 4793
+          },
+          {
+            "name": "pointerdown",
+            "start": 3862.899999976158,
+            "duration": 24,
+            "interactionId": 4800
+          },
+          {
+            "name": "pointerup",
+            "start": 3862.899999976158,
+            "duration": 24,
+            "interactionId": 4800
+          },
+          {
+            "name": "click",
+            "start": 3862.899999976158,
+            "duration": 24,
+            "interactionId": 4800
+          },
+          {
+            "name": "pointerdown",
+            "start": 4254.399999976158,
+            "duration": 16,
+            "interactionId": 4807
+          },
+          {
+            "name": "pointerup",
+            "start": 4254.600000023842,
+            "duration": 16,
+            "interactionId": 4807
+          },
+          {
+            "name": "click",
+            "start": 4254.600000023842,
+            "duration": 16,
+            "interactionId": 4807
+          },
+          {
+            "name": "pointerdown",
+            "start": 4279.699999988079,
+            "duration": 24,
+            "interactionId": 4814
+          },
+          {
+            "name": "pointerup",
+            "start": 4279.699999988079,
+            "duration": 24,
+            "interactionId": 4814
+          },
+          {
+            "name": "click",
+            "start": 4279.699999988079,
+            "duration": 24,
+            "interactionId": 4814
+          },
+          {
+            "name": "pointerdown",
+            "start": 4662.5,
+            "duration": 24,
+            "interactionId": 4821
+          },
+          {
+            "name": "pointerup",
+            "start": 4662.600000023842,
+            "duration": 24,
+            "interactionId": 4821
+          },
+          {
+            "name": "click",
+            "start": 4662.600000023842,
+            "duration": 24,
+            "interactionId": 4821
+          },
+          {
+            "name": "pointerdown",
+            "start": 4687.899999976158,
+            "duration": 24,
+            "interactionId": 4828
+          },
+          {
+            "name": "pointerup",
+            "start": 4687.899999976158,
+            "duration": 24,
+            "interactionId": 4828
+          },
+          {
+            "name": "click",
+            "start": 4687.899999976158,
+            "duration": 24,
+            "interactionId": 4828
+          },
+          {
+            "name": "pointerdown",
+            "start": 5066.699999988079,
+            "duration": 16,
+            "interactionId": 4835
+          },
+          {
+            "name": "pointerup",
+            "start": 5066.899999976158,
+            "duration": 16,
+            "interactionId": 4835
+          },
+          {
+            "name": "click",
+            "start": 5066.899999976158,
+            "duration": 16,
+            "interactionId": 4835
+          },
+          {
+            "name": "pointerdown",
+            "start": 5097.5,
+            "duration": 24,
+            "interactionId": 4842
+          },
+          {
+            "name": "pointerup",
+            "start": 5097.5,
+            "duration": 24,
+            "interactionId": 4842
+          },
+          {
+            "name": "click",
+            "start": 5097.5,
+            "duration": 24,
+            "interactionId": 4842
+          },
+          {
+            "name": "pointerdown",
+            "start": 5491.600000023842,
+            "duration": 16,
+            "interactionId": 4849
+          },
+          {
+            "name": "pointerup",
+            "start": 5491.699999988079,
+            "duration": 16,
+            "interactionId": 4849
+          },
+          {
+            "name": "click",
+            "start": 5491.699999988079,
+            "duration": 16,
+            "interactionId": 4849
+          },
+          {
+            "name": "pointerdown",
+            "start": 5513,
+            "duration": 24,
+            "interactionId": 4856
+          },
+          {
+            "name": "pointerup",
+            "start": 5513,
+            "duration": 24,
+            "interactionId": 4856
+          },
+          {
+            "name": "click",
+            "start": 5513,
+            "duration": 24,
+            "interactionId": 4856
+          },
+          {
+            "name": "pointerdown",
+            "start": 5898,
+            "duration": 24,
+            "interactionId": 4863
+          },
+          {
+            "name": "pointerup",
+            "start": 5898.100000023842,
+            "duration": 24,
+            "interactionId": 4863
+          },
+          {
+            "name": "click",
+            "start": 5898.100000023842,
+            "duration": 24,
+            "interactionId": 4863
+          },
+          {
+            "name": "pointerdown",
+            "start": 5922,
+            "duration": 24,
+            "interactionId": 4870
+          },
+          {
+            "name": "pointerup",
+            "start": 5922.100000023842,
+            "duration": 24,
+            "interactionId": 4870
+          },
+          {
+            "name": "click",
+            "start": 5922.100000023842,
+            "duration": 24,
+            "interactionId": 4870
+          },
+          {
+            "name": "pointerdown",
+            "start": 6306.800000011921,
+            "duration": 16,
+            "interactionId": 4877
+          },
+          {
+            "name": "pointerup",
+            "start": 6306.899999976158,
+            "duration": 16,
+            "interactionId": 4877
+          },
+          {
+            "name": "click",
+            "start": 6306.899999976158,
+            "duration": 16,
+            "interactionId": 4877
+          },
+          {
+            "name": "pointerdown",
+            "start": 6330,
+            "duration": 24,
+            "interactionId": 4884
+          },
+          {
+            "name": "pointerup",
+            "start": 6330,
+            "duration": 24,
+            "interactionId": 4884
+          },
+          {
+            "name": "click",
+            "start": 6330,
+            "duration": 24,
+            "interactionId": 4884
+          },
+          {
+            "name": "pointerdown",
+            "start": 6698.600000023842,
+            "duration": 16,
+            "interactionId": 4891
+          },
+          {
+            "name": "pointerup",
+            "start": 6698.699999988079,
+            "duration": 16,
+            "interactionId": 4891
+          },
+          {
+            "name": "click",
+            "start": 6698.699999988079,
+            "duration": 16,
+            "interactionId": 4891
+          },
+          {
+            "name": "pointerdown",
+            "start": 6730,
+            "duration": 24,
+            "interactionId": 4898
+          },
+          {
+            "name": "pointerup",
+            "start": 6730.199999988079,
+            "duration": 24,
+            "interactionId": 4898
+          },
+          {
+            "name": "click",
+            "start": 6730.199999988079,
+            "duration": 24,
+            "interactionId": 4898
+          },
+          {
+            "name": "pointerdown",
+            "start": 7124.399999976158,
+            "duration": 16,
+            "interactionId": 4905
+          },
+          {
+            "name": "pointerup",
+            "start": 7124.5,
+            "duration": 16,
+            "interactionId": 4905
+          },
+          {
+            "name": "click",
+            "start": 7124.5,
+            "duration": 16,
+            "interactionId": 4905
+          },
+          {
+            "name": "pointerdown",
+            "start": 7146.600000023842,
+            "duration": 24,
+            "interactionId": 4912
+          },
+          {
+            "name": "pointerup",
+            "start": 7146.600000023842,
+            "duration": 24,
+            "interactionId": 4912
+          },
+          {
+            "name": "click",
+            "start": 7146.600000023842,
+            "duration": 24,
+            "interactionId": 4912
+          },
+          {
+            "name": "pointerdown",
+            "start": 7531.899999976158,
+            "duration": 16,
+            "interactionId": 4919
+          },
+          {
+            "name": "pointerup",
+            "start": 7532,
+            "duration": 16,
+            "interactionId": 4919
+          },
+          {
+            "name": "click",
+            "start": 7532,
+            "duration": 16,
+            "interactionId": 4919
+          },
+          {
+            "name": "pointerdown",
+            "start": 7563.800000011921,
+            "duration": 32,
+            "interactionId": 4926
+          },
+          {
+            "name": "pointerup",
+            "start": 7563.899999976158,
+            "duration": 32,
+            "interactionId": 4926
+          },
+          {
+            "name": "click",
+            "start": 7563.899999976158,
+            "duration": 32,
+            "interactionId": 4926
+          },
+          {
+            "name": "pointerdown",
+            "start": 8009.399999976158,
+            "duration": 16,
+            "interactionId": 4933
+          },
+          {
+            "name": "pointerup",
+            "start": 8009.5,
+            "duration": 16,
+            "interactionId": 4933
+          },
+          {
+            "name": "click",
+            "start": 8009.5,
+            "duration": 16,
+            "interactionId": 4933
+          },
+          {
+            "name": "pointerdown",
+            "start": 8038.399999976158,
+            "duration": 16,
+            "interactionId": 4940
+          },
+          {
+            "name": "pointerup",
+            "start": 8038.399999976158,
+            "duration": 16,
+            "interactionId": 4940
+          },
+          {
+            "name": "click",
+            "start": 8038.399999976158,
+            "duration": 16,
+            "interactionId": 4940
+          },
+          {
+            "name": "pointerdown",
+            "start": 8421.399999976158,
+            "duration": 16,
+            "interactionId": 4947
+          },
+          {
+            "name": "pointerup",
+            "start": 8421.600000023842,
+            "duration": 16,
+            "interactionId": 4947
+          },
+          {
+            "name": "click",
+            "start": 8421.600000023842,
+            "duration": 16,
+            "interactionId": 4947
+          },
+          {
+            "name": "pointerdown",
+            "start": 8446.600000023842,
+            "duration": 24,
+            "interactionId": 4954
+          },
+          {
+            "name": "pointerup",
+            "start": 8446.800000011921,
+            "duration": 24,
+            "interactionId": 4954
+          },
+          {
+            "name": "click",
+            "start": 8446.800000011921,
+            "duration": 24,
+            "interactionId": 4954
+          },
+          {
+            "name": "pointerdown",
+            "start": 8828.199999988079,
+            "duration": 16,
+            "interactionId": 4961
+          },
+          {
+            "name": "pointerup",
+            "start": 8828.199999988079,
+            "duration": 16,
+            "interactionId": 4961
+          },
+          {
+            "name": "click",
+            "start": 8828.199999988079,
+            "duration": 16,
+            "interactionId": 4961
+          },
+          {
+            "name": "pointerdown",
+            "start": 8854.699999988079,
+            "duration": 16,
+            "interactionId": 4968
+          },
+          {
+            "name": "pointerup",
+            "start": 8854.800000011921,
+            "duration": 16,
+            "interactionId": 4968
+          },
+          {
+            "name": "click",
+            "start": 8854.800000011921,
+            "duration": 16,
+            "interactionId": 4968
+          },
+          {
+            "name": "pointerdown",
+            "start": 9233.5,
+            "duration": 24,
+            "interactionId": 4975
+          },
+          {
+            "name": "pointerup",
+            "start": 9233.600000023842,
+            "duration": 24,
+            "interactionId": 4975
+          },
+          {
+            "name": "click",
+            "start": 9233.600000023842,
+            "duration": 24,
+            "interactionId": 4975
+          },
+          {
+            "name": "pointerdown",
+            "start": 9273,
+            "duration": 32,
+            "interactionId": 4982
+          },
+          {
+            "name": "pointerup",
+            "start": 9273.100000023842,
+            "duration": 32,
+            "interactionId": 4982
+          },
+          {
+            "name": "click",
+            "start": 9273.100000023842,
+            "duration": 32,
+            "interactionId": 4982
+          },
+          {
+            "name": "pointerdown",
+            "start": 9654.399999976158,
+            "duration": 16,
+            "interactionId": 4989
+          },
+          {
+            "name": "pointerup",
+            "start": 9654.399999976158,
+            "duration": 16,
+            "interactionId": 4989
+          },
+          {
+            "name": "click",
+            "start": 9654.399999976158,
+            "duration": 16,
+            "interactionId": 4989
+          },
+          {
+            "name": "pointerdown",
+            "start": 9679.800000011921,
+            "duration": 24,
+            "interactionId": 4996
+          },
+          {
+            "name": "pointerup",
+            "start": 9679.899999976158,
+            "duration": 24,
+            "interactionId": 4996
+          },
+          {
+            "name": "click",
+            "start": 9679.899999976158,
+            "duration": 24,
+            "interactionId": 4996
+          },
+          {
+            "name": "pointerdown",
+            "start": 10062.199999988079,
+            "duration": 16,
+            "interactionId": 5003
+          },
+          {
+            "name": "pointerup",
+            "start": 10062.399999976158,
+            "duration": 16,
+            "interactionId": 5003
+          },
+          {
+            "name": "click",
+            "start": 10062.399999976158,
+            "duration": 16,
+            "interactionId": 5003
+          },
+          {
+            "name": "pointerdown",
+            "start": 10088.300000011921,
+            "duration": 24,
+            "interactionId": 5010
+          },
+          {
+            "name": "pointerup",
+            "start": 10088.300000011921,
+            "duration": 24,
+            "interactionId": 5010
+          },
+          {
+            "name": "click",
+            "start": 10088.300000011921,
+            "duration": 24,
+            "interactionId": 5010
+          },
+          {
+            "name": "pointerdown",
+            "start": 10468,
+            "duration": 24,
+            "interactionId": 5017
+          },
+          {
+            "name": "pointerup",
+            "start": 10468,
+            "duration": 24,
+            "interactionId": 5017
+          },
+          {
+            "name": "click",
+            "start": 10468,
+            "duration": 24,
+            "interactionId": 5017
+          },
+          {
+            "name": "pointerdown",
+            "start": 10497.899999976158,
+            "duration": 24,
+            "interactionId": 5024
+          },
+          {
+            "name": "pointerup",
+            "start": 10498,
+            "duration": 24,
+            "interactionId": 5024
+          },
+          {
+            "name": "click",
+            "start": 10498,
+            "duration": 24,
+            "interactionId": 5024
+          },
+          {
+            "name": "pointerdown",
+            "start": 10876,
+            "duration": 16,
+            "interactionId": 5031
+          },
+          {
+            "name": "pointerup",
+            "start": 10876,
+            "duration": 16,
+            "interactionId": 5031
+          },
+          {
+            "name": "click",
+            "start": 10876,
+            "duration": 16,
+            "interactionId": 5031
+          },
+          {
+            "name": "pointerdown",
+            "start": 10897.199999988079,
+            "duration": 24,
+            "interactionId": 5038
+          },
+          {
+            "name": "pointerup",
+            "start": 10897.300000011921,
+            "duration": 24,
+            "interactionId": 5038
+          },
+          {
+            "name": "click",
+            "start": 10897.300000011921,
+            "duration": 24,
+            "interactionId": 5038
+          },
+          {
+            "name": "pointerdown",
+            "start": 11281.800000011921,
+            "duration": 16,
+            "interactionId": 5045
+          },
+          {
+            "name": "pointerup",
+            "start": 11281.899999976158,
+            "duration": 16,
+            "interactionId": 5045
+          },
+          {
+            "name": "click",
+            "start": 11281.899999976158,
+            "duration": 16,
+            "interactionId": 5045
+          },
+          {
+            "name": "pointerdown",
+            "start": 11305.600000023842,
+            "duration": 24,
+            "interactionId": 5052
+          },
+          {
+            "name": "pointerup",
+            "start": 11305.600000023842,
+            "duration": 24,
+            "interactionId": 5052
+          },
+          {
+            "name": "click",
+            "start": 11305.600000023842,
+            "duration": 24,
+            "interactionId": 5052
+          },
+          {
+            "name": "pointerdown",
+            "start": 11686.600000023842,
+            "duration": 16,
+            "interactionId": 5059
+          },
+          {
+            "name": "pointerup",
+            "start": 11686.600000023842,
+            "duration": 16,
+            "interactionId": 5059
+          },
+          {
+            "name": "click",
+            "start": 11686.600000023842,
+            "duration": 16,
+            "interactionId": 5059
+          },
+          {
+            "name": "pointerdown",
+            "start": 11713.399999976158,
+            "duration": 16,
+            "interactionId": 5066
+          },
+          {
+            "name": "pointerup",
+            "start": 11713.399999976158,
+            "duration": 16,
+            "interactionId": 5066
+          },
+          {
+            "name": "click",
+            "start": 11713.399999976158,
+            "duration": 16,
+            "interactionId": 5066
+          },
+          {
+            "name": "pointerdown",
+            "start": 12092.100000023842,
+            "duration": 16,
+            "interactionId": 5073
+          },
+          {
+            "name": "pointerup",
+            "start": 12092.100000023842,
+            "duration": 16,
+            "interactionId": 5073
+          },
+          {
+            "name": "click",
+            "start": 12092.100000023842,
+            "duration": 16,
+            "interactionId": 5073
+          },
+          {
+            "name": "pointerdown",
+            "start": 12113.800000011921,
+            "duration": 24,
+            "interactionId": 5080
+          },
+          {
+            "name": "pointerup",
+            "start": 12113.800000011921,
+            "duration": 24,
+            "interactionId": 5080
+          },
+          {
+            "name": "click",
+            "start": 12113.800000011921,
+            "duration": 24,
+            "interactionId": 5080
+          },
+          {
+            "name": "pointerdown",
+            "start": 12321.600000023842,
+            "duration": 32,
+            "interactionId": 5087
+          },
+          {
+            "name": "pointerup",
+            "start": 12321.800000011921,
+            "duration": 32,
+            "interactionId": 5087
+          },
+          {
+            "name": "click",
+            "start": 12321.800000011921,
+            "duration": 32,
+            "interactionId": 5087
+          },
+          {
+            "name": "pointerdown",
+            "start": 12547.100000023842,
+            "duration": 32,
+            "interactionId": 5094
+          },
+          {
+            "name": "pointerup",
+            "start": 12547.100000023842,
+            "duration": 32,
+            "interactionId": 5094
+          },
+          {
+            "name": "click",
+            "start": 12547.100000023842,
+            "duration": 32,
+            "interactionId": 5094
+          },
+          {
+            "name": "keydown",
+            "start": 12583.899999976158,
+            "duration": 16,
+            "interactionId": 5101
+          },
+          {
+            "name": "keyup",
+            "start": 12592.199999988079,
+            "duration": 16,
+            "interactionId": 5101
+          },
+          {
+            "name": "pointerdown",
+            "start": 12648.100000023842,
+            "duration": 24,
+            "interactionId": 5108
+          },
+          {
+            "name": "pointerup",
+            "start": 12648.199999988079,
+            "duration": 16,
+            "interactionId": 5108
+          },
+          {
+            "name": "click",
+            "start": 12648.199999988079,
+            "duration": 16,
+            "interactionId": 5108
+          },
+          {
+            "name": "pointerdown",
+            "start": 12871.699999988079,
+            "duration": 24,
+            "interactionId": 5115
+          },
+          {
+            "name": "pointerup",
+            "start": 12871.899999976158,
+            "duration": 24,
+            "interactionId": 5115
+          },
+          {
+            "name": "click",
+            "start": 12871.899999976158,
+            "duration": 24,
+            "interactionId": 5115
+          },
+          {
+            "name": "pointerdown",
+            "start": 13088.199999988079,
+            "duration": 24,
+            "interactionId": 5122
+          },
+          {
+            "name": "pointerup",
+            "start": 13088.399999976158,
+            "duration": 24,
+            "interactionId": 5122
+          },
+          {
+            "name": "click",
+            "start": 13088.399999976158,
+            "duration": 24,
+            "interactionId": 5122
+          },
+          {
+            "name": "keydown",
+            "start": 13214.699999988079,
+            "duration": 24,
+            "interactionId": 5129
+          },
+          {
+            "name": "keyup",
+            "start": 13217.899999976158,
+            "duration": 16,
+            "interactionId": 5129
+          },
+          {
+            "name": "pointerdown",
+            "start": 13239,
+            "duration": 24,
+            "interactionId": 5136
+          },
+          {
+            "name": "pointerup",
+            "start": 13239.100000023842,
+            "duration": 24,
+            "interactionId": 5136
+          },
+          {
+            "name": "click",
+            "start": 13239.100000023842,
+            "duration": 24,
+            "interactionId": 5136
+          },
+          {
+            "name": "pointerdown",
+            "start": 13446.300000011921,
+            "duration": 32,
+            "interactionId": 5143
+          },
+          {
+            "name": "pointerup",
+            "start": 13446.300000011921,
+            "duration": 32,
+            "interactionId": 5143
+          },
+          {
+            "name": "click",
+            "start": 13446.300000011921,
+            "duration": 32,
+            "interactionId": 5143
+          },
+          {
+            "name": "pointerdown",
+            "start": 13663.199999988079,
+            "duration": 24,
+            "interactionId": 5150
+          },
+          {
+            "name": "pointerup",
+            "start": 13663.199999988079,
+            "duration": 24,
+            "interactionId": 5150
+          },
+          {
+            "name": "click",
+            "start": 13663.199999988079,
+            "duration": 24,
+            "interactionId": 5150
+          },
+          {
+            "name": "keydown",
+            "start": 13792.399999976158,
+            "duration": 24,
+            "interactionId": 5157
+          },
+          {
+            "name": "keyup",
+            "start": 13796.699999988079,
+            "duration": 32,
+            "interactionId": 5157
+          },
+          {
+            "name": "pointerdown",
+            "start": 13821.699999988079,
+            "duration": 32,
+            "interactionId": 5164
+          },
+          {
+            "name": "pointerup",
+            "start": 13821.800000011921,
+            "duration": 32,
+            "interactionId": 5164
+          },
+          {
+            "name": "click",
+            "start": 13821.800000011921,
+            "duration": 32,
+            "interactionId": 5164
+          },
+          {
+            "name": "pointerdown",
+            "start": 14029.699999988079,
+            "duration": 32,
+            "interactionId": 5171
+          },
+          {
+            "name": "pointerup",
+            "start": 14029.699999988079,
+            "duration": 32,
+            "interactionId": 5171
+          },
+          {
+            "name": "click",
+            "start": 14029.699999988079,
+            "duration": 32,
+            "interactionId": 5171
+          },
+          {
+            "name": "pointerdown",
+            "start": 14247.399999976158,
+            "duration": 24,
+            "interactionId": 5178
+          },
+          {
+            "name": "pointerup",
+            "start": 14247.399999976158,
+            "duration": 24,
+            "interactionId": 5178
+          },
+          {
+            "name": "click",
+            "start": 14247.399999976158,
+            "duration": 24,
+            "interactionId": 5178
+          },
+          {
+            "name": "keydown",
+            "start": 14374,
+            "duration": 16,
+            "interactionId": 5185
+          },
+          {
+            "name": "keyup",
+            "start": 14377.100000023842,
+            "duration": 24,
+            "interactionId": 5185
+          },
+          {
+            "name": "pointerdown",
+            "start": 14405.100000023842,
+            "duration": 24,
+            "interactionId": 5192
+          },
+          {
+            "name": "pointerup",
+            "start": 14405.100000023842,
+            "duration": 24,
+            "interactionId": 5192
+          },
+          {
+            "name": "click",
+            "start": 14405.100000023842,
+            "duration": 24,
+            "interactionId": 5192
+          },
+          {
+            "name": "pointerdown",
+            "start": 14604.5,
+            "duration": 24,
+            "interactionId": 5199
+          },
+          {
+            "name": "pointerup",
+            "start": 14604.600000023842,
+            "duration": 24,
+            "interactionId": 5199
+          },
+          {
+            "name": "click",
+            "start": 14604.600000023842,
+            "duration": 24,
+            "interactionId": 5199
+          },
+          {
+            "name": "pointerdown",
+            "start": 14821.600000023842,
+            "duration": 24,
+            "interactionId": 5206
+          },
+          {
+            "name": "pointerup",
+            "start": 14821.800000011921,
+            "duration": 24,
+            "interactionId": 5206
+          },
+          {
+            "name": "click",
+            "start": 14821.800000011921,
+            "duration": 24,
+            "interactionId": 5206
+          },
+          {
+            "name": "keydown",
+            "start": 14950.300000011921,
+            "duration": 16,
+            "interactionId": 5213
+          },
+          {
+            "name": "keyup",
+            "start": 14954,
+            "duration": 24,
+            "interactionId": 5213
+          },
+          {
+            "name": "pointerdown",
+            "start": 14980.300000011921,
+            "duration": 24,
+            "interactionId": 5220
+          },
+          {
+            "name": "pointerup",
+            "start": 14980.399999976158,
+            "duration": 24,
+            "interactionId": 5220
+          },
+          {
+            "name": "click",
+            "start": 14980.399999976158,
+            "duration": 24,
+            "interactionId": 5220
+          },
+          {
+            "name": "pointerdown",
+            "start": 15197.199999988079,
+            "duration": 24,
+            "interactionId": 5227
+          },
+          {
+            "name": "pointerup",
+            "start": 15197.300000011921,
+            "duration": 24,
+            "interactionId": 5227
+          },
+          {
+            "name": "click",
+            "start": 15197.300000011921,
+            "duration": 24,
+            "interactionId": 5227
+          },
+          {
+            "name": "pointerdown",
+            "start": 15413.300000011921,
+            "duration": 24,
+            "interactionId": 5234
+          },
+          {
+            "name": "pointerup",
+            "start": 15413.399999976158,
+            "duration": 24,
+            "interactionId": 5234
+          },
+          {
+            "name": "click",
+            "start": 15413.399999976158,
+            "duration": 24,
+            "interactionId": 5234
+          },
+          {
+            "name": "keydown",
+            "start": 15543.800000011921,
+            "duration": 24,
+            "interactionId": 5241
+          },
+          {
+            "name": "keyup",
+            "start": 15547.100000023842,
+            "duration": 24,
+            "interactionId": 5241
+          },
+          {
+            "name": "pointerdown",
+            "start": 15563.899999976158,
+            "duration": 16,
+            "interactionId": 5248
+          },
+          {
+            "name": "pointerup",
+            "start": 15564,
+            "duration": 16,
+            "interactionId": 5248
+          },
+          {
+            "name": "click",
+            "start": 15564,
+            "duration": 16,
+            "interactionId": 5248
+          },
+          {
+            "name": "pointerdown",
+            "start": 15780.600000023842,
+            "duration": 24,
+            "interactionId": 5255
+          },
+          {
+            "name": "pointerup",
+            "start": 15780.600000023842,
+            "duration": 24,
+            "interactionId": 5255
+          },
+          {
+            "name": "click",
+            "start": 15780.600000023842,
+            "duration": 24,
+            "interactionId": 5255
+          },
+          {
+            "name": "pointerdown",
+            "start": 15996.199999988079,
+            "duration": 24,
+            "interactionId": 5262
+          },
+          {
+            "name": "pointerup",
+            "start": 15996.199999988079,
+            "duration": 24,
+            "interactionId": 5262
+          },
+          {
+            "name": "click",
+            "start": 15996.199999988079,
+            "duration": 24,
+            "interactionId": 5262
+          },
+          {
+            "name": "keydown",
+            "start": 16122.699999988079,
+            "duration": 24,
+            "interactionId": 5269
+          },
+          {
+            "name": "keyup",
+            "start": 16129.800000011921,
+            "duration": 24,
+            "interactionId": 5269
+          },
+          {
+            "name": "pointerdown",
+            "start": 16154.600000023842,
+            "duration": 24,
+            "interactionId": 5276
+          },
+          {
+            "name": "pointerup",
+            "start": 16154.699999988079,
+            "duration": 24,
+            "interactionId": 5276
+          },
+          {
+            "name": "click",
+            "start": 16154.699999988079,
+            "duration": 24,
+            "interactionId": 5276
+          },
+          {
+            "name": "pointerdown",
+            "start": 16372.399999976158,
+            "duration": 24,
+            "interactionId": 5283
+          },
+          {
+            "name": "pointerup",
+            "start": 16372.399999976158,
+            "duration": 24,
+            "interactionId": 5283
+          },
+          {
+            "name": "click",
+            "start": 16372.399999976158,
+            "duration": 24,
+            "interactionId": 5283
+          },
+          {
+            "name": "pointerdown",
+            "start": 16588.100000023842,
+            "duration": 24,
+            "interactionId": 5290
+          },
+          {
+            "name": "pointerup",
+            "start": 16588.19999998808,
+            "duration": 24,
+            "interactionId": 5290
+          },
+          {
+            "name": "click",
+            "start": 16588.19999998808,
+            "duration": 24,
+            "interactionId": 5290
+          },
+          {
+            "name": "keydown",
+            "start": 16719.30000001192,
+            "duration": 24,
+            "interactionId": 5297
+          },
+          {
+            "name": "keyup",
+            "start": 16722.399999976158,
+            "duration": 24,
+            "interactionId": 5297
+          },
+          {
+            "name": "pointerdown",
+            "start": 16746.899999976158,
+            "duration": 24,
+            "interactionId": 5304
+          },
+          {
+            "name": "pointerup",
+            "start": 16746.899999976158,
+            "duration": 24,
+            "interactionId": 5304
+          },
+          {
+            "name": "click",
+            "start": 16746.899999976158,
+            "duration": 24,
+            "interactionId": 5304
+          },
+          {
+            "name": "pointerdown",
+            "start": 16938.19999998808,
+            "duration": 24,
+            "interactionId": 5311
+          },
+          {
+            "name": "pointerup",
+            "start": 16938.30000001192,
+            "duration": 24,
+            "interactionId": 5311
+          },
+          {
+            "name": "click",
+            "start": 16938.30000001192,
+            "duration": 24,
+            "interactionId": 5311
+          },
+          {
+            "name": "pointerdown",
+            "start": 17163.19999998808,
+            "duration": 24,
+            "interactionId": 5318
+          },
+          {
+            "name": "pointerup",
+            "start": 17163.19999998808,
+            "duration": 24,
+            "interactionId": 5318
+          },
+          {
+            "name": "click",
+            "start": 17163.19999998808,
+            "duration": 24,
+            "interactionId": 5318
+          },
+          {
+            "name": "keydown",
+            "start": 17289,
+            "duration": 24,
+            "interactionId": 5325
+          },
+          {
+            "name": "keyup",
+            "start": 17296,
+            "duration": 24,
+            "interactionId": 5325
+          },
+          {
+            "name": "pointerdown",
+            "start": 17321.30000001192,
+            "duration": 24,
+            "interactionId": 5332
+          },
+          {
+            "name": "pointerup",
+            "start": 17321.399999976158,
+            "duration": 24,
+            "interactionId": 5332
+          },
+          {
+            "name": "click",
+            "start": 17321.399999976158,
+            "duration": 24,
+            "interactionId": 5332
+          },
+          {
+            "name": "pointerdown",
+            "start": 17538.5,
+            "duration": 32,
+            "interactionId": 5339
+          },
+          {
+            "name": "pointerup",
+            "start": 17538.600000023842,
+            "duration": 32,
+            "interactionId": 5339
+          },
+          {
+            "name": "click",
+            "start": 17538.600000023842,
+            "duration": 32,
+            "interactionId": 5339
+          },
+          {
+            "name": "pointerdown",
+            "start": 17771.5,
+            "duration": 24,
+            "interactionId": 5346
+          },
+          {
+            "name": "pointerup",
+            "start": 17771.600000023842,
+            "duration": 24,
+            "interactionId": 5346
+          },
+          {
+            "name": "click",
+            "start": 17771.600000023842,
+            "duration": 24,
+            "interactionId": 5346
+          }
+        ],
+        "longTasks": [
+          {
+            "start": 621.8000000119209,
+            "duration": 73
+          }
+        ]
+      }
+    },
+    {
+      "round": 3,
+      "environment": {
+        "dpr": 1,
+        "viewport": {
+          "width": 1440,
+          "height": 900
+        },
+        "visualScale": 1,
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36"
+      },
+      "build": {
+        "version": 1,
+        "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+        "dirty": true,
+        "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+      },
+      "initialText": "ColloSys\nCtrl\n/\nT\nTEST refinement 99ed4a04\nProjects\nTasks\nConversations\nTeam\nConnections\nSettings\nColloSys\n0.1.0\nTEST dense reading · 团队上下文与长会话\nProject details\nTasks\nActivity\nConversations\nHandoffs\nTimeline\nAbout\nProject tasks\nActive\n135\nFilter\nDisplay\nCtrl\nK\nIN PROGRESS\n(67)\nct-243\nTEST menu density 200\n8h\nct-240\nTEST menu density 197\n8h\nct-237\nTEST menu density 194\n8h\nct-234\nTEST menu density 191\n8h\nct-231\nTEST menu density 188\n8h\nct-228\nTEST menu density 185\n8h\nct-225\nTEST menu density 182\n8h\nct-222\nTEST menu density 179\n8h\nct-219\nTEST menu density 176\n8h\nct-216\nTEST menu density 173\n8h\nct-213\nTEST menu density 170\n8h\nct-210\nTEST menu density 167\n8h\nct-207\nTEST menu density 164\n8h\nct-204\nTEST menu density 161\n8h\nct-201\nTEST menu density 158\n8h\nct-198\nTEST menu density 155\n8h\nct-195\nTEST menu density 152\n8h\nct-192\nTEST menu density 149\n8h\nct-189\nTEST menu density 146\n8h\nct-186\nTEST menu density 143\n8h\nct-183\nTEST menu density 140\n8h\nct-180\nTEST menu density 137\n8h\nct-177\nTEST menu density 134\n8h\nct-174\nTEST menu density 131\n8h\nct-171\nTEST menu density 128\n8h\nct-168\nTEST menu density 125\n8h\nct-165\nTEST menu density 122\n8h\n+1\nStatus\nNo active sessions\nKILLED",
+      "metrics": {
+        "actions": [
+          {
+            "name": "Active",
+            "cold": true,
+            "start": 2966.800000011921,
+            "eventTimestamp": 2963.5,
+            "feedbackOpportunity": 29.19999998807907,
+            "operableOpportunity": 29.19999998807907,
+            "stableOpportunity": 211.5,
+            "animationSettled": 211.5999999642372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3440.899999976158,
+            "eventTimestamp": 3439.399999976158,
+            "feedbackOpportunity": 12.699999988079071,
+            "operableOpportunity": 12.800000011920929,
+            "stableOpportunity": 195.5,
+            "animationSettled": 195.5
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 3857.899999976158,
+            "eventTimestamp": 3856.5,
+            "feedbackOpportunity": 20.400000035762787,
+            "operableOpportunity": 20.400000035762787,
+            "stableOpportunity": 203.60000002384186,
+            "animationSettled": 203.60000002384186
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4274,
+            "eventTimestamp": 4272.599999964237,
+            "feedbackOpportunity": 21,
+            "operableOpportunity": 21,
+            "stableOpportunity": 204.0999999642372,
+            "animationSettled": 204.0999999642372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 4691,
+            "eventTimestamp": 4689.599999964237,
+            "feedbackOpportunity": 21,
+            "operableOpportunity": 21,
+            "stableOpportunity": 203.80000001192093,
+            "animationSettled": 203.89999997615814
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5099.300000011921,
+            "eventTimestamp": 5097.699999988079,
+            "feedbackOpportunity": 20.899999976158142,
+            "operableOpportunity": 20.899999976158142,
+            "stableOpportunity": 203.89999997615814,
+            "animationSettled": 203.89999997615814
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5491.099999964237,
+            "eventTimestamp": 5489.699999988079,
+            "feedbackOpportunity": 20.700000047683716,
+            "operableOpportunity": 20.700000047683716,
+            "stableOpportunity": 203.60000002384186,
+            "animationSettled": 203.60000002384186
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 5899.699999988079,
+            "eventTimestamp": 5898.199999988079,
+            "feedbackOpportunity": 20.600000023841858,
+            "operableOpportunity": 20.600000023841858,
+            "stableOpportunity": 203.39999997615814,
+            "animationSettled": 203.39999997615814
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6316.899999976158,
+            "eventTimestamp": 6315.199999988079,
+            "feedbackOpportunity": 20.100000023841858,
+            "operableOpportunity": 20.100000023841858,
+            "stableOpportunity": 202.9000000357628,
+            "animationSettled": 202.9000000357628
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 6724.5,
+            "eventTimestamp": 6723.199999988079,
+            "feedbackOpportunity": 20.80000001192093,
+            "operableOpportunity": 20.80000001192093,
+            "stableOpportunity": 203.5999999642372,
+            "animationSettled": 203.5999999642372
+          },
+          {
+            "name": "Active",
+            "cold": false,
+            "start": 7116.5,
+            "eventTimestamp": 7114.800000011921,
+            "feedbackOpportunity": 20.19999998807907,
+            "operableOpportunity": 20.30000001192093,
+            "stableOpportunity": 203.30000001192093,
+            "animationSettled": 203.30000001192093
+          },
+          {
+            "name": "Display",
+            "cold": true,
+            "start": 7532.5,
+            "eventTimestamp": 7531.099999964237,
+            "feedbackOpportunity": 29.399999976158142,
+            "operableOpportunity": 29.399999976158142,
+            "stableOpportunity": 212.30000001192093,
+            "animationSettled": 212.39999997615814
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8007.899999976158,
+            "eventTimestamp": 8006.399999976158,
+            "feedbackOpportunity": 12.600000023841858,
+            "operableOpportunity": 12.600000023841858,
+            "stableOpportunity": 195.30000001192093,
+            "animationSettled": 195.4000000357628
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8424.399999976158,
+            "eventTimestamp": 8423.099999964237,
+            "feedbackOpportunity": 21.30000001192093,
+            "operableOpportunity": 21.30000001192093,
+            "stableOpportunity": 203.69999998807907,
+            "animationSettled": 203.69999998807907
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 8824.399999976158,
+            "eventTimestamp": 8823.099999964237,
+            "feedbackOpportunity": 20.69999998807907,
+            "operableOpportunity": 20.69999998807907,
+            "stableOpportunity": 203.9000000357628,
+            "animationSettled": 203.9000000357628
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9242,
+            "eventTimestamp": 9240.399999976158,
+            "feedbackOpportunity": 19.80000001192093,
+            "operableOpportunity": 19.899999976158142,
+            "stableOpportunity": 202.80000001192093,
+            "animationSettled": 202.80000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 9657.699999988079,
+            "eventTimestamp": 9656.300000011921,
+            "feedbackOpportunity": 21.100000023841858,
+            "operableOpportunity": 21.100000023841858,
+            "stableOpportunity": 203.80000001192093,
+            "animationSettled": 203.80000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10065.5,
+            "eventTimestamp": 10064.300000011921,
+            "feedbackOpportunity": 21.30000001192093,
+            "operableOpportunity": 21.30000001192093,
+            "stableOpportunity": 204.30000001192093,
+            "animationSettled": 204.39999997615814
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10474.5,
+            "eventTimestamp": 10473.099999964237,
+            "feedbackOpportunity": 20.69999998807907,
+            "operableOpportunity": 20.69999998807907,
+            "stableOpportunity": 204.19999998807907,
+            "animationSettled": 204.30000001192093
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 10899.599999964237,
+            "eventTimestamp": 10898.300000011921,
+            "feedbackOpportunity": 20.600000023841858,
+            "operableOpportunity": 20.600000023841858,
+            "stableOpportunity": 203.70000004768372,
+            "animationSettled": 203.70000004768372
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11315.899999976158,
+            "eventTimestamp": 11314.599999964237,
+            "feedbackOpportunity": 20.900000035762787,
+            "operableOpportunity": 20.900000035762787,
+            "stableOpportunity": 204,
+            "animationSettled": 204
+          },
+          {
+            "name": "Display",
+            "cold": false,
+            "start": 11725.5,
+            "eventTimestamp": 11724.099999964237,
+            "feedbackOpportunity": 19.69999998807907,
+            "operableOpportunity": 19.69999998807907,
+            "stableOpportunity": 202.69999998807907,
+            "animationSettled": 202.69999998807907
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 12567.5,
+            "eventTimestamp": 12564.699999988079,
+            "feedbackOpportunity": 13.800000011920929,
+            "operableOpportunity": 13.800000011920929,
+            "stableOpportunity": 27.5,
+            "animationSettled": 27.5
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13184.899999976158,
+            "eventTimestamp": 13182.099999964237,
+            "feedbackOpportunity": 11.199999988079071,
+            "operableOpportunity": 11.199999988079071,
+            "stableOpportunity": 27,
+            "animationSettled": 27
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 13776,
+            "eventTimestamp": 13773.699999988079,
+            "feedbackOpportunity": 9.5,
+            "operableOpportunity": 9.5,
+            "stableOpportunity": 27.399999976158142,
+            "animationSettled": 27.399999976158142
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14366.599999964237,
+            "eventTimestamp": 14364.399999976158,
+            "feedbackOpportunity": 9.300000011920929,
+            "operableOpportunity": 9.300000011920929,
+            "stableOpportunity": 28.600000023841858,
+            "animationSettled": 28.700000047683716
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 14941.899999976158,
+            "eventTimestamp": 14939.099999964237,
+            "feedbackOpportunity": 9.699999988079071,
+            "operableOpportunity": 9.699999988079071,
+            "stableOpportunity": 28.5,
+            "animationSettled": 28.600000023841858
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 15517.5,
+            "eventTimestamp": 15514.800000011921,
+            "feedbackOpportunity": 9.300000011920929,
+            "operableOpportunity": 9.300000011920929,
+            "stableOpportunity": 27.80000001192093,
+            "animationSettled": 27.80000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 16100,
+            "eventTimestamp": 16097.699999988079,
+            "feedbackOpportunity": 9.099999964237213,
+            "operableOpportunity": 9.099999964237213,
+            "stableOpportunity": 28.399999976158142,
+            "animationSettled": 28.399999976158142
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 16691.69999998808,
+            "eventTimestamp": 16689.5,
+            "feedbackOpportunity": 8.699999988079071,
+            "operableOpportunity": 8.699999988079071,
+            "stableOpportunity": 28.19999998807907,
+            "animationSettled": 28.30000001192093
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17266.80000001192,
+            "eventTimestamp": 17264.5,
+            "feedbackOpportunity": 8.799999952316284,
+            "operableOpportunity": 8.799999952316284,
+            "stableOpportunity": 28.299999952316284,
+            "animationSettled": 28.299999952316284
+          },
+          {
+            "name": "Grouping",
+            "cold": false,
+            "start": 17841.69999998808,
+            "eventTimestamp": 17839.19999998808,
+            "feedbackOpportunity": 11,
+            "operableOpportunity": 11,
+            "stableOpportunity": 29,
+            "animationSettled": 29
+          }
+        ],
+        "events": [
+          {
+            "name": "pointerdown",
+            "start": 2963.5,
+            "duration": 72,
+            "interactionId": 7308
+          },
+          {
+            "name": "pointerup",
+            "start": 2963.599999964237,
+            "duration": 72,
+            "interactionId": 7308
+          },
+          {
+            "name": "click",
+            "start": 2963.599999964237,
+            "duration": 72,
+            "interactionId": 7308
+          },
+          {
+            "name": "pointerdown",
+            "start": 3414.199999988079,
+            "duration": 16,
+            "interactionId": 7315
+          },
+          {
+            "name": "pointerup",
+            "start": 3414.199999988079,
+            "duration": 16,
+            "interactionId": 7315
+          },
+          {
+            "name": "click",
+            "start": 3414.199999988079,
+            "duration": 16,
+            "interactionId": 7315
+          },
+          {
+            "name": "pointerdown",
+            "start": 3439.399999976158,
+            "duration": 16,
+            "interactionId": 7322
+          },
+          {
+            "name": "pointerup",
+            "start": 3439.399999976158,
+            "duration": 16,
+            "interactionId": 7322
+          },
+          {
+            "name": "click",
+            "start": 3439.399999976158,
+            "duration": 16,
+            "interactionId": 7322
+          },
+          {
+            "name": "pointerdown",
+            "start": 3826.599999964237,
+            "duration": 16,
+            "interactionId": 7329
+          },
+          {
+            "name": "pointerup",
+            "start": 3826.599999964237,
+            "duration": 16,
+            "interactionId": 7329
+          },
+          {
+            "name": "click",
+            "start": 3826.599999964237,
+            "duration": 16,
+            "interactionId": 7329
+          },
+          {
+            "name": "pointerdown",
+            "start": 3856.5,
+            "duration": 24,
+            "interactionId": 7336
+          },
+          {
+            "name": "pointerup",
+            "start": 3856.5,
+            "duration": 24,
+            "interactionId": 7336
+          },
+          {
+            "name": "click",
+            "start": 3856.5,
+            "duration": 24,
+            "interactionId": 7336
+          },
+          {
+            "name": "pointerdown",
+            "start": 4249.399999976158,
+            "duration": 24,
+            "interactionId": 7343
+          },
+          {
+            "name": "pointerup",
+            "start": 4249.399999976158,
+            "duration": 24,
+            "interactionId": 7343
+          },
+          {
+            "name": "click",
+            "start": 4249.399999976158,
+            "duration": 24,
+            "interactionId": 7343
+          },
+          {
+            "name": "pointerdown",
+            "start": 4272.599999964237,
+            "duration": 24,
+            "interactionId": 7350
+          },
+          {
+            "name": "pointerup",
+            "start": 4272.699999988079,
+            "duration": 24,
+            "interactionId": 7350
+          },
+          {
+            "name": "click",
+            "start": 4272.699999988079,
+            "duration": 24,
+            "interactionId": 7350
+          },
+          {
+            "name": "pointerdown",
+            "start": 4656.300000011921,
+            "duration": 24,
+            "interactionId": 7357
+          },
+          {
+            "name": "pointerup",
+            "start": 4656.399999976158,
+            "duration": 24,
+            "interactionId": 7357
+          },
+          {
+            "name": "click",
+            "start": 4656.399999976158,
+            "duration": 24,
+            "interactionId": 7357
+          },
+          {
+            "name": "pointerdown",
+            "start": 4689.599999964237,
+            "duration": 24,
+            "interactionId": 7364
+          },
+          {
+            "name": "pointerup",
+            "start": 4689.699999988079,
+            "duration": 24,
+            "interactionId": 7364
+          },
+          {
+            "name": "click",
+            "start": 4689.699999988079,
+            "duration": 24,
+            "interactionId": 7364
+          },
+          {
+            "name": "pointerdown",
+            "start": 5097.699999988079,
+            "duration": 24,
+            "interactionId": 7378
+          },
+          {
+            "name": "pointerup",
+            "start": 5097.800000011921,
+            "duration": 24,
+            "interactionId": 7378
+          },
+          {
+            "name": "click",
+            "start": 5097.800000011921,
+            "duration": 24,
+            "interactionId": 7378
+          },
+          {
+            "name": "pointerdown",
+            "start": 5467.599999964237,
+            "duration": 16,
+            "interactionId": 7385
+          },
+          {
+            "name": "pointerup",
+            "start": 5467.599999964237,
+            "duration": 16,
+            "interactionId": 7385
+          },
+          {
+            "name": "click",
+            "start": 5467.599999964237,
+            "duration": 16,
+            "interactionId": 7385
+          },
+          {
+            "name": "pointerdown",
+            "start": 5489.699999988079,
+            "duration": 24,
+            "interactionId": 7392
+          },
+          {
+            "name": "pointerup",
+            "start": 5489.800000011921,
+            "duration": 24,
+            "interactionId": 7392
+          },
+          {
+            "name": "click",
+            "start": 5489.800000011921,
+            "duration": 24,
+            "interactionId": 7392
+          },
+          {
+            "name": "pointerdown",
+            "start": 5871.5,
+            "duration": 16,
+            "interactionId": 7399
+          },
+          {
+            "name": "pointerup",
+            "start": 5871.5,
+            "duration": 16,
+            "interactionId": 7399
+          },
+          {
+            "name": "click",
+            "start": 5871.5,
+            "duration": 16,
+            "interactionId": 7399
+          },
+          {
+            "name": "pointerdown",
+            "start": 5898.199999988079,
+            "duration": 24,
+            "interactionId": 7406
+          },
+          {
+            "name": "pointerup",
+            "start": 5898.300000011921,
+            "duration": 24,
+            "interactionId": 7406
+          },
+          {
+            "name": "click",
+            "start": 5898.300000011921,
+            "duration": 24,
+            "interactionId": 7406
+          },
+          {
+            "name": "pointerdown",
+            "start": 6282,
+            "duration": 24,
+            "interactionId": 7413
+          },
+          {
+            "name": "pointerup",
+            "start": 6282.199999988079,
+            "duration": 24,
+            "interactionId": 7413
+          },
+          {
+            "name": "click",
+            "start": 6282.199999988079,
+            "duration": 24,
+            "interactionId": 7413
+          },
+          {
+            "name": "pointerdown",
+            "start": 6315.199999988079,
+            "duration": 24,
+            "interactionId": 7420
+          },
+          {
+            "name": "pointerup",
+            "start": 6315.300000011921,
+            "duration": 24,
+            "interactionId": 7420
+          },
+          {
+            "name": "click",
+            "start": 6315.300000011921,
+            "duration": 24,
+            "interactionId": 7420
+          },
+          {
+            "name": "pointerdown",
+            "start": 6702.5,
+            "duration": 16,
+            "interactionId": 7427
+          },
+          {
+            "name": "pointerup",
+            "start": 6702.599999964237,
+            "duration": 16,
+            "interactionId": 7427
+          },
+          {
+            "name": "click",
+            "start": 6702.599999964237,
+            "duration": 16,
+            "interactionId": 7427
+          },
+          {
+            "name": "pointerdown",
+            "start": 6723.199999988079,
+            "duration": 24,
+            "interactionId": 7434
+          },
+          {
+            "name": "pointerup",
+            "start": 6723.199999988079,
+            "duration": 24,
+            "interactionId": 7434
+          },
+          {
+            "name": "click",
+            "start": 6723.199999988079,
+            "duration": 24,
+            "interactionId": 7434
+          },
+          {
+            "name": "pointerdown",
+            "start": 7089.399999976158,
+            "duration": 16,
+            "interactionId": 7441
+          },
+          {
+            "name": "pointerup",
+            "start": 7089.5,
+            "duration": 16,
+            "interactionId": 7441
+          },
+          {
+            "name": "click",
+            "start": 7089.5,
+            "duration": 16,
+            "interactionId": 7441
+          },
+          {
+            "name": "pointerdown",
+            "start": 7114.800000011921,
+            "duration": 24,
+            "interactionId": 7448
+          },
+          {
+            "name": "pointerup",
+            "start": 7114.800000011921,
+            "duration": 24,
+            "interactionId": 7448
+          },
+          {
+            "name": "click",
+            "start": 7114.800000011921,
+            "duration": 24,
+            "interactionId": 7448
+          },
+          {
+            "name": "pointerdown",
+            "start": 7494.5,
+            "duration": 16,
+            "interactionId": 7455
+          },
+          {
+            "name": "pointerup",
+            "start": 7494.699999988079,
+            "duration": 16,
+            "interactionId": 7455
+          },
+          {
+            "name": "click",
+            "start": 7494.699999988079,
+            "duration": 16,
+            "interactionId": 7455
+          },
+          {
+            "name": "pointerdown",
+            "start": 7531.099999964237,
+            "duration": 40,
+            "interactionId": 7462
+          },
+          {
+            "name": "pointerup",
+            "start": 7531.099999964237,
+            "duration": 40,
+            "interactionId": 7462
+          },
+          {
+            "name": "click",
+            "start": 7531.099999964237,
+            "duration": 40,
+            "interactionId": 7462
+          },
+          {
+            "name": "pointerdown",
+            "start": 7976.699999988079,
+            "duration": 16,
+            "interactionId": 7469
+          },
+          {
+            "name": "pointerup",
+            "start": 7976.800000011921,
+            "duration": 16,
+            "interactionId": 7469
+          },
+          {
+            "name": "click",
+            "start": 7976.800000011921,
+            "duration": 16,
+            "interactionId": 7469
+          },
+          {
+            "name": "pointerdown",
+            "start": 8006.399999976158,
+            "duration": 24,
+            "interactionId": 7476
+          },
+          {
+            "name": "pointerup",
+            "start": 8006.399999976158,
+            "duration": 24,
+            "interactionId": 7476
+          },
+          {
+            "name": "click",
+            "start": 8006.399999976158,
+            "duration": 24,
+            "interactionId": 7476
+          },
+          {
+            "name": "pointerdown",
+            "start": 8399,
+            "duration": 24,
+            "interactionId": 7483
+          },
+          {
+            "name": "pointerup",
+            "start": 8399.099999964237,
+            "duration": 24,
+            "interactionId": 7483
+          },
+          {
+            "name": "click",
+            "start": 8399.099999964237,
+            "duration": 24,
+            "interactionId": 7483
+          },
+          {
+            "name": "pointerdown",
+            "start": 8423.099999964237,
+            "duration": 24,
+            "interactionId": 7490
+          },
+          {
+            "name": "pointerup",
+            "start": 8423.199999988079,
+            "duration": 24,
+            "interactionId": 7490
+          },
+          {
+            "name": "click",
+            "start": 8423.199999988079,
+            "duration": 24,
+            "interactionId": 7490
+          },
+          {
+            "name": "pointerdown",
+            "start": 8793.099999964237,
+            "duration": 16,
+            "interactionId": 7497
+          },
+          {
+            "name": "pointerup",
+            "start": 8793.099999964237,
+            "duration": 16,
+            "interactionId": 7497
+          },
+          {
+            "name": "click",
+            "start": 8793.099999964237,
+            "duration": 16,
+            "interactionId": 7497
+          },
+          {
+            "name": "pointerdown",
+            "start": 8823.099999964237,
+            "duration": 24,
+            "interactionId": 7504
+          },
+          {
+            "name": "pointerup",
+            "start": 8823.199999988079,
+            "duration": 24,
+            "interactionId": 7504
+          },
+          {
+            "name": "click",
+            "start": 8823.199999988079,
+            "duration": 24,
+            "interactionId": 7504
+          },
+          {
+            "name": "pointerdown",
+            "start": 9213.5,
+            "duration": 16,
+            "interactionId": 7511
+          },
+          {
+            "name": "pointerup",
+            "start": 9213.5,
+            "duration": 16,
+            "interactionId": 7511
+          },
+          {
+            "name": "click",
+            "start": 9213.5,
+            "duration": 16,
+            "interactionId": 7511
+          },
+          {
+            "name": "pointerdown",
+            "start": 9240.399999976158,
+            "duration": 24,
+            "interactionId": 7518
+          },
+          {
+            "name": "pointerup",
+            "start": 9240.5,
+            "duration": 24,
+            "interactionId": 7518
+          },
+          {
+            "name": "click",
+            "start": 9240.5,
+            "duration": 24,
+            "interactionId": 7518
+          },
+          {
+            "name": "pointerdown",
+            "start": 9632.800000011921,
+            "duration": 24,
+            "interactionId": 7525
+          },
+          {
+            "name": "pointerup",
+            "start": 9632.899999976158,
+            "duration": 16,
+            "interactionId": 7525
+          },
+          {
+            "name": "click",
+            "start": 9632.899999976158,
+            "duration": 16,
+            "interactionId": 7525
+          },
+          {
+            "name": "pointerdown",
+            "start": 9656.300000011921,
+            "duration": 24,
+            "interactionId": 7532
+          },
+          {
+            "name": "pointerup",
+            "start": 9656.399999976158,
+            "duration": 24,
+            "interactionId": 7532
+          },
+          {
+            "name": "click",
+            "start": 9656.399999976158,
+            "duration": 24,
+            "interactionId": 7532
+          },
+          {
+            "name": "pointerdown",
+            "start": 10038.699999988079,
+            "duration": 16,
+            "interactionId": 7539
+          },
+          {
+            "name": "pointerup",
+            "start": 10038.699999988079,
+            "duration": 16,
+            "interactionId": 7539
+          },
+          {
+            "name": "click",
+            "start": 10038.699999988079,
+            "duration": 16,
+            "interactionId": 7539
+          },
+          {
+            "name": "pointerdown",
+            "start": 10064.300000011921,
+            "duration": 24,
+            "interactionId": 7546
+          },
+          {
+            "name": "pointerup",
+            "start": 10064.399999976158,
+            "duration": 24,
+            "interactionId": 7546
+          },
+          {
+            "name": "click",
+            "start": 10064.399999976158,
+            "duration": 24,
+            "interactionId": 7546
+          },
+          {
+            "name": "pointerdown",
+            "start": 10448,
+            "duration": 24,
+            "interactionId": 7553
+          },
+          {
+            "name": "pointerup",
+            "start": 10448.099999964237,
+            "duration": 24,
+            "interactionId": 7553
+          },
+          {
+            "name": "click",
+            "start": 10448.099999964237,
+            "duration": 24,
+            "interactionId": 7553
+          },
+          {
+            "name": "pointerdown",
+            "start": 10473.099999964237,
+            "duration": 24,
+            "interactionId": 7560
+          },
+          {
+            "name": "pointerup",
+            "start": 10473.199999988079,
+            "duration": 24,
+            "interactionId": 7560
+          },
+          {
+            "name": "click",
+            "start": 10473.199999988079,
+            "duration": 24,
+            "interactionId": 7560
+          },
+          {
+            "name": "pointerdown",
+            "start": 10853.800000011921,
+            "duration": 24,
+            "interactionId": 7567
+          },
+          {
+            "name": "pointerup",
+            "start": 10853.800000011921,
+            "duration": 24,
+            "interactionId": 7567
+          },
+          {
+            "name": "click",
+            "start": 10853.800000011921,
+            "duration": 24,
+            "interactionId": 7567
+          },
+          {
+            "name": "pointerdown",
+            "start": 10898.300000011921,
+            "duration": 24,
+            "interactionId": 7574
+          },
+          {
+            "name": "pointerup",
+            "start": 10898.300000011921,
+            "duration": 24,
+            "interactionId": 7574
+          },
+          {
+            "name": "click",
+            "start": 10898.300000011921,
+            "duration": 24,
+            "interactionId": 7574
+          },
+          {
+            "name": "pointerdown",
+            "start": 11290.300000011921,
+            "duration": 24,
+            "interactionId": 7581
+          },
+          {
+            "name": "pointerup",
+            "start": 11290.300000011921,
+            "duration": 24,
+            "interactionId": 7581
+          },
+          {
+            "name": "click",
+            "start": 11290.300000011921,
+            "duration": 24,
+            "interactionId": 7581
+          },
+          {
+            "name": "pointerdown",
+            "start": 11314.599999964237,
+            "duration": 24,
+            "interactionId": 7588
+          },
+          {
+            "name": "pointerup",
+            "start": 11314.599999964237,
+            "duration": 24,
+            "interactionId": 7588
+          },
+          {
+            "name": "click",
+            "start": 11314.599999964237,
+            "duration": 24,
+            "interactionId": 7588
+          },
+          {
+            "name": "pointerdown",
+            "start": 11696.699999988079,
+            "duration": 16,
+            "interactionId": 7595
+          },
+          {
+            "name": "pointerup",
+            "start": 11696.800000011921,
+            "duration": 16,
+            "interactionId": 7595
+          },
+          {
+            "name": "click",
+            "start": 11696.800000011921,
+            "duration": 16,
+            "interactionId": 7595
+          },
+          {
+            "name": "pointerdown",
+            "start": 11724.099999964237,
+            "duration": 24,
+            "interactionId": 7602
+          },
+          {
+            "name": "pointerup",
+            "start": 11724.099999964237,
+            "duration": 24,
+            "interactionId": 7602
+          },
+          {
+            "name": "click",
+            "start": 11724.099999964237,
+            "duration": 24,
+            "interactionId": 7602
+          },
+          {
+            "name": "pointerdown",
+            "start": 12140.099999964237,
+            "duration": 24,
+            "interactionId": 7616
+          },
+          {
+            "name": "pointerup",
+            "start": 12140.199999988079,
+            "duration": 24,
+            "interactionId": 7616
+          },
+          {
+            "name": "click",
+            "start": 12140.199999988079,
+            "duration": 24,
+            "interactionId": 7616
+          },
+          {
+            "name": "pointerdown",
+            "start": 12348.300000011921,
+            "duration": 32,
+            "interactionId": 7623
+          },
+          {
+            "name": "pointerup",
+            "start": 12348.399999976158,
+            "duration": 32,
+            "interactionId": 7623
+          },
+          {
+            "name": "click",
+            "start": 12348.399999976158,
+            "duration": 32,
+            "interactionId": 7623
+          },
+          {
+            "name": "pointerdown",
+            "start": 12564.699999988079,
+            "duration": 32,
+            "interactionId": 7630
+          },
+          {
+            "name": "pointerup",
+            "start": 12564.800000011921,
+            "duration": 32,
+            "interactionId": 7630
+          },
+          {
+            "name": "click",
+            "start": 12564.800000011921,
+            "duration": 32,
+            "interactionId": 7630
+          },
+          {
+            "name": "keydown",
+            "start": 12698,
+            "duration": 24,
+            "interactionId": 7637
+          },
+          {
+            "name": "keyup",
+            "start": 12702.599999964237,
+            "duration": 16,
+            "interactionId": 7637
+          },
+          {
+            "name": "pointerdown",
+            "start": 12723.5,
+            "duration": 24,
+            "interactionId": 7644
+          },
+          {
+            "name": "pointerup",
+            "start": 12723.599999964237,
+            "duration": 24,
+            "interactionId": 7644
+          },
+          {
+            "name": "click",
+            "start": 12723.599999964237,
+            "duration": 24,
+            "interactionId": 7644
+          },
+          {
+            "name": "pointerdown",
+            "start": 12948.599999964237,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "pointerup",
+            "start": 12948.699999988079,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "click",
+            "start": 12948.699999988079,
+            "duration": 24,
+            "interactionId": 7651
+          },
+          {
+            "name": "pointerdown",
+            "start": 13182.099999964237,
+            "duration": 24,
+            "interactionId": 7658
+          },
+          {
+            "name": "pointerup",
+            "start": 13182.099999964237,
+            "duration": 24,
+            "interactionId": 7658
+          },
+          {
+            "name": "click",
+            "start": 13182.099999964237,
+            "duration": 24,
+            "interactionId": 7658
+          },
+          {
+            "name": "keydown",
+            "start": 13318.899999976158,
+            "duration": 16,
+            "interactionId": 7665
+          },
+          {
+            "name": "keyup",
+            "start": 13323,
+            "duration": 24,
+            "interactionId": 7665
+          },
+          {
+            "name": "pointerdown",
+            "start": 13348.5,
+            "duration": 24,
+            "interactionId": 7672
+          },
+          {
+            "name": "pointerup",
+            "start": 13348.599999964237,
+            "duration": 24,
+            "interactionId": 7672
+          },
+          {
+            "name": "click",
+            "start": 13348.599999964237,
+            "duration": 24,
+            "interactionId": 7672
+          },
+          {
+            "name": "pointerdown",
+            "start": 13547.800000011921,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "pointerup",
+            "start": 13547.899999976158,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "click",
+            "start": 13547.899999976158,
+            "duration": 24,
+            "interactionId": 7679
+          },
+          {
+            "name": "pointerdown",
+            "start": 13773.699999988079,
+            "duration": 24,
+            "interactionId": 7686
+          },
+          {
+            "name": "pointerup",
+            "start": 13773.699999988079,
+            "duration": 24,
+            "interactionId": 7686
+          },
+          {
+            "name": "click",
+            "start": 13773.699999988079,
+            "duration": 24,
+            "interactionId": 7686
+          },
+          {
+            "name": "keydown",
+            "start": 13898.899999976158,
+            "duration": 24,
+            "interactionId": 7693
+          },
+          {
+            "name": "keyup",
+            "start": 13905.899999976158,
+            "duration": 24,
+            "interactionId": 7693
+          },
+          {
+            "name": "pointerdown",
+            "start": 13931.099999964237,
+            "duration": 24,
+            "interactionId": 7700
+          },
+          {
+            "name": "pointerup",
+            "start": 13931.199999988079,
+            "duration": 24,
+            "interactionId": 7700
+          },
+          {
+            "name": "click",
+            "start": 13931.199999988079,
+            "duration": 24,
+            "interactionId": 7700
+          },
+          {
+            "name": "pointerdown",
+            "start": 14139.099999964237,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "pointerup",
+            "start": 14139.199999988079,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "click",
+            "start": 14139.199999988079,
+            "duration": 24,
+            "interactionId": 7707
+          },
+          {
+            "name": "pointerdown",
+            "start": 14364.399999976158,
+            "duration": 24,
+            "interactionId": 7714
+          },
+          {
+            "name": "pointerup",
+            "start": 14364.399999976158,
+            "duration": 24,
+            "interactionId": 7714
+          },
+          {
+            "name": "click",
+            "start": 14364.399999976158,
+            "duration": 24,
+            "interactionId": 7714
+          },
+          {
+            "name": "keydown",
+            "start": 14486.399999976158,
+            "duration": 24,
+            "interactionId": 7721
+          },
+          {
+            "name": "keyup",
+            "start": 14497.599999964237,
+            "duration": 24,
+            "interactionId": 7721
+          },
+          {
+            "name": "pointerdown",
+            "start": 14523.199999988079,
+            "duration": 24,
+            "interactionId": 7728
+          },
+          {
+            "name": "pointerup",
+            "start": 14523.300000011921,
+            "duration": 24,
+            "interactionId": 7728
+          },
+          {
+            "name": "click",
+            "start": 14523.300000011921,
+            "duration": 24,
+            "interactionId": 7728
+          },
+          {
+            "name": "pointerdown",
+            "start": 14730.899999976158,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "pointerup",
+            "start": 14731,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "click",
+            "start": 14731,
+            "duration": 24,
+            "interactionId": 7735
+          },
+          {
+            "name": "pointerdown",
+            "start": 14939.099999964237,
+            "duration": 24,
+            "interactionId": 7742
+          },
+          {
+            "name": "pointerup",
+            "start": 14939.099999964237,
+            "duration": 24,
+            "interactionId": 7742
+          },
+          {
+            "name": "click",
+            "start": 14939.099999964237,
+            "duration": 24,
+            "interactionId": 7742
+          },
+          {
+            "name": "keydown",
+            "start": 15070.099999964237,
+            "duration": 24,
+            "interactionId": 7749
+          },
+          {
+            "name": "keyup",
+            "start": 15073.899999976158,
+            "duration": 24,
+            "interactionId": 7749
+          },
+          {
+            "name": "pointerdown",
+            "start": 15097.899999976158,
+            "duration": 24,
+            "interactionId": 7756
+          },
+          {
+            "name": "pointerup",
+            "start": 15097.899999976158,
+            "duration": 24,
+            "interactionId": 7756
+          },
+          {
+            "name": "click",
+            "start": 15097.899999976158,
+            "duration": 24,
+            "interactionId": 7756
+          },
+          {
+            "name": "pointerdown",
+            "start": 15297.5,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "pointerup",
+            "start": 15297.599999964237,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "click",
+            "start": 15297.599999964237,
+            "duration": 24,
+            "interactionId": 7763
+          },
+          {
+            "name": "pointerdown",
+            "start": 15514.800000011921,
+            "duration": 24,
+            "interactionId": 7770
+          },
+          {
+            "name": "pointerup",
+            "start": 15514.899999976158,
+            "duration": 24,
+            "interactionId": 7770
+          },
+          {
+            "name": "click",
+            "start": 15514.899999976158,
+            "duration": 24,
+            "interactionId": 7770
+          },
+          {
+            "name": "keydown",
+            "start": 15643.300000011921,
+            "duration": 16,
+            "interactionId": 7777
+          },
+          {
+            "name": "keyup",
+            "start": 15648.199999988079,
+            "duration": 24,
+            "interactionId": 7777
+          },
+          {
+            "name": "pointerdown",
+            "start": 15672.599999964237,
+            "duration": 24,
+            "interactionId": 7784
+          },
+          {
+            "name": "pointerup",
+            "start": 15672.699999988079,
+            "duration": 24,
+            "interactionId": 7784
+          },
+          {
+            "name": "click",
+            "start": 15672.699999988079,
+            "duration": 24,
+            "interactionId": 7784
+          },
+          {
+            "name": "pointerdown",
+            "start": 15872.699999988079,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "pointerup",
+            "start": 15872.699999988079,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "click",
+            "start": 15872.699999988079,
+            "duration": 24,
+            "interactionId": 7791
+          },
+          {
+            "name": "pointerdown",
+            "start": 16097.699999988079,
+            "duration": 24,
+            "interactionId": 7798
+          },
+          {
+            "name": "pointerup",
+            "start": 16097.800000011921,
+            "duration": 24,
+            "interactionId": 7798
+          },
+          {
+            "name": "click",
+            "start": 16097.800000011921,
+            "duration": 24,
+            "interactionId": 7798
+          },
+          {
+            "name": "keydown",
+            "start": 16220.899999976158,
+            "duration": 16,
+            "interactionId": 7805
+          },
+          {
+            "name": "keyup",
+            "start": 16224,
+            "duration": 16,
+            "interactionId": 7805
+          },
+          {
+            "name": "pointerdown",
+            "start": 16247.599999964237,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "pointerup",
+            "start": 16247.699999988079,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "click",
+            "start": 16247.699999988079,
+            "duration": 16,
+            "interactionId": 7812
+          },
+          {
+            "name": "pointerdown",
+            "start": 16456.80000001192,
+            "duration": 24,
+            "interactionId": 7819
+          },
+          {
+            "name": "pointerup",
+            "start": 16456.80000001192,
+            "duration": 24,
+            "interactionId": 7819
+          },
+          {
+            "name": "click",
+            "start": 16456.80000001192,
+            "duration": 24,
+            "interactionId": 7819
+          },
+          {
+            "name": "pointerdown",
+            "start": 16689.5,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "pointerup",
+            "start": 16689.599999964237,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "click",
+            "start": 16689.599999964237,
+            "duration": 24,
+            "interactionId": 7826
+          },
+          {
+            "name": "keydown",
+            "start": 16816.80000001192,
+            "duration": 16,
+            "interactionId": 7833
+          },
+          {
+            "name": "keyup",
+            "start": 16819.69999998808,
+            "duration": 16,
+            "interactionId": 7833
+          },
+          {
+            "name": "pointerdown",
+            "start": 16839.099999964237,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "pointerup",
+            "start": 16839.099999964237,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "click",
+            "start": 16839.099999964237,
+            "duration": 16,
+            "interactionId": 7840
+          },
+          {
+            "name": "pointerdown",
+            "start": 17048.099999964237,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "pointerup",
+            "start": 17048.099999964237,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "click",
+            "start": 17048.099999964237,
+            "duration": 24,
+            "interactionId": 7847
+          },
+          {
+            "name": "pointerdown",
+            "start": 17264.5,
+            "duration": 24,
+            "interactionId": 7854
+          },
+          {
+            "name": "pointerup",
+            "start": 17264.5,
+            "duration": 24,
+            "interactionId": 7854
+          },
+          {
+            "name": "click",
+            "start": 17264.5,
+            "duration": 24,
+            "interactionId": 7854
+          },
+          {
+            "name": "keydown",
+            "start": 17396.5,
+            "duration": 24,
+            "interactionId": 7861
+          },
+          {
+            "name": "keyup",
+            "start": 17400,
+            "duration": 16,
+            "interactionId": 7861
+          },
+          {
+            "name": "pointerdown",
+            "start": 17423.399999976158,
+            "duration": 24,
+            "interactionId": 7868
+          },
+          {
+            "name": "pointerup",
+            "start": 17423.5,
+            "duration": 24,
+            "interactionId": 7868
+          },
+          {
+            "name": "click",
+            "start": 17423.5,
+            "duration": 24,
+            "interactionId": 7868
+          },
+          {
+            "name": "pointerdown",
+            "start": 17624.30000001192,
+            "duration": 24,
+            "interactionId": 7875
+          },
+          {
+            "name": "pointerup",
+            "start": 17624.30000001192,
+            "duration": 24,
+            "interactionId": 7875
+          },
+          {
+            "name": "click",
+            "start": 17624.30000001192,
+            "duration": 24,
+            "interactionId": 7875
+          },
+          {
+            "name": "pointerdown",
+            "start": 17839.19999998808,
+            "duration": 32,
+            "interactionId": 7882
+          },
+          {
+            "name": "pointerup",
+            "start": 17839.399999976158,
+            "duration": 32,
+            "interactionId": 7882
+          },
+          {
+            "name": "click",
+            "start": 17839.399999976158,
+            "duration": 32,
+            "interactionId": 7882
+          }
+        ],
+        "longTasks": [
+          {
+            "start": 598.0999999642372,
+            "duration": 73
+          }
+        ]
+      }
+    }
+  ]
+}

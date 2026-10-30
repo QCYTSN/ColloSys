@@ -13,6 +13,7 @@ import { themeVarsByMode } from '../lib/theme/themeVars';
 import { productTheme } from './productTheme';
 import {
   applyAppearance,
+  designTokens,
   readAppearance,
   type ProductAppearance,
   type AppearanceMode,
@@ -70,7 +71,7 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
         version: 1,
         mode: preference.mode,
         theme,
-        background: themes[theme]['--sol-bg'],
+        background: designTokens.color[theme]['surface-app'],
       })
       .catch(() =>
         setError('The window frame could not update. Reopen this window to apply its appearance.'),
@@ -122,6 +123,7 @@ export function ProductAppearanceSettings() {
   if (!appearance) throw new Error('ColloSys appearance settings are outside the product provider');
   const { preference, save, error } = appearance;
   const accents: [AppearanceAccent, string][] = [
+    ['forest', 'Forest'],
     ['iris', 'Iris'],
     ['clay', 'Clay'],
     ['moss', 'Moss'],
@@ -148,12 +150,16 @@ export function ProductAppearanceSettings() {
             <span
               className={`collo-appearance-sample sample-${mode}`}
               aria-hidden="true"
-              style={{
-                '--preview-bg': themes[mode === 'system' ? appearance.theme : mode]['--sol-bg'],
-                '--preview-tool': themes[mode === 'system' ? appearance.theme : mode]['--sol-bg-alt'],
-                '--preview-line': themes[mode === 'system' ? appearance.theme : mode]['--sol-border'],
-                '--preview-accent': `var(--collo-accent-${preference.accent}-${mode === 'system' ? appearance.theme : mode})`,
-              } as CSSProperties}
+              style={
+                {
+                  '--preview-bg': themes[mode === 'system' ? appearance.theme : mode]['--sol-bg'],
+                  '--preview-tool':
+                    themes[mode === 'system' ? appearance.theme : mode]['--sol-bg-alt'],
+                  '--preview-line':
+                    themes[mode === 'system' ? appearance.theme : mode]['--sol-border'],
+                  '--preview-accent': `var(--collo-accent-${preference.accent}-${mode === 'system' ? appearance.theme : mode})`,
+                } as CSSProperties
+              }
             >
               <i />
               <span>

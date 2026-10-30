@@ -1,0 +1,42 @@
+{
+  "measuredAt": "2026-10-30T14:26:00.440Z",
+  "command": "npm start",
+  "build": {
+    "version": 1,
+    "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "dirty": true,
+    "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+  },
+  "sourceFingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42",
+  "windows": [
+    {
+      "processId": 37808,
+      "title": "ColloSys",
+      "nativeHandle": 13305036,
+      "responding": true
+    }
+  ],
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3411
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3410
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3409
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3408
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3407
+    }
+  ],
+  "scope": "Read-only verification of the ordinary default-profile native entry. No default-profile content captured or deliberate account/workspace-data edits. Isolated native interaction tests are in final-native/results.json."
+}

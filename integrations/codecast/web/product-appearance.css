@@ -2,17 +2,31 @@
   padding: 20px 0;
 }
 .collo-appearance-settings h2 {
-  font-size: 16px;
-  font-weight: 600;
+  font: var(--collo-type-section-title);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-appearance-settings > p {
   color: var(--collo-secondary);
-  font-size: 12px;
   margin: 7px 0 20px;
+  font: var(--collo-type-body);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-appearance-settings h3 {
-  font-size: 12px;
   margin: 22px 0 12px;
+  font: var(--collo-type-control-label);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-appearance-modes {
   display: grid;
@@ -21,9 +35,9 @@
 }
 .collo-appearance-modes > button {
   padding: 8px;
-  border: 1px solid var(--collo-line);
-  border-radius: 10px;
   text-align: left;
+  border-radius: var(--collo-radius-control);
+  border: 1px solid var(--collo-control-edge);
 }
 .collo-appearance-modes > button[aria-pressed='true'] {
   border-color: var(--collo-accent);
@@ -33,8 +47,13 @@
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
   padding: 10px 2px 2px;
+  font: var(--collo-type-control-label);
+  letter-spacing: normal;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-appearance-modes > button > span:last-child > svg:last-child {
   margin-left: auto;
@@ -76,13 +95,19 @@
   gap: 8px;
 }
 .collo-appearance-accents button {
-  border: 1px solid var(--collo-line);
-  border-radius: 7px;
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 11px;
-  font-size: 12px;
+  font: var(--collo-type-control-label);
+  letter-spacing: normal;
+  height: 36px;
+  padding: 0 12px;
+  border-radius: var(--collo-radius-control);
+  border: 1px solid var(--collo-control-edge);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
 .collo-appearance-accents button[aria-pressed='true'] {
   border-color: var(--collo-accent);

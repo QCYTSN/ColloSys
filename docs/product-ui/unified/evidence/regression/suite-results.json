@@ -1,0 +1,77 @@
+[
+  {
+    "name": "menus",
+    "args": [
+      "tests/product-menu-acceptance.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T13:18:10.771Z",
+    "finished": "2026-10-30T13:18:44.836Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native-menus",
+    "args": [
+      "tests/product-menu-native.mjs"
+    ],
+    "started": "2026-10-30T13:18:44.837Z",
+    "finished": "2026-10-30T13:19:04.130Z",
+    "exitCode": 0
+  },
+  {
+    "name": "login",
+    "args": [
+      "tests/product-menu-auth-visual.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T13:19:04.131Z",
+    "finished": "2026-10-30T13:19:16.818Z",
+    "exitCode": 0
+  },
+  {
+    "name": "startup",
+    "args": [
+      "tests/product-identity-startup.mjs"
+    ],
+    "started": "2026-10-30T13:19:16.819Z",
+    "finished": "2026-10-30T13:19:38.175Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-races",
+    "args": [
+      "tests/product-identity-auth-races.mjs"
+    ],
+    "started": "2026-10-30T13:19:38.175Z",
+    "finished": "2026-10-30T13:19:59.538Z",
+    "exitCode": 0
+  },
+  {
+    "name": "security",
+    "args": [
+      "tests/product-identity-security.mjs"
+    ],
+    "started": "2026-10-30T13:19:59.539Z",
+    "finished": "2026-10-30T13:20:06.447Z",
+    "exitCode": 0
+  },
+  {
+    "name": "provider-policy",
+    "args": [
+      ".local/menu-provider-policy.mjs"
+    ],
+    "started": "2026-10-30T13:20:06.761Z",
+    "finished": "2026-10-30T13:20:06.912Z",
+    "exitCode": 0
+  },
+  {
+    "name": "identity",
+    "args": [
+      "tests/product-identity-flows.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T13:20:06.913Z",
+    "finished": "2026-10-30T13:21:20.660Z",
+    "exitCode": 1
+  }
+]

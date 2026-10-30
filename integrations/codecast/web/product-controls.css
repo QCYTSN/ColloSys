@@ -1,24 +1,153 @@
-/* Pressed, open and selected are independent states, driven by real controls. */
-[data-collo-trigger] {
+.collo-meta {
+  font: var(--collo-type-meta);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+.collo-inbox-tab {
+  height: 32px;
+  font: var(--collo-type-control-label);
+  border-radius: var(--collo-radius-control);
+}
+.collo-comment-composer {
+  padding: 16px;
+  border-radius: var(--collo-radius-surface);
+  margin-top: 16px;
+  border-color: var(--collo-control-edge);
+}
+.collo-comment-composer textarea {
+  font: var(--collo-type-body);
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+}
+.collo-task-reading {
+  max-width: 768px;
+}
+.collo-task-reading [data-page-head] h1 {
+  font: var(--collo-type-object-title);
+  font-variation-settings: 'opsz' 18, 'GRAD' 0;
+  font-optical-sizing: none;
+  letter-spacing: normal;
+  overflow-wrap: anywhere;
+}
+.collo-input {
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: var(--collo-radius-control);
+  font: var(--collo-type-button);
+  background: var(--collo-content);
+  color: var(--collo-ink);
+  box-shadow: none;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+.collo-input:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: 2px;
+  box-shadow: none;
+}
+.collo-segmented {
+  height: 32px;
+  border-radius: var(--collo-radius-control);
+  border-color: var(--collo-control-edge);
+}
+.collo-segmented button {
+  padding: 0 10px;
+  gap: 8px;
+  font: var(--collo-type-control-label);
   transition:
-    background-color 140ms,
-    border-color 140ms,
-    box-shadow 140ms,
-    transform 90ms;
+    background-color 160ms var(--collo-motion-ease-state),
+    color 160ms;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
 }
-[data-collo-trigger]:active:not(:disabled):not([aria-disabled='true']) {
-  transform: scale(0.98);
+.collo-segmented button svg {
+  width: 16px;
+  height: 16px;
 }
-[data-collo-trigger][data-state='open'] {
-  background-color: var(--collo-selected);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--collo-accent) 40%, transparent);
+.collo-segmented button[aria-pressed='true'] {
+  background: var(--collo-selected);
+  color: var(--collo-selection-ink);
 }
+.collo-segmented button:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: -2px;
+}
+.collo-tabs-list {
+  height: 40px;
+  padding: 2px;
+  border-radius: var(--collo-radius-control);
+  background: var(--collo-tool);
+}
+.collo-tab-trigger {
+  height: 36px;
+  padding: 0 12px;
+  font: var(--collo-type-control-label);
+  border-radius: var(--collo-radius-control);
+  box-shadow: none;
+  transition:
+    background-color 160ms var(--collo-motion-ease-state),
+    color 160ms;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  font-optical-sizing: none;
+}
+.collo-tab-trigger[data-state='active'] {
+  background: var(--collo-selected);
+  color: var(--collo-selection-ink);
+  box-shadow: none;
+}
+/* Shared product controls. Component variants choose semantics; page CSS only
+   composes them. Radix list triggers keep their separate stable anchor/face. */
+.collo-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--collo-radius-control);
+  color: var(--collo-secondary);
+  background: transparent;
+  transition:
+    background-color 100ms,
+    color 100ms,
+    transform 130ms var(--collo-motion-ease-out);
+}
+.collo-icon-button > svg {
+  width: 18px;
+  height: 18px;
+}
+.collo-icon-button:hover {
+  background: var(--collo-selected);
+  color: var(--collo-ink);
+}
+.collo-icon-button:focus-visible,
 [data-collo-trigger]:focus-visible {
   outline: 2px solid var(--collo-accent);
   outline-offset: 2px;
 }
+[data-collo-trigger] {
+  transition:
+    background-color 100ms,
+    border-color 100ms,
+    color 100ms;
+}
+[data-collo-trigger][data-state='open'] {
+  background-color: var(--collo-selected);
+}
 [data-collo-trigger] [data-collo-chevron] {
-  transition: transform 160ms ease;
+  transition: transform 160ms var(--collo-motion-ease-state);
 }
 [data-collo-trigger][data-state='open'] [data-collo-chevron] {
   transform: rotate(180deg);
@@ -29,24 +158,22 @@
 .collo-dialog-backdrop[data-state='closed'] {
   pointer-events: none;
 }
-.cc-btn:active:not(:disabled),
-.collo-icon-button:active:not(:disabled) {
-  transform: scale(0.98);
-}
 .collo-appearance-modes > button,
 .collo-appearance-accents button,
 .collo-identity-icons button,
 .collo-identity-tones button {
   transition:
-    background-color 130ms,
-    border-color 130ms,
-    transform 90ms;
+    background-color 100ms,
+    border-color 100ms,
+    transform 130ms var(--collo-motion-ease-out);
 }
+.collo-icon-button:active:not(:disabled),
 .collo-appearance-modes > button:active,
 .collo-appearance-accents button:active,
 .collo-identity-icons button:active:not(:disabled),
 .collo-identity-tones button:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: translateY(0.7px);
+  transition-duration: 70ms;
 }
 .collo-appearance-modes > button:focus-visible,
 .collo-appearance-accents button:focus-visible {
@@ -54,22 +181,19 @@
   outline-offset: 2px;
 }
 @media (prefers-reduced-motion: reduce) {
-  [data-collo-trigger],
+  .collo-icon-button,
   .collo-appearance-modes > button,
   .collo-appearance-accents button,
   .collo-identity-icons button,
-  .collo-identity-tones button {
-    transition:
-      background-color 80ms,
-      border-color 80ms;
-  }
-  [data-collo-trigger]:active:not(:disabled),
-  .cc-btn:active:not(:disabled),
-  .collo-icon-button:active:not(:disabled) {
-    transform: none;
-    outline: 1px solid var(--collo-accent);
-  }
+  .collo-identity-tones button,
   [data-collo-trigger] [data-collo-chevron] {
     transition: none;
+  }
+  .collo-icon-button:active:not(:disabled),
+  .collo-appearance-modes > button:active,
+  .collo-appearance-accents button:active,
+  .collo-identity-icons button:active:not(:disabled),
+  .collo-identity-tones button:active:not(:disabled) {
+    transform: none;
   }
 }

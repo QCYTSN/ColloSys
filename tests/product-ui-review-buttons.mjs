@@ -7,7 +7,7 @@ const before = process.argv.includes('--before'),
   expect = baseExpect.configure({ timeout: 30000 }),
   f = await reviewFixture(),
   cp = await legacyCheckpoint(f);
-const out = `docs/product-ui/review-fixes/evidence/${before ? 'before' : 'after'}/buttons`;
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || `docs/product-ui/review-fixes/evidence/${before ? 'before' : 'after'}/buttons`;
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',

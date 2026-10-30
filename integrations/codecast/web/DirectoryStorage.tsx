@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Database, LockKey, ArrowSquareOut, Copy, Check } from '@phosphor-icons/react';
 import { Button } from '../components/ui/button';
 import { localRequest } from './local';
@@ -121,20 +121,40 @@ function StoragePanel({ token, directory, checkpoints, onChanged }: StorageProps
   const errorId = useId();
   const confirmation = useRef<HTMLFormElement>(null);
   const completed = useRef<HTMLDivElement>(null);
+  const focusedError = useRef<typeof error>(null);
   useEffect(() => {
     if (operation) {
       confirmation.current?.scrollIntoView({ block: 'nearest' });
       confirmation.current?.focus({ preventScroll: true });
     }
   }, [operation?.reviewId]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (error && !busy) {
       const target =
         error.field &&
         confirmation.current?.querySelector<HTMLInputElement>(`[name="${error.field}"]`);
-      (target || confirmation.current)?.focus({ preventScroll: true });
+      // Keep the field and its message together after a failed submission,
+      // including confirmations taller than the available dialog viewport.
+      const region =
+        target?.closest('label') ||
+        confirmation.current?.querySelector('[role="alert"]') ||
+        confirmation.current;
+      const first = focusedError.current !== error;
+      if (
+        first ||
+        document.activeElement === target ||
+        document.activeElement === confirmation.current
+      ) {
+        region?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+        if (first) (target || confirmation.current)?.focus({ preventScroll: true });
+      }
+      focusedError.current = error;
+    } else if (!error) {
+      focusedError.current = null;
     }
-  }, [error, busy]);
+    // The post-failure reads can change content above the confirmation. Keep
+    // its focused error visible, but never steal focus from a newer action.
+  }, [error, busy, localRead.pending, backupRead.pending]);
   useEffect(() => {
     if (completion && !busy) {
       completed.current?.scrollIntoView({ block: 'nearest' });

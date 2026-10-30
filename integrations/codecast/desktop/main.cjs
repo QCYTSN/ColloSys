@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const root = path.resolve(__dirname, '../../..');
 const brand = require('../brand.json');
+const design = require('../web/design-tokens.json');
 const productVersion = require('../../../package.json').version;
 const data = path.join(root, '.local/codecast-app');
 const origin = 'http://127.0.0.1:3407';
@@ -30,10 +31,14 @@ const appearancePath = path.join(process.env.COLLOSYS_USER_DATA, 'collosys-appea
 let initialMode = 'system';
 try {
   const saved = JSON.parse(fs.readFileSync(appearancePath, 'utf8'));
-  if (saved.version === 1 && ['light', 'dark', 'system'].includes(saved.mode)) initialMode = saved.mode;
-} catch { /* First start or damaged preference follows the OS. */ }
+  if (saved.version === 1 && ['light', 'dark', 'system'].includes(saved.mode))
+    initialMode = saved.mode;
+} catch {
+  /* First start or damaged preference follows the OS. */
+}
 electron.nativeTheme.themeSource = initialMode;
-const nativeBackground = () => electron.nativeTheme.shouldUseDarkColors ? '#202127' : '#ffffff';
+const nativeBackground = () =>
+  design.color[electron.nativeTheme.shouldUseDarkColors ? 'dark' : 'light']['surface-app'];
 const pair = fs.readFileSync(path.join(data, 'browser-pairing'), 'utf8').trim();
 if (!/^[a-f0-9]{64}$/.test(pair)) throw new Error('Invalid local pairing state');
 const framework = path.join(data, 'desktop-framework');
@@ -46,13 +51,28 @@ function trusted(event) {
 }
 ipcMain.handle('collosys:auth:start:v1', async (event, request) => {
   trusted(event);
-  if (!request || request.version !== 1 || !/^[a-f0-9-]{36}$/.test(request.attemptId) || !['github', 'google'].includes(request.provider)) throw new Error('Invalid sign-in request');
+  if (
+    !request ||
+    request.version !== 1 ||
+    !/^[a-f0-9-]{36}$/.test(request.attemptId) ||
+    !['github', 'google'].includes(request.provider)
+  )
+    throw new Error('Invalid sign-in request');
   // No renderer-supplied URL, protocol or host crosses this boundary.
-  await electron.shell.openExternal(`${origin}/auth/desktop?attempt=${encodeURIComponent(request.attemptId)}`);
+  await electron.shell.openExternal(
+    `${origin}/auth/desktop?attempt=${encodeURIComponent(request.attemptId)}`,
+  );
 });
 ipcMain.handle('collosys:appearance:v1', (event, request) => {
   trusted(event);
-  if (!request || request.version !== 1 || !['dark', 'light', 'system'].includes(request.mode) || !['dark', 'light'].includes(request.theme) || !['#202127', '#ffffff'].includes(request.background)) throw new Error('Invalid appearance');
+  if (
+    !request ||
+    request.version !== 1 ||
+    !['dark', 'light', 'system'].includes(request.mode) ||
+    !['dark', 'light'].includes(request.theme) ||
+    request.background !== design.color[request.theme]['surface-app']
+  )
+    throw new Error('Invalid appearance');
   electron.nativeTheme.themeSource = request.mode;
   for (const window of BrowserWindow.getAllWindows()) window.setBackgroundColor(request.background);
   fs.mkdirSync(path.dirname(appearancePath), { recursive: true });
@@ -98,24 +118,51 @@ function ProductWindow(options) {
       nodeIntegration: false,
     },
   });
-  if (!hasWindowMenu) { window.setMenu(null); window.setMenuBarVisibility(false); }
+  if (!hasWindowMenu) {
+    window.setMenu(null);
+    window.setMenuBarVisibility(false);
+  }
   // The reused shell keeps backgroundThrottling=false for live collaboration,
   // so document.hidden does not reliably reflect a minimized native window.
   // Project only visibility to decorative consumers; do not throttle sync.
   const publishVisibility = () => {
     if (!window.isDestroyed() && !window.webContents.isDestroyed())
-      window.webContents.send('collosys:visibility:v1', { version: 1, visible: window.isVisible() && !window.isMinimized() });
+      window.webContents.send('collosys:visibility:v1', {
+        version: 1,
+        visible: window.isVisible() && !window.isMinimized(),
+      });
   };
   for (const event of ['show', 'hide', 'minimize', 'restore']) window.on(event, publishVisibility);
   window.webContents.on('did-finish-load', publishVisibility);
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
-    const key = input.key.toLowerCase(), contents = window.webContents;
-    const edits = { c: 'copy', x: 'cut', v: 'paste', a: 'selectAll', z: input.shift ? 'redo' : 'undo', y: 'redo' };
-    if (edits[key] && !input.alt) { event.preventDefault(); contents[edits[key]](); }
-    else if (['+', '=', '-', '0'].includes(key)) { event.preventDefault(); contents.setZoomFactor(key === '0' ? 1 : Math.max(0.5, Math.min(2, contents.getZoomFactor() + (key === '-' ? -0.1 : 0.1)))); }
-    else if (key === ',') { event.preventDefault(); desktop.navigateMain('/settings'); }
-    else if (key === 'q') { event.preventDefault(); app.quit(); }
+    const key = input.key.toLowerCase(),
+      contents = window.webContents;
+    const edits = {
+      c: 'copy',
+      x: 'cut',
+      v: 'paste',
+      a: 'selectAll',
+      z: input.shift ? 'redo' : 'undo',
+      y: 'redo',
+    };
+    if (edits[key] && !input.alt) {
+      event.preventDefault();
+      contents[edits[key]]();
+    } else if (['+', '=', '-', '0'].includes(key)) {
+      event.preventDefault();
+      contents.setZoomFactor(
+        key === '0'
+          ? 1
+          : Math.max(0.5, Math.min(2, contents.getZoomFactor() + (key === '-' ? -0.1 : 0.1))),
+      );
+    } else if (key === ',') {
+      event.preventDefault();
+      desktop.navigateMain('/settings');
+    } else if (key === 'q') {
+      event.preventDefault();
+      app.quit();
+    }
   });
   window.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
@@ -194,7 +241,8 @@ function nativeMenu() {
 }
 const productMenu = new Proxy(Menu, {
   get(target, property) {
-    if (property === 'setApplicationMenu') return () => Menu.setApplicationMenu(hasWindowMenu ? nativeMenu() : null);
+    if (property === 'setApplicationMenu')
+      return () => Menu.setApplicationMenu(hasWindowMenu ? nativeMenu() : null);
     return Reflect.get(target, property);
   },
 });
@@ -226,7 +274,13 @@ desktop = createDesktopApp(
       htmlClass: 'electron-desktop',
     },
     assets: { icon: path.join(root, 'dist/codecast-app', brand.desktopIcon) },
-    window: { width: 1440, height: 960, minWidth: 900, minHeight: 640, backgroundColor: nativeBackground() },
+    window: {
+      width: 1440,
+      height: 960,
+      minWidth: 900,
+      minHeight: 640,
+      backgroundColor: nativeBackground(),
+    },
     update: { enabled: false },
     web: { cache: false },
     palette: null,

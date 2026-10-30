@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, denseFixture } from './product-ui-refinement-data.mjs';
 const mode = process.argv.includes('--production') ? 'production' : 'development';
-const out = `docs/product-ui/menu-motion/evidence/acceptance-${mode}`;
+const out =
+  process.env.COLLOSYS_UI_EVIDENCE_DIR || `docs/product-ui/menu-motion/evidence/acceptance-${mode}`;
 await fs.mkdir(out, { recursive: true });
 const fixture = await denseFixture(),
   expect = baseExpect.configure({ timeout: 60000 });
@@ -26,8 +27,8 @@ const display = () => page.getByTitle('Display options', { exact: true }),
   panel = () => page.locator('.collo-display-panel[data-state=open]');
 const shot = async (name) => {
   if (['active-open', 'display-open', 'display-child'].includes(name)) {
-    await page.locator('.collo-list-surface').evaluateAll(async elements => {
-      await Promise.allSettled(elements.flatMap(e => e.getAnimations().map(a => a.finished)));
+    await page.locator('.collo-list-surface').evaluateAll(async (elements) => {
+      await Promise.allSettled(elements.flatMap((e) => e.getAnimations().map((a) => a.finished)));
     });
   }
   await page.screenshot({ path: `${out}/${name}.png` });
@@ -51,7 +52,8 @@ try {
   await expect(page.locator('.collo-projects')).toBeVisible({ timeout: 60000 });
   await page.goto(route, { timeout: 120000 });
   await expect(async () => {
-    if (await page.locator('[data-foreign-switch]').isVisible()) await page.locator('[data-foreign-switch]').click();
+    if (await page.locator('[data-foreign-switch]').isVisible())
+      await page.locator('[data-foreign-switch]').click();
     await expect(display()).toBeVisible({ timeout: 700 });
   }).toPass({ timeout: 60000 });
   await page.getByRole('navigation').getByRole('link', { name: 'Tasks', exact: true }).click();
@@ -78,12 +80,10 @@ try {
     name: 'pointerdown opens without click delay',
     button: await active.boundingBox(),
     anchorBefore: box,
-    face: await active
-      .locator('.collo-trigger-face')
-      .evaluate((e) => ({
-        transform: getComputedStyle(e).transform,
-        animations: e.getAnimations().map((a) => ({ time: a.currentTime, playState: a.playState })),
-      })),
+    face: await active.locator('.collo-trigger-face').evaluate((e) => ({
+      transform: getComputedStyle(e).transform,
+      animations: e.getAnimations().map((a) => ({ time: a.currentTime, playState: a.playState })),
+    })),
   });
   const pressedBox = await active.boundingBox();
   for (const k of ['x', 'y', 'width', 'height'])
@@ -103,16 +103,14 @@ try {
   await page.keyboard.press('Escape');
   observations.push({
     name: 'closing presence',
-    layers: await page
-      .locator('.collo-preset-menu')
-      .evaluateAll((es) =>
-        es.map((e) => ({
-          state: e.dataset.state,
-          opacity: getComputedStyle(e).opacity,
-          pointerEvents: getComputedStyle(e).pointerEvents,
-          wrapperPointerEvents: getComputedStyle(e.parentElement).pointerEvents,
-        })),
-      ),
+    layers: await page.locator('.collo-preset-menu').evaluateAll((es) =>
+      es.map((e) => ({
+        state: e.dataset.state,
+        opacity: getComputedStyle(e).opacity,
+        pointerEvents: getComputedStyle(e).pointerEvents,
+        wrapperPointerEvents: getComputedStyle(e.parentElement).pointerEvents,
+      })),
+    ),
   });
   await shot('active-closing');
   await expect(active).toBeFocused();

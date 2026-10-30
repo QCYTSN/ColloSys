@@ -1,6 +1,6 @@
 import { usePathname } from 'next/navigation';
 import { FolderSimple, CheckSquare, Chats, Users, GearSix, Plugs } from '@phosphor-icons/react';
-import { NavSection, RailHeading } from '../components/sidebar/navPrimitives';
+import { NavSection } from '../components/sidebar/navPrimitives';
 import type { UpstreamSidebarNavView } from '../components/sidebar/SidebarNav';
 import { useInboxStore } from '../store/inboxStore';
 import { productBrand } from './productBrand';
@@ -20,7 +20,7 @@ export function ProductNav({
       isActive={selected}
       isNarrow={isNarrow}
       onMobileClose={onMobileClose}
-      icon={<Icon size={19} />}
+      icon={<Icon size={18} />}
     />
   );
   return (
@@ -28,7 +28,6 @@ export function ProductNav({
       <div className="collo-workspace-switch">
         <TeamSwitcher />
       </div>
-      <RailHeading label="Workspace" isNarrow={isNarrow} />
       {item('/projects', 'Projects', FolderSimple, !!active.projects)}
       <NavSection
         href="/tasks"
@@ -36,7 +35,7 @@ export function ProductNav({
         isActive={active.tasks}
         isNarrow={isNarrow}
         onMobileClose={onMobileClose}
-        icon={<CheckSquare size={19} />}
+        icon={<CheckSquare size={18} />}
         items={tasks.onDrill ? undefined : tasks.items}
         expanded={tasks.expanded}
         onToggle={tasks.onToggle}
@@ -49,7 +48,6 @@ export function ProductNav({
         pathname === '/inbox' || pathname.startsWith('/conversation/'),
       )}
       <div className="collo-nav-settings">
-        <RailHeading label="Manage" isNarrow={isNarrow} />
         {item('/settings/team', 'Team', Users, pathname.startsWith('/settings/team'))}
         {item(
           '/settings/integrations',
@@ -65,7 +63,7 @@ export function ProductNav({
           }}
           title="Settings"
         >
-          <GearSix size={19} />
+          <GearSix size={18} />
           {!isNarrow && 'Settings'}
         </button>
         {!isNarrow && (

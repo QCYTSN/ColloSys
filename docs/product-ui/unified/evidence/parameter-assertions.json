@@ -1,0 +1,128 @@
+{
+  "build": {
+    "version": 1,
+    "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "dirty": true,
+    "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+  },
+  "states": 52,
+  "typography": {
+    "wordmark": [
+      18,
+      24,
+      600
+    ],
+    "art": [
+      36,
+      42,
+      450
+    ],
+    "authTitle": [
+      28,
+      36,
+      600
+    ],
+    "authInput": [
+      15,
+      22,
+      400
+    ],
+    "authButton": [
+      14,
+      20,
+      500
+    ],
+    "pageTitle": [
+      24,
+      32,
+      600
+    ],
+    "objectTitle": [
+      20,
+      28,
+      600
+    ],
+    "taskTitle": [
+      20,
+      28,
+      600
+    ],
+    "nav": [
+      14,
+      20,
+      500
+    ],
+    "listTitle": [
+      14,
+      20,
+      500
+    ],
+    "triggerFace": [
+      13,
+      18,
+      500
+    ],
+    "body": [
+      15,
+      24,
+      400
+    ]
+  },
+  "boundaries": [
+    {
+      "theme": "light",
+      "role": "authInput",
+      "kind": "border",
+      "ratio": 3.5108970595784124,
+      "paint": "1px solid rgb(127, 140, 131)",
+      "background": "rgb(255, 255, 255)"
+    },
+    {
+      "theme": "light",
+      "role": "authInput",
+      "kind": "outline",
+      "ratio": 5.8812199647587935,
+      "paint": "rgb(70, 108, 95) solid 2px",
+      "background": "rgb(255, 255, 255)"
+    },
+    {
+      "theme": "light",
+      "role": "triggerFace",
+      "kind": "border",
+      "ratio": 3.5108970595784124,
+      "paint": "1px solid rgb(127, 140, 131)",
+      "background": "rgb(255, 255, 255)"
+    },
+    {
+      "theme": "dark",
+      "role": "authInput",
+      "kind": "border",
+      "ratio": 4.2830995203470055,
+      "paint": "1px solid rgb(125, 144, 130)",
+      "background": "rgb(35, 43, 37)"
+    },
+    {
+      "theme": "dark",
+      "role": "authInput",
+      "kind": "outline",
+      "ratio": 7.759590280572765,
+      "paint": "rgb(159, 198, 179) solid 2px",
+      "background": "rgb(35, 43, 37)"
+    },
+    {
+      "theme": "dark",
+      "role": "triggerFace",
+      "kind": "border",
+      "ratio": 4.2830995203470055,
+      "paint": "1px solid rgb(125, 144, 130)",
+      "background": "rgb(35, 43, 37)"
+    }
+  ],
+  "localFonts": [
+    "Google Sans",
+    "Noto Sans SC",
+    "Newsreader"
+  ],
+  "diff": "13/20 in the actual Pierre shadow DOM",
+  "limits": "Visible sampled states; disabled and gradient text excluded. No assertion of every arbitrary future state or physical display contrast."
+}

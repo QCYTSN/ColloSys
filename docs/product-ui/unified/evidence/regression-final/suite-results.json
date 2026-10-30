@@ -1,0 +1,57 @@
+[
+  {
+    "name": "identity",
+    "args": [
+      "tests/product-identity-flows.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T13:24:55.291Z",
+    "finished": "2026-10-30T13:25:13.676Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native",
+    "args": [
+      "tests/product-identity-native.mjs"
+    ],
+    "started": "2026-10-30T13:25:13.677Z",
+    "finished": "2026-10-30T13:25:26.925Z",
+    "exitCode": 0
+  },
+  {
+    "name": "continuity",
+    "args": [
+      "tests/product-ui-craft.mjs"
+    ],
+    "started": "2026-10-30T13:25:26.926Z",
+    "finished": "2026-10-30T13:26:11.454Z",
+    "exitCode": 0
+  },
+  {
+    "name": "storage",
+    "args": [
+      "tests/product-ui-craft-storage-race.mjs"
+    ],
+    "started": "2026-10-30T13:26:11.454Z",
+    "finished": "2026-10-30T13:26:49.570Z",
+    "exitCode": 0
+  },
+  {
+    "name": "access",
+    "args": [
+      "tests/product-ui-refinement-access.mjs"
+    ],
+    "started": "2026-10-30T13:26:49.570Z",
+    "finished": "2026-10-30T13:27:03.083Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-continuity",
+    "args": [
+      "tests/product-auth-continuity.mjs"
+    ],
+    "started": "2026-10-30T13:27:03.084Z",
+    "finished": "2026-10-30T13:27:24.605Z",
+    "exitCode": 0
+  }
+]

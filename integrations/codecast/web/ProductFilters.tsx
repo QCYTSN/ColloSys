@@ -130,7 +130,7 @@ export function FilterOptionList({
                     if (!multi && checked) onPicked?.();
                   }}
                 />
-                {o.face ?? (Icon && <Icon size={15} className={o.color ?? ''} aria-hidden />)}
+                {o.face ?? (Icon && <Icon size={16} className={o.color ?? ''} aria-hidden />)}
                 <span className="collo-option-label">{o.label}</span>
                 {!!o.count && <span className="collo-list-count">{o.count}</span>}
                 <span className="collo-filter-check" aria-hidden>

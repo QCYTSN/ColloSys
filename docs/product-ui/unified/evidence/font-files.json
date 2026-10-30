@@ -1,0 +1,81 @@
+[
+  {
+    "name": "NotoSansSC",
+    "sourceCommit": "6157dfaa640ca5738b4d1a7070fe389c3036d7fc",
+    "sourceRepository": "https://github.com/google/fonts",
+    "sourceFile": "ofl/notosanssc/NotoSansSC[wght].ttf",
+    "sourceSha256": "a3041811a78c361b1de50f953c805e0244951c21c5bd412f7232ef0d899af0da",
+    "woff2Sha256": "3605704700c4ef356a388766790dd2daee4b1002061cf55bad93ce45bcfbf4f6",
+    "bytes": 7782292,
+    "codepoints": 30890,
+    "coveragePreserved": true,
+    "axes": [
+      [
+        "wght",
+        100.0,
+        100.0,
+        900.0
+      ]
+    ],
+    "version": [
+      "Version 2.004-H2;hotconv 1.0.118;makeotfexe 2.5.65603"
+    ]
+  },
+  {
+    "name": "Newsreader",
+    "sourceCommit": "6157dfaa640ca5738b4d1a7070fe389c3036d7fc",
+    "sourceRepository": "https://github.com/google/fonts",
+    "sourceFile": "ofl/newsreader/Newsreader[opsz,wght].ttf",
+    "sourceSha256": "8a08d13f8a6c0d51be379a60af84f945f65369a67e509ee3c3bdcc421254d7c1",
+    "woff2Sha256": "d3ac6da67f35ff58339d448214a9157a80486d578b0635f76cad4af0aa1fb38c",
+    "bytes": 215308,
+    "codepoints": 564,
+    "coveragePreserved": true,
+    "axes": [
+      [
+        "wght",
+        200.0,
+        400.0,
+        800.0
+      ],
+      [
+        "opsz",
+        6.0,
+        18.0,
+        72.0
+      ]
+    ],
+    "version": [
+      "Version 1.003"
+    ]
+  },
+  {
+    "name": "Google Sans",
+    "bytes": 4974940,
+    "codepoints": 3749,
+    "axes": [
+      [
+        "opsz",
+        17.0,
+        18.0,
+        18.0
+      ],
+      [
+        "wght",
+        400.0,
+        400.0,
+        700.0
+      ],
+      [
+        "GRAD",
+        -50.0,
+        0.0,
+        200.0
+      ]
+    ],
+    "version": [
+      "Version 14.000;[08f2ac800]"
+    ],
+    "hasChinese": false
+  }
+]

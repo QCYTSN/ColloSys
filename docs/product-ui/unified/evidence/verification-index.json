@@ -1,0 +1,88 @@
+{
+  "recordedAt": "2026-10-30T14:26:00.447Z",
+  "branch": "codex/product-ui",
+  "build": {
+    "version": 1,
+    "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "dirty": true,
+    "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+  },
+  "sourceFingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42",
+  "publication": "The user subsequently authorized commit and push of this revision, tests and evidence to public QCYTSN/ColloSys, codex/product-ui. Build identities record the actual pre-publication verification stage and are not relabelled. No deployment or merge to main.",
+  "prepared": {
+    "explicitChanges": 214,
+    "ownedIntegrationFiles": 81
+  },
+  "requiredChecks": [
+    {
+      "command": "npm run typecheck",
+      "result": "Passed; root TypeScript",
+      "log": "checks/typecheck.log"
+    },
+    {
+      "command": "npm test",
+      "result": "69 passed, 0 failed",
+      "log": "checks/tests.log"
+    },
+    {
+      "command": "npm run build",
+      "result": "Passed in 1m03s; existing upstream import/circular/chunk warnings retained",
+      "log": "checks/build-final.log"
+    },
+    {
+      "command": "npm run typecheck:integration",
+      "result": "Passed against the prepared fork; 81 owned integration files",
+      "log": "checks/integration-final.log"
+    },
+    {
+      "command": "npm run codecast:verify",
+      "result": "9854 immutable files; zero failures; two documented upstream symlinks",
+      "log": "checks/upstream.log"
+    }
+  ],
+  "currentBuild": {
+    "normalEntry": "normal-entry.json",
+    "nativeFrameThemeRelaunch": "final-native/results.json",
+    "parameters": "parameter-assertions.json",
+    "actualMeasurements": "final-audit/runtime.json",
+    "finalSuiteRuns": "final-suites.json",
+    "menus": "final-menus/menus/results.json",
+    "nativeMenuZoom": "final-menus/native-menus/results.json",
+    "login": "final-menus/login/results.json",
+    "coreStorageAndSurfaces": "core-regression/run-storage-surfaces.json",
+    "screenshots": "after/screens/capture.json",
+    "diffContinuity": "after/screens/diff-continuity.json",
+    "responsiveReading": "reading-continuity/results.json"
+  },
+  "earlierSameRound": {
+    "note": "These retained reports have actual intermediate identities. They are not relabelled as the final build. Final edits concern typography, pane minima and storage error visibility, not authentication/protocol logic.",
+    "initial": "regression/suite-results.json",
+    "followup": "regression-final/suite-results.json",
+    "additionalButtonsHandoffsCounterexamples": [
+      "core-regression/run-buttons-handoffs-storage-surfaces-counterexamples.json",
+      "core-regression/run-handoffs-surfaces-counterexamples.json"
+    ]
+  },
+  "performance": {
+    "comparison": "performance-comparison.json",
+    "traceReview": "trace-review.json",
+    "afterOnlyAuth": "after/production/auth-performance.json",
+    "limits": "Three fresh Chrome 156 processes per phase; 1440x900 DPR1. Frame opportunities and EventTiming are distinct. Project details cold and long-conversation return still miss the approximate 100ms target. No universal speedup or native 60fps claim."
+  },
+  "fonts": "font-files.json",
+  "visualReview": "../REVIEW.html",
+  "execution": "../EXECUTION.md",
+  "openRequirements": [
+    "User aesthetic acceptance",
+    "Real configured GitHub/Google OAuth round trips",
+    "Heavy-path approximate 100ms latency misses and their exact causes",
+    "Changed OS DPI, multiple physical displays and native hardware frame rate"
+  ],
+  "safetyScope": "Destructive tests use isolated TEST roots. Real source/TEST teammate bytes checked unchanged. Existing auth/store, confirmation, idempotency, attribution and restore boundaries retained. No paid models, invitations or public deployment.",
+  "handoffChecks": {
+    "reviewArtifact": "review-artifact-check.json",
+    "evidenceHygiene": "evidence-hygiene.json",
+    "diffWhitespace": "git diff --check passed; only a CRLF normalization warning",
+    "immutableAndGeneratedChanges": "No tracked changes under third_party or .local"
+  }
+}

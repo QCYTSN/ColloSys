@@ -1,0 +1,12 @@
+{
+  "checks": [
+    "Unsigned deep link retains path, query and anchor without mounting protected UI",
+    "Untrusted or expired local token cannot expose workspace content",
+    "Untrusted or expired local token cannot expose workspace content",
+    "A stale durable token cannot reopen an explicitly signed-out device",
+    "Slow identity service has recovery controls and no protected flash (controlled transport)",
+    "Real server session revocation hides already mounted workspace immediately on query update",
+    "Forged and expired OAuth callback show a retryable failure with no workspace"
+  ],
+  "boundary": "Actual product and loopback backend except explicitly blocked WebSocket transport. No synthetic provider success."
+}

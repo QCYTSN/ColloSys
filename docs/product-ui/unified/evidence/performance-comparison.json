@@ -1,0 +1,655 @@
+{
+  "method": "Menu latency starts at actual in-page pointerdown and reports browser frame opportunities, not hardware pixels. Cold n=3 separate processes/contexts with OS cache retained; warm n=30 per entry/mode. Heavy flows use maximum EventTiming duration per interactionId per page, durationThreshold=16: faster unreported interactions are absent, never counted as zero. Driver/assertion elapsed is not used. Each round retains raw traces, long tasks and videos; no claim of native 60fps.",
+  "rows": [
+    {
+      "phase": "before",
+      "mode": "production",
+      "menu": {
+        "Active": {
+          "cold": [
+            {
+              "feedbackOpportunity": 28.19999998807907,
+              "operableOpportunity": 28.19999998807907,
+              "stableOpportunity": 210.39999997615814,
+              "animationSettled": 210.39999997615814
+            },
+            {
+              "feedbackOpportunity": 28.19999998807907,
+              "operableOpportunity": 28.19999998807907,
+              "stableOpportunity": 210.5999999642372,
+              "animationSettled": 210.69999998807907
+            },
+            {
+              "feedbackOpportunity": 27.599999964237213,
+              "operableOpportunity": 27.599999964237213,
+              "stableOpportunity": 209.89999997615814,
+              "animationSettled": 209.89999997615814
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 20,
+              "p95": 21.19999998807907,
+              "max": 21.299999952316284
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 20,
+              "p95": 21.19999998807907,
+              "max": 21.299999952316284
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 202.10000002384186,
+              "p95": 203.89999997615814,
+              "max": 204
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 202.10000002384186,
+              "p95": 203.89999997615814,
+              "max": 204
+            }
+          }
+        },
+        "Display": {
+          "cold": [
+            {
+              "feedbackOpportunity": 29.099999964237213,
+              "operableOpportunity": 29.099999964237213,
+              "stableOpportunity": 211.5999999642372,
+              "animationSettled": 211.69999998807907
+            },
+            {
+              "feedbackOpportunity": 22.900000035762787,
+              "operableOpportunity": 22.900000035762787,
+              "stableOpportunity": 203.80000001192093,
+              "animationSettled": 203.9000000357628
+            },
+            {
+              "feedbackOpportunity": 28.30000001192093,
+              "operableOpportunity": 28.30000001192093,
+              "stableOpportunity": 209.9000000357628,
+              "animationSettled": 210
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 20.30000001192093,
+              "p95": 21.5,
+              "max": 22.099999964237213
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 20.30000001192093,
+              "p95": 21.5,
+              "max": 22.099999964237213
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 202.80000001192093,
+              "p95": 204,
+              "max": 205.29999995231628
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 202.80000001192093,
+              "p95": 204,
+              "max": 205.29999995231628
+            }
+          }
+        },
+        "Grouping": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 9.199999988079071,
+              "p95": 13.599999964237213,
+              "max": 13.799999952316284
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 9.199999988079071,
+              "p95": 13.599999964237213,
+              "max": 13.799999952316284
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 28.30000001192093,
+              "p95": 28.899999976158142,
+              "max": 28.900000035762787
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 28.30000001192093,
+              "p95": 28.900000035762787,
+              "max": 29
+            }
+          }
+        }
+      },
+      "heavyRounds": [
+        {
+          "round": 1,
+          "interaction": {
+            "n": 52,
+            "p50": 32,
+            "p95": 96,
+            "max": 104
+          },
+          "longTasks": {
+            "n": 15,
+            "p50": 72,
+            "p95": 165,
+            "max": 165,
+            "totalMs": 1296
+          },
+          "byAction": {
+            "login email input": {
+              "n": 65,
+              "p50": 16,
+              "p95": 24,
+              "max": 24
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 32,
+              "p95": 32,
+              "max": 32
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 80,
+              "p95": 104,
+              "max": 104
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 64,
+              "p95": 64,
+              "max": 64
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 16,
+              "p95": 24,
+              "max": 24
+            }
+          }
+        },
+        {
+          "round": 2,
+          "interaction": {
+            "n": 51,
+            "p50": 32,
+            "p95": 104,
+            "max": 120
+          },
+          "longTasks": {
+            "n": 16,
+            "p50": 73,
+            "p95": 167,
+            "max": 167,
+            "totalMs": 1454
+          },
+          "byAction": {
+            "login email input": {
+              "n": 68,
+              "p50": 16,
+              "p95": 16,
+              "max": 24
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 120,
+              "p95": 120,
+              "max": 120
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 48,
+              "max": 48
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 96,
+              "p95": 112,
+              "max": 112
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 64,
+              "p95": 64,
+              "max": 64
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 16,
+              "p95": 24,
+              "max": 24
+            }
+          }
+        },
+        {
+          "round": 3,
+          "interaction": {
+            "n": 51,
+            "p50": 32,
+            "p95": 96,
+            "max": 120
+          },
+          "longTasks": {
+            "n": 18,
+            "p50": 70,
+            "p95": 196,
+            "max": 196,
+            "totalMs": 1593
+          },
+          "byAction": {
+            "login email input": {
+              "n": 66,
+              "p50": 16,
+              "p95": 24,
+              "max": 24
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 120,
+              "p95": 120,
+              "max": 120
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 64,
+              "max": 64
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 88,
+              "p95": 112,
+              "max": 112
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 72,
+              "p95": 72,
+              "max": 72
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 24,
+              "p95": 32,
+              "max": 32
+            }
+          }
+        }
+      ]
+    },
+    {
+      "phase": "after",
+      "mode": "production",
+      "menu": {
+        "Active": {
+          "cold": [
+            {
+              "feedbackOpportunity": 26.5,
+              "operableOpportunity": 26.5,
+              "stableOpportunity": 209.5,
+              "animationSettled": 209.5999999642372
+            },
+            {
+              "feedbackOpportunity": 34.09999996423721,
+              "operableOpportunity": 34.09999996423721,
+              "stableOpportunity": 216.89999997615814,
+              "animationSettled": 216.89999997615814
+            },
+            {
+              "feedbackOpportunity": 29.19999998807907,
+              "operableOpportunity": 29.19999998807907,
+              "stableOpportunity": 211.5,
+              "animationSettled": 211.5999999642372
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 20.599999964237213,
+              "p95": 21.399999976158142,
+              "max": 21.400000035762787
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 20.599999964237213,
+              "p95": 21.399999976158142,
+              "max": 21.400000035762787
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 203.4000000357628,
+              "p95": 204.19999998807907,
+              "max": 204.30000001192093
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 203.5,
+              "p95": 204.19999998807907,
+              "max": 204.30000001192093
+            }
+          }
+        },
+        "Display": {
+          "cold": [
+            {
+              "feedbackOpportunity": 22,
+              "operableOpportunity": 22,
+              "stableOpportunity": 204.19999998807907,
+              "animationSettled": 204.19999998807907
+            },
+            {
+              "feedbackOpportunity": 20.400000035762787,
+              "operableOpportunity": 20.400000035762787,
+              "stableOpportunity": 203.4000000357628,
+              "animationSettled": 203.5
+            },
+            {
+              "feedbackOpportunity": 29.399999976158142,
+              "operableOpportunity": 29.399999976158142,
+              "stableOpportunity": 212.30000001192093,
+              "animationSettled": 212.39999997615814
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 20.600000023841858,
+              "p95": 21.600000023841858,
+              "max": 27.599999964237213
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 20.600000023841858,
+              "p95": 21.600000023841858,
+              "max": 27.69999998807907
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 203.19999998807907,
+              "p95": 204.69999998807907,
+              "max": 210.5999999642372
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 203.30000001192093,
+              "p95": 204.69999998807907,
+              "max": 210.69999998807907
+            }
+          }
+        },
+        "Grouping": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 9.300000011920929,
+              "p95": 14.799999952316284,
+              "max": 16
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 9.300000011920929,
+              "p95": 14.899999976158142,
+              "max": 16
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 28.19999998807907,
+              "p95": 28.69999998807907,
+              "max": 29
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 28.19999998807907,
+              "p95": 28.80000001192093,
+              "max": 29
+            }
+          }
+        }
+      },
+      "heavyRounds": [
+        {
+          "round": 1,
+          "interaction": {
+            "n": 52,
+            "p50": 32,
+            "p95": 96,
+            "max": 120
+          },
+          "longTasks": {
+            "n": 15,
+            "p50": 70,
+            "p95": 167,
+            "max": 167,
+            "totalMs": 1331
+          },
+          "byAction": {
+            "login email input": {
+              "n": 74,
+              "p50": 16,
+              "p95": 16,
+              "max": 16
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 120,
+              "p95": 120,
+              "max": 120
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 32,
+              "p95": 32,
+              "max": 32
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 88,
+              "p95": 120,
+              "max": 120
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 24,
+              "p95": 32,
+              "max": 32
+            }
+          }
+        },
+        {
+          "round": 2,
+          "interaction": {
+            "n": 52,
+            "p50": 32,
+            "p95": 104,
+            "max": 120
+          },
+          "longTasks": {
+            "n": 17,
+            "p50": 75,
+            "p95": 166,
+            "max": 166,
+            "totalMs": 1433
+          },
+          "byAction": {
+            "login email input": {
+              "n": 67,
+              "p50": 16,
+              "p95": 16,
+              "max": 16
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 120,
+              "p95": 120,
+              "max": 120
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 32,
+              "max": 32
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 32,
+              "p95": 32,
+              "max": 32
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 104,
+              "p95": 120,
+              "max": 120
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 24,
+              "p95": 24,
+              "max": 24
+            }
+          }
+        },
+        {
+          "round": 3,
+          "interaction": {
+            "n": 52,
+            "p50": 32,
+            "p95": 104,
+            "max": 128
+          },
+          "longTasks": {
+            "n": 15,
+            "p50": 75,
+            "p95": 166,
+            "max": 166,
+            "totalMs": 1302
+          },
+          "byAction": {
+            "login email input": {
+              "n": 74,
+              "p50": 16,
+              "p95": 16,
+              "max": 24
+            },
+            "dropdown first": {
+              "n": 1,
+              "p50": 128,
+              "p95": 128,
+              "max": 128
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 24,
+              "p95": 24,
+              "max": 24
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 80,
+              "p95": 104,
+              "max": 104
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "diff file selection": {
+              "n": 5,
+              "p50": 24,
+              "p95": 32,
+              "max": 32
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

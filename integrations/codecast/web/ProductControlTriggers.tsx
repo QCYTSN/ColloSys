@@ -31,26 +31,32 @@ export const ProductDropdownTrigger = productTrigger(Dropdown.Trigger, 'Dropdown
 export const ProductDialogTrigger = productTrigger(Dialog.Trigger, 'Dialog');
 export const ProductSheetTrigger = productTrigger(Dialog.Trigger, 'Sheet');
 
+export function usePressSurface(disabled?: boolean) {
+  const face = useRef<HTMLSpanElement>(null),
+    motion = useRef<Animation | null>(null);
+  useEffect(() => () => motion.current?.cancel(), []);
+  const press = () => {
+    if (disabled || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const current = face.current ? getComputedStyle(face.current).transform : 'none';
+    motion.current?.cancel();
+    motion.current =
+      face.current?.animate(
+        [
+          { transform: current, easing: 'cubic-bezier(.4,0,.2,1)' },
+          { transform: 'translateY(.7px)', offset: 0.35, easing: 'cubic-bezier(.2,.8,.2,1)' },
+          { transform: 'translateY(0)' },
+        ],
+        { duration: 200 },
+      ) ?? null;
+  };
+  return { face, press };
+}
+
 /** The button remains the stable positioning anchor. Only its inner visual layer
  * responds to press; Radix owns opening, dismissal, presence and focus. */
 export const ListTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLButtonElement>>(
   ({ children, className = '', onPointerDown, onKeyDown, ...props }, ref) => {
-    const face = useRef<HTMLSpanElement>(null),
-      motion = useRef<Animation | null>(null);
-    useEffect(() => () => motion.current?.cancel(), []);
-    const press = () => {
-      if (props.disabled || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      motion.current?.cancel();
-      motion.current =
-        face.current?.animate(
-          [
-            { transform: 'scale(1)' },
-            { transform: 'scale(.975)', offset: 0.32 },
-            { transform: 'scale(1)' },
-          ],
-          { duration: 210, easing: 'cubic-bezier(.2,.7,.25,1)' },
-        ) ?? null;
-    };
+    const { face, press } = usePressSurface(props.disabled);
     return (
       <button
         {...props}

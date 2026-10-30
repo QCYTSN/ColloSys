@@ -8,7 +8,7 @@ import { completionFixture, account } from './product-ui-completion-data.mjs';
 import { inspectOverflow, inspectActions } from './product-ui-overflow.mjs';
 const f = await completionFixture(),
   expect = baseExpect.configure({ timeout: 30000 }),
-  out = 'docs/product-ui/review-fixes/evidence/after/storage';
+  out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/review-fixes/evidence/after/storage';
 await fs.mkdir(out, { recursive: true });
 const digest = async (root) => {
   const rows = [];
@@ -50,6 +50,16 @@ const browser = await chromium.launch({
     recordVideo: { dir: '.local/review-storage-video' },
   }),
   page = await context.newPage();
+await page.addInitScript(()=>{
+  window.TESTstorageScroll=[];
+  const original=Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView=function(options){
+    const panel=this.closest('.collo-storage');
+    if(!panel)return original.call(this,options);
+    const entry={target:this.tagName,role:this.getAttribute('role'),before:panel.scrollTop,top:this.getBoundingClientRect().top,options,at:performance.now()};
+    const result=original.call(this,options);entry.after=panel.scrollTop;window.TESTstorageScroll.push(entry);return result;
+  };
+});
 page.on('request', (r) => {
   if (r.method() === 'POST' && /\/api\/(storage|backups)\//.test(r.url())) {
     const route = new URL(r.url()).pathname;
@@ -215,6 +225,9 @@ try {
     'aria-invalid',
     'true',
   );
+  await shot('wrong-passphrase-local-error');
+  await fs.writeFile(out+'/error-scroll.json',JSON.stringify(await page.evaluate(()=>({calls:window.TESTstorageScroll,focused:document.activeElement?.getAttribute('name')})),null,2));
+  await fs.writeFile(out+'/error-geometry.json',JSON.stringify(await form.getByRole('alert').evaluate(e=>{const rows=[];for(let p=e;p;p=p.parentElement){const r=p.getBoundingClientRect(),s=getComputedStyle(p);rows.push({tag:p.tagName,class:p.className,top:r.top,bottom:r.bottom,height:r.height,scroll:p.scrollTop,overflow:s.overflowY});}return rows;}),null,2));
   assert.ok(await visibleInPanel(form.getByRole('alert')));
   assert.equal(await form.getByLabel('Backup passphrase', { exact: true }).inputValue(), '');
   await shot('wrong-passphrase-local-error');

@@ -1,0 +1,32 @@
+PASS Create submits name, icon and color atomically to the real backend
+PASS Cancel keeps persisted identity; editing and reload retain one selected mark
+PASS Invalid choices, stale revisions and cross-account writes are rejected
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+ExpectError: expect(received).not.toBe(expected) // Object.is equality
+
+Expected: not "none"
+
+Call Log:
+- Timeout 60000ms exceeded while waiting on the predicate
+    at captureRawStack (D:\Github_Ku\ColloSys\node_modules\playwright-core\lib\coreBundle.js:9282:17)
+    at callMatcherAsStep (D:\Github_Ku\ColloSys\node_modules\playwright\lib\matchers\expect.js:13316:57)
+    at Object.toBe (D:\Github_Ku\ColloSys\node_modules\playwright\lib\matchers\expect.js:13308:23)
+    at D:\Github_Ku\ColloSys\tests\product-identity-flows.mjs:67:87
+    at async check (D:\Github_Ku\ColloSys\tests\product-identity-flows.mjs:14:38)
+    at async file:///D:/Github_Ku/ColloSys/tests/product-identity-flows.mjs:64:3 {
+  matcherResult: {
+    pass: true,
+    message: 'expect(received).not.toBe(expected) // Object.is equality\n' +
+      '\n' +
+      'Expected: not "none"\n' +
+      '\n' +
+      'Call Log:\n' +
+      '- Timeout 60000ms exceeded while waiting on the predicate',
+    name: 'toBe'
+  }
+}
+
+Node.js v24.15.0

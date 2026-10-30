@@ -35,8 +35,11 @@ function AuthSurface({
         </header>
         <ProductAuthScene state={state === 'idle' ? focus : state} />
         <div className="collo-auth-scene-caption">
-          <h2>A little more in sync.</h2>
-          <p>Your work. A shared understanding.</p>
+          <h2>
+            Separate paths.
+            <br />
+            Shared direction.
+          </h2>
         </div>
       </section>
       <section

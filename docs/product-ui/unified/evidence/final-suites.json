@@ -1,0 +1,52 @@
+[
+  {
+    "name": "controls-and-core",
+    "args": [
+      "tests/product-ui-review-regression.mjs",
+      "storage",
+      "surfaces"
+    ],
+    "start": "2026-10-30T14:02:34.145Z",
+    "end": "2026-10-30T14:03:48.585Z",
+    "code": 0
+  },
+  {
+    "name": "audit",
+    "args": [
+      "tests/product-unified-audit.mjs",
+      "--matrix"
+    ],
+    "start": "2026-10-30T14:03:48.586Z",
+    "end": "2026-10-30T14:04:57.617Z",
+    "code": 0
+  },
+  {
+    "name": "screens",
+    "args": [
+      "tests/product-unified-captures.mjs",
+      "after"
+    ],
+    "start": "2026-10-30T14:04:57.617Z",
+    "end": "2026-10-30T14:05:21.390Z",
+    "code": 0
+  },
+  {
+    "name": "final-menus",
+    "args": [
+      "tests/product-menu-regression.mjs",
+      "--suites=menus,native-menus,login"
+    ],
+    "start": "2026-10-30T14:05:21.391Z",
+    "end": "2026-10-30T14:06:33.081Z",
+    "code": 0
+  },
+  {
+    "name": "reading",
+    "args": [
+      "tests/product-unified-reading.mjs"
+    ],
+    "start": "2026-10-30T14:06:33.082Z",
+    "end": "2026-10-30T14:06:35.336Z",
+    "code": 0
+  }
+]

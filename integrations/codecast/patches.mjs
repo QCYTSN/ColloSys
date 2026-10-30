@@ -12,6 +12,7 @@ import { authStoragePatches } from './auth-storage-patches.mjs';
 import { craftPatches } from './craft-patches.mjs';
 import { identityPatches } from './identity-patches.mjs';
 import { menuPatches } from './menu-patches.mjs';
+import { unifiedPatches } from './unified-patches.mjs';
 export const patches = [
   ...productPatches,
   ...backendPatches,
@@ -137,4 +138,5 @@ export const patches = [
   ...craftPatches,
   ...identityPatches,
   ...menuPatches,
+  ...unifiedPatches,
 ];

@@ -1,0 +1,2 @@
+PASS Actual SDK refresh response, held after real server response, released after sibling logout cannot restore JWT or workspace
+PASS Controlled offline cold load needs consent for matching unexpired verified identity; saved local workspace remains readable

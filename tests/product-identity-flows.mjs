@@ -64,7 +64,9 @@ try {
   await check('Shared trigger exposes pressed/open state, Esc restores focus', async () => {
     const trigger = page.getByRole('button', { name: 'Project details', exact: true });
     const box = await trigger.boundingBox(); await page.mouse.move(box.x + 12, box.y + 12); await page.mouse.down();
-    await expect.poll(() => trigger.evaluate(e => getComputedStyle(e).transform)).not.toBe('none');
+    const press = await trigger.locator('.collo-trigger-face').evaluate(e => e.getAnimations().map(a=>a.effect.getKeyframes()));
+    assert.ok(press.some(frames=>frames.some(f=>f.transform==='translateY(0.7px)')));
+    assert.deepEqual(await trigger.boundingBox(), box, 'Press keeps the popup anchor stable');
     await page.mouse.up(); await expect(trigger).toHaveAttribute('data-state', 'open');
     await expect(page.locator('.collo-project-property-menu')).toBeVisible();
     await page.screenshot({ path: out + '/trigger-open.png' });

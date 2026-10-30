@@ -1,17 +1,97 @@
-@font-face { font-family: 'Google Sans'; src: url('/collo-design/GoogleSans.ttf') format('truetype'); font-style: normal; font-weight: 400 700; font-display: swap; }
-html, body { margin: 0; background: var(--collo-content, var(--sol-bg, #fff)); }
-.collo-loading { box-sizing: border-box; color: var(--collo-secondary, var(--sol-text-muted, #565c68)); font: 14px/1.5 'Google Sans', 'Microsoft YaHei UI', sans-serif; display: grid; place-items: center; }
-.collo-loading-screen { min-height: 100dvh; background: var(--collo-content, var(--sol-bg, #fff)); }
-.collo-loading-panel { height: 100%; min-height: 100px; }
-#boot-shell { position: fixed; inset: 0; z-index: 1000; }
-#root:not(:empty) ~ #boot-shell { display: none; pointer-events: none; }
-.collo-loading-brand { text-align: center; padding: 28px; }
-.collo-boot-logo { display: inline-flex; align-items: center; gap: 9px; color: var(--collo-ink, var(--sol-text, #262830)); font-size: 18px; font-weight: 650; letter-spacing: -.55px; }
-.collo-boot-logo img { border-radius: 24%; }
-.collo-loading-caption { display: flex; justify-content: center; align-items: center; gap: 10px; margin-top: 24px; }
-.collo-loading-dot { width: 6px; height: 6px; background: var(--collo-accent, #7568b6); border-radius: 50%; animation: collo-breathe 1.8s ease-in-out infinite; }
-.collo-slow-boot, #boot-retry { max-width: 380px; margin: 28px auto 0; font-size: 13px; }
-.collo-slow-boot button, .collo-slow-boot a, #boot-retry button, #boot-retry a { color: inherit; font: inherit; background: none; border: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 4px; }
-.collo-slow-boot a, #boot-retry a { margin-left: 18px; }
-@keyframes collo-breathe { 50% { opacity: .35; } }
-@media (prefers-reduced-motion: reduce) { .collo-loading-dot { animation: none; } }
+html,
+body {
+  margin: 0;
+  background: var(--collo-app);
+}
+.collo-loading {
+  box-sizing: border-box;
+  color: var(--collo-secondary);
+  font: var(--collo-type-button);
+  font-synthesis: none;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
+  display: grid;
+  place-items: center;
+}
+.collo-loading-screen {
+  min-height: 100dvh;
+  background: var(--collo-app);
+}
+.collo-loading-panel {
+  height: 100%;
+  min-height: 100px;
+}
+#boot-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+#root:not(:empty) ~ #boot-shell {
+  display: none;
+  pointer-events: none;
+}
+.collo-loading-brand {
+  text-align: center;
+  padding: 28px;
+}
+.collo-boot-logo {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--collo-ink);
+  font: var(--collo-type-brand-wordmark);
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
+  letter-spacing: -0.02em;
+}
+.collo-boot-logo img {
+  border-radius: 24%;
+}
+.collo-loading-caption {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  margin-top: 24px;
+}
+.collo-loading-dot {
+  width: 6px;
+  height: 6px;
+  background: var(--collo-accent);
+  border-radius: 50%;
+  animation: collo-breathe 1.8s ease-in-out infinite;
+}
+.collo-slow-boot,
+#boot-retry {
+  max-width: 380px;
+  margin: 28px auto 0;
+  font-size: 13px;
+}
+.collo-slow-boot button,
+.collo-slow-boot a,
+#boot-retry button,
+#boot-retry a {
+  color: inherit;
+  font: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.collo-slow-boot a,
+#boot-retry a {
+  margin-left: 18px;
+}
+@keyframes collo-breathe {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .collo-loading-dot {
+    animation: none;
+  }
+}

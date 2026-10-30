@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600" fill="none" aria-hidden="true" focusable="false">
+  <defs>
+    <clipPath id="collo-water-clip"><path d="M154 282C270 274 393 280 509 279C584 278 639 287 692 306L679 364C589 376 483 374 391 362L164 346Z"/></clipPath>
+    <mask id="collo-light-mask"><path d="M307 307H588V322H307Z" fill="white"/></mask>
+  </defs>
+  <g class="collo-water-still">
+    <path class="collo-water-mountain" d="M110 273C144 254 166 233 192 230C222 227 234 239 258 224C289 204 306 193 331 199C361 208 377 233 406 236C438 239 454 220 481 226C515 234 531 251 558 253C596 253 617 260 650 280L387 291Z" fill="#D6E0D7"/>
+    <path class="collo-water-main" d="M154 282C270 274 393 280 509 279C584 278 639 287 692 306L679 364C589 376 483 374 391 362L164 346Z" fill="#7B969B"/>
+    <path class="collo-water-shore" d="M92 359C152 344 201 342 252 354C292 363 311 377 353 386C396 397 439 393 478 411C397 430 307 428 232 416L102 392Z" fill="#BC9670"/>
+    <path class="collo-water-bank" d="M353 386C403 393 435 392 478 411L520 396C486 383 454 387 429 381C413 378 394 374 381 376Z" fill="#344D48"/>
+  </g>
+  <g clip-path="url(#collo-water-clip)">
+    <g class="collo-water-reflection" stroke="#D6E0D7" stroke-width="2" stroke-linecap="round">
+      <path d="M215 299H295M322 301H357M508 337H588M605 336H632"/>
+    </g>
+    <g mask="url(#collo-light-mask)">
+      <path class="collo-water-light" d="M330 312H433L429 316H340Z" fill="#C39448"/>
+    </g>
+  </g>
+</svg>
