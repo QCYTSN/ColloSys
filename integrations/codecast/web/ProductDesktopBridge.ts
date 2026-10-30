@@ -13,6 +13,7 @@ export interface ProductDesktopBridge {
     background: string;
   }): Promise<void>;
   call(name: 'chooseDirectory'): Promise<{ path: string | null }>;
+  onVisibilityChange?(listener: (visible: boolean) => void): () => void;
 }
 declare global {
   interface Window {

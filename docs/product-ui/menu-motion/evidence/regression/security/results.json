@@ -1,0 +1,13 @@
+{
+  "checks": [
+    "Missing provider configuration is rejected by the real backend",
+    "Fresh provider proof required; anonymous approval and unapproved claims rejected",
+    "One authorized claim issues a real same-account ColloSys session; replay/wrong secret fail",
+    "Cancelled, expired and fabricated requests cannot yield sessions",
+    "Revoking the authorizing session prevents a later desktop claim",
+    "Directory migration preserves IDs and references; repeated execution does not rewrite rows",
+    "Existing project identity migration is idempotent and rejects cross-account mutation",
+    "An interrupted directory migration rolls back earlier writes in the same real transaction"
+  ],
+  "boundary": "Actual loopback backend and sessions. External OAuth verification proof is seeded for isolated TEST account; this is NOT GitHub/Google end-to-end verification. No provider credentials configured."
+}

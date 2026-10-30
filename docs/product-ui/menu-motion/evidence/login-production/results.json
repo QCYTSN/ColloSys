@@ -1,0 +1,16 @@
+{
+  "checks": [
+    "1920/1440/1280/960/390 light and dark: form operable, no horizontal overflow, wide layout has substantive left scene",
+    "Real sequential typing and both password visibility states: focus uses field identity, not its contents or length.",
+    "Actual missing provider configuration and actual invalid password errors remain in the formal form",
+    "Reduced-motion disables scene animation",
+    "Asset failure shows a local vector fallback; actual email input remains usable.",
+    "Actual valid email sign-in reaches the requested projects page immediately; transient scene states recorded without waiting for celebration."
+  ],
+  "build": {
+    "version": 1,
+    "commit": "e0854f84b168215f637574ebff57572d3d9e6f30",
+    "dirty": true,
+    "fingerprint": "7f4ea772ccf37367598f60ed97eebf1129cc028d30023d59499cbbea3cbdc1cb"
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "mode": "production",
+  "checks": [
+    "Actual Tasks preset: pointerdown feedback on inner visual, stable anchor, four radio choices/counts, mouse/Enter/Space/arrows/typeahead/Home/End/Escape and trigger focus; cancelling preserves scroll.",
+    "Display: compact settings dialog, every upstream axis retained; nested Escape/focus, immediate grouping/subgroup/sort/direction, no-group clears both axes per the existing model, manual direction disabled, List/Board, real clipboard link and refresh preferences.",
+    "Add filter/category and filter chip use actual popovers; multi status remains Filtered, layered Escape, clearing status restores All per the existing model. Existing inline Save view cancel and persisted save are exercised.",
+    "Low height and squeezed 960/720/640 CSS-pixel widths: parent/child stay in viewport, bottom copy action reachable. Actual desktop zoom is tested separately; CSS zoom is not used as its substitute. Reduced motion preserves states without surface animation."
+  ],
+  "observations": [
+    {
+      "name": "pointerdown opens without click delay",
+      "button": {
+        "x": 258.625,
+        "y": 65,
+        "width": 116.40625,
+        "height": 29
+      },
+      "anchorBefore": {
+        "x": 258.625,
+        "y": 65,
+        "width": 116.40625,
+        "height": 29
+      },
+      "face": {
+        "transform": "matrix(0.988259, 0, 0, 0.988259, 0, 0)",
+        "animations": [
+          {
+            "time": 49.83599995411936,
+            "playState": "running"
+          }
+        ]
+      }
+    },
+    {
+      "name": "closing presence",
+      "layers": [
+        {
+          "state": "closed",
+          "opacity": "0.990384",
+          "pointerEvents": "none",
+          "wrapperPointerEvents": "none"
+        }
+      ]
+    },
+    {
+      "name": "all available grouping axes",
+      "axes": [
+        "No grouping",
+        "Status",
+        "Project",
+        "Plan",
+        "Assignee",
+        "Chain",
+        "Label",
+        "Session"
+      ]
+    },
+    {
+      "name": "status values",
+      "options": [
+        {
+          "value": "open",
+          "checked": true
+        },
+        {
+          "value": "in_progress",
+          "checked": true
+        },
+        {
+          "value": "in_review",
+          "checked": true
+        },
+        {
+          "value": "backlog",
+          "checked": false
+        },
+        {
+          "value": "done",
+          "checked": false
+        }
+      ]
+    }
+  ],
+  "build": {
+    "version": 1,
+    "commit": "e0854f84b168215f637574ebff57572d3d9e6f30",
+    "dirty": true,
+    "fingerprint": "7f4ea772ccf37367598f60ed97eebf1129cc028d30023d59499cbbea3cbdc1cb"
+  }
+}

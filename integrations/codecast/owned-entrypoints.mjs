@@ -1,6 +1,7 @@
 // Stable, reviewable seams. Complete product implementations live in owned
 // modules; the materialized fork contains only these compatibility exports.
 export const productEntrypoints = {
+  'packages/web/components/FilterDropdown.tsx': 'export { FilterDropdown, FilterOptionList } from "../collo/ProductFilters";\nexport type { FilterOption } from "../collo/ProductFilters";\n',
   'packages/web/app/forgot-password/page.tsx':
     'export { ProductForgotPassword as default } from "../../collo/ProductAuth";\n',
   'packages/web/app/reset-password/page.tsx':

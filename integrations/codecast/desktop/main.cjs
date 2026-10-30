@@ -99,6 +99,15 @@ function ProductWindow(options) {
     },
   });
   if (!hasWindowMenu) { window.setMenu(null); window.setMenuBarVisibility(false); }
+  // The reused shell keeps backgroundThrottling=false for live collaboration,
+  // so document.hidden does not reliably reflect a minimized native window.
+  // Project only visibility to decorative consumers; do not throttle sync.
+  const publishVisibility = () => {
+    if (!window.isDestroyed() && !window.webContents.isDestroyed())
+      window.webContents.send('collosys:visibility:v1', { version: 1, visible: window.isVisible() && !window.isMinimized() });
+  };
+  for (const event of ['show', 'hide', 'minimize', 'restore']) window.on(event, publishVisibility);
+  window.webContents.on('did-finish-load', publishVisibility);
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown' || !(input.control || input.meta)) return;
     const key = input.key.toLowerCase(), contents = window.webContents;

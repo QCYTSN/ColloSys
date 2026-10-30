@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ColloSys · 本轮运行证据</title>
+<style>
+body{margin:0;background:#f3f2ee;color:#20242b;font:15px/1.7 "Segoe UI","Microsoft YaHei",sans-serif}main{max-width:1120px;margin:48px auto;padding:0 24px}h1{font-size:28px;letter-spacing:-.6px}h2{font-size:20px;margin-top:42px}p{max-width:850px;color:#525660}a{color:#4f5189}nav{display:flex;gap:20px;flex-wrap:wrap;padding:20px 0;border-bottom:1px solid #d8d8d5}figure{margin:24px 0}img,video{display:block;width:100%;height:auto;background:white;border:1px solid #d8d8d5;border-radius:8px}figcaption{font-size:13px;color:#646971;margin:8px 0}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}@media(max-width:760px){.pair{grid-template-columns:1fr}}code{font-size:13px}details{padding:16px 0;border-top:1px solid #d8d8d5}
+</style>
+<main>
+<h1>ColloSys · 真实菜单与登录视觉</h1>
+<p>这里是正式应用的运行证据索引。产品仍从仓库里的 <code>npm start</code> 打开独立桌面窗口。本页不承担应用功能，也不代表用户已经批准视觉方案。</p>
+<nav><a href="EXECUTION.md">需求、实现、验证与边界</a><a href="evidence/performance-comparison.json">性能原始汇总</a><a href="evidence/regression/suite-results.json">回归执行结果</a><a href="../../../integrations/codecast/OAUTH.md">OAuth 最小配置</a></nav>
+<h2>登录 · 单一主体与安静表单</h2>
+<figure><img src="evidence/login-production/light-1440.png" alt="正式登录页的浅色完整画面"><figcaption>1440×900，真实表单与本地原创素材；静止构图。<a href="evidence/login-production/left-closeup.png">左侧近景</a>。</figcaption></figure>
+<div class="pair"><figure><img src="evidence/login-production/dark-1440.png" alt="深色登录页"><figcaption>深色完整页面。</figcaption></figure><figure><img src="evidence/login-production/password-focused.png" alt="密码聚焦状态"><figcaption>密码聚焦只传递字段状态，不读取内容或长度。</figcaption></figure></div>
+<details><summary>实际输入、提交、错误及恢复录像</summary><video controls preload="none" poster="evidence/login-production/light-1440.png" src="evidence/login-production/states.webm"></video><p>邮箱提交来自真实请求，快速成功不会等待动画。<a href="evidence/login-production/actual-email-states.json">失败请求状态日志</a> · <a href="evidence/login-production/verified-login-states.json">真实登录状态日志</a>。OAuth 未配置；<a href="evidence/login-development/waiting-component-preview.png">等待图</a>仅为明确标注的开发组件状态预览。</p></details>
+<h2>Tasks · Active 与 Display</h2>
+<figure><img src="evidence/acceptance-production/display-open.png" alt="正式 Tasks 页紧凑 Display 设置面板"><figcaption>默认只展示当前配置。所有已有分组轴仍可通过子选择器访问。</figcaption></figure>
+<div class="pair"><figure><img src="evidence/acceptance-production/active-open.png" alt="Active 单选菜单"><figcaption>预设、计数和当前值保留单选语义。</figcaption></figure><figure><img src="evidence/acceptance-production/display-child.png" alt="分组子菜单"><figcaption>子菜单选择后父面板保持打开，Esc 分层关闭。</figcaption></figure></div>
+<details open><summary>真实连续操作录像</summary><video controls preload="none" poster="evidence/acceptance-production/display-open.png" src="evidence/acceptance-production/menus.webm"></video><p>包含鼠标、键盘、快速重开、分组/排序、筛选、保存视图、低高度窗口和减少动态效果。<a href="evidence/acceptance-production/results.json">逐项观察</a>。</p></details>
+<h2>独立桌面窗口</h2>
+<p>原生窗口验证 100%、125%、150%、200% 页面缩放；系统显示缩放单独记录，不将两者混为一谈。最小化暂停与恢复也从真实窗口检查。</p>
+<div class="pair"><figure><img src="evidence/native-menus/display-100.png" alt="原生默认缩放菜单"><figcaption>原生默认页面缩放。</figcaption></figure><figure><img src="evidence/native-menus/display-200.png" alt="原生百分之二百页面缩放菜单"><figcaption>原生 200% 页面缩放，仍能选择底部项。</figcaption></figure></div>
+<p><a href="evidence/native-menus/results.json">原生菜单数据</a> · <a href="evidence/regression/native/results.json">原生窗口、菜单与主题回归</a> · <a href="evidence/regression/continuity/results.json">连续性检查</a> · <a href="evidence/normal-desktop-entry.json">默认桌面入口最终确认</a></p>
+<h2>性能与尚待验收项</h2>
+<p>前后分别保留 development / production 三轮结果。冷首次与重复操作分开；浏览器帧观察不等于物理显示延迟，自动化驱动耗时不当作点击延迟。变慢及未达约100ms目标的路径见集中执行记录。真实 GitHub/Google 授权仍待所有者配置后联调，视觉是否满意仍由用户判断。</p>
+<p><a href="evidence/before/production/menus.json">生产菜单基线</a> · <a href="evidence/after/production/menus.json">生产菜单后测</a> · <a href="evidence/after/development/menus.json">开发菜单后测</a> · <a href="evidence/after/production/flows/round-1/performance.json">重内容路径与阶段观察</a> · <a href="evidence/after/production/auth-performance.json">密码显隐与实际错误计时</a></p>
+</main></html>

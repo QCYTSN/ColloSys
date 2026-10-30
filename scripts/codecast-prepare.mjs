@@ -113,6 +113,11 @@ const additions = [
     'product-project-identity.css',
     'ProductControlTriggers.tsx',
     'product-controls.css',
+    'ProductListMenus.tsx',
+  'ProductTime.ts',
+    'ProductFilters.tsx',
+    'product-list-menus.css',
+    'product-auth-scene.css',
     'productAuthPolicy.ts',
     'CheckpointSource.tsx',
     'DirectoryStorage.tsx',
@@ -195,6 +200,14 @@ await mkdir(publicDesign, { recursive: true });
 for (const entry of await readdir(designAssets, { withFileTypes: true })) {
   if (!entry.isFile()) throw new Error('Design assets must be ordinary files');
   await copyFile(path.join(designAssets, entry.name), path.join(publicDesign, entry.name));
+}
+const authAssets = path.join(root, 'integrations/codecast/assets/auth');
+const publicAuth = path.join(root, '.local/codecast-app/product-public/collo-auth');
+await mkdir(publicAuth, { recursive: true });
+for (const entry of await readdir(authAssets, { withFileTypes: true })) {
+  if (!entry.isFile()) throw new Error('Auth assets must be ordinary files');
+  if (!/\.(webp|svg)$/.test(entry.name)) continue;
+  await copyFile(path.join(authAssets, entry.name), path.join(publicAuth, entry.name));
 }
 const protocol = path
   .relative(

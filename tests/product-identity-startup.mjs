@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, signIn } from './product-ui-refinement-data.mjs';
-const expect = baseExpect.configure({ timeout: 45000 }), out = 'docs/product-ui/identity-motion/evidence/startup';
+const expect = baseExpect.configure({ timeout: 45000 }), out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/identity-motion/evidence/startup';
 await fs.mkdir(out, { recursive: true });
 const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });
 const checks = [], contexts = [];

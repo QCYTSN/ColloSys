@@ -1,0 +1,90 @@
+{
+  "checks": [
+    {
+      "result": "Actual native minimize pauses the scene; restore resumes visibility without moving input focus."
+    },
+    {
+      "factor": 1,
+      "native": {
+        "zoom": 1,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 1267,
+          "height": 765
+        },
+        "dpr": 2,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 1.25,
+      "native": {
+        "zoom": 1.25,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 1013,
+          "height": 612
+        },
+        "dpr": 2.5,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 1.5,
+      "native": {
+        "zoom": 1.5,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 844,
+          "height": 510
+        },
+        "dpr": 3,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 2,
+      "native": {
+        "zoom": 2,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 633,
+          "height": 382
+        },
+        "dpr": 4,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    }
+  ],
+  "build": {
+    "version": 1,
+    "commit": "e0854f84b168215f637574ebff57572d3d9e6f30",
+    "dirty": true,
+    "fingerprint": "7f4ea772ccf37367598f60ed97eebf1129cc028d30023d59499cbbea3cbdc1cb"
+  },
+  "limits": "Actual Electron window and webContents zoom; OS display scale recorded, not changed. Screenshots show renderer content. Native frame evidence is in the separate native regression."
+}

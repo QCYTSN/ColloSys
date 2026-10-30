@@ -28,6 +28,7 @@ checks.push('Previously verified provider subject retains its account despite ch
 await assert.rejects(updateProductIdentity({ db }, { ...base, existingUserId: null }), /Automatic account linking/);
 await assert.rejects(updateProductIdentity({ db }, { ...base, existingUserId: 'users:missing' }), /no longer exists/);
 checks.push('Verified email alone cannot merge accounts; removed provider account cannot be revived');
-await fs.mkdir('docs/product-ui/identity-motion/evidence/security', { recursive: true });
-await fs.writeFile('docs/product-ui/identity-motion/evidence/security/provider-policy.json', JSON.stringify({ checks, boundary: 'Synthetic provider callback/profile inputs and fake DB; actual installed product implementation. Not real OAuth verification.' }, null, 2));
+const out=process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/identity-motion/evidence/security';
+await fs.mkdir(out, { recursive: true });
+await fs.writeFile(out + '/provider-policy.json', JSON.stringify({ checks, boundary: 'Synthetic provider callback/profile inputs and fake DB; actual installed product implementation. Not real OAuth verification.' }, null, 2));
 checks.forEach(c => console.log('PASS', c));

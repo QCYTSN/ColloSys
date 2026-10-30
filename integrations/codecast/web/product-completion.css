@@ -3,6 +3,8 @@
 @import './product-appearance.css';
 @import './product-project-identity.css';
 @import './product-controls.css';
+@import './product-list-menus.css';
+@import './product-auth-scene.css';
 /* Storage belongs to directory history, with explicit, scoped confirmations. */
 .collo-storage-dialog {
   width: min(780px, calc(100vw - 40px));

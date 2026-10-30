@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useRef, useMemo } from 'react';
+import { memo, useCallback, useDeferredValue, useEffect, useState, useRef, useMemo } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useAuthToken } from '@convex-dev/auth/react';
 import {
@@ -48,7 +48,26 @@ import { isPaired, localRequest, chooseDirectory, LOCAL_INSPECTION_INTERVAL_MS }
 
 const field =
   'w-full rounded-md border border-sol-border bg-sol-bg px-3 py-2 text-sm text-sol-text';
-function Files({ files, scope }: { files: FileChange[]; scope: string }) {
+type FilesProps = { files: FileChange[]; scope: string };
+function Files({ files, scope }: FilesProps) {
+  // Commit the selected checkpoint and its real status before mounting the
+  // expensive diff tree. React schedules the content; there is no timed delay.
+  // This component is keyed by event and unmounted on access loss, so deferred
+  // data can only belong to the same currently authorized checkpoint.
+  const ready = useDeferredValue<FileChange[] | null>(files, null);
+  return (
+    <div aria-busy={ready !== files}>
+      {ready ? (
+        <FileContent files={ready} scope={scope} />
+      ) : (
+        <div className="collo-reader-loading" role="status">
+          Preparing file changes…
+        </div>
+      )}
+    </div>
+  );
+}
+const FileContent = memo(function FileContent({ files, scope }: FilesProps) {
   const saved = useRef(readView<{ file?: string; line?: number }>(scope));
   const projected = useMemo(
     () =>
@@ -105,7 +124,7 @@ function Files({ files, scope }: { files: FileChange[]; scope: string }) {
       />
     </div>
   );
-}
+});
 export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const token = useAuthToken();
   const principal = useAuthPrincipal();

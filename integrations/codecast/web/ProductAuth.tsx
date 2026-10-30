@@ -7,7 +7,7 @@ import { AppLoader } from './ProductLoader';
 import { useProductStartup, StartupRecovery } from './ProductStartup';
 import { applicationDestination } from './productAuthPolicy';
 import { ProductOAuthButtons, type OAuthPhase } from './ProductOAuth';
-import { ProductAuthScene } from './ProductAuthScene';
+import { ProductAuthScene, type AuthSceneState } from './ProductAuthScene';
 import { useEmailAuth, useResetRequest, useResetConfirm } from '../hooks/useEmailAuth';
 import { makeFunctionReference } from 'convex/server';
 import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
@@ -15,37 +15,34 @@ import { EmailVerificationForm } from '../components/EmailVerificationForm';
 import { Button } from '../components/ui/button';
 import { useProductSignOut } from './ProductSignOut';
 
-function AuthSurface({ children, state = 'idle' }: { children: ReactNode; state?: string }) {
-  const [focused, setFocused] = useState(false);
+function AuthSurface({
+  children,
+  state = 'idle',
+}: {
+  children: ReactNode;
+  state?: AuthSceneState;
+}) {
+  const [focus, setFocus] = useState<AuthSceneState>('idle');
+  const focusedState = (target: EventTarget | null): AuthSceneState => {
+    if (!(target instanceof HTMLInputElement)) return 'idle';
+    return /password/i.test(target.name || target.id) ? 'password-focused' : 'input-focused';
+  };
   return (
     <main className="collo-auth-layout">
       <section className="collo-auth-visual">
         <header className="collo-auth-brand">
           <Logo />
-          <span className="collo-auth-edition">A space to work together</span>
         </header>
-        <ProductAuthScene state={state === 'idle' && focused ? 'focused' : state} />
+        <ProductAuthScene state={state === 'idle' ? focus : state} />
         <div className="collo-auth-scene-caption">
-          <span className="collo-auth-kicker">A LITTLE CONTEXT GOES A LONG WAY</span>
-          <h2>
-            Independent work.
-            <br />
-            Shared understanding.
-          </h2>
-          <p>
-            Keep the conversation, the changes
-            <br />
-            and the next step together.
-          </p>
+          <h2>A little more in sync.</h2>
+          <p>Your work. A shared understanding.</p>
         </div>
-        <span className="collo-auth-scene-foot">Made for small teams doing thoughtful work.</span>
       </section>
       <section
         className="collo-auth-work"
-        onFocusCapture={(event) => {
-          if ((event.target as HTMLElement).tagName === 'INPUT') setFocused(true);
-        }}
-        onBlurCapture={() => setFocused(false)}
+        onFocusCapture={(event) => setFocus(focusedState(event.target))}
+        onBlurCapture={(event) => setFocus(focusedState(event.relatedTarget))}
       >
         <div className="collo-auth-content">{children}</div>
         <footer>
@@ -124,7 +121,17 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
         </div>
       </AuthSurface>
     );
-  if (startup.phase !== 'signed-out') return <StartupRecovery />;
+  // A verified ColloSys session is the only success fact. Navigation in the
+  // existing effect/hook is immediate; the scene adds no celebration timer.
+  if (startup.phase === 'authenticated')
+    return (
+      <AuthSurface state="success">
+        <p role="status">Opening your workspace…</p>
+      </AuthSurface>
+    );
+  const signingIn = auth.loading || oauthPhase === 'starting' || oauthPhase === 'waiting';
+  if (startup.phase !== 'signed-out' && !(signingIn && startup.phase === 'restoring'))
+    return <StartupRecovery />;
   if (auth.pendingVerification)
     return (
       <AuthSurface>
@@ -136,7 +143,19 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
       </AuthSurface>
     );
   return (
-    <AuthSurface state={oauthPhase}>
+    <AuthSurface
+      state={
+        auth.loading
+          ? 'submitting'
+          : oauthPhase === 'waiting'
+            ? 'oauth-waiting'
+            : oauthPhase === 'starting'
+              ? 'oauth-starting'
+              : auth.error || ['error', 'timeout', 'unavailable'].includes(oauthPhase)
+                ? 'recoverable-error'
+                : 'idle'
+      }
+    >
       <div className="collo-auth-step" key={flow}>
         <h1>{signup ? 'Create your account' : 'Welcome back'}</h1>
         <p>

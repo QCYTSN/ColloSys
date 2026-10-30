@@ -1,0 +1,8 @@
+{
+  "passed": true,
+  "checks": [
+    "Revocation removes the real reader, open draft and scoped UI hints in both windows",
+    "Restored membership can retry and read through a fresh authorized query",
+    "Sign-out and account switch do not retain reader position or unsent draft"
+  ]
+}

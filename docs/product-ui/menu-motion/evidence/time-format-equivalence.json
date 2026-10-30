@@ -1,0 +1,17 @@
+{
+  "checks": [
+    {
+      "zone": "UTC",
+      "cases": 876
+    },
+    {
+      "zone": "Asia/Shanghai",
+      "cases": 876
+    },
+    {
+      "zone": "America/New_York",
+      "cases": 876
+    }
+  ],
+  "method": "Owned formatter compared byte-for-byte with the pinned original shared/time and Rail clock across separate timezone processes, years, DST boundaries, epoch and invalid dates."
+}

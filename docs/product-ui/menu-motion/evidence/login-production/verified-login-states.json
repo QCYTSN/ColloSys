@@ -1,0 +1,22 @@
+[
+  {
+    "state": "input-focused",
+    "at": 1793349681603
+  },
+  {
+    "state": "password-focused",
+    "at": 1793349681622
+  },
+  {
+    "state": "idle",
+    "at": 1793349681662
+  },
+  {
+    "state": "submitting",
+    "at": 1793349681667
+  },
+  {
+    "state": "startup",
+    "at": 1793349681950
+  }
+]

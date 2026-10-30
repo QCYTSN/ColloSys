@@ -1,0 +1,405 @@
+{
+  "at": "2026-10-30T08:42:14.840Z",
+  "checks": [
+    "Overview query failure preserves successful sections and retry restores the failed query",
+    "Slow handoff submission locks the reviewed draft and cannot clear a later form",
+    "New URL source intent survives the previous pending submission",
+    "Normal close follows actual CSS duration; quick reopen and cancellation retain valid detail",
+    "Programmatic left and right panel toggles share intermediate geometry",
+    "Changing a reviewed policy or checkpoint requires a new review",
+    "Recovery route remains reachable with an existing identity and clears durable sign-in explicitly"
+  ],
+  "metrics": [
+    {
+      "auth": {
+        "weight": "500",
+        "size": "30px",
+        "tracking": "-1.05px",
+        "family": "\"Google Sans\", \"Microsoft YaHei UI\", sans-serif"
+      }
+    },
+    {
+      "panel": "sidebar",
+      "frames": [
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 244.625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 207.21875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 170.375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 134.53125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 105.859375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 83.75,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 66.09375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 52.921875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 33.859375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 21.671875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 13.546875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 10.515625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 6.03125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 3.0625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 1.25,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0.265625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        }
+      ]
+    },
+    {
+      "panel": "session-list",
+      "frames": [
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 53.953125,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 107.6875,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 157.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 256.828125,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 276.140625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 303.5625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 313.296875,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 327.9375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 333.015625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 337.375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 341.0625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 343.984375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 348.234375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 349.65625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 350.84375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 351.640625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 352.515625,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": true
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        },
+        {
+          "width": 352.609375,
+          "total": 1175.375,
+          "group": 1176,
+          "moving": false
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

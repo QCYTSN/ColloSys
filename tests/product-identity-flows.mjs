@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, signIn } from './product-ui-refinement-data.mjs';
 const mode = process.argv.includes('--production') ? 'production' : 'development';
-const out = `docs/product-ui/identity-motion/evidence/flows-${mode}`;
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || `docs/product-ui/identity-motion/evidence/flows-${mode}`;
 await fs.mkdir(out, { recursive: true });
 const a = await signIn(account.a), b = await signIn(account.b);
 const browser = await chromium.launch({ executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe', headless: true });

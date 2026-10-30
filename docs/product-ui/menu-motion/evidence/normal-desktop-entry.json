@@ -1,0 +1,41 @@
+{
+  "checkedAt": "2026-10-30T17:19:54.5312215+08:00",
+  "entry": "node scripts/codecast-start.mjs (exact package npm start entry)",
+  "profile": "default; no profile, preview or design-lab overrides",
+  "nativeWindow": {
+    "readyHook": true,
+    "hasNativeHandle": true,
+    "started": "2026-10-30T17:17:17.6880684+08:00",
+    "title": "ColloSys",
+    "responding": true
+  },
+  "build": {
+    "version": 1,
+    "commit": "e0854f84b168215f637574ebff57572d3d9e6f30",
+    "dirty": true,
+    "fingerprint": "7f4ea772ccf37367598f60ed97eebf1129cc028d30023d59499cbbea3cbdc1cb"
+  },
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3407
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3408
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3409
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3410
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3411
+    }
+  ],
+  "scope": "Normal native window left open. No explicit account operation, workspace-data edit or default-profile screenshot was performed for this launch check; ordinary application startup may update its own caches and preferences."
+}

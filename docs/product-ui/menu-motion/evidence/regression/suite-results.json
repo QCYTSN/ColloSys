@@ -1,0 +1,122 @@
+[
+  {
+    "name": "security",
+    "args": [
+      "tests/product-identity-security.mjs"
+    ],
+    "started": "2026-10-30T07:45:48.353Z",
+    "finished": "2026-10-30T07:45:59.270Z",
+    "exitCode": 0
+  },
+  {
+    "name": "provider-policy",
+    "args": [
+      ".local/menu-provider-policy.mjs"
+    ],
+    "started": "2026-10-30T07:47:12.010Z",
+    "finished": "2026-10-30T07:47:12.166Z",
+    "exitCode": 0
+  },
+  {
+    "name": "identity",
+    "args": [
+      "tests/product-identity-flows.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T07:47:12.167Z",
+    "finished": "2026-10-30T07:47:36.186Z",
+    "exitCode": 0
+  },
+  {
+    "name": "storage",
+    "args": [
+      "tests/product-ui-craft-storage-race.mjs"
+    ],
+    "started": "2026-10-30T07:58:29.296Z",
+    "finished": "2026-10-30T07:59:11.908Z",
+    "exitCode": 0
+  },
+  {
+    "name": "access",
+    "args": [
+      "tests/product-ui-refinement-access.mjs"
+    ],
+    "started": "2026-10-30T07:59:11.909Z",
+    "finished": "2026-10-30T07:59:30.731Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-continuity",
+    "args": [
+      "tests/product-auth-continuity.mjs"
+    ],
+    "started": "2026-10-30T07:59:30.732Z",
+    "finished": "2026-10-30T07:59:58.733Z",
+    "exitCode": 0
+  },
+  {
+    "name": "startup",
+    "args": [
+      "tests/product-identity-startup.mjs"
+    ],
+    "started": "2026-10-30T08:09:39.566Z",
+    "finished": "2026-10-30T08:10:07.204Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-races",
+    "args": [
+      "tests/product-identity-auth-races.mjs"
+    ],
+    "started": "2026-10-30T08:10:07.205Z",
+    "finished": "2026-10-30T08:10:31.590Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native",
+    "args": [
+      "tests/product-identity-native.mjs"
+    ],
+    "started": "2026-10-30T08:10:31.591Z",
+    "finished": "2026-10-30T08:10:46.949Z",
+    "exitCode": 0
+  },
+  {
+    "name": "menus",
+    "args": [
+      "tests/product-menu-acceptance.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T08:40:12.773Z",
+    "finished": "2026-10-30T08:40:52.458Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native-menus",
+    "args": [
+      "tests/product-menu-native.mjs"
+    ],
+    "started": "2026-10-30T08:40:52.459Z",
+    "finished": "2026-10-30T08:41:12.307Z",
+    "exitCode": 0
+  },
+  {
+    "name": "login",
+    "args": [
+      "tests/product-menu-auth-visual.mjs",
+      "--production"
+    ],
+    "started": "2026-10-30T08:41:12.308Z",
+    "finished": "2026-10-30T08:41:25.264Z",
+    "exitCode": 0
+  },
+  {
+    "name": "continuity",
+    "args": [
+      "tests/product-ui-craft.mjs"
+    ],
+    "started": "2026-10-30T08:41:25.265Z",
+    "finished": "2026-10-30T08:42:15.372Z",
+    "exitCode": 0
+  }
+]

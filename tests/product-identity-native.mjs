@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { _electron as electron, expect as baseExpect } from '@playwright/test';
 import { account } from './product-ui-refinement-data.mjs';
-const expect = baseExpect.configure({ timeout: 60000 }), out = 'docs/product-ui/identity-motion/evidence/native';
+const expect = baseExpect.configure({ timeout: 60000 }), out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/identity-motion/evidence/native';
 await fs.mkdir(out, { recursive: true });
 const profile = 'test-' + randomUUID(), env = { ...process.env, COLLOSYS_DESKTOP_PROFILE: profile };
 delete env.ELECTRON_RUN_AS_NODE; delete env.COLLOSYS_WORKBENCH_PREVIEW; delete env.COLLOSYS_DESIGN_LAB;

@@ -7,7 +7,7 @@ import { parseEnv, promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import { ConvexHttpClient } from '../third_party/codecast/upstream/packages/convex/node_modules/convex/dist/esm/browser/index.js';
 import { account, signIn, denseFixture } from './product-ui-refinement-data.mjs';
-const out = 'docs/product-ui/identity-motion/evidence/security';
+const out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/identity-motion/evidence/security';
 await fs.mkdir(out, { recursive: true });
 const privateDir = path.resolve('.local', 'identity-security-' + randomUUID());
 await fs.mkdir(privateDir);

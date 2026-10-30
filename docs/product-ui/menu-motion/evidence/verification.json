@@ -1,0 +1,50 @@
+{
+  "build": {
+    "version": 1,
+    "commit": "e0854f84b168215f637574ebff57572d3d9e6f30",
+    "dirty": true,
+    "fingerprint": "7f4ea772ccf37367598f60ed97eebf1129cc028d30023d59499cbbea3cbdc1cb"
+  },
+  "checks": [
+    {
+      "command": "npm run typecheck",
+      "exitCode": 0
+    },
+    {
+      "command": "npm test",
+      "exitCode": 0,
+      "passed": 69,
+      "failed": 0
+    },
+    {
+      "command": "npm run build",
+      "exitCode": 0,
+      "seconds": 112,
+      "warnings": "Existing upstream circular re-exports, mixed static/dynamic imports and chunks over 500 kB remain."
+    },
+    {
+      "command": "npm run typecheck:integration",
+      "exitCode": 0,
+      "ownedFiles": 80,
+      "againstCurrentPreparedFork": true
+    },
+    {
+      "command": "npm run codecast:verify",
+      "exitCode": 0,
+      "upstreamCommit": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+      "verifiedFiles": 9854,
+      "failures": 0
+    },
+    {
+      "command": "node tests/product-menu-time-format.mjs",
+      "exitCode": 0,
+      "equivalentCases": 2628,
+      "timeZones": ["UTC", "Asia/Shanghai", "America/New_York"]
+    },
+    {
+      "command": "git diff --check",
+      "exitCode": 0
+    }
+  ],
+  "notes": "Original mirrors were not edited. No commit, push, public deployment, invitations or external paid model API calls. Broad regressions retain their own timestamps/build metadata. The final 7f4ea77 menu Escape/date-format changes were followed by production menu/native-menu/login/continuity passes and development menu/login passes; backend/security regression versions remain explicit in EXECUTION.md."
+}
