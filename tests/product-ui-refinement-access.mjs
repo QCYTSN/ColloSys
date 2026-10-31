@@ -49,6 +49,13 @@ try {
   await project(draft, 'tab=handoffs');
   await draft.getByRole('button', { name: 'New handoff', exact: true }).click();
   await draft.getByLabel('Title', { exact: true }).fill('TEST PRIVATE UNSENT DRAFT');
+  let comment;
+  if (process.argv.includes('--workspace')) {
+    comment = await context.newPage();
+    await comment.goto(`http://127.0.0.1:3407/tasks/${fixture.taskId}`);
+    await comment.getByRole('button', { name: 'Add comment', exact: true }).click();
+    await comment.getByPlaceholder('Leave a comment...').fill('TEST PRIVATE TASK COMMENT DRAFT');
+  }
   const members = await fixture.a.client.query('teams:getTeamMembers', { team_id: fixture.teamId });
   const member = members.find((m) => m.email === account.b.email);
   assert.ok(member);
@@ -66,7 +73,7 @@ try {
     }),
     /access denied/i,
   );
-  for (const p of [page, draft]) {
+  for (const p of [page, draft, ...(comment ? [comment] : [])]) {
     await expect(p.getByTestId('captured-conversation')).toHaveCount(0);
     await expect(p.getByRole('dialog', { name: 'New handoff' })).toHaveCount(0);
     await expect(async () =>
@@ -83,6 +90,7 @@ try {
     ).toPass({ timeout: 30000 });
     assert.equal(await p.locator('.collo-detail-surface[data-phase=closing]').count(), 0);
   }
+  if (comment) await expect(comment.getByPlaceholder('Leave a comment...')).toHaveCount(0);
   await page.screenshot({ path: out + '/revoked-reader.png' });
   await draft.screenshot({ path: out + '/revoked-draft.png' });
   checks.push('Revocation removes the real reader, open draft and scoped UI hints in both windows');

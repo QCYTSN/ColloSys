@@ -1,0 +1,396 @@
+{
+  "at": "2026-10-31T09:48:32.103Z",
+  "checks": [
+    "Overview query failure preserves successful sections and retry restores the failed query",
+    "Slow handoff submission locks the reviewed draft and cannot clear a later form",
+    "New URL source intent survives the previous pending submission",
+    "Normal close follows actual CSS duration; quick reopen and cancellation retain valid detail",
+    "Programmatic left and right panel toggles share intermediate geometry",
+    "Changing a reviewed policy or checkpoint requires a new review"
+  ],
+  "metrics": [
+    {
+      "panel": "sidebar",
+      "frames": [
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 231.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 192.890625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 154.1875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 91.546875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 70.53125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 53.78125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 42.390625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 32.84375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 20.484375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 9.671875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 7.453125,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 4.15625,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 1.359375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0.4375,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0.1875,
+          "total": 1439,
+          "group": 1440,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1439,
+          "group": 1440,
+          "moving": false
+        }
+      ]
+    },
+    {
+      "panel": "session-list",
+      "frames": [
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 0,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 60.609375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 119.609375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 174.59375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 307.375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 317.734375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 332.984375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 338.40625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 342.8125,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 348.984375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 351.3125,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 353.09375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 354.515625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 355.59375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 356.40625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 356.984375,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 357.578125,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": true
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        },
+        {
+          "width": 357.640625,
+          "total": 1192.15625,
+          "group": 1193,
+          "moving": false
+        }
+      ]
+    }
+  ],
+  "errors": []
+}

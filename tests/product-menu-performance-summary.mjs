@@ -14,7 +14,7 @@ for (const phase of ['before', 'after'])
     try {
       menus = JSON.parse(await fs.readFile(`${root}/${phase}/${mode}/menus.json`, 'utf8'));
     } catch {
-      continue;
+      menus = { results: [] };
     }
     const metrics = menus.results.flatMap((r) => r.metrics.actions),
       menu = {};
@@ -59,7 +59,9 @@ for (const phase of ['before', 'after'])
       }
       const interactions = [],
         longTasks = [],
-        byAction = {};
+        byAction = {},
+        presentation = {},
+        inputEvents = {};
       for (const sample of pages.values()) {
         const events = new Map();
         for (const e of sample.events) {
@@ -75,6 +77,9 @@ for (const phase of ['before', 'after'])
         }
         for (const a of sample.actions) {
           if (!a.name) continue;
+          if (a.presentation) (presentation[a.name] ??= []).push(a.presentation);
+          const durations = [...events.values()].filter(e => e.start >= a.start && e.start <= a.feedbackFrame).map(e => e.duration);
+          if (durations.length) (inputEvents[a.name] ??= []).push(Math.max(...durations));
           for (const e of events.values())
             if (e.start >= a.start && e.start <= a.feedbackFrame)
               (byAction[a.name] ??= []).push(e.duration);
@@ -85,9 +90,21 @@ for (const phase of ['before', 'after'])
         interaction: stats(interactions),
         longTasks: { ...stats(longTasks), totalMs: longTasks.reduce((a, b) => a + b, 0) },
         byAction: Object.fromEntries(Object.entries(byAction).map(([k, v]) => [k, stats(v)])),
+        presentation,
+        inputEvents,
       });
     }
-    rows.push({ phase, mode, menu, heavyRounds });
+    if (!menus.results.length && !heavyRounds.length) continue;
+    const names = [...new Set(heavyRounds.flatMap(r => Object.keys(r.presentation)))];
+    const workspace = Object.fromEntries(names.map(name => {
+      const samples = heavyRounds.flatMap(r => r.presentation[name] ?? []);
+      return [name, {
+        n: samples.length,
+        ...Object.fromEntries(['feedbackOpportunity', 'operableOpportunity', 'navigationOperable', 'contentStableOpportunity', 'animationSettled'].map(key => [key, stats(samples.map(s => s[key]).filter(Number.isFinite))])),
+        eventTiming: stats(heavyRounds.flatMap(r => r.inputEvents[name] ?? [])),
+      }];
+    }));
+    rows.push({ phase, mode, menu, heavyRounds, workspace });
   }
 const result = {
   method:

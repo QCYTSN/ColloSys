@@ -1,0 +1,92 @@
+{
+  "passed": true,
+  "checks": [
+    "Session A -> B -> A retains acquired pages, visible code expansion and message identity",
+    "All 65 captured messages remain reachable through actual pagination and virtual scrolling",
+    "Real activity -> captured session -> checkpoint file -> session return preserves the current project and acquired message range",
+    "32 real files: independent same-basename identity, full path copy and per-file line restoration",
+    "Diff line anchor survives unified/split and 1280, 960, 1920, 1440 resizing",
+    "Rapid A/B/C keeps C; binary, oversized unavailable diff, excluded content and rename delete/add are explicit",
+    "Local history opens the real shared Diff and returns to the same history; checkpoint/file selection survives reopening",
+    "Unsent task comment survives close/reopen; sending uses the actual persisted task mutation",
+    "Non-default All preset, Assignee grouping and Title sorting remain selected after task detail and return",
+    "Project Board card and keyboard return retain the same project and Board setting",
+    "Project details nested status control writes through the real project store/backend",
+    "Real appearance controls cover Forest/light, Iris/dark and reduced motion; isolated profile returns to original Iris/light",
+    "A real delayed session A response released after selecting B cannot replace B"
+  ],
+  "styles": [
+    {
+      "label": "file row",
+      "height": 32,
+      "font": "500 14px / 20px \"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontFamily": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "14px",
+      "lineHeight": "20px",
+      "fontWeight": "500",
+      "radius": "0px",
+      "padding": "6px 8px",
+      "icon": null,
+      "color": "rgb(75, 87, 81)",
+      "background": "oklab(0.949633 0.00512475 -0.0114923 / 0.175541)"
+    },
+    {
+      "label": "copy path",
+      "height": 32,
+      "font": "",
+      "fontFamily": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "500",
+      "radius": "8px",
+      "padding": "0px",
+      "icon": {
+        "width": 16,
+        "height": 16
+      },
+      "color": "rgb(83, 96, 89)",
+      "background": "rgb(255, 255, 255)"
+    },
+    {
+      "label": "post comment",
+      "height": 36,
+      "font": "",
+      "fontFamily": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "14px",
+      "lineHeight": "20px",
+      "fontWeight": "500",
+      "radius": "8px",
+      "padding": "0px 14px",
+      "icon": {
+        "width": 16,
+        "height": 16
+      },
+      "color": "rgb(55, 63, 59)",
+      "background": "rgb(252, 253, 252)"
+    },
+    {
+      "label": "project property trigger",
+      "height": 32,
+      "font": "",
+      "fontFamily": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "fontWeight": "500",
+      "radius": "8px",
+      "padding": "0px 10px",
+      "icon": {
+        "width": 17.330810546875,
+        "height": 17.330772399902344
+      },
+      "color": "rgb(37, 44, 41)",
+      "background": "oklab(0.989061 0.00114822 -0.00247916)"
+    }
+  ],
+  "errors": [],
+  "build": {
+    "version": 1,
+    "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+    "dirty": true,
+    "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+  }
+}

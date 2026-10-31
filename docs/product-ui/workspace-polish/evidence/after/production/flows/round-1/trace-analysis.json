@@ -1,0 +1,5612 @@
+{
+  "method": "Actual pointerdown through correct content readiness plus 20ms. This excludes the subsequent close in the return sample. Sampled leaf weights and inclusive timeline slices cannot be added together.",
+  "result": [
+    {
+      "action": "dropdown first",
+      "presentation": {
+        "input": 2389.7999999523163,
+        "eventTimestamp": 2384.099999964237,
+        "target": {},
+        "feedbackOpportunity": 70.10000002384186,
+        "operableOpportunity": 70.20000004768372,
+        "animationSettled": 232.70000004768372,
+        "contentStableOpportunity": 255
+      },
+      "windowMs": 90.20000004768372,
+      "timeline": [
+        {
+          "type": "EventDispatch",
+          "ms": 58.778,
+          "at": 5.030000061035156,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 49.258,
+          "at": 5.488000061035156,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "",
+            "isolate": "15189143547633368342",
+            "lineNumber": 24,
+            "sampleTraceId": 424432223998872,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 14.051,
+          "at": 26.021000061035156
+        },
+        {
+          "type": "Layout",
+          "ms": 4.173,
+          "at": 40.08600006103516
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 1.811,
+          "at": 63.825000061035155
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 1.457,
+          "at": 59.86000006103516
+        },
+        {
+          "type": "FireAnimationFrame",
+          "ms": 1.443,
+          "at": 69.04800006103515,
+          "call": {
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "id": 199
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 1.422,
+          "at": 69.05000006103515,
+          "call": {
+            "columnNumber": 23,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "frame",
+            "isolate": "15189143547633368342",
+            "lineNumber": 20,
+            "sampleTraceId": 424432223997976,
+            "scriptId": "682",
+            "url": ""
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 1.065,
+          "at": 87.88300006103516,
+          "call": {
+            "type": "animationstart"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 0.911,
+          "at": 82.58900006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223998039,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 0.812,
+          "at": 49.59800006103516,
+          "call": {
+            "type": "focusScope.autoFocusOnMount"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 0.719,
+          "at": 88.06300006103515,
+          "call": {
+            "columnNumber": 344927,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "m",
+            "isolate": "15189143547633368342",
+            "lineNumber": 1336,
+            "sampleTraceId": 424432223998029,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/index-DMH-neEf.js"
+          }
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 24.028999999999993,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 18.830000000000002,
+          "stack": [
+            {
+              "fn": "Lm",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 345410
+            },
+            {
+              "fn": "",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 344319
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 3.2089999999999996,
+          "stack": [
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 2.292,
+          "stack": [
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            }
+          ]
+        },
+        {
+          "ms": 2.149,
+          "stack": [
+            {
+              "fn": "focus"
+            },
+            {
+              "fn": "Qo",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 312589
+            },
+            {
+              "fn": "owe",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 311747
+            },
+            {
+              "fn": "",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 310832
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 1.93,
+          "stack": [
+            {
+              "fn": "setAttribute"
+            },
+            {
+              "fn": "ze",
+              "url": "client-DVxCHmLY.js",
+              "line": 16,
+              "column": 9440
+            },
+            {
+              "fn": "V",
+              "url": "client-DVxCHmLY.js",
+              "line": 24,
+              "column": 85
+            },
+            {
+              "fn": "hl",
+              "url": "client-DVxCHmLY.js",
+              "line": 24,
+              "column": 5482
+            },
+            {
+              "fn": "sh",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 76751
+            },
+            {
+              "fn": "vf",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106946
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.782,
+          "stack": [
+            {
+              "fn": "qn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.718,
+          "stack": [
+            {
+              "fn": "$Z",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 328204
+            },
+            {
+              "fn": "Kwe",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 332270
+            },
+            {
+              "fn": "fn",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 324969
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.561,
+          "stack": [
+            {
+              "fn": "",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 340066
+            },
+            {
+              "fn": "qn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "i1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 60002
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.4540000000000002,
+          "stack": [
+            {
+              "fn": "",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 310832
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        },
+        {
+          "ms": 1.3889999999999998,
+          "stack": [
+            {
+              "fn": "kwe",
+              "url": "index-DMH-neEf.js",
+              "line": 1335,
+              "column": 316399
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.2799999999999998,
+          "stack": [
+            {
+              "fn": "i1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 60002
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "long conversation return",
+      "presentation": {
+        "input": 3388.2999999523163,
+        "eventTimestamp": 3384.599999964237,
+        "target": {
+          "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+          "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+        },
+        "feedbackOpportunity": 72.5,
+        "operableOpportunity": 72.70000004768372,
+        "contentStableOpportunity": 102.60000002384186,
+        "animationSettled": 266.10000002384186
+      },
+      "windowMs": 92.70000004768372,
+      "timeline": [
+        {
+          "type": "EventDispatch",
+          "ms": 44.554,
+          "at": 1.3520000610351564,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 38.099,
+          "at": 6.862000061035157,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "",
+            "isolate": "15189143547633368342",
+            "lineNumber": 24,
+            "sampleTraceId": 424432224038102,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 20.161,
+          "at": 45.929000061035154
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 5.302,
+          "at": 1.5340000610351563,
+          "call": {
+            "columnNumber": 26381,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "fd",
+            "isolate": "15189143547633368342",
+            "lineNumber": 25,
+            "sampleTraceId": 424432224038076,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "Paint",
+          "ms": 3.839,
+          "at": 74.75300006103515,
+          "call": {
+            "clip": [
+              0,
+              0,
+              1440,
+              0,
+              1440,
+              900,
+              0,
+              900
+            ],
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "layerId": 0,
+            "nodeId": 208,
+            "nodeName": "#document"
+          }
+        },
+        {
+          "type": "Paint",
+          "ms": 3.605,
+          "at": 74.96800006103516,
+          "call": {
+            "clip": [
+              0,
+              0,
+              1193,
+              0,
+              1193,
+              729,
+              0,
+              729
+            ],
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "layerId": 0,
+            "nodeId": 337,
+            "nodeName": "DIV class='collo-detail-stage relative h-full overflow-hidden'"
+          }
+        },
+        {
+          "type": "Paint",
+          "ms": 3.482,
+          "at": 75.08800006103516,
+          "call": {
+            "clip": [
+              -8388608,
+              -8388608,
+              8388607,
+              -8388608,
+              8388607,
+              8388607,
+              -8388608,
+              8388607
+            ],
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "layerId": 0,
+            "nodeId": 229,
+            "nodeName": "DIV class='collo-detail-surface absolute inset-0 z-30 bg-sol-bg flex flex-col'"
+          }
+        },
+        {
+          "type": "FireAnimationFrame",
+          "ms": 1.953,
+          "at": 70.30400006103515,
+          "call": {
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "id": 385
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 1.937,
+          "at": 70.30800006103516,
+          "call": {
+            "columnNumber": 20268,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "",
+            "isolate": "15189143547633368342",
+            "lineNumber": 1,
+            "sampleTraceId": 424432224038231,
+            "scriptId": "474",
+            "url": "http://127.0.0.1:3407/assets/index-DYXzXPGu.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 1.714,
+          "at": 70.34600006103516
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 1.704,
+          "at": 82.45300006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432224038244,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 0.967,
+          "at": 88.72600006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432224038281,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 42.87,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 2.5359999999999996,
+          "stack": [
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.815,
+          "stack": [
+            {
+              "fn": "getMaxScrollOffset",
+              "url": "index-DYXzXPGu.js",
+              "line": 0,
+              "column": 16169
+            },
+            {
+              "fn": "getOffsetForAlignment",
+              "url": "index-DYXzXPGu.js",
+              "line": 0,
+              "column": 16878
+            },
+            {
+              "fn": "getOffsetForIndex",
+              "url": "index-DYXzXPGu.js",
+              "line": 0,
+              "column": 17140
+            },
+            {
+              "fn": "reconcileScroll",
+              "url": "index-DYXzXPGu.js",
+              "line": 0,
+              "column": 20329
+            },
+            {
+              "fn": "",
+              "url": "index-DYXzXPGu.js",
+              "line": 0,
+              "column": 20267
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.333,
+          "stack": [
+            {
+              "fn": "va",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 21905
+            },
+            {
+              "fn": "e",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 49542
+            },
+            {
+              "fn": "j",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 53417
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 54822
+            },
+            {
+              "fn": "vl",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 59931
+            },
+            {
+              "fn": "i1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 60002
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.25,
+          "stack": [
+            {
+              "fn": "replaceState"
+            },
+            {
+              "fn": "",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 10577
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 1.024,
+          "stack": [
+            {
+              "fn": "hM",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 21,
+              "column": 89343
+            },
+            {
+              "fn": "qn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 0.789,
+          "stack": [
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 37286
+            },
+            {
+              "fn": "yC",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 36497
+            },
+            {
+              "fn": "An",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 37488
+            },
+            {
+              "fn": "get",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 45992
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 151936
+            },
+            {
+              "fn": "Ve.onCommitted",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120286
+            },
+            {
+              "fn": "Kt.kC.enablePatches.pathAsArray",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118860
+            },
+            {
+              "fn": "t",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 51493
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "ag",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 74069
+            },
+            {
+              "fn": "replace",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 166972
+            },
+            {
+              "fn": "",
+              "url": "page-utceeUFg.js",
+              "line": 0,
+              "column": 112363
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        },
+        {
+          "ms": 0.748,
+          "stack": [
+            {
+              "fn": "transaction"
+            },
+            {
+              "fn": "transaction",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 72765
+            },
+            {
+              "fn": "transaction",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 66891
+            },
+            {
+              "fn": "js.create",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 37287
+            },
+            {
+              "fn": "z",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 12695
+            },
+            {
+              "fn": "ht._trans",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 12225
+            },
+            {
+              "fn": "ht.put",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 17893
+            },
+            {
+              "fn": "lH",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 62,
+              "column": 92689
+            },
+            {
+              "fn": "Ms",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 112542
+            },
+            {
+              "fn": "It",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 116136
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 33082
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        },
+        {
+          "ms": 0.733,
+          "stack": [
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 37286
+            },
+            {
+              "fn": "yC",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 36497
+            },
+            {
+              "fn": "An",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 37488
+            },
+            {
+              "fn": "get",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 45992
+            },
+            {
+              "fn": "Uf",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 43925
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 84735
+            },
+            {
+              "fn": "Ve.onCommitted",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120286
+            },
+            {
+              "fn": "Kt.kC.enablePatches.pathAsArray",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118860
+            },
+            {
+              "fn": "t",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 51493
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "s",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 5940
+            },
+            {
+              "fn": "",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 6122
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6744
+            },
+            {
+              "fn": "WY",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6404
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6730
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 33482
+            },
+            {
+              "fn": "s",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 33338
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 64,
+              "column": 78962
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "ag",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 74069
+            },
+            {
+              "fn": "push",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 166796
+            },
+            {
+              "fn": "onClick",
+              "url": "CapturedSessions-IerJirui.js",
+              "line": 0,
+              "column": 8860
+            },
+            {
+              "fn": "vv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 116195
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 117890
+            },
+            {
+              "fn": "gi",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 8996
+            },
+            {
+              "fn": "Hc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 117478
+            },
+            {
+              "fn": "jc",
+              "url": "client-DVxCHmLY.js",
+              "line": 24,
+              "column": 26566
+            },
+            {
+              "fn": "fd",
+              "url": "client-DVxCHmLY.js",
+              "line": 24,
+              "column": 26380
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 0.711,
+          "stack": [
+            {
+              "fn": "createTask"
+            },
+            {
+              "fn": "ht._trans",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 12225
+            },
+            {
+              "fn": "ht.put",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 43,
+              "column": 17893
+            },
+            {
+              "fn": "vk",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 62,
+              "column": 87999
+            },
+            {
+              "fn": "",
+              "url": "index-DMH-neEf.js",
+              "line": 1333,
+              "column": 16403
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "s",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 5940
+            },
+            {
+              "fn": "",
+              "url": "DashboardLayout-DYjKn9T9.js",
+              "line": 29,
+              "column": 6122
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6744
+            },
+            {
+              "fn": "WY",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6404
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 6730
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 33482
+            },
+            {
+              "fn": "s",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 33338
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 64,
+              "column": 78962
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "ag",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 81,
+              "column": 74069
+            },
+            {
+              "fn": "replace",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 166972
+            },
+            {
+              "fn": "",
+              "url": "page-utceeUFg.js",
+              "line": 0,
+              "column": 112363
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 0.71,
+          "stack": [
+            {
+              "fn": "S0",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 38576
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        },
+        {
+          "ms": 0.669,
+          "stack": [
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 166587
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 765,
+              "column": 166541
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-CpycS_Vt.js",
+              "line": 61,
+              "column": 33718
+            },
+            {
+              "fn": "g0",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 38690
+            },
+            {
+              "fn": "S0",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 38576
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "32-file diff first",
+      "presentation": {
+        "input": 3852.800000011921,
+        "eventTimestamp": 3848.699999988079,
+        "target": {
+          "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+          "file": "TEST-source-01.ts",
+          "code": "item1"
+        },
+        "feedbackOpportunity": 67.59999996423721,
+        "navigationOperable": 266.69999998807907,
+        "operableOpportunity": 267,
+        "animationSettled": 295.19999998807907,
+        "contentStableOpportunity": 316.5999999642372
+      },
+      "windowMs": 287,
+      "timeline": [
+        {
+          "type": "FunctionCall",
+          "ms": 155.381,
+          "at": 108.218,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223921519,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 36.458,
+          "at": 1.595,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 30.928,
+          "at": 5.939,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "",
+            "isolate": "15189143547633368342",
+            "lineNumber": 24,
+            "sampleTraceId": 424432223921295,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "Layout",
+          "ms": 29.117,
+          "at": 120.288
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 20.274,
+          "at": 38.099
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 17.166,
+          "at": 274.952,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223920682,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 7.095,
+          "at": 113.142
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 5.466,
+          "at": 101.759,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223921534,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 5.178,
+          "at": 84.326,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223921444,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 5.015,
+          "at": 76.594,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223921459,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 4.991,
+          "at": 95.167,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "Au",
+            "isolate": "15189143547633368342",
+            "lineNumber": 9,
+            "sampleTraceId": 424432223921475,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 4.229,
+          "at": 1.689,
+          "call": {
+            "columnNumber": 26381,
+            "frame": "3AE3418096DC0105FF3E8BF23488A136",
+            "functionName": "fd",
+            "isolate": "15189143547633368342",
+            "lineNumber": 25,
+            "sampleTraceId": 424432223921304,
+            "scriptId": "13",
+            "url": "http://127.0.0.1:3407/assets/client-DVxCHmLY.js"
+          }
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 57.74899999999998,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 36.197999999999986,
+          "stack": [
+            {
+              "fn": "er",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 267,
+              "column": 20
+            },
+            {
+              "fn": "connectedCallback",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 277,
+              "column": 3607
+            },
+            {
+              "fn": "appendChild"
+            },
+            {
+              "fn": "tf",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 85486
+            },
+            {
+              "fn": "tf",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 85486
+            },
+            {
+              "fn": "Hl",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95415
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 91083
+            }
+          ]
+        },
+        {
+          "ms": 7.321,
+          "stack": [
+            {
+              "fn": "wasm-function[25]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 5215
+            },
+            {
+              "fn": "wasm-function[48]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 39535
+            },
+            {
+              "fn": "wasm-function[46]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 33830
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[196]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 143964
+            },
+            {
+              "fn": "js-to-wasm"
+            },
+            {
+              "fn": "Ul",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 38084
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 40559
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 18234
+            }
+          ]
+        },
+        {
+          "ms": 5.930000000000001,
+          "stack": [
+            {
+              "fn": "ct",
+              "url": "react-resizable-panels-fIYUSekr.js",
+              "line": 0,
+              "column": 2118
+            },
+            {
+              "fn": "ge",
+              "url": "react-resizable-panels-fIYUSekr.js",
+              "line": 0,
+              "column": 2051
+            },
+            {
+              "fn": "registerPanel",
+              "url": "react-resizable-panels-fIYUSekr.js",
+              "line": 0,
+              "column": 26199
+            },
+            {
+              "fn": "",
+              "url": "react-resizable-panels-fIYUSekr.js",
+              "line": 0,
+              "column": 29264
+            },
+            {
+              "fn": "Kt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 3.8040000000000003,
+          "stack": [
+            {
+              "fn": "wasm-function[25]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 5215
+            },
+            {
+              "fn": "wasm-function[48]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 39535
+            },
+            {
+              "fn": "wasm-function[46]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 33830
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[196]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 143964
+            },
+            {
+              "fn": "js-to-wasm"
+            },
+            {
+              "fn": "Ul",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 38084
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 40559
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4833
+            }
+          ]
+        },
+        {
+          "ms": 2.628,
+          "stack": [
+            {
+              "fn": "wasm-function[25]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 5215
+            },
+            {
+              "fn": "wasm-function[48]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 39535
+            },
+            {
+              "fn": "wasm-function[46]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 33830
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[196]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 143964
+            },
+            {
+              "fn": "js-to-wasm"
+            },
+            {
+              "fn": "Ul",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 38084
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 40559
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1785
+            }
+          ]
+        },
+        {
+          "ms": 2.0589999999999997,
+          "stack": [
+            {
+              "fn": "wasm-function[196]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 143964
+            },
+            {
+              "fn": "js-to-wasm"
+            },
+            {
+              "fn": "Ul",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 38084
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 40559
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 18234
+            },
+            {
+              "fn": "renderDiffWithHighlighter",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 302,
+              "column": 22929
+            },
+            {
+              "fn": "renderDiff",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 302,
+              "column": 20252
+            },
+            {
+              "fn": "render",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 16982
+            },
+            {
+              "fn": "hydrate",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 11170
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 85363
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 82756
+            },
+            {
+              "fn": "Ct",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83820
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 2.042,
+          "stack": [
+            {
+              "fn": "render",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 16982
+            },
+            {
+              "fn": "hydrate",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 11170
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 85363
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 303,
+              "column": 82756
+            },
+            {
+              "fn": "Ct",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 83820
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 1.7970000000000002,
+          "stack": [
+            {
+              "fn": "O",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 52068
+            },
+            {
+              "fn": "j",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 53417
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 54822
+            },
+            {
+              "fn": "vl",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 59931
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.78,
+          "stack": [
+            {
+              "fn": "O",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 52068
+            },
+            {
+              "fn": "j",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 53417
+            },
+            {
+              "fn": "",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 54822
+            },
+            {
+              "fn": "vl",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 59931
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "fv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113351
+            },
+            {
+              "fn": "Au",
+              "url": "client-DVxCHmLY.js",
+              "line": 8,
+              "column": 1397
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.75,
+          "stack": [
+            {
+              "fn": "wasm-function[25]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 5215
+            },
+            {
+              "fn": "wasm-function[48]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 39535
+            },
+            {
+              "fn": "wasm-function[46]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 33830
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[40]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 17238
+            },
+            {
+              "fn": "wasm-function[39]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 16816
+            },
+            {
+              "fn": "wasm-function[27]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 12096
+            },
+            {
+              "fn": "wasm-function[196]",
+              "url": "001c7aca",
+              "line": 0,
+              "column": 143964
+            },
+            {
+              "fn": "js-to-wasm"
+            },
+            {
+              "fn": "Ul",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 38084
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 40559
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "compile",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64090
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 1,
+              "column": 56639
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-Dzz6p56P.js",
+              "line": 298,
+              "column": 18234
+            }
+          ]
+        },
+        {
+          "ms": 1.7200000000000002,
+          "stack": [
+            {
+              "fn": "qn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Eh",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 106166
+            },
+            {
+              "fn": "Mh",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 105336
+            },
+            {
+              "fn": "K1",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "fv",
+              "url": "client-DVxCHmLY.js",
+              "line": 23,
+              "column": 113351
+            },
+            {
+              "fn": "Au",
+              "url": "client-DVxCHmLY.js",
+              "line": 8,
+              "column": 1397
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

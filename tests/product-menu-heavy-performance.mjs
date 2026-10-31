@@ -18,6 +18,8 @@ const flag = (key, fallback) =>
 const phase = flag('phase', 'before'),
   mode = flag('mode', 'production'),
   origin = flag('origin', 'http://127.0.0.1:3407');
+const workspaceOnly = process.argv.includes('--workspace');
+const presentationRun = workspaceOnly || process.env.COLLOSYS_PRESENTATION_PHASES === '1';
 const out = path.resolve(
   `${process.env.COLLOSYS_MEASUREMENT_ROOT || 'docs/product-ui/menu-motion/evidence'}/${phase}/${mode}/flows/round-${flag('round', '1')}`,
 );
@@ -36,6 +38,13 @@ const context = await browser.newContext({
   checks = [];
 page.setDefaultTimeout(15000);
 page.setDefaultNavigationTimeout(120000);
+if (workspaceOnly) {
+  const profile = JSON.parse(await fs.readFile('docs/product-ui/workspace-polish/evidence/actual-profile.json', 'utf8'));
+  await context.addInitScript((profile) => {
+    if (profile.appearance) localStorage.setItem('collosys.appearance.v1', JSON.stringify(profile.appearance));
+    if (profile.sidebar) localStorage.setItem('collo.boot.nav', JSON.stringify(profile.sidebar));
+  }, profile);
+}
 await context.addInitScript(() => {
   window.__identityMetrics = { longTasks: [], events: [], frames: [], actions: [], startup: [] };
   try {
@@ -95,10 +104,10 @@ const go = async (route) => {
       await expect(page.getByTestId('captured-conversation')).toBeVisible({ timeout: 700 });
   }).toPass({ timeout: 60000 });
 };
-async function action(name, trigger, visible) {
+async function action(name, trigger, visible, target = {}) {
   console.log('ACTION', name);
-  if (process.env.COLLOSYS_PRESENTATION_PHASES === '1')
-    await page.evaluate((name) => {
+  if (presentationRun)
+    await page.evaluate(({ name, workspaceOnly, target }) => {
       const a = { start: performance.now(), name, presentation: {} };
       window.__identityMetrics.actions.push(a);
       if (!/dropdown|conversation return|diff/.test(name)) return;
@@ -112,6 +121,9 @@ async function action(name, trigger, visible) {
             ? '[data-testid=captured-conversation]'
             : '.collo-checkpoint-diff';
         a.presentation.input = start;
+        a.presentation.eventTimestamp = event.timeStamp;
+        a.presentation.target = target;
+        performance.mark(`workspace:${name}:${start}`);
         let last = '',
           same = 0;
         const frame = () => {
@@ -123,22 +135,43 @@ async function action(name, trigger, visible) {
             box = content?.getBoundingClientRect();
           const shown =
             !!content && !!box?.height && getComputedStyle(content).visibility !== 'hidden';
-          if (
+          const correctRoute = !target.session || new URLSearchParams(location.search).get('session') === target.session;
+          const correctSelection = !workspaceOnly || (
+            name.startsWith('dropdown') ? shown :
+            name === 'long conversation return' ? correctRoute && document.querySelector(`[data-captured-session="${CSS.escape(target.session)}"].selected`) :
+            name === '32-file diff first' ? new URLSearchParams(location.search).get('event') === target.event :
+            button?.classList.contains('bg-sol-violet/20') || button?.getAttribute('aria-selected') === 'true'
+          );
+          if (correctSelection && (
             face?.getAnimations().some((x) => x.playState === 'running') ||
             button?.getAttribute('aria-expanded') === 'true' ||
             button?.classList.contains('selected') ||
             (name === '32-file diff first' &&
               document.querySelector('[data-testid=checkpoint-completeness]')) ||
             shown
-          )
+          ))
             a.presentation.feedbackOpportunity ??= performance.now() - start;
           if (shown) {
-            const ready =
+            let ready =
               name === '32-file diff first'
                 ? content.querySelectorAll('button[data-diff-file]').length === 32
                 : name === 'long conversation return'
                   ? !content.querySelector('.collo-reader-pagination button:disabled,[role=status]')
                   : !content.querySelector('[role=status]');
+            if (workspaceOnly) {
+              if (name === 'long conversation return') {
+                const row = content.querySelector(`[data-reading-message="${CSS.escape(target.anchor || '')}"]`);
+                const feed = content.querySelector('[data-sv-feed]');
+                const rr = row?.getBoundingClientRect(), fr = feed?.getBoundingClientRect();
+                ready = correctRoute && !!rr && !!fr && rr.bottom > fr.top && rr.top < fr.bottom && !!row.textContent?.trim();
+              } else if (name.includes('diff')) {
+                const navigation = content.querySelectorAll('button[data-diff-file]');
+                if (navigation.length === 32) a.presentation.navigationOperable ??= performance.now() - start;
+                const pane = name === '32-file diff first' ? content.querySelector('[id="file-0"]') || content : content.querySelector('[data-follow-diff-scroll]');
+                const text = [...(pane?.querySelectorAll('diffs-container') || [])].map(e => e.shadowRoot?.textContent || '').join(' ');
+                ready = navigation.length === 32 && !!pane?.textContent?.includes(target.file) && text.includes(target.code);
+              }
+            }
             if (ready) a.presentation.operableOpportunity ??= performance.now() - start;
             const key = content.textContent + '|' + box.width + '|' + box.height;
             same = key === last ? same + 1 : 0;
@@ -167,7 +200,7 @@ async function action(name, trigger, visible) {
         requestAnimationFrame(frame);
       };
       document.addEventListener('pointerdown', begin, { once: true, capture: true });
-    }, name);
+    }, { name, workspaceOnly, target });
   else
     await page.evaluate(() => window.__identityMetrics.actions.push({ start: performance.now() }));
   const start = Date.now();
@@ -189,7 +222,7 @@ async function action(name, trigger, visible) {
     name,
   );
   if (
-    process.env.COLLOSYS_PRESENTATION_PHASES === '1' &&
+    presentationRun &&
     /dropdown|conversation return|diff/.test(name)
   )
     // Separate after-only presentation run: let the observed entrance finish
@@ -202,15 +235,16 @@ async function action(name, trigger, visible) {
       );
     });
   checks.push({ name, wallMs: Date.now() - start });
+  if (workspaceOnly && /dropdown|conversation return|diff/.test(name))
+    assert.ok(await page.evaluate(() => window.__identityMetrics.actions.at(-1).presentation.operableOpportunity !== undefined), `Correct target never became operable: ${name}`);
 }
 let cdp,
   tracing = false;
 try {
   await page.goto(origin + '/');
   await expect(page.locator('#email')).toBeVisible({ timeout: 120000 });
-  await page.screenshot({ path: out + '/cold-login.png' });
-  await capture('cold startup without credentials');
-  for (let i = 0; i < 3; i++) {
+  if (!workspaceOnly) await page.screenshot({ path: out + '/cold-login.png' });
+  for (let i = 0; i < (workspaceOnly ? 0 : 3); i++) {
     await action(
       'login email input',
       async () => {
@@ -292,12 +326,19 @@ try {
   await page
     .locator('[data-testid=captured-conversation] [data-sv-feed]')
     .evaluate((e) => (e.scrollTop = 5200));
+  await page.waitForTimeout(250);
+  const readingAnchor = await page.locator('[data-testid=captured-conversation] [data-sv-feed]').evaluate(feed => {
+    const edge=feed.getBoundingClientRect().top;
+    return [...feed.querySelectorAll('[data-reading-message]')].find(row=>row.getBoundingClientRect().bottom>edge+8)?.getAttribute('data-reading-message');
+  });
   for (let i = 0; i < 4; i++) {
     await page.getByRole('button', { name: 'Back to conversations', exact: true }).click();
+    if (workspaceOnly) await expect(page.getByTestId('captured-conversation')).toBeHidden();
     await action(
       'long conversation return',
       () => page.locator(`[data-captured-session="${fixture.sessionId}"]`).click(),
       () => expect(page.getByTestId('captured-conversation')).toBeVisible(),
+      { session: fixture.sessionId, anchor: readingAnchor },
     );
   }
   await go(`/projects/${fixture.projectId}?tab=workspaces`);
@@ -352,16 +393,18 @@ try {
     '32-file diff first',
     () => row.click(),
     () => expect(page.getByTestId('checkpoint-completeness')).toBeVisible(),
+    { event: event.id, file: 'TEST-source-01.ts', code: 'item1' },
   );
   await expect(page.locator('button[data-diff-file="TEST-source-28.ts"]')).toBeVisible();
   const split = page.getByRole('button', { name: 'Split', exact: true });
   if (await split.count()) await split.click();
   await expect(page.locator('button[data-diff-file="TEST-source-28.ts"]')).toBeVisible();
-  for (const file of ['01', '28', '04', '27', '09', '32'])
+  for (const file of (workspaceOnly ? ['28','04','27','09','32','01','28','04','09','32'] : ['01', '28', '04', '27', '09', '32']))
     await action(
       'diff file selection',
       () => page.locator(`button[data-diff-file="TEST-source-${file}.ts"]`).click(),
       async () => {},
+      { file: `TEST-source-${file}.ts`, code: `item${Number(file)}` },
     );
   await page.screenshot({ path: out + '/real-diff.png' });
   await capture('multi-file diff');
@@ -403,7 +446,8 @@ try {
     JSON.stringify(
       {
         phase,
-        detailedPresentation: process.env.COLLOSYS_PRESENTATION_PHASES === '1',
+        detailedPresentation: presentationRun,
+        workspaceOnly,
         mode,
         origin,
         environment: env,

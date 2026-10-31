@@ -13,6 +13,7 @@ import { craftPatches } from './craft-patches.mjs';
 import { identityPatches } from './identity-patches.mjs';
 import { menuPatches } from './menu-patches.mjs';
 import { unifiedPatches } from './unified-patches.mjs';
+import { workspacePatches } from './workspace-patches.mjs';
 export const patches = [
   ...productPatches,
   ...backendPatches,
@@ -139,4 +140,5 @@ export const patches = [
   ...identityPatches,
   ...menuPatches,
   ...unifiedPatches,
+  ...workspacePatches,
 ];

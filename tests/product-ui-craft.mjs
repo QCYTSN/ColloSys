@@ -4,6 +4,7 @@ import path from 'node:path';
 import { chromium, expect as baseExpect } from '@playwright/test';
 import { account, completionFixture, eventually } from './product-ui-completion-data.mjs';
 const expect = baseExpect.configure({ timeout: 30000 });
+const workspaceOnly = process.argv.includes('--workspace');
 const f = await completionFixture(),
   out = process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/craft/evidence/continuity';
 await fs.mkdir(out, { recursive: true });
@@ -93,6 +94,7 @@ const shot = (name) => page.screenshot({ path: path.join(out, name + '.png') });
 try {
   await page.goto('http://127.0.0.1:3407/login');
   await expect(page.locator('#email')).toBeVisible();
+  if (!workspaceOnly) {
   await page.evaluate(() => document.fonts.ready);
   const h = await page.locator('.collo-auth-step h1').evaluate((e) => {
     const s = getComputedStyle(e);
@@ -105,6 +107,7 @@ try {
   });
   assert.equal(h.weight, '600');
   metrics.push({ auth: h });
+  }
   await page.locator('#email').fill(account.a.email);
   await page.locator('#password').fill(account.a.password);
   await page.locator('#password').press('Enter');
@@ -298,7 +301,7 @@ try {
     await shot('04-storage-review-reset');
   });
   await page.keyboard.press('Escape');
-  await check(
+  if (!workspaceOnly) await check(
     'Recovery route remains reachable with an existing identity and clears durable sign-in explicitly',
     async () => {
       await page.goto('http://127.0.0.1:3407/login?recover=1&return_to=%2Fprojects');

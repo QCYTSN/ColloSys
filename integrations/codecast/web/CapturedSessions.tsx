@@ -19,6 +19,7 @@ import { useAuthPrincipal } from '../lib/authPrincipal';
 import { AgentBadge } from './AgentBadge';
 import { formatAgentType } from '../components/AgentTypeIcon';
 import { readView, writeView, viewKey, clearProjectViews } from './productViewState';
+import { ProductViewVisibility } from './ProductViewVisibility';
 
 export function capturedHref(
   projectId: string,
@@ -220,7 +221,16 @@ function Reader({
   if (!page.data && !rows.length)
     return (
       <div className="collo-reader-loading" role="status" aria-label="Loading conversation">
-        <div className="collo-reader-heading">Loading conversation…</div>
+        <div className="collo-reader-heading">
+          <div>
+            <Button variant="ghost" size="sm" aria-label="Back to conversations"
+              onClick={() => router.push(backHref ?? `/projects/${projectId}?tab=sessions`)}>
+              <ArrowLeft size={17} />
+            </Button>
+            <span className="collo-reader-owner" title={sessionId}>{sessionId}</span>
+          </div>
+          <span className="collo-tag">Loading messages…</span>
+        </div>
         <div className="collo-skeleton-list">
           <i />
           <i />
@@ -354,6 +364,20 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
     through && /^\d+$/.test(through) && Number.isSafeInteger(Number(through))
       ? Number(through)
       : undefined;
+  // At most two live readers in this project surface. This keeps acquired pages,
+  // expanded tools and the virtualizer's measured rows together. These are
+  // mounted subscriptions, not a durable content or authorization cache.
+  const readers = useRef<{ workspaceId: string; sessionId: string; throughSeq?: number }[]>([]);
+  const readerKey = (reader: { workspaceId: string; sessionId: string; throughSeq?: number }) =>
+    `${reader.workspaceId}:${reader.sessionId}:${reader.throughSeq ?? ''}`;
+  const requested = workspaceId && sessionId ? { workspaceId, sessionId, throughSeq } : null;
+  if (page.denied || members.denied) readers.current = [];
+  else if (requested) {
+    const key = readerKey(requested);
+    if (readerKey(readers.current.at(-1) ?? requested) !== key || !readers.current.length)
+      readers.current = [...readers.current.filter(reader => readerKey(reader) !== key), requested].slice(-2);
+  }
+  const displayedReader = requested ?? readers.current.at(-1);
   const closeHref = global ? `/inbox?project=${projectId}` : `/projects/${projectId}?tab=sessions`;
   const name = (id: string) =>
     members.data?.members.find((m: { id: string }) => m.id === id)?.name ?? 'Member';
@@ -368,6 +392,8 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
       <DetailSplitLayout
         closeHref={closeHref}
         accessValid={!page.denied && !members.denied}
+        detailOpen={!!requested}
+        retainDetail
         list={
           <div className="collo-session-list">
             <div className="collo-page-heading">
@@ -523,14 +549,19 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
           </div>
         }
       >
-        {workspaceId && sessionId ? (
-          <CapturedReader
-            projectId={projectId}
-            workspaceId={workspaceId}
-            sessionId={sessionId}
-            throughSeq={throughSeq}
-            backHref={closeHref}
-          />
+        {readers.current.length ? (
+          <div className="collo-reader-stack">
+            {readers.current.map(reader => {
+              const shown = !!displayedReader && readerKey(displayedReader) === readerKey(reader);
+              return (
+                <div key={readerKey(reader)} className="collo-retained-reader" data-visible={shown} inert={!shown} aria-hidden={!shown}>
+                  <ProductViewVisibility.Provider value={shown && !!requested}>
+                    <CapturedReader projectId={projectId} {...reader} backHref={closeHref} />
+                  </ProductViewVisibility.Provider>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
       </DetailSplitLayout>
     </div>

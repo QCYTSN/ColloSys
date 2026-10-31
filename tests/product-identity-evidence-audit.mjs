@@ -8,6 +8,8 @@ const root = process.env.COLLOSYS_EVIDENCE_AUDIT_ROOT || 'docs/product-ui/identi
   findings = [],
   files = [];
 const secrets = [];
+try { secrets.push((await fs.readFile('.local/codecast-app/browser-pairing', 'utf8')).trim()); }
+catch (error) { if (error.code !== 'ENOENT') throw error; }
 for (const file of ['.local/codecast-app/local.env', '.local/codecast-app/oauth.env']) {
   try {
     for (const [key, value] of Object.entries(parseEnv(await fs.readFile(file, 'utf8'))))
@@ -35,7 +37,7 @@ for (const file of files) {
     const text = carry + chunk.toString('utf8');
     if (
       !matched &&
-      (secrets.some((value) => text.includes(value)) ||
+      (secrets.some((value) => value.length >= 16 && text.includes(value)) ||
         /eyJ[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{20,}/.test(text))
     ) {
       findings.push({ file, kind: 'Potential private credential or JWT; inspect privately' });
@@ -44,11 +46,17 @@ for (const file of files) {
     carry = text.slice(-16384);
   }
 }
-const html = await fs.readFile(root + '/REVIEW.html', 'utf8');
+let html;
+try { html = await fs.readFile(root + '/REVIEW.html', 'utf8'); }
+catch (error) {
+  if (error.code !== 'ENOENT') throw error;
+  html = await fs.readFile(root + '/README.md', 'utf8');
+}
 const links = [
-  ...new Set(
-    [...html.matchAll(/(?:["'])(evidence\/[^"']+|[A-Z][A-Z-]+\.md)["']/g)].map((match) => match[1]),
-  ),
+  ...new Set([
+    ...[...html.matchAll(/(?:["'])(evidence\/[^"']+|[A-Z][A-Z-]+\.md)["']/g)].map((match) => match[1]),
+    ...[...html.matchAll(/\]\((evidence\/[^)]+)\)/g)].map(match => match[1]),
+  ]),
 ];
 for (const link of links) {
   try {

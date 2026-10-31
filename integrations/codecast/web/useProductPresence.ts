@@ -46,6 +46,7 @@ export function useProductPresence<T>(value: T | null, allowed = true) {
     };
   }, [exiting, epoch, safe]);
   return {
+    allowed: safe,
     value: safe ? (value ?? held.current?.value ?? null) : null,
     phase: exiting ? 'closing' : 'open',
     ref,

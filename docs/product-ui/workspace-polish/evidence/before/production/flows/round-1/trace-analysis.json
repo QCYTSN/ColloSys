@@ -1,0 +1,5079 @@
+{
+  "method": "Actual pointerdown through correct content readiness plus 20ms. This excludes the subsequent close in the return sample. Sampled leaf weights and inclusive timeline slices cannot be added together.",
+  "result": [
+    {
+      "action": "dropdown first",
+      "presentation": {
+        "input": 2030.300000011921,
+        "eventTimestamp": 2014.1000000238419,
+        "target": {},
+        "feedbackOpportunity": 79.30000001192093,
+        "operableOpportunity": 79.30000001192093,
+        "animationSettled": 244.5,
+        "contentStableOpportunity": 260.9000000357628
+      },
+      "windowMs": 99.30000001192093,
+      "timeline": [
+        {
+          "type": "EventDispatch",
+          "ms": 68.063,
+          "at": 5.456,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 57.88,
+          "at": 6.191,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 24,
+            "sampleTraceId": 3165191013078303,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 23.022,
+          "at": 27.08
+        },
+        {
+          "type": "Layout",
+          "ms": 4.649,
+          "at": 50.125
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 1.999,
+          "at": 73.544
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 1.483,
+          "at": 69.068
+        },
+        {
+          "type": "FireAnimationFrame",
+          "ms": 1.18,
+          "at": 78.407,
+          "call": {
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "id": 140
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 1.162,
+          "at": 78.409,
+          "call": {
+            "columnNumber": 23,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "frame",
+            "isolate": "3830127641955018281",
+            "lineNumber": 20,
+            "sampleTraceId": 3165191013078168,
+            "scriptId": "721",
+            "url": ""
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 0.922,
+          "at": 93.483,
+          "call": {
+            "type": "animationstart"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 0.815,
+          "at": 0.483,
+          "call": {
+            "columnNumber": 26381,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "fd",
+            "isolate": "3830127641955018281",
+            "lineNumber": 25,
+            "sampleTraceId": 3165191013078324,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "Paint",
+          "ms": 0.721,
+          "at": 81.821,
+          "call": {
+            "clip": [
+              0,
+              0,
+              1440,
+              0,
+              1440,
+              900,
+              0,
+              900
+            ],
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "layerId": 0,
+            "nodeId": 46,
+            "nodeName": "#document"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 0.72,
+          "at": 3.237,
+          "call": {
+            "type": "focusin"
+          }
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 28.560000000000002,
+          "stack": [
+            {
+              "fn": "Lm",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 345410
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 344319
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        },
+        {
+          "ms": 21.076,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.897,
+          "stack": [
+            {
+              "fn": "jZ",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 328204
+            },
+            {
+              "fn": "qwe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 332270
+            },
+            {
+              "fn": "fn",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 324969
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.835,
+          "stack": [
+            {
+              "fn": "ywe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 316399
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.78,
+          "stack": [
+            {
+              "fn": "Hl",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95415
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            },
+            {
+              "fn": "B1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 91083
+            },
+            {
+              "fn": "Ul",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 90605
+            }
+          ]
+        },
+        {
+          "ms": 1.211,
+          "stack": [
+            {
+              "fn": "Wwe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 332341
+            },
+            {
+              "fn": "Gwe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 333193
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.048,
+          "stack": [
+            {
+              "fn": "qn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "i1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 60002
+            },
+            {
+              "fn": "A1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 0.929,
+          "stack": [
+            {
+              "fn": "createElement"
+            },
+            {
+              "fn": "sh",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 76751
+            },
+            {
+              "fn": "vf",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106946
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 0.893,
+          "stack": [
+            {
+              "fn": "n",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 9,
+              "column": 133
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1500,
+              "column": 119569
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1500,
+              "column": 119557
+            },
+            {
+              "fn": "useMemo",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 45962
+            },
+            {
+              "fn": "nt.useMemo",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 17,
+              "column": 7418
+            },
+            {
+              "fn": "P6t",
+              "url": "index-BnHjVaHw.js",
+              "line": 1500,
+              "column": 119505
+            },
+            {
+              "fn": "qn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 0.875,
+          "stack": [
+            {
+              "fn": "la",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 326246
+            },
+            {
+              "fn": "Zk",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 328409
+            },
+            {
+              "fn": "Jwe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 334476
+            },
+            {
+              "fn": "whileElementsMounted",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 340755
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 337414
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            }
+          ]
+        },
+        {
+          "ms": 0.802,
+          "stack": [
+            {
+              "fn": "ake",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 335439
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 336957
+            },
+            {
+              "fn": "Jwe",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 334476
+            },
+            {
+              "fn": "whileElementsMounted",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 340755
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1335,
+              "column": 337414
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            }
+          ]
+        },
+        {
+          "ms": 0.688,
+          "stack": [
+            {
+              "fn": "n",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 9,
+              "column": 133
+            },
+            {
+              "fn": "L6t",
+              "url": "index-BnHjVaHw.js",
+              "line": 1500,
+              "column": 121525
+            },
+            {
+              "fn": "qn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "tv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 112348
+            },
+            {
+              "fn": "",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113742
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "long conversation return",
+      "presentation": {
+        "input": 3266,
+        "eventTimestamp": 3263,
+        "target": {
+          "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+          "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+        },
+        "feedbackOpportunity": 45.5,
+        "operableOpportunity": 324,
+        "contentStableOpportunity": 380.5
+      },
+      "windowMs": 344,
+      "timeline": [
+        {
+          "type": "EventDispatch",
+          "ms": 62.231,
+          "at": 260.865,
+          "call": {
+            "type": "scroll"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 57.431,
+          "at": 264.976,
+          "call": {
+            "columnNumber": 2096,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 1,
+            "sampleTraceId": 3165191013116012,
+            "scriptId": "336",
+            "url": "http://127.0.0.1:3407/assets/index-C2pof9dT.js"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 42.489,
+          "at": 1.282,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 38.964,
+          "at": 82.882,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013111367,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 36.687,
+          "at": 6.085,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 24,
+            "sampleTraceId": 3165191013111649,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 20.612,
+          "at": 127.465,
+          "call": {
+            "type": "scroll"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 18.352,
+          "at": 237.283,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013116121,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 17.221,
+          "at": 338.274,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013116903,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 16.365,
+          "at": 131.283,
+          "call": {
+            "columnNumber": 2096,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 1,
+            "sampleTraceId": 3165191013116299,
+            "scriptId": "336",
+            "url": "http://127.0.0.1:3407/assets/index-C2pof9dT.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 15.72,
+          "at": 201.965,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013116051,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 15.035,
+          "at": 158.252,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013116261,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 13.032,
+          "at": 290.221
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 86.3820000000002,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 24.328999999999997,
+          "stack": [
+            {
+              "fn": "o",
+              "url": "index-BnHjVaHw.js",
+              "line": 1514,
+              "column": 130204
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1514,
+              "column": 130160
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 16.076999999999995,
+          "stack": [
+            {
+              "fn": "o",
+              "url": "index-BnHjVaHw.js",
+              "line": 1514,
+              "column": 130204
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1514,
+              "column": 130160
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 7.171999999999999,
+          "stack": [
+            {
+              "fn": "(garbage collector)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 7.036,
+          "stack": [
+            {
+              "fn": "d",
+              "url": "CapturedSessions-fp_INfTe.js",
+              "line": 0,
+              "column": 1927
+            },
+            {
+              "fn": "",
+              "url": "CapturedSessions-fp_INfTe.js",
+              "line": 0,
+              "column": 2299
+            },
+            {
+              "fn": "Qa",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83316
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            }
+          ]
+        },
+        {
+          "ms": 4.556,
+          "stack": [
+            {
+              "fn": "d",
+              "url": "CapturedSessions-fp_INfTe.js",
+              "line": 0,
+              "column": 1927
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 4.453,
+          "stack": [
+            {
+              "fn": "d",
+              "url": "CapturedSessions-fp_INfTe.js",
+              "line": 0,
+              "column": 1927
+            },
+            {
+              "fn": "",
+              "url": "CapturedSessions-fp_INfTe.js",
+              "line": 0,
+              "column": 2299
+            },
+            {
+              "fn": "Qa",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83316
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            },
+            {
+              "fn": "Z1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 100046
+            },
+            {
+              "fn": "Jt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 99856
+            }
+          ]
+        },
+        {
+          "ms": 3.588,
+          "stack": [
+            {
+              "fn": "focus"
+            },
+            {
+              "fn": "",
+              "url": "DetailSplitLayout-8X1Yh_dI.js",
+              "line": 0,
+              "column": 883
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 2.5380000000000003,
+          "stack": [
+            {
+              "fn": "V",
+              "url": "client-B-vye1zL.js",
+              "line": 24,
+              "column": 85
+            },
+            {
+              "fn": "hl",
+              "url": "client-B-vye1zL.js",
+              "line": 24,
+              "column": 5482
+            },
+            {
+              "fn": "sh",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 76751
+            },
+            {
+              "fn": "vf",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106946
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "nv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113680
+            },
+            {
+              "fn": "Wt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 111938
+            },
+            {
+              "fn": "cf",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 103850
+            },
+            {
+              "fn": "Lh",
+              "url": "client-B-vye1zL.js",
+              "line": 24,
+              "column": 15058
+            },
+            {
+              "fn": "AD.wn.flushSync",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 39,
+              "column": 1182
+            },
+            {
+              "fn": "onChange",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 22733
+            },
+            {
+              "fn": "notify",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 6225
+            },
+            {
+              "fn": "maybeNotify.x.key",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 6432
+            },
+            {
+              "fn": "o",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 465
+            },
+            {
+              "fn": "",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 7512
+            },
+            {
+              "fn": "",
+              "url": "index-C2pof9dT.js",
+              "line": 0,
+              "column": 2095
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.8179999999999998,
+          "stack": [
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1379,
+              "column": 3269
+            },
+            {
+              "fn": "qn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "i1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 60002
+            },
+            {
+              "fn": "A1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Th",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105301
+            },
+            {
+              "fn": "zc",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 104844
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "fv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113351
+            },
+            {
+              "fn": "Au",
+              "url": "client-B-vye1zL.js",
+              "line": 8,
+              "column": 1397
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 1.8,
+          "stack": [
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 37286
+            },
+            {
+              "fn": "yC",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 36497
+            },
+            {
+              "fn": "An",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 37488
+            },
+            {
+              "fn": "get",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 45992
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 765,
+              "column": 108792
+            },
+            {
+              "fn": "Ve.onCommitted",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 120286
+            },
+            {
+              "fn": "Kt.kC.enablePatches.pathAsArray",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 118860
+            },
+            {
+              "fn": "t",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 51493
+            },
+            {
+              "fn": "Kt",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 118741
+            },
+            {
+              "fn": "xe",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 61,
+              "column": 120150
+            },
+            {
+              "fn": "",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 765,
+              "column": 108726
+            },
+            {
+              "fn": "CS",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 81,
+              "column": 6292
+            },
+            {
+              "fn": "syncTable",
+              "url": "lineWorkspaceUrl-Dy_bFdyv.js",
+              "line": 765,
+              "column": 108715
+            },
+            {
+              "fn": "",
+              "url": "DashboardLayout-gSTax0Si.js",
+              "line": 21,
+              "column": 62224
+            },
+            {
+              "fn": "",
+              "url": "index-BnHjVaHw.js",
+              "line": 1328,
+              "column": 1715
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            }
+          ]
+        },
+        {
+          "ms": 1.682,
+          "stack": [
+            {
+              "fn": "o",
+              "url": "ConversationView-DXA6ls_n.js",
+              "line": 24,
+              "column": 11237
+            },
+            {
+              "fn": "",
+              "url": "ConversationView-DXA6ls_n.js",
+              "line": 24,
+              "column": 11137
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            },
+            {
+              "fn": "X1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97777
+            },
+            {
+              "fn": "ua",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 97684
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "action": "32-file diff first",
+      "presentation": {
+        "input": 4065.2999999523163,
+        "eventTimestamp": 4060.099999964237,
+        "target": {
+          "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+          "file": "TEST-source-01.ts",
+          "code": "item1"
+        },
+        "feedbackOpportunity": 71.70000004768372,
+        "navigationOperable": 163.70000004768372,
+        "operableOpportunity": 462.5,
+        "animationSettled": 479.7000000476837,
+        "contentStableOpportunity": 490.7000000476837
+      },
+      "windowMs": 482.5,
+      "timeline": [
+        {
+          "type": "FunctionCall",
+          "ms": 189.951,
+          "at": 267.18500006103517,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 24,
+            "sampleTraceId": 3165191013007862,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "EventDispatch",
+          "ms": 65.36,
+          "at": 2.407000061035156,
+          "call": {
+            "type": "click"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 64.145,
+          "at": 94.30600006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013011307,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 59.222,
+          "at": 7.174000061035156,
+          "call": {
+            "columnNumber": 113743,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "",
+            "isolate": "3830127641955018281",
+            "lineNumber": 24,
+            "sampleTraceId": 3165191013011343,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 22.881,
+          "at": 27.590000061035155
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 22.416,
+          "at": 180.27300006103516,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013011006,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "Layout",
+          "ms": 18.015,
+          "at": 108.45000006103515
+        },
+        {
+          "type": "Layout",
+          "ms": 12.809,
+          "at": 137.48400006103515
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 11.145,
+          "at": 210.03200006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013011051,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 8.819,
+          "at": 468.18100006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013007730,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        },
+        {
+          "type": "UpdateLayoutTree",
+          "ms": 8.005,
+          "at": 100.42800006103515
+        },
+        {
+          "type": "FunctionCall",
+          "ms": 5.066,
+          "at": 86.47300006103515,
+          "call": {
+            "columnNumber": 1398,
+            "frame": "B3314424843709857EB391FC24E934BB",
+            "functionName": "Au",
+            "isolate": "3830127641955018281",
+            "lineNumber": 9,
+            "sampleTraceId": 3165191013011217,
+            "scriptId": "11",
+            "url": "http://127.0.0.1:3407/assets/client-B-vye1zL.js"
+          }
+        }
+      ],
+      "sampledLeafStacks": [
+        {
+          "ms": 78.24600000000002,
+          "stack": [
+            {
+              "fn": "(program)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 26.858,
+          "stack": [
+            {
+              "fn": "focus"
+            },
+            {
+              "fn": "",
+              "url": "DetailSplitLayout-8X1Yh_dI.js",
+              "line": 0,
+              "column": 883
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 25.958000000000002,
+          "stack": [
+            {
+              "fn": "ct",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 2118
+            },
+            {
+              "fn": "ge",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 2051
+            },
+            {
+              "fn": "registerPanel",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 26199
+            },
+            {
+              "fn": "",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 29264
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 25.894000000000002,
+          "stack": [
+            {
+              "fn": "findNextMatchSync",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8522
+            },
+            {
+              "fn": "findNextMatchSync",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 20
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 18234
+            },
+            {
+              "fn": "renderDiffWithHighlighter",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 22929
+            },
+            {
+              "fn": "renderDiff",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 20252
+            },
+            {
+              "fn": "render",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 16982
+            },
+            {
+              "fn": "hydrate",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 11170
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 85363
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 82756
+            },
+            {
+              "fn": "Ct",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83820
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            }
+          ]
+        },
+        {
+          "ms": 17.439999999999998,
+          "stack": [
+            {
+              "fn": "#o",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 15993
+            },
+            {
+              "fn": "exec",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 15690
+            },
+            {
+              "fn": "findNextMatchSync",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8522
+            },
+            {
+              "fn": "findNextMatchSync",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 20
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 18234
+            },
+            {
+              "fn": "renderDiffWithHighlighter",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 22929
+            },
+            {
+              "fn": "renderDiff",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 20252
+            },
+            {
+              "fn": "render",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 16982
+            },
+            {
+              "fn": "hydrate",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 11170
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 85363
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 82756
+            },
+            {
+              "fn": "Ct",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83820
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            }
+          ]
+        },
+        {
+          "ms": 12.896,
+          "stack": [
+            {
+              "fn": "ct",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 2118
+            },
+            {
+              "fn": "ge",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 2051
+            },
+            {
+              "fn": "registerPanel",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 26199
+            },
+            {
+              "fn": "",
+              "url": "react-resizable-panels-B-gW1Pom.js",
+              "line": 0,
+              "column": 29264
+            },
+            {
+              "fn": "Kt",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83095
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            },
+            {
+              "fn": "_1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 87573
+            },
+            {
+              "fn": "Za",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 95999
+            }
+          ]
+        },
+        {
+          "ms": 8.851,
+          "stack": [
+            {
+              "fn": "yf",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 17278
+            },
+            {
+              "fn": "Sf",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18475
+            },
+            {
+              "fn": "Cf.t.regexConstructor",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18737
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8197
+            },
+            {
+              "fn": "Nu",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8020
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18778
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 18234
+            },
+            {
+              "fn": "renderDiffWithHighlighter",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 22929
+            },
+            {
+              "fn": "renderDiff",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 20252
+            },
+            {
+              "fn": "render",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 16982
+            },
+            {
+              "fn": "hydrate",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 11170
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 85363
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 82756
+            },
+            {
+              "fn": "Ct",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 83820
+            }
+          ]
+        },
+        {
+          "ms": 5.9799999999999995,
+          "stack": [
+            {
+              "fn": "(garbage collector)"
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 4.639,
+          "stack": [
+            {
+              "fn": "getBoundingClientRect"
+            },
+            {
+              "fn": "frame",
+              "line": 19,
+              "column": 22
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 3.402,
+          "stack": [
+            {
+              "fn": "$u",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 43,
+              "column": 890
+            },
+            {
+              "fn": "Vu",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 43,
+              "column": 39
+            },
+            {
+              "fn": "la",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 44,
+              "column": 8772
+            },
+            {
+              "fn": "Ef",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 17394
+            },
+            {
+              "fn": "yf",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 17278
+            },
+            {
+              "fn": "Sf",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18475
+            },
+            {
+              "fn": "Cf.t.regexConstructor",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18737
+            },
+            {
+              "fn": "",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8197
+            },
+            {
+              "fn": "Nu",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 8020
+            },
+            {
+              "fn": "createScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 152,
+              "column": 18778
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 15058
+            },
+            {
+              "fn": "createOnigScanner",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 7274
+            },
+            {
+              "fn": "Mr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64845
+            },
+            {
+              "fn": "_resolveAnchors",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64719
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 64230
+            },
+            {
+              "fn": "compileAG",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 1,
+              "column": 55478
+            },
+            {
+              "fn": "Hs",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4833
+            },
+            {
+              "fn": "Rd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 4149
+            },
+            {
+              "fn": "xd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 3898
+            },
+            {
+              "fn": "f",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1785
+            },
+            {
+              "fn": "Ms",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 1533
+            },
+            {
+              "fn": "_tokenize",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8763
+            },
+            {
+              "fn": "tokenizeLine2",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 2,
+              "column": 8591
+            },
+            {
+              "fn": "pr",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19614
+            },
+            {
+              "fn": "Qd",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 19501
+            },
+            {
+              "fn": "Ws",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 3,
+              "column": 18563
+            },
+            {
+              "fn": "Bi",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15101
+            },
+            {
+              "fn": "Rn",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 15295
+            },
+            {
+              "fn": "An",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 11,
+              "column": 16878
+            },
+            {
+              "fn": "codeToHast",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 12,
+              "column": 2787
+            },
+            {
+              "fn": "kg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 22508
+            },
+            {
+              "fn": "Sg",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 298,
+              "column": 18234
+            },
+            {
+              "fn": "renderDiffWithHighlighter",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 22929
+            },
+            {
+              "fn": "renderDiff",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 302,
+              "column": 20252
+            },
+            {
+              "fn": "render",
+              "url": "PierreDiff-CYnT3x1s.js",
+              "line": 303,
+              "column": 16982
+            }
+          ]
+        },
+        {
+          "ms": 3.0649999999999995,
+          "stack": [
+            {
+              "fn": "frame",
+              "line": 19,
+              "column": 22
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        },
+        {
+          "ms": 3.0069999999999997,
+          "stack": [
+            {
+              "fn": "qn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 33972
+            },
+            {
+              "fn": "Wn",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 61890
+            },
+            {
+              "fn": "A1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 71817
+            },
+            {
+              "fn": "r1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106208
+            },
+            {
+              "fn": "Eh",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 106166
+            },
+            {
+              "fn": "Mh",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 105336
+            },
+            {
+              "fn": "K1",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 101848
+            },
+            {
+              "fn": "fv",
+              "url": "client-B-vye1zL.js",
+              "line": 23,
+              "column": 113351
+            },
+            {
+              "fn": "Au",
+              "url": "client-B-vye1zL.js",
+              "line": 8,
+              "column": 1397
+            },
+            {
+              "fn": "(root)"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

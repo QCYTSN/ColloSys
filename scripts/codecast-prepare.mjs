@@ -132,6 +132,8 @@ const additions = [
     'product-project-identity.css',
     'ProductControlTriggers.tsx',
     'ProductReadingSplit.tsx',
+    'ProductViewVisibility.ts',
+    'useTaskCommentDraft.ts',
     'product-controls.css',
     'ProductListMenus.tsx',
     'ProductTime.ts',

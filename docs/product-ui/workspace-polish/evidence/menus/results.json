@@ -1,0 +1,110 @@
+{
+  "mode": "production",
+  "checks": [
+    "Actual Tasks preset: pointerdown feedback on inner visual, stable anchor, four radio choices/counts, mouse/Enter/Space/arrows/typeahead/Home/End/Escape and trigger focus; cancelling preserves scroll.",
+    "Display: compact settings dialog, every upstream axis retained; nested Escape/focus, immediate grouping/subgroup/sort/direction, no-group clears both axes per the existing model, manual direction disabled, List/Board, real clipboard link and refresh preferences.",
+    "Add filter/category and filter chip use actual popovers; multi status remains Filtered, layered Escape, clearing status restores All per the existing model. Existing inline Save view cancel and persisted save are exercised.",
+    "Low height and squeezed 960/720/640 CSS-pixel widths: parent/child stay in viewport, bottom copy action reachable. Actual desktop zoom is tested separately; CSS zoom is not used as its substitute. Reduced motion preserves states without surface animation."
+  ],
+  "observations": [
+    {
+      "name": "pointerdown opens without click delay",
+      "button": {
+        "x": 243.84375,
+        "y": 67,
+        "width": 130.40625,
+        "height": 32
+      },
+      "anchorBefore": {
+        "x": 243.84375,
+        "y": 67,
+        "width": 130.40625,
+        "height": 32
+      },
+      "face": {
+        "transform": "matrix(1, 0, 0, 1, 0, 0.355619)",
+        "animations": [
+          {
+            "time": 58.100000000000485,
+            "playState": "running"
+          },
+          {
+            "time": 24.725999989919423,
+            "playState": "running"
+          },
+          {
+            "time": 24.725999989919423,
+            "playState": "running"
+          },
+          {
+            "time": 24.725999989919423,
+            "playState": "running"
+          },
+          {
+            "time": 24.725999989919423,
+            "playState": "running"
+          },
+          {
+            "time": 24.725999989919423,
+            "playState": "running"
+          }
+        ]
+      }
+    },
+    {
+      "name": "closing presence",
+      "layers": [
+        {
+          "state": "closed",
+          "opacity": "0.986156",
+          "pointerEvents": "none",
+          "wrapperPointerEvents": "none"
+        }
+      ]
+    },
+    {
+      "name": "all available grouping axes",
+      "axes": [
+        "No grouping",
+        "Status",
+        "Project",
+        "Plan",
+        "Assignee",
+        "Chain",
+        "Label",
+        "Session"
+      ]
+    },
+    {
+      "name": "status values",
+      "options": [
+        {
+          "value": "open",
+          "checked": true
+        },
+        {
+          "value": "in_progress",
+          "checked": true
+        },
+        {
+          "value": "in_review",
+          "checked": true
+        },
+        {
+          "value": "backlog",
+          "checked": false
+        },
+        {
+          "value": "done",
+          "checked": false
+        }
+      ]
+    }
+  ],
+  "build": {
+    "version": 1,
+    "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+    "dirty": true,
+    "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+  }
+}

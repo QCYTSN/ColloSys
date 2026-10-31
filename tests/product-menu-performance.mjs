@@ -38,6 +38,13 @@ const results = [];
 for (let round = 1; round <= 3; round++) {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  if (process.env.COLLOSYS_MEASUREMENT_ROOT?.includes('workspace-polish')) {
+    const profile = JSON.parse(await fs.readFile('docs/product-ui/workspace-polish/evidence/actual-profile.json', 'utf8'));
+    await context.addInitScript(({ appearance, sidebar }) => {
+      localStorage.setItem('collosys.appearance.v1', JSON.stringify(appearance));
+      localStorage.setItem('collo.boot.nav', JSON.stringify(sidebar));
+    }, profile);
+  }
   await context.addInitScript(() => {
     window.__menu = { actions: [], events: [], longTasks: [] };
     try {

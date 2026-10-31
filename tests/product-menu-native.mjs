@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { _electron as electron, expect as baseExpect } from '@playwright/test';
 import { account } from './product-ui-refinement-data.mjs';
 const expect = baseExpect.configure({ timeout: 60000 });
+const workspaceOnly = process.argv.includes('--workspace');
 const out =
   process.env.COLLOSYS_UI_EVIDENCE_DIR || 'docs/product-ui/menu-motion/evidence/native-menus';
 await fs.mkdir(out, { recursive: true });
@@ -44,6 +45,7 @@ const contained = async (locator) => {
 };
 try {
   await expect(page.locator('#email')).toBeVisible();
+  if (!workspaceOnly) {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].minimize());
   await expect(page.locator('.collo-companion-scene')).toHaveAttribute('data-paused', 'true');
   await app.evaluate(({ BrowserWindow }) => {
@@ -56,6 +58,15 @@ try {
     result:
       'Actual native minimize pauses the scene; restore resumes visibility without moving input focus.',
   });
+  }
+  if (workspaceOnly) {
+    const profile = JSON.parse(await fs.readFile('docs/product-ui/workspace-polish/evidence/actual-profile.json', 'utf8'));
+    await page.evaluate(profile => {
+      localStorage.setItem('collosys.appearance.v1', JSON.stringify(profile.appearance));
+      localStorage.setItem('collo.boot.nav', JSON.stringify(profile.sidebar));
+    }, profile);
+    await page.reload();
+  }
   await page.locator('#email').fill(account.a.email);
   await page.locator('#password').fill(account.a.password);
   await page.locator('form button[type=submit]').click();
@@ -109,6 +120,24 @@ try {
       result:
         'Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration.',
     });
+  }
+  if (workspaceOnly) {
+    const fixture = JSON.parse(await fs.readFile('.local/workspace-polish-fixture.json', 'utf8'));
+    await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      w.setBounds({ width: 1440, height: 852 });
+      w.webContents.setZoomFactor(1);
+    });
+    await page.goto(`http://127.0.0.1:3407/projects/${fixture.projectId}?tab=workspaces&event=${fixture.eventId}`);
+    await expect(async () => {
+      if (await page.locator('[data-foreign-switch]').isVisible()) await page.locator('[data-foreign-switch]').click();
+      await expect(page.locator('.collo-checkpoint-diff')).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 60000 });
+    if (await page.getByRole('button', { name: 'Split', exact: true }).count()) await page.getByRole('button', { name: 'Split', exact: true }).click();
+    await page.locator('button[data-diff-file="long.ts"]').click();
+    await expect(page.locator('diffs-container')).toBeVisible();
+    await capture(`${out}/native-actual-iris-dpr2.png`);
+    checks.push({ actualAppearance: await page.evaluate(() => ({ appearance: JSON.parse(localStorage.getItem('collosys.appearance.v1')), dpr: devicePixelRatio, width: innerWidth, height: innerHeight })), result: 'Real native checkpoint Diff at actual Iris light / zoom1 / OS scale2' });
   }
   await fs.writeFile(
     out + '/results.json',

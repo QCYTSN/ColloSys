@@ -17,7 +17,8 @@ import { CheckpointSource } from './CheckpointSource';
 import { DirectoryStorage } from './DirectoryStorage';
 import { formatAgentType } from '../components/AgentTypeIcon';
 import { capturedHref } from './CapturedSessions';
-import { FileDiffLayout } from '../components/FileDiffLayout';
+import { FileDiffLayout, getFileExtension } from '../components/FileDiffLayout';
+import { preloadDiffRenderer } from '../components/diff/pierre';
 import { MemberFace } from './MemberFace';
 import { readView, writeView, viewKey } from './productViewState';
 import { Button } from '../components/ui/button';
@@ -37,6 +38,9 @@ import { groupByDay } from '../lib/timelineRail';
 import { useTabVisible } from '../hooks/usePagePresence';
 import { useAuthPrincipal, authPrincipal } from '../lib/authPrincipal';
 import { useCollaboration } from './useCollaboration';
+import { useProductQuery } from './useProductQuery';
+import { colloApi } from './colloApi';
+import type { GenericId } from 'convex/values';
 import type { FileChange, Checkpoint } from './protocol';
 import type {
   LocalDirectory,
@@ -49,16 +53,33 @@ import { isPaired, localRequest, chooseDirectory, LOCAL_INSPECTION_INTERVAL_MS }
 const field =
   'w-full rounded-md border border-sol-border bg-sol-bg px-3 py-2 text-sm text-sol-text';
 type FilesProps = { files: FileChange[]; scope: string };
+type FileReadingState = { file?: string; line?: number; positions?: Record<string, { line?: number }> };
 function Files({ files, scope }: FilesProps) {
+  const slot = useRef<HTMLDivElement>(null);
+  const [initialWidth, setInitialWidth] = useState(0);
+  useEffect(() => {
+    const element = slot.current;
+    if (!element) return;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width) setInitialWidth(entry.contentRect.width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    const saved = readView<{ file?: string }>(scope);
+    const first = files.find(file => file.path === saved?.file) ?? files[0];
+    if (first) preloadDiffRenderer(first.path, getFileExtension(first.path));
+  }, [files, scope]);
   // Commit the selected checkpoint and its real status before mounting the
   // expensive diff tree. React schedules the content; there is no timed delay.
   // This component is keyed by event and unmounted on access loss, so deferred
   // data can only belong to the same currently authorized checkpoint.
   const ready = useDeferredValue<FileChange[] | null>(files, null);
   return (
-    <div className="collo-files-slot" aria-busy={ready !== files}>
-      {ready ? (
-        <FileContent files={ready} scope={scope} />
+    <div ref={slot} className="collo-files-slot" aria-busy={ready !== files || !initialWidth}>
+      {ready && initialWidth ? (
+        <FileContent files={ready} scope={scope} initialWidth={initialWidth} />
       ) : (
         <div className="collo-reader-loading" role="status">
           Preparing file changes…
@@ -67,8 +88,16 @@ function Files({ files, scope }: FilesProps) {
     </div>
   );
 }
-const FileContent = memo(function FileContent({ files, scope }: FilesProps) {
-  const saved = useRef(readView<{ file?: string; line?: number }>(scope));
+const FileContent = memo(function FileContent({ files, scope, initialWidth }: FilesProps & { initialWidth: number }) {
+  const saved = useRef(readView<FileReadingState>(scope));
+  const rememberPosition = useCallback((position: { file: string; line?: number }) => {
+    const previous = readView<FileReadingState>(scope);
+    writeView(scope, { ...previous, ...position, positions: { ...previous?.positions, [position.file]: { line: position.line } } });
+  }, [scope]);
+  const rememberFile = useCallback((file: string) => {
+    const previous = readView<FileReadingState>(scope);
+    writeView(scope, { ...previous, file, line: previous?.positions?.[file]?.line });
+  }, [scope]);
   const projected = useMemo(
     () =>
       files.map((file) => {
@@ -90,11 +119,13 @@ const FileContent = memo(function FileContent({ files, scope }: FilesProps) {
     <div className="collo-checkpoint-diff">
       <FileDiffLayout
         files={projected}
+        initialPaneWidth={initialWidth}
         title="Changed files"
         focusFile={saved.current?.file}
         focusLine={saved.current?.line}
-        onPositionChange={(position) => writeView(scope, position)}
-        onFileSelected={(file) => writeView(scope, { file })}
+        filePositions={saved.current?.positions}
+        onPositionChange={rememberPosition}
+        onFileSelected={rememberFile}
         renderFileExtra={(rendered) => {
           const file = files.find(
             (f) => f.path === (rendered.originalFilename ?? rendered.filename),
@@ -136,6 +167,14 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const pane = search.get('workspaceView') === 'history' ? 'history' : 'activity';
   const collaboration = useCollaboration(projectId, current);
   const { events, workspaces, selectedEvent, checkpoint } = collaboration;
+  useEffect(() => {
+    // Prepare the first file represented by the visible, authorized history.
+    // No extra data request or hidden content cache; Files still prepares a
+    // different selected language on demand.
+    const first = events.find(event => event.kind === 'checkpoint' && event.payload.files.length);
+    const file = first?.kind === 'checkpoint' ? first.payload.files[0] : undefined;
+    if (visible && file) preloadDiffRenderer(file.path, getFileExtension(file.path));
+  }, [visible, events]);
   const link = (event: string | null, nextPane = pane) => {
     const params = new URLSearchParams(search);
     params.set('tab', 'workspaces');
@@ -151,7 +190,19 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const [directories, setDirectories] = useState<LocalDirectory[]>([]);
   const requestedDirectory = search.get('directory');
   const [selected, setSelected] = useState<string | null>(requestedDirectory);
-  const [memberFilter, setMemberFilter] = useState('');
+  const activityKey = viewKey(projectId, 'activity-view');
+  const savedActivity = useRef(readView<{ member?: string; top?: number }>(activityKey));
+  const [memberFilter, setMemberFilter] = useState(savedActivity.current?.member ?? '');
+  const activityList = useRef<HTMLDivElement>(null);
+  const activityRestored = useRef(false);
+  useEffect(() => {
+    if (!collaboration.accessValid || activityRestored.current || !events.length) return;
+    const list = activityList.current;
+    if (list) {
+      list.scrollTop = savedActivity.current?.top ?? 0;
+      activityRestored.current = true;
+    }
+  }, [events, collaboration.accessValid]);
   const [details, setDetails] = useState<DirectoryStatus | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [error, setError] = useState('');
@@ -167,6 +218,20 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
   const [agentPreview, setAgentPreview] = useState<(AgentPreview & { path: string }) | null>(null);
   const [history, setHistory] = useState(false);
   const directory = directories.find((d) => d.workspaceId === selected);
+  const [reviewing, setReviewing] = useState<string | null>(null);
+  const reviewReceipt = useProductQuery(colloApi.collo.checkpointParts,
+    reviewing && directory && pane === 'history' && !current ? {
+      projectId: projectId as GenericId<'projects'>,
+      workspaceId: directory.workspaceId,
+      checkpointId: reviewing,
+    } : 'skip');
+  useEffect(() => { setReviewing(null); }, [projectId, directory?.workspaceId, pane, principal.epoch]);
+  useEffect(() => {
+    const first = reviewReceipt.data?.events[0];
+    if (!reviewing || !first || reviewReceipt.denied || current || pane !== 'history') return;
+    setReviewing(null);
+    router.push(link(first.id));
+  }, [reviewing, reviewReceipt.data, reviewReceipt.denied, current, pane]);
   const identity = `${principal.principalId}:${principal.epoch}:${projectId}`;
   const scope = `${identity}:${directory?.workspaceId}`;
   const activeScope = useRef(scope);
@@ -420,7 +485,10 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
             className="collo-member-filter"
             aria-label="Filter activity by member"
             value={memberFilter}
-            onChange={(e) => setMemberFilter(e.target.value)}
+            onChange={(e) => {
+              setMemberFilter(e.target.value);
+              writeView(activityKey, { member: e.target.value, top: 0 });
+            }}
           >
             <option value="">All members</option>
             {[...new Map(activities.map((e) => [e.actor.id, e.actor.name])).entries()].map(
@@ -528,7 +596,10 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
           closeHref={closeHref}
           accessValid={collaboration.accessValid}
           list={
-            <div className="collo-activity-list" data-testid="collaboration-list">
+            <div ref={activityList} className="collo-activity-list" data-testid="collaboration-list"
+              onScroll={e => {
+                if (collaboration.accessValid) writeView(activityKey, { member: memberFilter, top: e.currentTarget.scrollTop });
+              }}>
               <div className="collo-activity-inner">
                 {pane === 'activity' ? (
                   <>
@@ -649,19 +720,10 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                       </p>
                     ) : (
                       checkpoints.map((cp) => (
-                        <button
+                        <div
                           key={cp.id}
-                          disabled={busy || cp.integrity === 'invalid'}
-                          className="flex w-full items-start gap-3 border-b border-sol-border/30 px-2 py-3 text-left hover:bg-sol-bg-alt disabled:opacity-50"
-                          onClick={() =>
-                            run(async () =>
-                              setPreview(
-                                await local<RestorePreview>('/api/restore/preview', {
-                                  checkpointId: cp.id,
-                                }),
-                              ),
-                            )
-                          }
+                          data-local-checkpoint={cp.id}
+                          className="collo-local-checkpoint"
                         >
                           <History className="mt-0.5 h-3.5 w-3.5 shrink-0 text-sol-text-dim" />
                           <div className="min-w-0 flex-1">
@@ -670,12 +732,25 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
                               {new Date(cp.createdAt).toLocaleString()} · {cp.fileCount} files
                             </div>
                           </div>
-                          <span className="text-xs text-sol-text-muted">
-                            {cp.integrity === 'invalid'
-                              ? 'Checkpoint unavailable'
-                              : 'Preview restore'}
-                          </span>
-                        </button>
+                          <div className="collo-inline-actions">
+                            <Button size="sm" variant="outline" onClick={() => {
+                              setReviewing(cp.id);
+                              if (reviewing === cp.id) reviewReceipt.retry();
+                            }}>
+                              {reviewing === cp.id && !reviewReceipt.data && !reviewReceipt.error ? 'Opening changes…' : 'Review changes'}
+                            </Button>
+                            <Button size="sm" variant="ghost" disabled={busy || cp.integrity === 'invalid'}
+                              title={cp.integrity === 'invalid' ? 'Checkpoint unavailable' : 'Preview restore'}
+                              onClick={() => run(async () => setPreview(await local<RestorePreview>('/api/restore/preview', { checkpointId: cp.id })))}>
+                              Preview restore
+                            </Button>
+                          </div>
+                          {reviewing === cp.id && (reviewReceipt.error || (reviewReceipt.data && !reviewReceipt.data.events.length)) && (
+                            <p className="collo-inline-notice" role="status">
+                              {reviewReceipt.error ? 'Shared changes could not be read. Review changes to retry.' : 'Shared changes are not available yet. The local recovery preview remains available.'}
+                            </p>
+                          )}
+                        </div>
                       ))
                     )}
                   </>
@@ -689,7 +764,7 @@ export function LocalWorkspaces({ projectId }: { projectId: string }) {
               <div className="collo-review-content">
                 <Button variant="ghost" size="sm" onClick={() => setCurrent(null)}>
                   <ArrowLeft />
-                  Back to activity
+                  {pane === 'history' ? 'Back to history' : 'Back to activity'}
                 </Button>
                 {selectedEvent ? (
                   <>

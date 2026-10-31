@@ -1,0 +1,44 @@
+{
+  "at": "2026-10-31T09:48:40.634Z",
+  "scope": "Real authorized checkpoint detail; browser history navigation A to B, reduced-motion return",
+  "observed": {
+    "animations": [
+      {
+        "tag": "DIV",
+        "className": "collo-review-heading",
+        "text": "手动检查点test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test · TEST completion source · 2026/10",
+        "frames": [
+          {
+            "opacity": 0.65,
+            "transform": "translateY(3px)"
+          },
+          {
+            "opacity": 1,
+            "transform": "none"
+          }
+        ],
+        "duration": 140
+      },
+      {
+        "tag": "DIV",
+        "className": "collo-review-heading",
+        "text": "手动检查点test-alice-a428c1eb-e5fa-4b76-bc88-2ef715acc53b@example.test · TEST completion source · 2026/10",
+        "frames": [
+          {
+            "opacity": 0.65,
+            "transform": "translateY(3px)"
+          },
+          {
+            "opacity": 1,
+            "transform": "none"
+          }
+        ],
+        "duration": 140
+      }
+    ],
+    "retainedSurface": true,
+    "retainedList": true
+  },
+  "errors": [],
+  "passed": true
+}

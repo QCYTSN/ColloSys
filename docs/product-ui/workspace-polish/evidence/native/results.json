@@ -1,0 +1,100 @@
+{
+  "checks": [
+    {
+      "factor": 1,
+      "native": {
+        "zoom": 1,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 1267,
+          "height": 765
+        },
+        "dpr": 2,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 1.25,
+      "native": {
+        "zoom": 1.25,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 1013,
+          "height": 612
+        },
+        "dpr": 2.5,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 1.5,
+      "native": {
+        "zoom": 1.5,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 844,
+          "height": 510
+        },
+        "dpr": 3,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "factor": 2,
+      "native": {
+        "zoom": 2,
+        "displayScale": 2,
+        "nativeHandle": true,
+        "menuVisible": false,
+        "applicationMenu": false
+      },
+      "renderer": {
+        "viewport": {
+          "width": 633,
+          "height": 382
+        },
+        "dpr": 4,
+        "visualScale": 1
+      },
+      "result": "Real native zoom: preset, parent and nested menus within viewport; all grouping options and bottom action reachable; layered focus restoration."
+    },
+    {
+      "actualAppearance": {
+        "appearance": {
+          "version": 1,
+          "mode": "light",
+          "accent": "iris"
+        },
+        "dpr": 2,
+        "width": 1427,
+        "height": 817
+      },
+      "result": "Real native checkpoint Diff at actual Iris light / zoom1 / OS scale2"
+    }
+  ],
+  "build": {
+    "version": 1,
+    "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+    "dirty": true,
+    "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+  },
+  "limits": "Actual Electron window and webContents zoom; OS display scale recorded, not changed. Screenshots show renderer content. Native frame evidence is in the separate native regression."
+}

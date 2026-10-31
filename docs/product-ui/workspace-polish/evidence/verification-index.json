@@ -1,0 +1,95 @@
+{
+  "checkedAt": "2026-10-31T10:00:50.123Z",
+  "head": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+  "branch": "codex/product-ui",
+  "dirty": true,
+  "source": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2",
+  "preparedFingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2",
+  "built": {
+    "version": 1,
+    "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+    "dirty": true,
+    "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+  },
+  "served": {
+    "version": 1,
+    "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+    "dirty": true,
+    "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+  },
+  "checks": [
+    {
+      "name": "continuity",
+      "artifact": "continuity/results.json",
+      "modifiedAt": "2026-10-31T09:49:50.867Z",
+      "result": "passed",
+      "build": {
+        "version": 1,
+        "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+        "dirty": true,
+        "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+      }
+    },
+    {
+      "name": "access",
+      "artifact": "access/results.json",
+      "modifiedAt": "2026-10-31T09:47:07.310Z",
+      "result": "passed",
+      "build": "same running final production service; suite does not independently stamp its build"
+    },
+    {
+      "name": "menus",
+      "artifact": "menus/results.json",
+      "modifiedAt": "2026-10-31T09:47:48.550Z",
+      "result": "passed",
+      "build": {
+        "version": 1,
+        "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+        "dirty": true,
+        "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+      }
+    },
+    {
+      "name": "transient",
+      "artifact": "transient/results.json",
+      "modifiedAt": "2026-10-31T09:48:32.106Z",
+      "result": "passed",
+      "build": "same running final production service; suite does not independently stamp its build"
+    },
+    {
+      "name": "detail",
+      "artifact": "detail/results.json",
+      "modifiedAt": "2026-10-31T09:48:40.635Z",
+      "result": "passed",
+      "build": "same running final production service; suite does not independently stamp its build"
+    },
+    {
+      "name": "native",
+      "artifact": "native/results.json",
+      "modifiedAt": "2026-10-31T09:49:04.703Z",
+      "result": "passed",
+      "build": {
+        "version": 1,
+        "commit": "d28c94e9c18eeec05c7324d326de1746ee08d14b",
+        "dirty": true,
+        "fingerprint": "5711822e23746f30813c47f2330f499897d61770d89f0aa94084585505e860c2"
+      }
+    }
+  ],
+  "coreChecks": {
+    "typecheck": "passed; root modules unchanged after this run",
+    "unitTests": "70 passed, 0 failed; root modules unchanged after this run",
+    "build": "passed, final 1m17s; existing upstream import/circular/chunk warnings retained",
+    "integration": "passed, 89 owned files against the final prepared full fork",
+    "immutableSource": {
+      "commit": "5dfb04f516122fe4f59a61137219b5a4e2e1f9f8",
+      "verified": 9854,
+      "windowsLineEndings": 9437,
+      "documentedSymlinks": 2,
+      "failureCount": 0,
+      "failures": []
+    }
+  },
+  "performance": "3 paired fresh-process heavy rounds; 33 warm project menus, 12 returns, 30 file selections per phase; final-only 30 Active and 30 Display. Performance target gaps are retained in README and raw summary.",
+  "scope": "TEST accounts and directories. No local skills, subagents, external OAuth work, commit, push or deployment this round."
+}

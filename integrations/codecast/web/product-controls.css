@@ -5,6 +5,28 @@
     'GRAD' 0;
   font-optical-sizing: none;
 }
+.collo-file-row {
+  min-height: 32px;
+  font: var(--collo-type-nav-list-title);
+  text-align: left;
+}
+.collo-file-row[aria-current='true'] {
+  background: var(--collo-selected);
+  color: var(--collo-selection-ink);
+}
+.collo-file-row:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: -2px;
+}
+.collo-diff-copy {
+  width: 32px;
+  padding: 0;
+  flex: none;
+}
+.collo-diff-copy .collo-trigger-face {
+  justify-content: center;
+  padding: 0;
+}
 .collo-inbox-tab {
   height: 32px;
   font: var(--collo-type-control-label);

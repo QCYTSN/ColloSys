@@ -1,0 +1,7 @@
+{
+  "checkedAt": "2026-10-31T15:13:48.037Z",
+  "textAndCompressedFiles": 27,
+  "reviewLinks": 28,
+  "findings": [],
+  "limitations": "Exact configured backend secret and JWT pattern scan of text/compressed traces. Does not certify arbitrary undisclosed secrets or OCR video frames. Password inputs remain masked in product captures."
+}

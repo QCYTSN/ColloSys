@@ -1,0 +1,3375 @@
+{
+  "method": "Menu latency starts at actual in-page pointerdown and reports browser frame opportunities, not hardware pixels. Cold n=3 separate processes/contexts with OS cache retained; warm n=30 per entry/mode. Heavy flows use maximum EventTiming duration per interactionId per page, durationThreshold=16: faster unreported interactions are absent, never counted as zero. Driver/assertion elapsed is not used. Each round retains raw traces, long tasks and videos; no claim of native 60fps.",
+  "rows": [
+    {
+      "phase": "before",
+      "mode": "production",
+      "menu": {
+        "Active": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "operableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "stableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "animationSettled": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            }
+          }
+        },
+        "Display": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "operableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "stableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "animationSettled": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            }
+          }
+        },
+        "Grouping": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "operableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "stableOpportunity": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            },
+            "animationSettled": {
+              "n": 0,
+              "p50": null,
+              "p95": null,
+              "max": null
+            }
+          }
+        }
+      },
+      "heavyRounds": [
+        {
+          "round": 1,
+          "interaction": {
+            "n": 56,
+            "p50": 48,
+            "p95": 120,
+            "max": 184
+          },
+          "longTasks": {
+            "n": 28,
+            "p50": 80,
+            "p95": 196,
+            "max": 232,
+            "totalMs": 2878
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 184,
+              "p95": 184,
+              "max": 184
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 64,
+              "max": 64
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 56,
+              "p95": 64,
+              "max": 64
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 64,
+              "p95": 72,
+              "max": 72
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 104,
+              "p95": 104,
+              "max": 104
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 2030.300000011921,
+                "eventTimestamp": 2014.1000000238419,
+                "target": {},
+                "feedbackOpportunity": 79.30000001192093,
+                "operableOpportunity": 79.30000001192093,
+                "animationSettled": 244.5,
+                "contentStableOpportunity": 260.9000000357628
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 2711,
+                "eventTimestamp": 2707.600000023842,
+                "target": {},
+                "feedbackOpportunity": 35.5,
+                "operableOpportunity": 35.5,
+                "animationSettled": 197.20000004768372,
+                "contentStableOpportunity": 221.10000002384186
+              },
+              {
+                "input": 3223,
+                "eventTimestamp": 3220.100000023842,
+                "target": {},
+                "feedbackOpportunity": 24.700000047683716,
+                "operableOpportunity": 24.700000047683716,
+                "animationSettled": 184.5,
+                "contentStableOpportunity": 208.60000002384186
+              },
+              {
+                "input": 3715.100000023842,
+                "eventTimestamp": 3712.600000023842,
+                "target": {},
+                "feedbackOpportunity": 24.5,
+                "operableOpportunity": 24.5,
+                "animationSettled": 183.80000001192093,
+                "contentStableOpportunity": 200
+              },
+              {
+                "input": 4179.400000035763,
+                "eventTimestamp": 4177.400000035763,
+                "target": {},
+                "feedbackOpportunity": 24.099999964237213,
+                "operableOpportunity": 24.099999964237213,
+                "animationSettled": 186.0999999642372,
+                "contentStableOpportunity": 210.80000001192093
+              },
+              {
+                "input": 4671.900000035763,
+                "eventTimestamp": 4669.700000047684,
+                "target": {},
+                "feedbackOpportunity": 26.69999998807907,
+                "operableOpportunity": 26.69999998807907,
+                "animationSettled": 186.0999999642372,
+                "contentStableOpportunity": 201.5999999642372
+              },
+              {
+                "input": 5162.900000035763,
+                "eventTimestamp": 5160.700000047684,
+                "target": {},
+                "feedbackOpportunity": 23.5,
+                "operableOpportunity": 23.5,
+                "animationSettled": 178,
+                "contentStableOpportunity": 202.39999997615814
+              },
+              {
+                "input": 5638.700000047684,
+                "eventTimestamp": 5636.300000011921,
+                "target": {},
+                "feedbackOpportunity": 25.19999998807907,
+                "operableOpportunity": 25.19999998807907,
+                "animationSettled": 185.29999995231628,
+                "contentStableOpportunity": 201.69999998807907
+              },
+              {
+                "input": 6096.800000011921,
+                "eventTimestamp": 6094.400000035763,
+                "target": {},
+                "feedbackOpportunity": 27.69999998807907,
+                "operableOpportunity": 27.69999998807907,
+                "animationSettled": 177.4000000357628,
+                "contentStableOpportunity": 201.30000001192093
+              },
+              {
+                "input": 6576.100000023842,
+                "eventTimestamp": 6573.600000023842,
+                "target": {},
+                "feedbackOpportunity": 22.30000001192093,
+                "operableOpportunity": 22.30000001192093,
+                "animationSettled": 181,
+                "contentStableOpportunity": 205.39999997615814
+              },
+              {
+                "input": 7053.5,
+                "eventTimestamp": 7051.5,
+                "target": {},
+                "feedbackOpportunity": 25.100000023841858,
+                "operableOpportunity": 25.100000023841858,
+                "animationSettled": 179.20000004768372,
+                "contentStableOpportunity": 203.4000000357628
+              },
+              {
+                "input": 7520.600000023842,
+                "eventTimestamp": 7518.700000047684,
+                "target": {},
+                "feedbackOpportunity": 22.19999998807907,
+                "operableOpportunity": 22.19999998807907,
+                "animationSettled": 173.69999998807907,
+                "contentStableOpportunity": 194.5
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3266,
+                "eventTimestamp": 3263,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 45.5,
+                "operableOpportunity": 324,
+                "contentStableOpportunity": 380.5
+              },
+              {
+                "input": 4831.900000035763,
+                "eventTimestamp": 4828.400000035763,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 47.5,
+                "operableOpportunity": 226.0999999642372,
+                "contentStableOpportunity": 284.39999997615814
+              },
+              {
+                "input": 6365.300000011921,
+                "eventTimestamp": 6362.200000047684,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 42.5,
+                "operableOpportunity": 222.60000002384186,
+                "contentStableOpportunity": 279.69999998807907
+              },
+              {
+                "input": 7822.600000023842,
+                "eventTimestamp": 7819.700000047684,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 42.69999998807907,
+                "operableOpportunity": 192.30000001192093,
+                "contentStableOpportunity": 261.39999997615814
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 4065.2999999523163,
+                "eventTimestamp": 4060.099999964237,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 71.70000004768372,
+                "navigationOperable": 163.70000004768372,
+                "operableOpportunity": 462.5,
+                "animationSettled": 479.7000000476837,
+                "contentStableOpportunity": 490.7000000476837
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 4739.699999988079,
+                "eventTimestamp": 4730.799999952316,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 20.69999998807907,
+                "navigationOperable": 20.69999998807907,
+                "operableOpportunity": 20.69999998807907,
+                "contentStableOpportunity": 58.09999996423721,
+                "animationSettled": 175.80000001192093
+              },
+              {
+                "input": 4957.5,
+                "eventTimestamp": 4952.799999952316,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 17.69999998807907,
+                "navigationOperable": 17.69999998807907,
+                "operableOpportunity": 17.799999952316284,
+                "contentStableOpportunity": 49.09999996423721,
+                "animationSettled": 174.0999999642372
+              },
+              {
+                "input": 5181.199999988079,
+                "eventTimestamp": 5171.899999976158,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 12.599999964237213,
+                "navigationOperable": 12.599999964237213,
+                "operableOpportunity": 12.699999988079071,
+                "contentStableOpportunity": 41.89999997615814,
+                "animationSettled": 168
+              },
+              {
+                "input": 5389.699999988079,
+                "eventTimestamp": 5385.599999964237,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 10,
+                "navigationOperable": 10.099999964237213,
+                "operableOpportunity": 10.099999964237213,
+                "contentStableOpportunity": 41.59999996423721,
+                "animationSettled": 159.0999999642372
+              },
+              {
+                "input": 5597.199999988079,
+                "eventTimestamp": 5589.599999964237,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 13.699999988079071,
+                "navigationOperable": 13.699999988079071,
+                "operableOpportunity": 13.699999988079071,
+                "contentStableOpportunity": 50.80000001192093,
+                "animationSettled": 176.80000001192093
+              },
+              {
+                "input": 5806.799999952316,
+                "eventTimestamp": 5802.899999976158,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 11.700000047683716,
+                "navigationOperable": 11.700000047683716,
+                "operableOpportunity": 11.800000011920929,
+                "contentStableOpportunity": 41.200000047683716,
+                "animationSettled": 167
+              },
+              {
+                "input": 6015,
+                "eventTimestamp": 6010.799999952316,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 14.299999952316284,
+                "navigationOperable": 14.299999952316284,
+                "operableOpportunity": 14.299999952316284,
+                "contentStableOpportunity": 41.39999997615814,
+                "animationSettled": 175.5999999642372
+              },
+              {
+                "input": 6232.899999976158,
+                "eventTimestamp": 6228.799999952316,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 15.5,
+                "navigationOperable": 15.600000023841858,
+                "operableOpportunity": 15.600000023841858,
+                "contentStableOpportunity": 48.5,
+                "animationSettled": 174.80000001192093
+              },
+              {
+                "input": 6454.5,
+                "eventTimestamp": 6450.599999964237,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 13.5,
+                "navigationOperable": 13.599999964237213,
+                "operableOpportunity": 13.599999964237213,
+                "contentStableOpportunity": 43.69999998807907,
+                "animationSettled": 169.39999997615814
+              },
+              {
+                "input": 6665.099999964237,
+                "eventTimestamp": 6660.5,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 14.5,
+                "navigationOperable": 14.600000023841858,
+                "operableOpportunity": 14.600000023841858,
+                "contentStableOpportunity": 49.19999998807907,
+                "animationSettled": 175.30000001192093
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              184
+            ],
+            "dropdown repeated": [
+              64,
+              56,
+              48,
+              48,
+              48,
+              48,
+              56,
+              56,
+              48,
+              48,
+              48
+            ],
+            "sidebar toggle": [
+              64,
+              56,
+              56,
+              56,
+              56,
+              40,
+              48,
+              48
+            ],
+            "long conversation return": [
+              64,
+              72,
+              64,
+              64
+            ],
+            "32-file diff first": [
+              104
+            ],
+            "diff file selection": [
+              40,
+              32,
+              32,
+              24,
+              32,
+              24,
+              32,
+              32,
+              32,
+              32
+            ]
+          }
+        },
+        {
+          "round": 2,
+          "interaction": {
+            "n": 57,
+            "p50": 48,
+            "p95": 120,
+            "max": 184
+          },
+          "longTasks": {
+            "n": 28,
+            "p50": 77,
+            "p95": 211,
+            "max": 220,
+            "totalMs": 2829
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 184,
+              "p95": 184,
+              "max": 184
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 64,
+              "max": 64
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 48,
+              "p95": 64,
+              "max": 64
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 64,
+              "p95": 72,
+              "max": 72
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 32,
+              "p95": 32,
+              "max": 32
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 1883.1000000238419,
+                "eventTimestamp": 1871.800000011921,
+                "target": {},
+                "feedbackOpportunity": 78.89999997615814,
+                "operableOpportunity": 79,
+                "animationSettled": 239.19999998807907,
+                "contentStableOpportunity": 262
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 2478.400000035763,
+                "eventTimestamp": 2475.100000023842,
+                "target": {},
+                "feedbackOpportunity": 27.899999976158142,
+                "operableOpportunity": 27.899999976158142,
+                "animationSettled": 184.30000001192093,
+                "contentStableOpportunity": 208.19999998807907
+              },
+              {
+                "input": 2959.7000000476837,
+                "eventTimestamp": 2957,
+                "target": {},
+                "feedbackOpportunity": 22.299999952316284,
+                "operableOpportunity": 22.399999976158142,
+                "animationSettled": 186.19999998807907,
+                "contentStableOpportunity": 202
+              },
+              {
+                "input": 3444,
+                "eventTimestamp": 3441.5,
+                "target": {},
+                "feedbackOpportunity": 25.900000035762787,
+                "operableOpportunity": 25.900000035762787,
+                "animationSettled": 184.60000002384186,
+                "contentStableOpportunity": 209.10000002384186
+              },
+              {
+                "input": 3940.900000035763,
+                "eventTimestamp": 3939.100000023842,
+                "target": {},
+                "feedbackOpportunity": 16.399999976158142,
+                "operableOpportunity": 16.399999976158142,
+                "animationSettled": 163.69999998807907,
+                "contentStableOpportunity": 186.89999997615814
+              },
+              {
+                "input": 4400.200000047684,
+                "eventTimestamp": 4398.200000047684,
+                "target": {},
+                "feedbackOpportunity": 22.69999998807907,
+                "operableOpportunity": 22.69999998807907,
+                "animationSettled": 178.89999997615814,
+                "contentStableOpportunity": 195.19999998807907
+              },
+              {
+                "input": 4872.400000035763,
+                "eventTimestamp": 4870.400000035763,
+                "target": {},
+                "feedbackOpportunity": 22.399999976158142,
+                "operableOpportunity": 22.399999976158142,
+                "animationSettled": 181.39999997615814,
+                "contentStableOpportunity": 205.5999999642372
+              },
+              {
+                "input": 5356.800000011921,
+                "eventTimestamp": 5354.900000035763,
+                "target": {},
+                "feedbackOpportunity": 24.80000001192093,
+                "operableOpportunity": 24.80000001192093,
+                "animationSettled": 180.4000000357628,
+                "contentStableOpportunity": 196.4000000357628
+              },
+              {
+                "input": 5817.600000023842,
+                "eventTimestamp": 5815.5,
+                "target": {},
+                "feedbackOpportunity": 25.100000023841858,
+                "operableOpportunity": 25.100000023841858,
+                "animationSettled": 186.10000002384186,
+                "contentStableOpportunity": 202.30000001192093
+              },
+              {
+                "input": 6275.5,
+                "eventTimestamp": 6273.400000035763,
+                "target": {},
+                "feedbackOpportunity": 24.600000023841858,
+                "operableOpportunity": 24.600000023841858,
+                "animationSettled": 186.80000001192093,
+                "contentStableOpportunity": 210.70000004768372
+              },
+              {
+                "input": 6755.100000023842,
+                "eventTimestamp": 6753.100000023842,
+                "target": {},
+                "feedbackOpportunity": 22.30000001192093,
+                "operableOpportunity": 22.30000001192093,
+                "animationSettled": 182.39999997615814,
+                "contentStableOpportunity": 198.19999998807907
+              },
+              {
+                "input": 7226.5,
+                "eventTimestamp": 7224.200000047684,
+                "target": {},
+                "feedbackOpportunity": 23.30000001192093,
+                "operableOpportunity": 23.400000035762787,
+                "animationSettled": 177.60000002384186,
+                "contentStableOpportunity": 201.4000000357628
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3393.600000023842,
+                "eventTimestamp": 3391.100000023842,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 43.80000001192093,
+                "operableOpportunity": 314.69999998807907,
+                "contentStableOpportunity": 362
+              },
+              {
+                "input": 4926.200000047684,
+                "eventTimestamp": 4923.800000011921,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 47.09999996423721,
+                "operableOpportunity": 334.19999998807907,
+                "contentStableOpportunity": 385.89999997615814
+              },
+              {
+                "input": 6445.100000023842,
+                "eventTimestamp": 6442.200000047684,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 40.30000001192093,
+                "operableOpportunity": 285.19999998807907,
+                "contentStableOpportunity": 335.5
+              },
+              {
+                "input": 7975.800000011921,
+                "eventTimestamp": 7973.200000047684,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 44.80000001192093,
+                "operableOpportunity": 301.9000000357628,
+                "contentStableOpportunity": 353.60000002384186
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 4029.199999988079,
+                "eventTimestamp": 4025.699999988079,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 67.5,
+                "navigationOperable": 150.80000001192093,
+                "operableOpportunity": 486.39999997615814,
+                "animationSettled": 503,
+                "contentStableOpportunity": 510.10000002384186
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 4648.899999976158,
+                "eventTimestamp": 4645.300000011921,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 19.30000001192093,
+                "navigationOperable": 19.30000001192093,
+                "operableOpportunity": 19.400000035762787,
+                "contentStableOpportunity": 57.69999998807907,
+                "animationSettled": 174.69999998807907
+              },
+              {
+                "input": 4865.399999976158,
+                "eventTimestamp": 4860.800000011921,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 15.699999988079071,
+                "navigationOperable": 15.699999988079071,
+                "operableOpportunity": 15.699999988079071,
+                "contentStableOpportunity": 48.90000003576279,
+                "animationSettled": 166.69999998807907
+              },
+              {
+                "input": 5075.300000011921,
+                "eventTimestamp": 5070.699999988079,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 15.299999952316284,
+                "navigationOperable": 15.299999952316284,
+                "operableOpportunity": 15.399999976158142,
+                "contentStableOpportunity": 47.799999952316284,
+                "animationSettled": 173.5
+              },
+              {
+                "input": 5290.699999988079,
+                "eventTimestamp": 5287.300000011921,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 13.300000011920929,
+                "navigationOperable": 13.300000011920929,
+                "operableOpportunity": 13.300000011920929,
+                "contentStableOpportunity": 41.10000002384186,
+                "animationSettled": 167
+              },
+              {
+                "input": 5507.599999964237,
+                "eventTimestamp": 5503.099999964237,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 12.600000023841858,
+                "navigationOperable": 12.600000023841858,
+                "operableOpportunity": 12.600000023841858,
+                "contentStableOpportunity": 48.30000001192093,
+                "animationSettled": 174.10000002384186
+              },
+              {
+                "input": 5724.599999964237,
+                "eventTimestamp": 5720.5,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 12.600000023841858,
+                "navigationOperable": 12.600000023841858,
+                "operableOpportunity": 12.600000023841858,
+                "contentStableOpportunity": 39.60000002384186,
+                "animationSettled": 166
+              },
+              {
+                "input": 5932.800000011921,
+                "eventTimestamp": 5928.5,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 15.199999988079071,
+                "navigationOperable": 15.199999988079071,
+                "operableOpportunity": 15.299999952316284,
+                "contentStableOpportunity": 48.799999952316284,
+                "animationSettled": 175
+              },
+              {
+                "input": 6139.899999976158,
+                "eventTimestamp": 6135.899999976158,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 15.5,
+                "navigationOperable": 15.600000023841858,
+                "operableOpportunity": 15.600000023841858,
+                "contentStableOpportunity": 50,
+                "animationSettled": 168
+              },
+              {
+                "input": 6348.5,
+                "eventTimestamp": 6344.199999988079,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 12.800000011920929,
+                "navigationOperable": 12.800000011920929,
+                "operableOpportunity": 12.899999976158142,
+                "contentStableOpportunity": 49.80000001192093,
+                "animationSettled": 167.30000001192093
+              },
+              {
+                "input": 6557.800000011921,
+                "eventTimestamp": 6553.399999976158,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 13.899999976158142,
+                "navigationOperable": 13.899999976158142,
+                "operableOpportunity": 14,
+                "contentStableOpportunity": 48.69999998807907,
+                "animationSettled": 174.29999995231628
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              184
+            ],
+            "dropdown repeated": [
+              64,
+              48,
+              56,
+              40,
+              48,
+              48,
+              48,
+              48,
+              48,
+              48,
+              48
+            ],
+            "sidebar toggle": [
+              64,
+              48,
+              48,
+              48,
+              48,
+              48,
+              40,
+              32
+            ],
+            "sidebar drag": [
+              56
+            ],
+            "long conversation return": [
+              64,
+              72,
+              56,
+              64
+            ],
+            "32-file diff first": [
+              96
+            ],
+            "diff file selection": [
+              32,
+              32,
+              32,
+              24,
+              32,
+              32,
+              32,
+              32,
+              24,
+              32
+            ]
+          }
+        },
+        {
+          "round": 3,
+          "interaction": {
+            "n": 57,
+            "p50": 48,
+            "p95": 120,
+            "max": 168
+          },
+          "longTasks": {
+            "n": 30,
+            "p50": 75,
+            "p95": 215,
+            "max": 232,
+            "totalMs": 3015
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 168,
+              "p95": 168,
+              "max": 168
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 48,
+              "p95": 72,
+              "max": 72
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 64,
+              "p95": 64,
+              "max": 64
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 24,
+              "p95": 40,
+              "max": 40
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 1953.4000000357628,
+                "eventTimestamp": 1941.199999988079,
+                "target": {},
+                "feedbackOpportunity": 65.19999998807907,
+                "operableOpportunity": 65.19999998807907,
+                "animationSettled": 336.5,
+                "contentStableOpportunity": 391.5
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 2652.5,
+                "eventTimestamp": 2649.900000035763,
+                "target": {},
+                "feedbackOpportunity": 26.30000001192093,
+                "operableOpportunity": 26.30000001192093,
+                "animationSettled": 185.10000002384186,
+                "contentStableOpportunity": 200.80000001192093
+              },
+              {
+                "input": 3126.600000023842,
+                "eventTimestamp": 3124,
+                "target": {},
+                "feedbackOpportunity": 27.399999976158142,
+                "operableOpportunity": 27.399999976158142,
+                "animationSettled": 177.69999998807907,
+                "contentStableOpportunity": 202.0999999642372
+              },
+              {
+                "input": 3602.600000023842,
+                "eventTimestamp": 3600,
+                "target": {},
+                "feedbackOpportunity": 26.30000001192093,
+                "operableOpportunity": 26.30000001192093,
+                "animationSettled": 185.19999998807907,
+                "contentStableOpportunity": 201
+              },
+              {
+                "input": 4084.600000023842,
+                "eventTimestamp": 4082,
+                "target": {},
+                "feedbackOpportunity": 27.19999998807907,
+                "operableOpportunity": 27.19999998807907,
+                "animationSettled": 186.5,
+                "contentStableOpportunity": 210.30000001192093
+              },
+              {
+                "input": 4567.900000035763,
+                "eventTimestamp": 4565.699999988079,
+                "target": {},
+                "feedbackOpportunity": 19.5,
+                "operableOpportunity": 19.599999964237213,
+                "animationSettled": 169.89999997615814,
+                "contentStableOpportunity": 193.5
+              },
+              {
+                "input": 5041.900000035763,
+                "eventTimestamp": 5039.699999988079,
+                "target": {},
+                "feedbackOpportunity": 20.299999952316284,
+                "operableOpportunity": 20.299999952316284,
+                "animationSettled": 179.19999998807907,
+                "contentStableOpportunity": 194.29999995231628
+              },
+              {
+                "input": 5522.400000035763,
+                "eventTimestamp": 5519.900000035763,
+                "target": {},
+                "feedbackOpportunity": 26.69999998807907,
+                "operableOpportunity": 26.69999998807907,
+                "animationSettled": 181.29999995231628,
+                "contentStableOpportunity": 206
+              },
+              {
+                "input": 5990.400000035763,
+                "eventTimestamp": 5988,
+                "target": {},
+                "feedbackOpportunity": 25.69999998807907,
+                "operableOpportunity": 25.69999998807907,
+                "animationSettled": 188.5,
+                "contentStableOpportunity": 204.0999999642372
+              },
+              {
+                "input": 6450.600000023842,
+                "eventTimestamp": 6448.400000035763,
+                "target": {},
+                "feedbackOpportunity": 25.30000001192093,
+                "operableOpportunity": 25.30000001192093,
+                "animationSettled": 187.19999998807907,
+                "contentStableOpportunity": 210.69999998807907
+              },
+              {
+                "input": 6960.199999988079,
+                "eventTimestamp": 6958,
+                "target": {},
+                "feedbackOpportunity": 25.700000047683716,
+                "operableOpportunity": 25.700000047683716,
+                "animationSettled": 185.20000004768372,
+                "contentStableOpportunity": 209.5
+              },
+              {
+                "input": 7434.199999988079,
+                "eventTimestamp": 7432.300000011921,
+                "target": {},
+                "feedbackOpportunity": 24.400000035762787,
+                "operableOpportunity": 24.400000035762787,
+                "animationSettled": 178.30000001192093,
+                "contentStableOpportunity": 202.30000001192093
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3308.800000011921,
+                "eventTimestamp": 3304.399999976158,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 47.39999997615814,
+                "operableOpportunity": 307.39999997615814,
+                "contentStableOpportunity": 369.89999997615814
+              },
+              {
+                "input": 4795.699999988079,
+                "eventTimestamp": 4792.899999976158,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 43.89999997615814,
+                "operableOpportunity": 328.30000001192093,
+                "contentStableOpportunity": 374.69999998807907
+              },
+              {
+                "input": 6321.300000011921,
+                "eventTimestamp": 6318.399999976158,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 43.69999998807907,
+                "operableOpportunity": 312.39999997615814,
+                "contentStableOpportunity": 364.0999999642372
+              },
+              {
+                "input": 7859.399999976158,
+                "eventTimestamp": 7857.300000011921,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 39.10000002384186,
+                "operableOpportunity": 282.80000001192093,
+                "contentStableOpportunity": 337
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 4555.199999988079,
+                "eventTimestamp": 4550.800000011921,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 62.5,
+                "navigationOperable": 162.30000001192093,
+                "operableOpportunity": 482.5,
+                "animationSettled": 498,
+                "contentStableOpportunity": 508.60000002384186
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 5230.300000011921,
+                "eventTimestamp": 5225.100000023842,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 22.599999964237213,
+                "navigationOperable": 22.69999998807907,
+                "operableOpportunity": 22.69999998807907,
+                "contentStableOpportunity": 57,
+                "animationSettled": 182.80000001192093
+              },
+              {
+                "input": 5467.899999976158,
+                "eventTimestamp": 5461.800000011921,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 16.600000023841858,
+                "navigationOperable": 16.600000023841858,
+                "operableOpportunity": 16.700000047683716,
+                "contentStableOpportunity": 52.80000001192093,
+                "animationSettled": 169.5
+              },
+              {
+                "input": 5677.800000011921,
+                "eventTimestamp": 5674.300000011921,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 14.099999964237213,
+                "navigationOperable": 14.099999964237213,
+                "operableOpportunity": 14.199999988079071,
+                "contentStableOpportunity": 51.19999998807907,
+                "animationSettled": 169
+              },
+              {
+                "input": 5886.600000023842,
+                "eventTimestamp": 5883.100000023842,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 14.399999976158142,
+                "navigationOperable": 14.399999976158142,
+                "operableOpportunity": 14.5,
+                "contentStableOpportunity": 50.89999997615814,
+                "animationSettled": 175.5999999642372
+              },
+              {
+                "input": 6098.300000011921,
+                "eventTimestamp": 6093.5,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 14.5,
+                "navigationOperable": 14.5,
+                "operableOpportunity": 14.599999964237213,
+                "contentStableOpportunity": 46.89999997615814,
+                "animationSettled": 172.69999998807907
+              },
+              {
+                "input": 6319.800000011921,
+                "eventTimestamp": 6315.600000023842,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 13.800000011920929,
+                "navigationOperable": 13.899999976158142,
+                "operableOpportunity": 13.899999976158142,
+                "contentStableOpportunity": 50.89999997615814,
+                "animationSettled": 176.69999998807907
+              },
+              {
+                "input": 6538,
+                "eventTimestamp": 6533.800000011921,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 13.600000023841858,
+                "navigationOperable": 13.600000023841858,
+                "operableOpportunity": 13.699999988079071,
+                "contentStableOpportunity": 49.69999998807907,
+                "animationSettled": 174.5
+              },
+              {
+                "input": 6753.5,
+                "eventTimestamp": 6749.5,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 13.699999988079071,
+                "navigationOperable": 13.699999988079071,
+                "operableOpportunity": 13.800000011920929,
+                "contentStableOpportunity": 51.39999997615814,
+                "animationSettled": 168.39999997615814
+              },
+              {
+                "input": 6969.699999988079,
+                "eventTimestamp": 6966.399999976158,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 12.800000011920929,
+                "navigationOperable": 12.800000011920929,
+                "operableOpportunity": 12.800000011920929,
+                "contentStableOpportunity": 44.30000001192093,
+                "animationSettled": 177.4000000357628
+              },
+              {
+                "input": 7189.300000011921,
+                "eventTimestamp": 7185.199999988079,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 11.800000011920929,
+                "navigationOperable": 11.800000011920929,
+                "operableOpportunity": 11.800000011920929,
+                "contentStableOpportunity": 39.5,
+                "animationSettled": 173.69999998807907
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              168
+            ],
+            "dropdown repeated": [
+              48,
+              56,
+              56,
+              56,
+              48,
+              40,
+              48,
+              48,
+              48,
+              56,
+              48
+            ],
+            "sidebar toggle": [
+              72,
+              64,
+              48,
+              56,
+              48,
+              40,
+              56,
+              48
+            ],
+            "sidebar drag": [
+              56
+            ],
+            "long conversation return": [
+              64,
+              64,
+              64,
+              56
+            ],
+            "32-file diff first": [
+              96
+            ],
+            "diff file selection": [
+              40,
+              40,
+              24,
+              24,
+              32,
+              32,
+              32,
+              24,
+              24,
+              24
+            ]
+          }
+        }
+      ],
+      "workspace": {
+        "dropdown first": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 3,
+            "p50": 78.89999997615814,
+            "p95": 79.30000001192093,
+            "max": 79.30000001192093
+          },
+          "operableOpportunity": {
+            "n": 3,
+            "p50": 79,
+            "p95": 79.30000001192093,
+            "max": 79.30000001192093
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 3,
+            "p50": 262,
+            "p95": 391.5,
+            "max": 391.5
+          },
+          "animationSettled": {
+            "n": 3,
+            "p50": 244.5,
+            "p95": 336.5,
+            "max": 336.5
+          },
+          "eventTiming": {
+            "n": 3,
+            "p50": 184,
+            "p95": 184,
+            "max": 184
+          }
+        },
+        "dropdown repeated": {
+          "n": 33,
+          "feedbackOpportunity": {
+            "n": 33,
+            "p50": 24.80000001192093,
+            "p95": 27.899999976158142,
+            "max": 35.5
+          },
+          "operableOpportunity": {
+            "n": 33,
+            "p50": 24.80000001192093,
+            "p95": 27.899999976158142,
+            "max": 35.5
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 33,
+            "p50": 202.30000001192093,
+            "p95": 210.80000001192093,
+            "max": 221.10000002384186
+          },
+          "animationSettled": {
+            "n": 33,
+            "p50": 183.80000001192093,
+            "p95": 188.5,
+            "max": 197.20000004768372
+          },
+          "eventTiming": {
+            "n": 33,
+            "p50": 48,
+            "p95": 64,
+            "max": 64
+          }
+        },
+        "sidebar toggle": {
+          "n": 24,
+          "feedbackOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "operableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "animationSettled": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "eventTiming": {
+            "n": 24,
+            "p50": 48,
+            "p95": 64,
+            "max": 72
+          }
+        },
+        "sidebar drag": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "operableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "animationSettled": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "eventTiming": {
+            "n": 2,
+            "p50": 56,
+            "p95": 56,
+            "max": 56
+          }
+        },
+        "long conversation return": {
+          "n": 12,
+          "feedbackOpportunity": {
+            "n": 12,
+            "p50": 43.80000001192093,
+            "p95": 47.5,
+            "max": 47.5
+          },
+          "operableOpportunity": {
+            "n": 12,
+            "p50": 301.9000000357628,
+            "p95": 334.19999998807907,
+            "max": 334.19999998807907
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 12,
+            "p50": 353.60000002384186,
+            "p95": 385.89999997615814,
+            "max": 385.89999997615814
+          },
+          "animationSettled": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "eventTiming": {
+            "n": 12,
+            "p50": 64,
+            "p95": 72,
+            "max": 72
+          }
+        },
+        "32-file diff first": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 3,
+            "p50": 67.5,
+            "p95": 71.70000004768372,
+            "max": 71.70000004768372
+          },
+          "operableOpportunity": {
+            "n": 3,
+            "p50": 482.5,
+            "p95": 486.39999997615814,
+            "max": 486.39999997615814
+          },
+          "navigationOperable": {
+            "n": 3,
+            "p50": 162.30000001192093,
+            "p95": 163.70000004768372,
+            "max": 163.70000004768372
+          },
+          "contentStableOpportunity": {
+            "n": 3,
+            "p50": 508.60000002384186,
+            "p95": 510.10000002384186,
+            "max": 510.10000002384186
+          },
+          "animationSettled": {
+            "n": 3,
+            "p50": 498,
+            "p95": 503,
+            "max": 503
+          },
+          "eventTiming": {
+            "n": 3,
+            "p50": 96,
+            "p95": 104,
+            "max": 104
+          }
+        },
+        "diff file selection": {
+          "n": 30,
+          "feedbackOpportunity": {
+            "n": 30,
+            "p50": 13.899999976158142,
+            "p95": 20.69999998807907,
+            "max": 22.599999964237213
+          },
+          "operableOpportunity": {
+            "n": 30,
+            "p50": 14,
+            "p95": 20.69999998807907,
+            "max": 22.69999998807907
+          },
+          "navigationOperable": {
+            "n": 30,
+            "p50": 13.899999976158142,
+            "p95": 20.69999998807907,
+            "max": 22.69999998807907
+          },
+          "contentStableOpportunity": {
+            "n": 30,
+            "p50": 48.799999952316284,
+            "p95": 57.69999998807907,
+            "max": 58.09999996423721
+          },
+          "animationSettled": {
+            "n": 30,
+            "p50": 173.69999998807907,
+            "p95": 177.4000000357628,
+            "max": 182.80000001192093
+          },
+          "eventTiming": {
+            "n": 30,
+            "p50": 32,
+            "p95": 40,
+            "max": 40
+          }
+        }
+      }
+    },
+    {
+      "phase": "after",
+      "mode": "production",
+      "menu": {
+        "Active": {
+          "cold": [
+            {
+              "feedbackOpportunity": 34.5,
+              "operableOpportunity": 34.5,
+              "stableOpportunity": 217.89999997615814,
+              "animationSettled": 218
+            },
+            {
+              "feedbackOpportunity": 43.89999997615814,
+              "operableOpportunity": 43.89999997615814,
+              "stableOpportunity": 226.29999995231628,
+              "animationSettled": 226.29999995231628
+            },
+            {
+              "feedbackOpportunity": 44.19999998807907,
+              "operableOpportunity": 44.19999998807907,
+              "stableOpportunity": 227.30000001192093,
+              "animationSettled": 227.39999997615814
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 18.80000001192093,
+              "p95": 26.80000001192093,
+              "max": 28.5
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 18.80000001192093,
+              "p95": 26.80000001192093,
+              "max": 28.5
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 201.80000001192093,
+              "p95": 209.60000002384186,
+              "max": 211.69999998807907
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 201.89999997615814,
+              "p95": 209.60000002384186,
+              "max": 211.69999998807907
+            }
+          }
+        },
+        "Display": {
+          "cold": [
+            {
+              "feedbackOpportunity": 36.19999998807907,
+              "operableOpportunity": 36.19999998807907,
+              "stableOpportunity": 218.0999999642372,
+              "animationSettled": 218.0999999642372
+            },
+            {
+              "feedbackOpportunity": 28.30000001192093,
+              "operableOpportunity": 28.30000001192093,
+              "stableOpportunity": 211,
+              "animationSettled": 211
+            },
+            {
+              "feedbackOpportunity": 43.19999998807907,
+              "operableOpportunity": 43.30000001192093,
+              "stableOpportunity": 226.10000002384186,
+              "animationSettled": 226.10000002384186
+            }
+          ],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 17.899999976158142,
+              "p95": 27,
+              "max": 27.200000047683716
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 17.900000035762787,
+              "p95": 27,
+              "max": 27.200000047683716
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 200.89999997615814,
+              "p95": 209.5,
+              "max": 210.4000000357628
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 201,
+              "p95": 209.69999998807907,
+              "max": 210.4000000357628
+            }
+          }
+        },
+        "Grouping": {
+          "cold": [],
+          "warm": {
+            "feedbackOpportunity": {
+              "n": 30,
+              "p50": 15.899999976158142,
+              "p95": 23.899999976158142,
+              "max": 25
+            },
+            "operableOpportunity": {
+              "n": 30,
+              "p50": 15.899999976158142,
+              "p95": 23.899999976158142,
+              "max": 25
+            },
+            "stableOpportunity": {
+              "n": 30,
+              "p50": 32.19999998807907,
+              "p95": 41.39999997615814,
+              "max": 41.69999998807907
+            },
+            "animationSettled": {
+              "n": 30,
+              "p50": 32.19999998807907,
+              "p95": 41.39999997615814,
+              "max": 41.799999952316284
+            }
+          }
+        }
+      },
+      "heavyRounds": [
+        {
+          "round": 1,
+          "interaction": {
+            "n": 58,
+            "p50": 48,
+            "p95": 96,
+            "max": 168
+          },
+          "longTasks": {
+            "n": 27,
+            "p50": 69,
+            "p95": 162,
+            "max": 174,
+            "totalMs": 2437
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 168,
+              "p95": 168,
+              "max": 168
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 64,
+              "max": 64
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 48,
+              "p95": 64,
+              "max": 64
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 56,
+              "p95": 56,
+              "max": 56
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 2389.7999999523163,
+                "eventTimestamp": 2384.099999964237,
+                "target": {},
+                "feedbackOpportunity": 70.10000002384186,
+                "operableOpportunity": 70.20000004768372,
+                "animationSettled": 232.70000004768372,
+                "contentStableOpportunity": 255
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 3081.599999964237,
+                "eventTimestamp": 3077.2999999523163,
+                "target": {},
+                "feedbackOpportunity": 38.10000002384186,
+                "operableOpportunity": 38.10000002384186,
+                "animationSettled": 189.19999998807907,
+                "contentStableOpportunity": 213.30000001192093
+              },
+              {
+                "input": 3643.599999964237,
+                "eventTimestamp": 3641.2999999523163,
+                "target": {},
+                "feedbackOpportunity": 24.100000023841858,
+                "operableOpportunity": 24.100000023841858,
+                "animationSettled": 185.19999998807907,
+                "contentStableOpportunity": 200.60000002384186
+              },
+              {
+                "input": 4109.5,
+                "eventTimestamp": 4107.299999952316,
+                "target": {},
+                "feedbackOpportunity": 25.299999952316284,
+                "operableOpportunity": 25.299999952316284,
+                "animationSettled": 177.5999999642372,
+                "contentStableOpportunity": 201.29999995231628
+              },
+              {
+                "input": 4576.899999976158,
+                "eventTimestamp": 4574.699999988079,
+                "target": {},
+                "feedbackOpportunity": 24.100000023841858,
+                "operableOpportunity": 24.100000023841858,
+                "animationSettled": 184.5,
+                "contentStableOpportunity": 200.5
+              },
+              {
+                "input": 5040.899999976158,
+                "eventTimestamp": 5039.199999988079,
+                "target": {},
+                "feedbackOpportunity": 21,
+                "operableOpportunity": 21,
+                "animationSettled": 179.19999998807907,
+                "contentStableOpportunity": 195.5
+              },
+              {
+                "input": 5506.299999952316,
+                "eventTimestamp": 5504.099999964237,
+                "target": {},
+                "feedbackOpportunity": 22.400000035762787,
+                "operableOpportunity": 22.400000035762787,
+                "animationSettled": 172.5,
+                "contentStableOpportunity": 196.60000002384186
+              },
+              {
+                "input": 5966.599999964237,
+                "eventTimestamp": 5964.399999976158,
+                "target": {},
+                "feedbackOpportunity": 22,
+                "operableOpportunity": 22,
+                "animationSettled": 170.60000002384186,
+                "contentStableOpportunity": 194.4000000357628
+              },
+              {
+                "input": 6416.599999964237,
+                "eventTimestamp": 6414.399999976158,
+                "target": {},
+                "feedbackOpportunity": 21.80000001192093,
+                "operableOpportunity": 21.80000001192093,
+                "animationSettled": 170.5,
+                "contentStableOpportunity": 194.69999998807907
+              },
+              {
+                "input": 6874.699999988079,
+                "eventTimestamp": 6872.599999964237,
+                "target": {},
+                "feedbackOpportunity": 21.30000001192093,
+                "operableOpportunity": 21.30000001192093,
+                "animationSettled": 179,
+                "contentStableOpportunity": 194.5999999642372
+              },
+              {
+                "input": 7333.299999952316,
+                "eventTimestamp": 7331,
+                "target": {},
+                "feedbackOpportunity": 25.200000047683716,
+                "operableOpportunity": 25.200000047683716,
+                "animationSettled": 186.9000000357628,
+                "contentStableOpportunity": 210.9000000357628
+              },
+              {
+                "input": 7817.199999988079,
+                "eventTimestamp": 7814.799999952316,
+                "target": {},
+                "feedbackOpportunity": 26,
+                "operableOpportunity": 26,
+                "animationSettled": 177.89999997615814,
+                "contentStableOpportunity": 202.39999997615814
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3388.2999999523163,
+                "eventTimestamp": 3384.599999964237,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 72.5,
+                "operableOpportunity": 72.70000004768372,
+                "contentStableOpportunity": 102.60000002384186,
+                "animationSettled": 266.10000002384186
+              },
+              {
+                "input": 4028.7999999523163,
+                "eventTimestamp": 4026,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 68.70000004768372,
+                "operableOpportunity": 69,
+                "contentStableOpportunity": 97.40000003576279,
+                "animationSettled": 259.5
+              },
+              {
+                "input": 4674.099999964237,
+                "eventTimestamp": 4671.099999964237,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 68.5,
+                "operableOpportunity": 68.80000001192093,
+                "contentStableOpportunity": 98.60000002384186,
+                "animationSettled": 264.30000001192093
+              },
+              {
+                "input": 5303.199999988079,
+                "eventTimestamp": 5300.199999988079,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 70,
+                "operableOpportunity": 70.19999998807907,
+                "contentStableOpportunity": 97.80000001192093,
+                "animationSettled": 259.80000001192093
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 3852.800000011921,
+                "eventTimestamp": 3848.699999988079,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 67.59999996423721,
+                "navigationOperable": 266.69999998807907,
+                "operableOpportunity": 267,
+                "animationSettled": 295.19999998807907,
+                "contentStableOpportunity": 316.5999999642372
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 4271.399999976158,
+                "eventTimestamp": 4265.699999988079,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 16.400000035762787,
+                "navigationOperable": 16.400000035762787,
+                "operableOpportunity": 16.5,
+                "contentStableOpportunity": 32.200000047683716,
+                "animationSettled": 174
+              },
+              {
+                "input": 4490.699999988079,
+                "eventTimestamp": 4485.699999988079,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 16.19999998807907,
+                "navigationOperable": 16.30000001192093,
+                "operableOpportunity": 16.30000001192093,
+                "contentStableOpportunity": 38.10000002384186,
+                "animationSettled": 179.9000000357628
+              },
+              {
+                "input": 4714.100000023842,
+                "eventTimestamp": 4709.800000011921,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 14.799999952316284,
+                "navigationOperable": 14.799999952316284,
+                "operableOpportunity": 14.799999952316284,
+                "contentStableOpportunity": 31.19999998807907,
+                "animationSettled": 172.79999995231628
+              },
+              {
+                "input": 4920.199999988079,
+                "eventTimestamp": 4916.600000023842,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 15.400000035762787,
+                "navigationOperable": 15.400000035762787,
+                "operableOpportunity": 15.400000035762787,
+                "contentStableOpportunity": 33.10000002384186,
+                "animationSettled": 175.4000000357628
+              },
+              {
+                "input": 5147.800000011921,
+                "eventTimestamp": 5143.199999988079,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 14,
+                "navigationOperable": 14.199999988079071,
+                "operableOpportunity": 14.199999988079071,
+                "contentStableOpportunity": 30.5,
+                "animationSettled": 172.69999998807907
+              },
+              {
+                "input": 5355.199999988079,
+                "eventTimestamp": 5350.800000011921,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 11.300000011920929,
+                "navigationOperable": 11.400000035762787,
+                "operableOpportunity": 11.400000035762787,
+                "contentStableOpportunity": 23.600000023841858,
+                "animationSettled": 173.19999998807907
+              },
+              {
+                "input": 5572.100000023842,
+                "eventTimestamp": 5567.300000011921,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 13.199999988079071,
+                "navigationOperable": 13.199999988079071,
+                "operableOpportunity": 13.199999988079071,
+                "contentStableOpportunity": 31.799999952316284,
+                "animationSettled": 172.89999997615814
+              },
+              {
+                "input": 5787.800000011921,
+                "eventTimestamp": 5783.699999988079,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 13.300000011920929,
+                "navigationOperable": 13.399999976158142,
+                "operableOpportunity": 13.399999976158142,
+                "contentStableOpportunity": 32.19999998807907,
+                "animationSettled": 173.69999998807907
+              },
+              {
+                "input": 5995.800000011921,
+                "eventTimestamp": 5991.399999976158,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 12.399999976158142,
+                "navigationOperable": 12.5,
+                "operableOpportunity": 12.5,
+                "contentStableOpportunity": 24.19999998807907,
+                "animationSettled": 166.19999998807907
+              },
+              {
+                "input": 6213,
+                "eventTimestamp": 6208.5,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 11.399999976158142,
+                "navigationOperable": 11.399999976158142,
+                "operableOpportunity": 11.5,
+                "contentStableOpportunity": 23.600000023841858,
+                "animationSettled": 165.89999997615814
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              168
+            ],
+            "dropdown repeated": [
+              64,
+              48,
+              56,
+              48,
+              48,
+              48,
+              48,
+              48,
+              48,
+              48,
+              56
+            ],
+            "sidebar toggle": [
+              64,
+              48,
+              48,
+              40,
+              48,
+              40,
+              40,
+              48
+            ],
+            "sidebar drag": [
+              56
+            ],
+            "long conversation return": [
+              96,
+              96,
+              88,
+              96
+            ],
+            "32-file diff first": [
+              96
+            ],
+            "diff file selection": [
+              40,
+              32,
+              32,
+              32,
+              32,
+              24,
+              32,
+              24,
+              24,
+              24
+            ]
+          }
+        },
+        {
+          "round": 2,
+          "interaction": {
+            "n": 57,
+            "p50": 40,
+            "p95": 96,
+            "max": 160
+          },
+          "longTasks": {
+            "n": 26,
+            "p50": 70,
+            "p95": 168,
+            "max": 175,
+            "totalMs": 2382
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 160,
+              "p95": 160,
+              "max": 160
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 48,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar drag": {
+              "n": 1,
+              "p50": 40,
+              "p95": 40,
+              "max": 40
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 88,
+              "p95": 96,
+              "max": 96
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 32,
+              "p95": 40,
+              "max": 40
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 1996.699999988079,
+                "eventTimestamp": 1986.6000000238419,
+                "target": {},
+                "feedbackOpportunity": 64.60000002384186,
+                "operableOpportunity": 64.60000002384186,
+                "animationSettled": 223.20000004768372,
+                "contentStableOpportunity": 246.60000002384186
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 2533,
+                "eventTimestamp": 2530.600000023842,
+                "target": {},
+                "feedbackOpportunity": 26.100000023841858,
+                "operableOpportunity": 26.100000023841858,
+                "animationSettled": 185.69999998807907,
+                "contentStableOpportunity": 201.4000000357628
+              },
+              {
+                "input": 3008.900000035763,
+                "eventTimestamp": 3006.699999988079,
+                "target": {},
+                "feedbackOpportunity": 21.5,
+                "operableOpportunity": 21.5,
+                "animationSettled": 176.89999997615814,
+                "contentStableOpportunity": 200.5999999642372
+              },
+              {
+                "input": 3475.300000011921,
+                "eventTimestamp": 3472.800000011921,
+                "target": {},
+                "feedbackOpportunity": 24.30000001192093,
+                "operableOpportunity": 24.30000001192093,
+                "animationSettled": 176.39999997615814,
+                "contentStableOpportunity": 201
+              },
+              {
+                "input": 3957.5,
+                "eventTimestamp": 3955.400000035763,
+                "target": {},
+                "feedbackOpportunity": 16.900000035762787,
+                "operableOpportunity": 16.900000035762787,
+                "animationSettled": 169.4000000357628,
+                "contentStableOpportunity": 193.4000000357628
+              },
+              {
+                "input": 4421.199999988079,
+                "eventTimestamp": 4419.300000011921,
+                "target": {},
+                "feedbackOpportunity": 21,
+                "operableOpportunity": 21,
+                "animationSettled": 172.4000000357628,
+                "contentStableOpportunity": 196.80000001192093
+              },
+              {
+                "input": 4898.100000023842,
+                "eventTimestamp": 4896.5,
+                "target": {},
+                "feedbackOpportunity": 17.30000001192093,
+                "operableOpportunity": 17.30000001192093,
+                "animationSettled": 178.89999997615814,
+                "contentStableOpportunity": 195
+              },
+              {
+                "input": 5365.900000035763,
+                "eventTimestamp": 5363.800000011921,
+                "target": {},
+                "feedbackOpportunity": 20.799999952316284,
+                "operableOpportunity": 20.799999952316284,
+                "animationSettled": 178.29999995231628,
+                "contentStableOpportunity": 193.89999997615814
+              },
+              {
+                "input": 5815.900000035763,
+                "eventTimestamp": 5813.900000035763,
+                "target": {},
+                "feedbackOpportunity": 21.69999998807907,
+                "operableOpportunity": 21.69999998807907,
+                "animationSettled": 177.69999998807907,
+                "contentStableOpportunity": 193.39999997615814
+              },
+              {
+                "input": 6265.199999988079,
+                "eventTimestamp": 6263.400000035763,
+                "target": {},
+                "feedbackOpportunity": 19.5,
+                "operableOpportunity": 19.5,
+                "animationSettled": 178.4000000357628,
+                "contentStableOpportunity": 202.80000001192093
+              },
+              {
+                "input": 6740.300000011921,
+                "eventTimestamp": 6738.400000035763,
+                "target": {},
+                "feedbackOpportunity": 24.600000023841858,
+                "operableOpportunity": 24.600000023841858,
+                "animationSettled": 186.10000002384186,
+                "contentStableOpportunity": 202.19999998807907
+              },
+              {
+                "input": 7207.100000023842,
+                "eventTimestamp": 7205,
+                "target": {},
+                "feedbackOpportunity": 21.19999998807907,
+                "operableOpportunity": 21.19999998807907,
+                "animationSettled": 177.89999997615814,
+                "contentStableOpportunity": 202.30000001192093
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3086.600000023842,
+                "eventTimestamp": 3083.5,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 72.80000001192093,
+                "operableOpportunity": 73,
+                "contentStableOpportunity": 101.30000001192093,
+                "animationSettled": 268.80000001192093
+              },
+              {
+                "input": 3737.7000000476837,
+                "eventTimestamp": 3735.300000011921,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 66.39999997615814,
+                "operableOpportunity": 66.69999998807907,
+                "contentStableOpportunity": 99,
+                "animationSettled": 259.19999998807907
+              },
+              {
+                "input": 4369.600000023842,
+                "eventTimestamp": 4367.100000023842,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 64,
+                "operableOpportunity": 64.39999997615814,
+                "contentStableOpportunity": 87.89999997615814,
+                "animationSettled": 252.19999998807907
+              },
+              {
+                "input": 4995.5,
+                "eventTimestamp": 4992.5,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 68.20000004768372,
+                "operableOpportunity": 68.5,
+                "contentStableOpportunity": 96.80000001192093,
+                "animationSettled": 259.9000000357628
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 3712.699999988079,
+                "eventTimestamp": 3708.399999976158,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 64.60000002384186,
+                "navigationOperable": 265.30000001192093,
+                "operableOpportunity": 265.39999997615814,
+                "animationSettled": 294.89999997615814,
+                "contentStableOpportunity": 314.89999997615814
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 4203.699999988079,
+                "eventTimestamp": 4196.199999988079,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 18.899999976158142,
+                "navigationOperable": 18.899999976158142,
+                "operableOpportunity": 18.899999976158142,
+                "contentStableOpportunity": 34.30000001192093,
+                "animationSettled": 169
+              },
+              {
+                "input": 4422.5,
+                "eventTimestamp": 4415.300000011921,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 16.599999964237213,
+                "navigationOperable": 16.69999998807907,
+                "operableOpportunity": 16.69999998807907,
+                "contentStableOpportunity": 32.89999997615814,
+                "animationSettled": 174.30000001192093
+              },
+              {
+                "input": 4639.699999988079,
+                "eventTimestamp": 4634.800000011921,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 15.399999976158142,
+                "navigationOperable": 15.5,
+                "operableOpportunity": 15.5,
+                "contentStableOpportunity": 31.899999976158142,
+                "animationSettled": 173.80000001192093
+              },
+              {
+                "input": 4855.399999976158,
+                "eventTimestamp": 4851.699999988079,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 15.100000023841858,
+                "navigationOperable": 15.100000023841858,
+                "operableOpportunity": 15.199999988079071,
+                "contentStableOpportunity": 32.90000003576279,
+                "animationSettled": 175.19999998807907
+              },
+              {
+                "input": 5065.599999964237,
+                "eventTimestamp": 5061.399999976158,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 12.400000035762787,
+                "navigationOperable": 12.400000035762787,
+                "operableOpportunity": 12.400000035762787,
+                "contentStableOpportunity": 31.600000023841858,
+                "animationSettled": 164.9000000357628
+              },
+              {
+                "input": 5272.399999976158,
+                "eventTimestamp": 5268.899999976158,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 11.400000035762787,
+                "navigationOperable": 11.5,
+                "operableOpportunity": 11.5,
+                "contentStableOpportunity": 24.600000023841858,
+                "animationSettled": 158.5
+              },
+              {
+                "input": 5472.5,
+                "eventTimestamp": 5468.399999976158,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 14.5,
+                "navigationOperable": 14.5,
+                "operableOpportunity": 14.599999964237213,
+                "contentStableOpportunity": 32.5,
+                "animationSettled": 174.5
+              },
+              {
+                "input": 5688.399999976158,
+                "eventTimestamp": 5684.699999988079,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 12.199999988079071,
+                "navigationOperable": 12.199999988079071,
+                "operableOpportunity": 12.300000011920929,
+                "contentStableOpportunity": 25.19999998807907,
+                "animationSettled": 175.10000002384186
+              },
+              {
+                "input": 5906,
+                "eventTimestamp": 5901.399999976158,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 11.699999988079071,
+                "navigationOperable": 11.800000011920929,
+                "operableOpportunity": 11.800000011920929,
+                "contentStableOpportunity": 24.19999998807907,
+                "animationSettled": 166.0999999642372
+              },
+              {
+                "input": 6116.199999988079,
+                "eventTimestamp": 6112.699999988079,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 11.5,
+                "navigationOperable": 11.600000023841858,
+                "operableOpportunity": 11.699999988079071,
+                "contentStableOpportunity": 30.5,
+                "animationSettled": 164.5
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              160
+            ],
+            "dropdown repeated": [
+              56,
+              40,
+              48,
+              40,
+              40,
+              48,
+              48,
+              48,
+              40,
+              48,
+              48
+            ],
+            "sidebar toggle": [
+              56,
+              48,
+              48,
+              48,
+              40,
+              40,
+              40,
+              48
+            ],
+            "sidebar drag": [
+              40
+            ],
+            "long conversation return": [
+              96,
+              88,
+              88,
+              88
+            ],
+            "32-file diff first": [
+              96
+            ],
+            "diff file selection": [
+              40,
+              40,
+              32,
+              32,
+              24,
+              24,
+              32,
+              24,
+              24,
+              32
+            ]
+          }
+        },
+        {
+          "round": 3,
+          "interaction": {
+            "n": 56,
+            "p50": 40,
+            "p95": 96,
+            "max": 152
+          },
+          "longTasks": {
+            "n": 28,
+            "p50": 70,
+            "p95": 170,
+            "max": 183,
+            "totalMs": 2532
+          },
+          "byAction": {
+            "dropdown first": {
+              "n": 1,
+              "p50": 152,
+              "p95": 152,
+              "max": 152
+            },
+            "dropdown repeated": {
+              "n": 11,
+              "p50": 48,
+              "p95": 56,
+              "max": 56
+            },
+            "sidebar toggle": {
+              "n": 8,
+              "p50": 48,
+              "p95": 56,
+              "max": 56
+            },
+            "long conversation return": {
+              "n": 4,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "32-file diff first": {
+              "n": 1,
+              "p50": 96,
+              "p95": 96,
+              "max": 96
+            },
+            "diff file selection": {
+              "n": 10,
+              "p50": 24,
+              "p95": 40,
+              "max": 40
+            }
+          },
+          "presentation": {
+            "dropdown first": [
+              {
+                "input": 1901,
+                "eventTimestamp": 1890.9000000357628,
+                "target": {},
+                "feedbackOpportunity": 59.60000002384186,
+                "operableOpportunity": 59.60000002384186,
+                "animationSettled": 226.69999998807907,
+                "contentStableOpportunity": 342.80000001192093
+              }
+            ],
+            "dropdown repeated": [
+              {
+                "input": 2510.900000035763,
+                "eventTimestamp": 2508.400000035763,
+                "target": {},
+                "feedbackOpportunity": 23.799999952316284,
+                "operableOpportunity": 23.799999952316284,
+                "animationSettled": 183.0999999642372,
+                "contentStableOpportunity": 207.19999998807907
+              },
+              {
+                "input": 2984.5,
+                "eventTimestamp": 2981.800000011921,
+                "target": {},
+                "feedbackOpportunity": 26.80000001192093,
+                "operableOpportunity": 26.80000001192093,
+                "animationSettled": 184.9000000357628,
+                "contentStableOpportunity": 200.80000001192093
+              },
+              {
+                "input": 3459.600000023842,
+                "eventTimestamp": 3457.199999988079,
+                "target": {},
+                "feedbackOpportunity": 22.399999976158142,
+                "operableOpportunity": 22.399999976158142,
+                "animationSettled": 184.30000001192093,
+                "contentStableOpportunity": 208.5999999642372
+              },
+              {
+                "input": 3941.400000035763,
+                "eventTimestamp": 3939.300000011921,
+                "target": {},
+                "feedbackOpportunity": 24.399999976158142,
+                "operableOpportunity": 24.399999976158142,
+                "animationSettled": 185.79999995231628,
+                "contentStableOpportunity": 201.69999998807907
+              },
+              {
+                "input": 4391.400000035763,
+                "eventTimestamp": 4389.199999988079,
+                "target": {},
+                "feedbackOpportunity": 23.299999952316284,
+                "operableOpportunity": 23.299999952316284,
+                "animationSettled": 185.89999997615814,
+                "contentStableOpportunity": 201.5999999642372
+              },
+              {
+                "input": 4857.199999988079,
+                "eventTimestamp": 4855.400000035763,
+                "target": {},
+                "feedbackOpportunity": 22.200000047683716,
+                "operableOpportunity": 22.200000047683716,
+                "animationSettled": 179,
+                "contentStableOpportunity": 194.30000001192093
+              },
+              {
+                "input": 5315.600000023842,
+                "eventTimestamp": 5313.699999988079,
+                "target": {},
+                "feedbackOpportunity": 22.69999998807907,
+                "operableOpportunity": 22.69999998807907,
+                "animationSettled": 178.5999999642372,
+                "contentStableOpportunity": 194.5999999642372
+              },
+              {
+                "input": 5773.5,
+                "eventTimestamp": 5771.600000023842,
+                "target": {},
+                "feedbackOpportunity": 22.69999998807907,
+                "operableOpportunity": 22.69999998807907,
+                "animationSettled": 179.10000002384186,
+                "contentStableOpportunity": 194.80000001192093
+              },
+              {
+                "input": 6240.699999988079,
+                "eventTimestamp": 6238.699999988079,
+                "target": {},
+                "feedbackOpportunity": 19.700000047683716,
+                "operableOpportunity": 19.700000047683716,
+                "animationSettled": 178.20000004768372,
+                "contentStableOpportunity": 194
+              },
+              {
+                "input": 6691.600000023842,
+                "eventTimestamp": 6689.5,
+                "target": {},
+                "feedbackOpportunity": 24.30000001192093,
+                "operableOpportunity": 24.399999976158142,
+                "animationSettled": 185.39999997615814,
+                "contentStableOpportunity": 209.89999997615814
+              },
+              {
+                "input": 7157.300000011921,
+                "eventTimestamp": 7155.199999988079,
+                "target": {},
+                "feedbackOpportunity": 21.899999976158142,
+                "operableOpportunity": 21.899999976158142,
+                "animationSettled": 169.80000001192093,
+                "contentStableOpportunity": 194.60000002384186
+              }
+            ],
+            "sidebar toggle": [
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {},
+              {}
+            ],
+            "sidebar drag": [
+              {}
+            ],
+            "long conversation return": [
+              {
+                "input": 3250.100000023842,
+                "eventTimestamp": 3247,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 69.80000001192093,
+                "operableOpportunity": 69.89999997615814,
+                "contentStableOpportunity": 95.30000001192093,
+                "animationSettled": 258.39999997615814
+              },
+              {
+                "input": 3882.600000023842,
+                "eventTimestamp": 3879.600000023842,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 72.89999997615814,
+                "operableOpportunity": 73.09999996423721,
+                "contentStableOpportunity": 103,
+                "animationSettled": 268
+              },
+              {
+                "input": 4516,
+                "eventTimestamp": 4513,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 67.40000003576279,
+                "operableOpportunity": 67.69999998807907,
+                "contentStableOpportunity": 95.5,
+                "animationSettled": 259.19999998807907
+              },
+              {
+                "input": 5132.600000023842,
+                "eventTimestamp": 5129.5,
+                "target": {
+                  "session": "test-refinement-fd0ed292-ff10-4ca1-a32e-c497efd071a3",
+                  "anchor": "5c761ea2-1c3f-4b4e-b988-1f34b4df2b78"
+                },
+                "feedbackOpportunity": 63.09999996423721,
+                "operableOpportunity": 63.09999996423721,
+                "contentStableOpportunity": 89.30000001192093,
+                "animationSettled": 251.0999999642372
+              }
+            ],
+            "32-file diff first": [
+              {
+                "input": 4610,
+                "eventTimestamp": 4606.199999988079,
+                "target": {
+                  "event": "3a027fa3-4a90-4492-82f1-8cd889eefd16",
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 67.69999998807907,
+                "navigationOperable": 279.5,
+                "operableOpportunity": 279.5999999642372,
+                "animationSettled": 291.19999998807907,
+                "contentStableOpportunity": 331
+              }
+            ],
+            "diff file selection": [
+              {
+                "input": 5090.699999988079,
+                "eventTimestamp": 5085.599999964237,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 19.600000023841858,
+                "navigationOperable": 19.69999998807907,
+                "operableOpportunity": 19.80000001192093,
+                "contentStableOpportunity": 39,
+                "animationSettled": 181.5
+              },
+              {
+                "input": 5313,
+                "eventTimestamp": 5305.199999988079,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 15.599999964237213,
+                "navigationOperable": 15.599999964237213,
+                "operableOpportunity": 15.699999988079071,
+                "contentStableOpportunity": 33.69999998807907,
+                "animationSettled": 167.39999997615814
+              },
+              {
+                "input": 5529,
+                "eventTimestamp": 5521.300000011921,
+                "target": {
+                  "file": "TEST-source-27.ts",
+                  "code": "item27"
+                },
+                "feedbackOpportunity": 16.19999998807907,
+                "navigationOperable": 16.19999998807907,
+                "operableOpportunity": 16.19999998807907,
+                "contentStableOpportunity": 34.69999998807907,
+                "animationSettled": 168.0999999642372
+              },
+              {
+                "input": 5740.099999964237,
+                "eventTimestamp": 5735.800000011921,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 15.5,
+                "navigationOperable": 15.600000023841858,
+                "operableOpportunity": 15.600000023841858,
+                "contentStableOpportunity": 31.5,
+                "animationSettled": 165.30000001192093
+              },
+              {
+                "input": 5962.599999964237,
+                "eventTimestamp": 5959.5,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 11.900000035762787,
+                "navigationOperable": 11.900000035762787,
+                "operableOpportunity": 12,
+                "contentStableOpportunity": 25.700000047683716,
+                "animationSettled": 159.10000002384186
+              },
+              {
+                "input": 6163.899999976158,
+                "eventTimestamp": 6159.699999988079,
+                "target": {
+                  "file": "TEST-source-01.ts",
+                  "code": "item1"
+                },
+                "feedbackOpportunity": 12.800000011920929,
+                "navigationOperable": 12.900000035762787,
+                "operableOpportunity": 12.900000035762787,
+                "contentStableOpportunity": 32.80000001192093,
+                "animationSettled": 166.69999998807907
+              },
+              {
+                "input": 6380.699999988079,
+                "eventTimestamp": 6376.399999976158,
+                "target": {
+                  "file": "TEST-source-28.ts",
+                  "code": "item28"
+                },
+                "feedbackOpportunity": 13.199999988079071,
+                "navigationOperable": 13.300000011920929,
+                "operableOpportunity": 13.300000011920929,
+                "contentStableOpportunity": 33,
+                "animationSettled": 166.89999997615814
+              },
+              {
+                "input": 6597.599999964237,
+                "eventTimestamp": 6593.5,
+                "target": {
+                  "file": "TEST-source-04.ts",
+                  "code": "item4"
+                },
+                "feedbackOpportunity": 13.800000011920929,
+                "navigationOperable": 13.800000011920929,
+                "operableOpportunity": 13.800000011920929,
+                "contentStableOpportunity": 32.5,
+                "animationSettled": 174.20000004768372
+              },
+              {
+                "input": 6822.199999988079,
+                "eventTimestamp": 6818.5,
+                "target": {
+                  "file": "TEST-source-09.ts",
+                  "code": "item9"
+                },
+                "feedbackOpportunity": 11.600000023841858,
+                "navigationOperable": 11.600000023841858,
+                "operableOpportunity": 11.600000023841858,
+                "contentStableOpportunity": 24.600000023841858,
+                "animationSettled": 166.80000001192093
+              },
+              {
+                "input": 7031.899999976158,
+                "eventTimestamp": 7027.5,
+                "target": {
+                  "file": "TEST-source-32.ts",
+                  "code": "item32"
+                },
+                "feedbackOpportunity": 12.100000023841858,
+                "navigationOperable": 12.199999988079071,
+                "operableOpportunity": 12.199999988079071,
+                "contentStableOpportunity": 23.5,
+                "animationSettled": 165.69999998807907
+              }
+            ]
+          },
+          "inputEvents": {
+            "dropdown first": [
+              152
+            ],
+            "dropdown repeated": [
+              48,
+              56,
+              40,
+              48,
+              48,
+              48,
+              48,
+              48,
+              40,
+              48,
+              48
+            ],
+            "sidebar toggle": [
+              56,
+              48,
+              48,
+              40,
+              48,
+              40,
+              48,
+              40
+            ],
+            "long conversation return": [
+              96,
+              96,
+              96,
+              88
+            ],
+            "32-file diff first": [
+              96
+            ],
+            "diff file selection": [
+              32,
+              40,
+              32,
+              32,
+              24,
+              24,
+              24,
+              32,
+              24,
+              24
+            ]
+          }
+        }
+      ],
+      "workspace": {
+        "dropdown first": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 3,
+            "p50": 64.60000002384186,
+            "p95": 70.10000002384186,
+            "max": 70.10000002384186
+          },
+          "operableOpportunity": {
+            "n": 3,
+            "p50": 64.60000002384186,
+            "p95": 70.20000004768372,
+            "max": 70.20000004768372
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 3,
+            "p50": 255,
+            "p95": 342.80000001192093,
+            "max": 342.80000001192093
+          },
+          "animationSettled": {
+            "n": 3,
+            "p50": 226.69999998807907,
+            "p95": 232.70000004768372,
+            "max": 232.70000004768372
+          },
+          "eventTiming": {
+            "n": 3,
+            "p50": 160,
+            "p95": 168,
+            "max": 168
+          }
+        },
+        "dropdown repeated": {
+          "n": 33,
+          "feedbackOpportunity": {
+            "n": 33,
+            "p50": 22.400000035762787,
+            "p95": 26.80000001192093,
+            "max": 38.10000002384186
+          },
+          "operableOpportunity": {
+            "n": 33,
+            "p50": 22.400000035762787,
+            "p95": 26.80000001192093,
+            "max": 38.10000002384186
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 33,
+            "p50": 200.5999999642372,
+            "p95": 210.9000000357628,
+            "max": 213.30000001192093
+          },
+          "animationSettled": {
+            "n": 33,
+            "p50": 178.89999997615814,
+            "p95": 186.9000000357628,
+            "max": 189.19999998807907
+          },
+          "eventTiming": {
+            "n": 33,
+            "p50": 48,
+            "p95": 56,
+            "max": 64
+          }
+        },
+        "sidebar toggle": {
+          "n": 24,
+          "feedbackOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "operableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "animationSettled": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "eventTiming": {
+            "n": 24,
+            "p50": 48,
+            "p95": 56,
+            "max": 64
+          }
+        },
+        "sidebar drag": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "operableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "animationSettled": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "eventTiming": {
+            "n": 2,
+            "p50": 40,
+            "p95": 56,
+            "max": 56
+          }
+        },
+        "long conversation return": {
+          "n": 12,
+          "feedbackOpportunity": {
+            "n": 12,
+            "p50": 68.5,
+            "p95": 72.89999997615814,
+            "max": 72.89999997615814
+          },
+          "operableOpportunity": {
+            "n": 12,
+            "p50": 68.80000001192093,
+            "p95": 73.09999996423721,
+            "max": 73.09999996423721
+          },
+          "navigationOperable": {
+            "n": 0,
+            "p50": null,
+            "p95": null,
+            "max": null
+          },
+          "contentStableOpportunity": {
+            "n": 12,
+            "p50": 97.40000003576279,
+            "p95": 103,
+            "max": 103
+          },
+          "animationSettled": {
+            "n": 12,
+            "p50": 259.5,
+            "p95": 268.80000001192093,
+            "max": 268.80000001192093
+          },
+          "eventTiming": {
+            "n": 12,
+            "p50": 96,
+            "p95": 96,
+            "max": 96
+          }
+        },
+        "32-file diff first": {
+          "n": 3,
+          "feedbackOpportunity": {
+            "n": 3,
+            "p50": 67.59999996423721,
+            "p95": 67.69999998807907,
+            "max": 67.69999998807907
+          },
+          "operableOpportunity": {
+            "n": 3,
+            "p50": 267,
+            "p95": 279.5999999642372,
+            "max": 279.5999999642372
+          },
+          "navigationOperable": {
+            "n": 3,
+            "p50": 266.69999998807907,
+            "p95": 279.5,
+            "max": 279.5
+          },
+          "contentStableOpportunity": {
+            "n": 3,
+            "p50": 316.5999999642372,
+            "p95": 331,
+            "max": 331
+          },
+          "animationSettled": {
+            "n": 3,
+            "p50": 294.89999997615814,
+            "p95": 295.19999998807907,
+            "max": 295.19999998807907
+          },
+          "eventTiming": {
+            "n": 3,
+            "p50": 96,
+            "p95": 96,
+            "max": 96
+          }
+        },
+        "diff file selection": {
+          "n": 30,
+          "feedbackOpportunity": {
+            "n": 30,
+            "p50": 13.300000011920929,
+            "p95": 18.899999976158142,
+            "max": 19.600000023841858
+          },
+          "operableOpportunity": {
+            "n": 30,
+            "p50": 13.399999976158142,
+            "p95": 18.899999976158142,
+            "max": 19.80000001192093
+          },
+          "navigationOperable": {
+            "n": 30,
+            "p50": 13.399999976158142,
+            "p95": 18.899999976158142,
+            "max": 19.69999998807907
+          },
+          "contentStableOpportunity": {
+            "n": 30,
+            "p50": 31.799999952316284,
+            "p95": 38.10000002384186,
+            "max": 39
+          },
+          "animationSettled": {
+            "n": 30,
+            "p50": 169,
+            "p95": 179.9000000357628,
+            "max": 181.5
+          },
+          "eventTiming": {
+            "n": 30,
+            "p50": 32,
+            "p95": 40,
+            "max": 40
+          }
+        }
+      }
+    }
+  ]
+}

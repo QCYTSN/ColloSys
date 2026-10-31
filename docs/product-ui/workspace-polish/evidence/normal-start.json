@@ -1,0 +1,38 @@
+{
+  "entry": "npm start",
+  "checkedAt": "2026-10-31T10:00:51.7637179Z",
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3411
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3410
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3409
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3408
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3407
+    }
+  ],
+  "scope": "Default profile normal native window; allowlisted process/window and loopback metadata only; no user content capture",
+  "windows": [
+    {
+      "Id": 10988,
+      "MainWindowTitle": "ColloSys",
+      "MainWindowHandle": {
+        "value": 5178584
+      },
+      "Responding": true,
+      "StartTime": "2026-10-31T18:00:23.2667726+08:00"
+    }
+  ]
+}
