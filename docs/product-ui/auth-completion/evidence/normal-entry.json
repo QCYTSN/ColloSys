@@ -1,0 +1,41 @@
+{
+  "checkedAt": "2026-10-31T07:05:50.0809824Z",
+  "entry": "npm start",
+  "profile": "default",
+  "nativeWindow": {
+    "title": "ColloSys",
+    "nonzeroNativeHandle": true,
+    "responding": true
+  },
+  "build": {
+    "version": 1,
+    "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+    "dirty": true,
+    "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+  },
+  "preparedFingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9",
+  "sourceFingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9",
+  "listeners": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3411
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3410
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3409
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3408
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 3407
+    }
+  ],
+  "privacy": "Only window identity, build metadata and loopback listeners inspected. No default-profile business screenshot or records captured."
+}

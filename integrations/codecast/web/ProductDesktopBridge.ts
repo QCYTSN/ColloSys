@@ -5,6 +5,7 @@ export interface ProductDesktopBridge {
     version: 1;
     attemptId: string;
     provider: IdentityProvider;
+    purpose?: 'link';
   }): Promise<void>;
   setAppearance(request: {
     version: 1;

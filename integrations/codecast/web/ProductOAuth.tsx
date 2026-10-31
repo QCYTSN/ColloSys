@@ -1,4 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  acquireAuthAttempt,
+  isCurrentAuthAttempt,
+  transitionAuthAttempt,
+  claimAuthNavigation,
+  type AuthAttempt,
+} from './authTransaction';
+import { ProviderHelp, useProviderCapabilities } from './ProductProviderStatus';
+import type { useAuthTransaction } from './useAuthTransaction';
 import { useAuthActions } from '@convex-dev/auth/react';
 import { useConvex, useMutation } from 'convex/react';
 import { makeFunctionReference } from 'convex/server';
@@ -21,6 +30,7 @@ import {
 } from './productAuthPolicy';
 import { AppLoader } from './ProductLoader';
 import { Logo } from './ProductLogo';
+import { Button } from '../components/ui/button';
 import type {} from './ProductDesktopBridge';
 
 const providersQuery = makeFunctionReference<
@@ -91,223 +101,202 @@ const hashSecret = async (value: string) =>
 
 export function ProductOAuthButtons({
   destination,
-  onPhase,
+  transaction,
 }: {
   destination: string;
-  onPhase?: (phase: OAuthPhase) => void;
+  transaction: ReturnType<typeof useAuthTransaction>;
 }) {
-  const providers = useQueryNoThrow(providersQuery, {}),
+  const providers = useProviderCapabilities(),
     client = useConvex(),
-    { signIn } = useAuthActions(),
-    startup = useProductStartup();
-  // Dev-only visual inspection of real component states; never enabled in a
-  // production build and never issues an identity or claim.
-  const preview = import.meta.env.DEV
-    ? new URLSearchParams(location.search).get('_colloAuthPreview')
-    : null;
-  const previewPhase = ['waiting', 'error', 'timeout'].includes(preview || '')
-    ? (preview as OAuthPhase)
-    : null;
-  const [phase, setPhase] = useState<OAuthPhase>(previewPhase ?? 'idle'),
-    [selected, setSelected] = useState<IdentityProvider | null>(previewPhase ? 'github' : null),
-    [message, setMessage] = useState(
-      previewPhase === 'waiting'
-        ? 'Finish signing in in your browser, then approve this desktop window.'
-        : previewPhase
-          ? 'The sign-in request could not finish. Please try again.'
-          : '',
-    );
-  const attempt = useRef<{
+    { signIn } = useAuthActions();
+  const [message, setMessage] = useState(''),
+    [lastMethod, setLastMethod] = useState<IdentityProvider | null>(null);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const active = useRef<{
+    auth: AuthAttempt;
     attemptId: string;
     claimSecret: string;
     expiresAt: number;
     claiming: boolean;
   } | null>(null);
-  const [attemptId, setAttemptId] = useState<string | null>(null),
-    mounted = useRef(true),
-    launching = useRef(false);
-  const status = useQueryNoThrow(statusQuery, attemptId ? { attemptId } : 'skip');
-  useEffect(() => {
-    onPhase?.(phase);
-  }, [phase, onPhase]);
-  const cancel = (next: OAuthPhase = 'cancelled') => {
-    const old = attempt.current;
-    attempt.current = null;
+  const alive = useRef(true);
+  const status = useQueryNoThrow(statusQuery, attemptId ? { attemptId } : 'skip', {
+    breakAfterMs: 8000,
+  });
+  const attempt = transaction.attempt;
+  const ours = attempt && attempt.method !== 'password';
+  const phase = ours ? attempt.phase : 'idle';
+  const dispose = (old: NonNullable<typeof active.current>) =>
+    client
+      .mutation(cancelAttempt, { attemptId: old.attemptId, claimSecret: old.claimSecret })
+      .catch(() => {});
+  const cancel = (expired = false) => {
+    const current = active.current;
+    if (current?.claiming) return; // An atomic claim cannot be undone; logout remains a separate operation.
+    if (ours) transitionAuthAttempt(attempt, expired ? 'expired' : 'cancelled');
+    active.current = null;
     setDesktopAttempt(null);
     setAttemptId(null);
-    launching.current = false;
-    if (old)
-      void client
-        .mutation(cancelAttempt, { attemptId: old.attemptId, claimSecret: old.claimSecret })
-        .catch(() => {});
-    setPhase(next);
+    if (current) void dispose(current);
     setMessage(
-      next === 'timeout'
-        ? 'The sign-in request expired. Start a new request when you are ready.'
+      expired
+        ? 'This request expired. Start again when ready.'
         : 'Sign-in cancelled. Your form is still here.',
     );
   };
   useEffect(() => {
-    mounted.current = true;
+    alive.current = true;
     return () => {
-      mounted.current = false;
-      const old = attempt.current;
-      setDesktopAttempt(null);
-      if (old && !old.claiming)
-        void client
-          .mutation(cancelAttempt, { attemptId: old.attemptId, claimSecret: old.claimSecret })
-          .catch(() => {});
+      alive.current = false;
+      const old = active.current;
+      if (old && !old.claiming) void dispose(old);
     };
   }, [client]);
   useEffect(() => {
-    const current = attempt.current;
+    const current = active.current;
     if (!current) return;
-    const timer = setTimeout(() => cancel('timeout'), Math.max(0, current.expiresAt - Date.now()));
+    const timer = setTimeout(() => cancel(true), Math.max(0, current.expiresAt - Date.now()));
     return () => clearTimeout(timer);
   }, [attemptId]);
   useEffect(() => {
-    const current = attempt.current;
-    if (status.data?.status === 'authorized' && current && !current.claiming) {
+    const current = active.current;
+    if (!current || !isCurrentAuthAttempt(current.auth)) return;
+    if (status.data?.status === 'authorized' && !current.claiming) {
       current.claiming = true;
+      transitionAuthAttempt(current.auth, 'establishing-session');
+      setMessage('Verifying your ColloSys session…');
       void signIn('collosys-desktop-v1', {
         attemptId: current.attemptId,
         claimSecret: current.claimSecret,
       }).catch(() => {
-        if (!mounted.current || attempt.current !== current) return;
-        setPhase('error');
-        setMessage('ColloSys could not finish this sign-in. Start a new request.');
-        setDesktopAttempt(null);
-        attempt.current = null;
+        if (!alive.current || !isCurrentAuthAttempt(current.auth)) return;
+        transitionAuthAttempt(current.auth, 'failed');
+        setMessage('Sign-in could not finish. Start a new request.');
+        active.current = null;
         setAttemptId(null);
+        setDesktopAttempt(null);
       });
     } else if (status.data?.status === 'cancelled' || status.data?.status === 'expired')
-      cancel(status.data.status === 'expired' ? 'timeout' : 'cancelled');
+      cancel(status.data.status === 'expired');
   }, [status.data, signIn]);
-  useEffect(() => {
-    if (startup.phase === 'authenticated' && attempt.current?.claiming) {
-      setPhase('success');
-      setMessage('Signed in to ColloSys. Opening your workspace…');
-    }
-  }, [startup.phase]);
   const launch = async (provider: IdentityProvider) => {
-    if (launching.current || phase === 'waiting' || phase === 'starting') return;
-    launching.current = true;
-    setSelected(provider);
-    setMessage('');
-    if (!providers.data?.[provider]) {
-      setPhase(providers.error ? 'error' : 'unavailable');
-      setMessage(
-        providers.error
-          ? 'The service could not check sign-in configuration. Retry or use email.'
-          : `${provider === 'github' ? 'GitHub' : 'Google'} sign-in is not configured for this ColloSys service. The service owner needs to add the OAuth client ID and secret. Email sign-in remains available.`,
-      );
-      launching.current = false;
-      return;
-    }
-    setPhase('starting');
+    if (providers.state(provider) !== 'ready') return;
+    const auth = acquireAuthAttempt(provider, transaction.owner);
+    if (!auth) return;
+    setLastMethod(provider);
+    setMessage('Opening secure sign-in…');
     try {
       const desktop = window.__COLLOSYS_DESKTOP__;
       if (desktop) {
-        const id = crypto.randomUUID(),
-          claimSecret = randomSecret();
+        const claimSecret = randomSecret();
         const created = await client.mutation(createAttempt, {
-          attemptId: id,
+          attemptId: auth.attemptId,
           claimHash: await hashSecret(claimSecret),
           provider,
         });
-        if (!mounted.current) {
-          void client.mutation(cancelAttempt, { attemptId: id, claimSecret });
-          return;
-        }
-        attempt.current = {
-          attemptId: id,
+        const current = {
+          auth,
+          attemptId: auth.attemptId,
           claimSecret,
           expiresAt: created.expiresAt,
           claiming: false,
         };
-        setDesktopAttempt(id);
-        setAttemptId(id);
-        await desktop.beginSignIn({ version: 1, attemptId: id, provider });
-        if (attempt.current?.attemptId !== id) return;
-        setPhase('waiting');
-        setMessage('Finish signing in in your browser, then approve this desktop window.');
+        if (!alive.current || !isCurrentAuthAttempt(auth)) {
+          void dispose(current);
+          return;
+        }
+        active.current = current;
+        setDesktopAttempt(auth.attemptId);
+        setAttemptId(auth.attemptId);
+        await desktop.beginSignIn({ version: 1, attemptId: auth.attemptId, provider });
+        if (!alive.current || !isCurrentAuthAttempt(auth)) return;
+        transitionAuthAttempt(auth, 'awaiting-provider');
+        setMessage('Finish in your browser, then approve this window.');
       } else {
         const redirectTo = beginBrowserSignIn(provider, destination);
         await signIn(provider, { redirectTo });
       }
     } catch {
-      if (!mounted.current) return;
-      const old = attempt.current;
-      attempt.current = null;
-      setDesktopAttempt(null);
+      if (!alive.current || !isCurrentAuthAttempt(auth)) return;
+      const old = active.current;
+      active.current = null;
+      if (old) void dispose(old);
       setAttemptId(null);
-      if (old)
-        void client
-          .mutation(cancelAttempt, { attemptId: old.attemptId, claimSecret: old.claimSecret })
-          .catch(() => {});
-      setPhase('error');
-      setMessage('Sign-in could not start. Check your connection and try again.');
-    } finally {
-      launching.current = false;
+      setDesktopAttempt(null);
+      transitionAuthAttempt(auth, 'failed');
+      setMessage('Sign-in could not start. Check your connection.');
     }
   };
-  const busy = phase === 'starting' || phase === 'waiting' || phase === 'success';
+  const capabilities = (['github', 'google'] as const).map((p) => providers.state(p));
+  const checking = capabilities.includes('checking'),
+    unavailable = capabilities.includes('temporarily-unavailable');
+  const disabledNames = (['github', 'google'] as const)
+    .filter((p) => providers.state(p) === 'unconfigured')
+    .map((p) => (p === 'github' ? 'GitHub' : 'Google'));
+  const text =
+    ours && phase !== 'idle'
+      ? message || 'Confirming your sign-in…'
+      : checking
+        ? 'Checking available sign-in services…'
+        : unavailable
+          ? 'Sign-in services could not be checked.'
+          : disabledNames.length
+            ? disabledNames.join(' and ') + ' sign-in is not enabled on this service.'
+            : 'Sign in securely through your system browser.';
   return (
     <div className="collo-oauth" data-phase={phase}>
-      {previewPhase && <p role="note">Development state preview · no authentication performed</p>}
       <div className="collo-oauth-providers">
-        {(['github', 'google'] as const).map((provider) => (
-          <button
-            key={provider}
-            type="button"
-            disabled={busy || (!providers.data && !providers.error)}
-            onClick={() => void launch(provider)}
-            aria-describedby={selected === provider && message ? 'oauth-status' : undefined}
-          >
-            {provider === 'github' ? (
-              <GithubLogo size={20} weight="fill" />
-            ) : (
-              <GoogleLogo size={20} weight="bold" />
-            )}
-            <span>
-              {selected === provider && phase === 'starting'
-                ? 'Opening…'
-                : provider === 'github'
-                  ? 'GitHub'
-                  : 'Google'}
-            </span>
-            {selected === provider && phase === 'waiting' && <ArrowSquareOut size={15} />}
-          </button>
-        ))}
-      </div>
-      {phase !== 'idle' && (
-        <div
-          id="oauth-status"
-          role={['error', 'unavailable', 'timeout'].includes(phase) ? 'alert' : 'status'}
-          className="collo-oauth-status"
-        >
-          <p>{message || 'Starting secure sign-in…'}</p>
-          {phase === 'waiting' && (
-            <button type="button" onClick={() => cancel()}>
-              <X size={14} />
-              Cancel sign-in
-            </button>
-          )}
-          {['error', 'unavailable', 'timeout', 'cancelled'].includes(phase) && (
-            <button
+        {(['github', 'google'] as const).map((provider) => {
+          const capability = providers.state(provider);
+          return (
+            <Button
+              variant="outline"
+              key={provider}
               type="button"
-              onClick={() => {
-                providers.retry();
-                setPhase('idle');
-                setMessage('');
-              }}
+              disabled={transaction.busy || capability !== 'ready'}
+              data-capability={capability}
+              aria-describedby="oauth-status"
+              onClick={() => void launch(provider)}
             >
-              <ArrowClockwise size={14} />
-              Check again
-            </button>
-          )}
-        </div>
-      )}
+              {provider === 'github' ? (
+                <GithubLogo size={20} weight="fill" />
+              ) : (
+                <GoogleLogo size={20} weight="bold" />
+              )}
+              <span className="collo-provider-label">
+                {provider === 'github' ? 'GitHub' : 'Google'}
+                {capability === 'unconfigured' && <small>Not enabled</small>}
+                {capability === 'checking' && <small>Checking…</small>}
+                {capability === 'temporarily-unavailable' && <small>Unavailable</small>}
+              </span>
+            </Button>
+          );
+        })}
+      </div>
+      <div className="collo-oauth-status">
+        <p id="oauth-status" role="status" aria-live="polite">
+          {text}
+        </p>
+        {ours && ['initiating', 'awaiting-provider'].includes(phase) ? (
+          <button type="button" onClick={() => cancel()}>
+            Cancel
+          </button>
+        ) : ours &&
+          ['failed', 'expired', 'cancelled'].includes(phase) &&
+          lastMethod &&
+          providers.state(lastMethod) === 'ready' ? (
+          <button type="button" onClick={() => void launch(lastMethod)}>
+            Retry
+          </button>
+        ) : (
+          <button type="button" disabled={transaction.busy || checking} onClick={providers.retry}>
+            {unavailable ? 'Retry check' : 'Refresh check'}
+          </button>
+        )}
+      </div>
+      <div className="collo-provider-help-anchor">
+        <ProviderHelp config={providers.data} />
+      </div>
     </div>
   );
 }
@@ -324,7 +313,8 @@ export function ProductOAuthComplete() {
     )
       return;
     sessionStorage.removeItem(OAUTH_PENDING_KEY);
-    window.location.replace(applicationDestination(pending.destination));
+    const destination = applicationDestination(pending.destination);
+    if (claimAuthNavigation(destination)) window.location.replace(destination);
   }, [startup.phase]);
   if (startup.phase === 'restoring' || startup.phase === 'initializing')
     return <AppLoader label="Confirming your sign-in" />;
@@ -344,6 +334,8 @@ export function ProductOAuthComplete() {
         <h1>Sign-in did not finish</h1>
         <p>
           The request was cancelled, expired or could not be verified. Start a new sign-in request.
+          If this email already belongs to an account, use its original login method, then link the
+          provider in Settings → Login methods.
         </p>
         <a
           href={`/login?return_to=${encodeURIComponent(applicationDestination(pending?.destination))}`}
@@ -364,6 +356,7 @@ export function ProductDesktopAuthorize() {
     authorize = useMutation(authorizeAttempt);
   const status = useQueryNoThrow(statusQuery, valid ? { attemptId } : 'skip'),
     providers = useQueryNoThrow(providersQuery, {});
+  const actionLock = useRef(false);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [approved, setApproved] = useState(false);
@@ -403,6 +396,8 @@ export function ProductDesktopAuthorize() {
               <button
                 disabled={busy}
                 onClick={async () => {
+                  if (actionLock.current) return;
+                  actionLock.current = true;
                   setBusy(true);
                   try {
                     await authorize({ attemptId });
@@ -413,6 +408,7 @@ export function ProductDesktopAuthorize() {
                       'Approval failed. The request may have expired or the account changed.',
                     );
                   } finally {
+                    actionLock.current = false;
                     setBusy(false);
                   }
                 }}
@@ -423,6 +419,8 @@ export function ProductDesktopAuthorize() {
               <button
                 disabled={busy || !providers.data?.[provider]}
                 onClick={async () => {
+                  if (actionLock.current) return;
+                  actionLock.current = true;
                   setBusy(true);
                   setError('');
                   try {
@@ -431,6 +429,7 @@ export function ProductDesktopAuthorize() {
                     });
                   } catch {
                     setError('Sign-in could not start. Try again from ColloSys.');
+                    actionLock.current = false;
                     setBusy(false);
                   }
                 }}

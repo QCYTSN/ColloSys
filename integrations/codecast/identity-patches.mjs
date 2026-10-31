@@ -1,6 +1,25 @@
 // Routing and imported SDK adapter only; product behavior is in owned files.
 export const identityPatches = [
   {
+    file: 'packages/web/components/ConversationView.tsx',
+    before: '    const canMeasure = containerRef.current?.offsetParent != null;',
+    after:
+      '    // A new or unchanged layout needs no DOM measurement. Reading offsetParent\n    // eagerly forces layout on every mount, even when corrections stays empty.\n    let canMeasure: boolean | undefined;',
+  },
+  {
+    file: 'packages/web/components/ConversationView.tsx',
+    before:
+      '      const mounted = canMeasure && element?.isConnected && element.dataset.index === String(index) && element.dataset.vkey === String(key);',
+    after:
+      '      const matches = estimate !== 0 && element?.isConnected && element.dataset.index === String(index) && element.dataset.vkey === String(key);\n      if (matches && canMeasure === undefined) canMeasure = containerRef.current?.offsetParent != null;\n      const mounted = matches && canMeasure;',
+  },
+  {
+    file: 'packages/web/components/DesktopProvider.tsx',
+    before: '  const router = useRouter();',
+    after:
+      "  const currentRouter = useRouter();\n  const latestRouter = useRef(currentRouter);\n  latestRouter.current = currentRouter;\n  // Native subscriptions live for this provider's lifetime. Route changes must\n  // not tear them down after initRef has already prevented re-registration.\n  const router = useRef({ push: (path: string) => latestRouter.current.push(path) }).current;",
+  },
+  {
     file: 'packages/web/components/BreadcrumbBar.tsx',
     before: 'import { projectDotClass } from "../lib/projectColors";',
     after: 'import { ProductProjectGlyph } from "../collo/ProjectIdentity";',
@@ -116,23 +135,23 @@ export const identityPatches = [
     file: 'packages/web/app/settings/profile/page.tsx',
     before: 'import { ThemePicker } from "../../../components/theme/ThemePicker";',
     after:
-      'import { ThemePicker } from "../../../components/theme/ThemePicker";\nimport { ProductAppearanceSettings } from "../../../collo/ProductAppearance";',
+      'import { ThemePicker } from "../../../components/theme/ThemePicker";\nimport { ProductAppearanceSettings } from "../../../collo/ProductAppearance";\nimport { ProductLoginMethods } from "../../../collo/ProductLoginMethods";',
   },
   {
     file: 'packages/web/app/settings/profile/page.tsx',
     before: '      <AppearanceSection />',
-    after: '      <ProductAppearanceSettings />',
+    after: '      <ProductLoginMethods />\n      <ProductAppearanceSettings />',
   },
   {
     file: 'packages/web/src/App.tsx',
     before: 'import { Routes, Route, Navigate } from "react-router";',
     after:
-      'import { Routes, Route, Navigate } from "react-router";\nimport { ProductEntry } from "../collo/ProductStartup";\nimport { ProductOAuthComplete, ProductDesktopAuthorize } from "../collo/ProductOAuth";',
+      'import { Routes, Route, Navigate } from "react-router";\nimport { ProductEntry } from "../collo/ProductStartup";\nimport { ProductOAuthComplete, ProductDesktopAuthorize } from "../collo/ProductOAuth";\nimport { ProductLinkAuthorize } from "../collo/ProductLoginMethods";',
   },
   {
     file: 'packages/web/src/App.tsx',
     before: '<Route index element={<Navigate to="/projects" replace />} />',
     after:
-      '<Route index element={<ProductEntry />} />\n            <Route path="auth/complete" element={<ProductOAuthComplete />} />\n            <Route path="auth/desktop" element={<ProductDesktopAuthorize />} />',
+      '<Route index element={<ProductEntry />} />\n            <Route path="auth/complete" element={<ProductOAuthComplete />} />\n            <Route path="auth/desktop" element={<ProductDesktopAuthorize />} />\n            <Route path="auth/link" element={<ProductLinkAuthorize />} />',
   },
 ];

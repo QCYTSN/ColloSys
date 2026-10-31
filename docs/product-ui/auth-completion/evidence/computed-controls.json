@@ -1,0 +1,54 @@
+{
+  "build": {
+    "version": 1,
+    "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+    "dirty": true,
+    "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+  },
+  "rows": [
+    {
+      "label": "Project details",
+      "tag": "BUTTON",
+      "height": 32,
+      "font": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "radius": "8px",
+      "padding": "0px"
+    },
+    {
+      "label": "Project status",
+      "tag": "BUTTON",
+      "height": 31.92108154296875,
+      "font": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "radius": "8px",
+      "padding": "0px"
+    },
+    {
+      "label": "Project deadline",
+      "tag": "BUTTON",
+      "height": 31.988693237304688,
+      "font": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "radius": "8px",
+      "padding": "0px"
+    },
+    {
+      "label": "Native date editor",
+      "tag": "INPUT",
+      "height": 32,
+      "font": "\"Google Sans\", \"Noto Sans SC\", \"Microsoft YaHei UI\", sans-serif",
+      "fontSize": "13px",
+      "lineHeight": "18px",
+      "radius": "8px",
+      "padding": "0px 8px"
+    }
+  ],
+  "checks": [
+    "Real project-property controls and date editor use the32px family,13/18 text; native date Escape closes without committing."
+  ],
+  "scope": "Read-only interface operations on TEST project. No deadline or status was saved."
+}

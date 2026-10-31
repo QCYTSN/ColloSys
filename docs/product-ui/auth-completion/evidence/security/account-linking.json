@@ -1,0 +1,15 @@
+{
+  "checks": [
+    "Anonymous and missing/stolen/wrong-password re-verification cannot link",
+    "github: session-bound staged link, callback replay, same-account SDK login and project continuity",
+    "google: session-bound staged link, callback replay, same-account SDK login and project continuity",
+    "A provider identity mapped to another account is rejected without retargeting data",
+    "Verified email collision never silently merges unrelated provider accounts",
+    "Cancelled, expired and revoked originating sessions cannot finish a link",
+    "Two accounts racing for one stable provider identity have exactly one winner",
+    "Link confirmation rechecks recent original-method proof, not only creation-time proof",
+    "Provider re-verification needs its already-linked stable identity",
+    "Backend rejects removing the last available verified method"
+  ],
+  "boundary": "Real local Convex backend, authAccounts mappings and SDK sessions. TEST provider proof injected at the internal persistence boundary; no external authorization. Temporary TEST provider settings removed in finally; real credentials were never replaced."
+}

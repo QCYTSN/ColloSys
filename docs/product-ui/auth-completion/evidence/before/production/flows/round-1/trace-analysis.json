@@ -1,0 +1,446 @@
+{
+  "trace": "docs/product-ui/auth-completion/evidence/before/production/flows/round-1/runtime-trace.json.gz",
+  "inclusiveTimelineMs": [
+    [
+      "RunTask",
+      [
+        164511,
+        43573.57799998511,
+        338.207
+      ]
+    ],
+    [
+      "FunctionCall",
+      [
+        16413,
+        4167.55900000007,
+        181.639
+      ]
+    ],
+    [
+      "GPUTask",
+      [
+        1559,
+        2430.837000000005,
+        40.779
+      ]
+    ],
+    [
+      "EventDispatch",
+      [
+        4026,
+        1463.4579999999953,
+        107.767
+      ]
+    ],
+    [
+      "Paint",
+      [
+        12911,
+        916.6739999999846,
+        3.506
+      ]
+    ],
+    [
+      "UpdateLayoutTree",
+      [
+        1610,
+        859.5919999999998,
+        23.6
+      ]
+    ],
+    [
+      "BackgroundJSStreamManager::RunScriptStreamingTask",
+      [
+        518,
+        678.0209999999997,
+        113.045
+      ]
+    ],
+    [
+      "v8.parseOnBackground",
+      [
+        518,
+        671.2810000000004,
+        113.025
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundParsing",
+      [
+        554,
+        546.6539999999994,
+        113.017
+      ]
+    ],
+    [
+      "V8.GC_SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL",
+      [
+        149,
+        490.7009999999998,
+        7.201
+      ]
+    ],
+    [
+      "Layout",
+      [
+        522,
+        476.789,
+        25.064
+      ]
+    ],
+    [
+      "PrePaint",
+      [
+        6035,
+        343.5080000000078,
+        1.996
+      ]
+    ],
+    [
+      "V8.GC_MC_BACKGROUND_MARKING",
+      [
+        36,
+        283.307,
+        24.708
+      ]
+    ],
+    [
+      "FireAnimationFrame",
+      [
+        1998,
+        229.33700000000036,
+        2.592
+      ]
+    ],
+    [
+      "v8.evaluateModule",
+      [
+        60,
+        228.27500000000003,
+        36.46
+      ]
+    ],
+    [
+      "RasterTask",
+      [
+        2273,
+        217.0409999999996,
+        1.281
+      ]
+    ],
+    [
+      "v8.produceModuleCache",
+      [
+        339,
+        198.26600000000005,
+        31.04
+      ]
+    ],
+    [
+      "Layerize",
+      [
+        1622,
+        187.77200000000042,
+        1.431
+      ]
+    ],
+    [
+      "Commit",
+      [
+        1825,
+        178.11299999999991,
+        0.672
+      ]
+    ],
+    [
+      "TimerFire",
+      [
+        136,
+        154.58700000000002,
+        36.1
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundWaiting",
+      [
+        36,
+        120.38700000000004,
+        10.877
+      ]
+    ],
+    [
+      "MinorGC",
+      [
+        19,
+        108.14500000000001,
+        10.537
+      ]
+    ]
+  ],
+  "inclusiveFunctionsMs": [
+    [
+      "Au http://127.0.0.1:3407/assets/client-CvhLMRCy.js:9",
+      [
+        547,
+        2026.4529999999986,
+        181.639
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      [
+        1423,
+        1066.4639999999981,
+        113.209
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-CQJYWp_d.js:1",
+      [
+        189,
+        208.621,
+        105.898
+      ]
+    ],
+    [
+      "a http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1515",
+      [
+        3,
+        85.547,
+        33.907
+      ]
+    ],
+    [
+      "sample :27",
+      [
+        1625,
+        77.4120000000002,
+        1.011
+      ]
+    ],
+    [
+      "fd http://127.0.0.1:3407/assets/client-CvhLMRCy.js:25",
+      [
+        1004,
+        71.6420000000001,
+        5.673
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1424",
+      [
+        12,
+        67.498,
+        7.548
+      ]
+    ],
+    [
+      "t.onmessage http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:63",
+      [
+        203,
+        53.30700000000001,
+        6.051
+      ]
+    ],
+    [
+      "jc http://127.0.0.1:3407/assets/client-CvhLMRCy.js:25",
+      [
+        4732,
+        49.939000000000256,
+        0.884
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:44",
+      [
+        951,
+        48.80700000000001,
+        2.424
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-C7H35kPB.js:1",
+      [
+        421,
+        45.659000000000034,
+        0.445
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/boot-BrfkmR6d.js:5",
+      [
+        9,
+        44.433,
+        17.681
+      ]
+    ],
+    [
+      "C1 http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      [
+        2,
+        39.603,
+        35.054
+      ]
+    ],
+    [
+      "nd http://127.0.0.1:3407/assets/client-CvhLMRCy.js:25",
+      [
+        1222,
+        27.73700000000006,
+        0.509
+      ]
+    ],
+    [
+      "gl http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:44",
+      [
+        228,
+        23.139000000000003,
+        0.447
+      ]
+    ],
+    [
+      "listener :8178",
+      [
+        338,
+        22.446000000000023,
+        1.091
+      ]
+    ],
+    [
+      "BY http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:82",
+      [
+        26,
+        17.261,
+        1.342
+      ]
+    ],
+    [
+      "je http://127.0.0.1:3407/assets/react-resizable-panels-C7H35kPB.js:1",
+      [
+        81,
+        16.283,
+        1.455
+      ]
+    ],
+    [
+      "p http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1336",
+      [
+        48,
+        14.590999999999998,
+        0.984
+      ]
+    ],
+    [
+      "U.onsuccess http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:44",
+      [
+        385,
+        14.158999999999974,
+        0.578
+      ]
+    ]
+  ],
+  "cpuLeafSamples": [
+    [
+      "B1 http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      913
+    ],
+    [
+      "Pm http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1336",
+      205
+    ],
+    [
+      " http://127.0.0.1:3407/assets/ConversationView-Ba6xB4va.js:25",
+      179
+    ],
+    [
+      "_1 http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      160
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:62",
+      156
+    ],
+    [
+      "qn http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      152
+    ],
+    [
+      "getMaxScrollOffset http://127.0.0.1:3407/assets/index-CQJYWp_d.js:1",
+      117
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1336",
+      94
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-C7H35kPB.js:1",
+      85
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-BplF90uG.js:2",
+      84
+    ],
+    [
+      "al http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      83
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:44",
+      81
+    ],
+    [
+      "Kt http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      72
+    ],
+    [
+      "o http://127.0.0.1:3407/assets/index-BokQ7pGr.js:1515",
+      71
+    ],
+    [
+      "ct http://127.0.0.1:3407/assets/react-resizable-panels-C7H35kPB.js:1",
+      69
+    ],
+    [
+      "Nn http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      68
+    ],
+    [
+      "Qa http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      66
+    ],
+    [
+      "A1 http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      64
+    ],
+    [
+      "Gh http://127.0.0.1:3407/assets/client-CvhLMRCy.js:25",
+      63
+    ],
+    [
+      "v http://127.0.0.1:3407/assets/DashboardLayout-53Ojj8Rw.js:16",
+      62
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Bu420CGf.js:766",
+      58
+    ],
+    [
+      " http://127.0.0.1:3407/assets/DashboardLayout-53Ojj8Rw.js:30",
+      55
+    ],
+    [
+      "Ul http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      52
+    ],
+    [
+      " http://127.0.0.1:3407/assets/client-CvhLMRCy.js:24",
+      51
+    ],
+    [
+      "pm http://127.0.0.1:3407/assets/DashboardLayout-53Ojj8Rw.js:30",
+      49
+    ]
+  ],
+  "note": "Inclusive timeline durations overlap and cannot be summed as CPU time. CPU samples are sampled leaf frames, not exact timings."
+}

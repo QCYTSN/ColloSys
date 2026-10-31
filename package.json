@@ -41,7 +41,10 @@
     "test:desktop": "node tests/codecast-desktop.mjs",
     "legacy:package:windows": "tsx scripts/package-windows.ts",
     "test:extended": "tsx tests/extended.ts",
-    "test:reliability": "tsx tests/reliability.ts"
+    "test:reliability": "tsx tests/reliability.ts",
+    "auth:check": "node scripts/codecast-auth-check.mjs",
+    "auth:verify": "node tests/product-auth-external.mjs",
+    "test:account-links": "node tests/product-account-linking.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "2.1.10",

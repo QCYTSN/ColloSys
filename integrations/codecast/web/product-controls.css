@@ -27,7 +27,9 @@
 }
 .collo-task-reading [data-page-head] h1 {
   font: var(--collo-type-object-title);
-  font-variation-settings: 'opsz' 18, 'GRAD' 0;
+  font-variation-settings:
+    'opsz' 18,
+    'GRAD' 0;
   font-optical-sizing: none;
   letter-spacing: normal;
   overflow-wrap: anywhere;
@@ -196,4 +198,145 @@
   .collo-identity-tones button:active:not(:disabled) {
     transform: none;
   }
+}
+
+/* Account methods retain the settings family's dimensions and readable errors. */
+.collo-login-methods {
+  padding: 24px 0;
+  border-bottom: 1px solid var(--collo-line);
+}
+.collo-login-methods h2 {
+  font: var(--collo-type-section-title);
+  margin: 0 0 8px;
+}
+.collo-login-methods > p {
+  font: var(--collo-type-body);
+  color: var(--collo-secondary);
+  margin: 8px 0 16px;
+}
+.collo-login-method {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--collo-line);
+}
+.collo-login-method > svg {
+  flex: none;
+}
+.collo-login-method > div:first-of-type {
+  min-width: 0;
+  flex: 1;
+}
+.collo-login-method h3 {
+  font: var(--collo-type-control-label);
+  margin: 0 0 4px;
+}
+.collo-login-method p {
+  font: var(--collo-type-meta);
+  color: var(--collo-secondary);
+  overflow-wrap: anywhere;
+  margin: 0;
+}
+.collo-login-method > span {
+  font: var(--collo-type-meta);
+}
+.collo-login-method-actions {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.collo-method-reverify {
+  margin: 20px 0 12px;
+}
+.collo-method-reverify label {
+  display: block;
+  font: var(--collo-type-control-label);
+  margin-bottom: 8px;
+}
+.collo-method-reverify > div {
+  display: flex;
+  gap: 8px;
+}
+.collo-method-reverify input {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: 8px;
+  background: var(--collo-content);
+  color: var(--collo-ink);
+  padding: 8px 12px;
+  font: var(--collo-type-button);
+}
+.collo-method-reverify input:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: 2px;
+}
+.collo-method-service {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  font: var(--collo-type-meta);
+}
+.collo-method-service button {
+  min-height: 28px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.collo-method-pending {
+  padding: 16px;
+  margin: 16px 0;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: 12px;
+  background: var(--collo-tool);
+  font: var(--collo-type-body);
+  overflow-wrap: anywhere;
+}
+.collo-method-pending p {
+  margin: 8px 0;
+}
+.collo-method-pending small {
+  font: var(--collo-type-meta);
+}
+.collo-method-error {
+  color: var(--collo-danger);
+  overflow-wrap: anywhere;
+}
+.collo-appearance-preview {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.collo-appearance-preview p {
+  flex-basis: 100%;
+  font: var(--collo-type-meta);
+  color: var(--collo-secondary);
+}
+
+.collo-login-methods > .collo-method-error {
+  color: var(--collo-danger);
+}
+
+.collo-intent-date-editor {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+}
+.collo-intent-date-input {
+  height: 32px;
+  min-width: 0;
+  padding: 0 8px;
+  font: var(--collo-type-control-label);
+  font-variant-numeric: tabular-nums;
+  border: 1px solid var(--collo-control-edge);
+  border-radius: var(--collo-radius-control);
+  background: var(--collo-content);
+}
+.collo-intent-date-input:focus-visible {
+  outline: 2px solid var(--collo-accent);
+  outline-offset: 2px;
 }

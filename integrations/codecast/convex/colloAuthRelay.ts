@@ -112,6 +112,19 @@ export const sweep = internalMutation({
       .withIndex('by_expiry', (q) => q.lt('expiresAt', Date.now()))
       .take(100);
     for (const row of rows) await ctx.db.delete(row._id);
-    return rows.length;
+    const links = await ctx.db
+      .query('collo_account_links')
+      .withIndex('by_expiry', (q) => q.lt('expiresAt', Date.now()))
+      .take(100);
+    for (const row of links) {
+      if (row.verifierId && (await ctx.db.get(row.verifierId))) await ctx.db.delete(row.verifierId);
+      await ctx.db.delete(row._id);
+    }
+    const proofs = await ctx.db
+      .query('collo_reauth_proofs')
+      .withIndex('by_verified', (q) => q.lt('verifiedAt', Date.now() - 5 * 60_000))
+      .take(100);
+    for (const row of proofs) await ctx.db.delete(row._id);
+    return rows.length + links.length + proofs.length;
   },
 });

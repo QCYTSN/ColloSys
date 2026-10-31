@@ -6,9 +6,12 @@ import { Logo } from './ProductLogo';
 import { AppLoader } from './ProductLoader';
 import { useProductStartup, StartupRecovery } from './ProductStartup';
 import { applicationDestination } from './productAuthPolicy';
-import { ProductOAuthButtons, type OAuthPhase } from './ProductOAuth';
+import { ProductOAuthButtons } from './ProductOAuth';
+import { useAuthTransaction } from './useAuthTransaction';
+import { claimAuthNavigation } from './authTransaction';
+import { useProductEmailAuth } from './useProductEmailAuth';
 import { ProductAuthScene, type AuthSceneState } from './ProductAuthScene';
-import { useEmailAuth, useResetRequest, useResetConfirm } from '../hooks/useEmailAuth';
+import { useResetRequest, useResetConfirm } from '../hooks/useEmailAuth';
 import { makeFunctionReference } from 'convex/server';
 import { useQueryNoThrow } from '../hooks/useQueryNoThrow';
 import { EmailVerificationForm } from '../components/EmailVerificationForm';
@@ -33,13 +36,17 @@ function AuthSurface({
         <header className="collo-auth-brand">
           <Logo />
         </header>
-        <ProductAuthScene state={state === 'idle' ? focus : state} />
-        <div className="collo-auth-scene-caption">
-          <h2>
-            Separate paths.
-            <br />
-            Shared direction.
-          </h2>
+        <div className="collo-auth-art-stage">
+          <div className="collo-auth-art-group">
+            <ProductAuthScene state={state === 'idle' ? focus : state} />
+            <div className="collo-auth-scene-caption">
+              <h2>
+                Separate paths.
+                <br />
+                Shared direction.
+              </h2>
+            </div>
+          </div>
         </div>
       </section>
       <section
@@ -61,20 +68,21 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
   const router = useRouter(),
     params = useSearchParams();
   const redirectTo = applicationDestination(params.get('return_to'));
-  const auth = useEmailAuth(flow, redirectTo);
+  const transaction = useAuthTransaction();
+  const auth = useProductEmailAuth(flow, transaction.owner);
   const recovering = params.get('recover') === '1';
   const signOut = useProductSignOut();
   const [recoveryBusy, setRecoveryBusy] = useState(false);
   const [recoveryError, setRecoveryError] = useState('');
   const signup = flow === 'signUp';
   const [visible, setVisible] = useState(false);
-  const [oauthPhase, setOAuthPhase] = useState<OAuthPhase>('idle');
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (auth.error) errorRef.current?.focus();
   }, [auth.error]);
   useEffect(() => {
-    if (!recovering && startup.canRead) router.replace(redirectTo);
+    if (!recovering && startup.phase === 'authenticated' && claimAuthNavigation(redirectTo))
+      router.replace(redirectTo);
   }, [startup.canRead, redirectTo, router, recovering]);
   if (recovering)
     return (
@@ -132,7 +140,8 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
         <p role="status">Opening your workspace…</p>
       </AuthSurface>
     );
-  const signingIn = auth.loading || oauthPhase === 'starting' || oauthPhase === 'waiting';
+  const signingIn = transaction.busy;
+  const authLoading = signingIn && transaction.attempt?.method === 'password';
   if (startup.phase !== 'signed-out' && !(signingIn && startup.phase === 'restoring'))
     return <StartupRecovery />;
   if (auth.pendingVerification)
@@ -148,13 +157,13 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
   return (
     <AuthSurface
       state={
-        auth.loading
+        authLoading
           ? 'submitting'
-          : oauthPhase === 'waiting'
+          : transaction.attempt?.phase === 'awaiting-provider'
             ? 'oauth-waiting'
-            : oauthPhase === 'starting'
+            : transaction.attempt?.phase === 'initiating'
               ? 'oauth-starting'
-              : auth.error || ['error', 'timeout', 'unavailable'].includes(oauthPhase)
+              : auth.error || ['failed', 'expired'].includes(transaction.attempt?.phase || '')
                 ? 'recoverable-error'
                 : 'idle'
       }
@@ -168,11 +177,11 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
               ? 'A place to keep your team in context.'
               : 'Sign in to pick up where your team left off.'}
         </p>
-        <ProductOAuthButtons destination={redirectTo} onPhase={setOAuthPhase} />
+        <ProductOAuthButtons destination={redirectTo} transaction={transaction} />
         <div className="collo-auth-divider">
           <span>or continue with email</span>
         </div>
-        <form onSubmit={auth.submit} aria-busy={auth.loading}>
+        <form onSubmit={auth.submit} aria-busy={transaction.busy}>
           <label htmlFor="email">Email</label>
           <input
             id="email"
@@ -180,6 +189,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
             type="email"
             autoComplete="username"
             required
+            disabled={transaction.busy}
             value={auth.email}
             onChange={(e) => auth.setEmail(e.target.value)}
             placeholder="you@example.com"
@@ -194,6 +204,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
               autoComplete={signup ? 'new-password' : 'current-password'}
               required
               minLength={signup ? 8 : undefined}
+              disabled={transaction.busy}
               value={auth.password}
               onChange={(e) => auth.setPassword(e.target.value)}
               placeholder={signup ? 'At least 8 characters' : 'Enter your password'}
@@ -218,6 +229,7 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
                 type={visible ? 'text' : 'password'}
                 autoComplete="new-password"
                 required
+                disabled={transaction.busy}
                 value={auth.confirmPassword}
                 onChange={(e) => auth.setConfirmPassword(e.target.value)}
               />
@@ -234,19 +246,15 @@ function AuthForm({ flow }: { flow: 'signIn' | 'signUp' }) {
               {auth.error}
             </p>
           )}
-          <Button
-            type="submit"
-            disabled={auth.loading || oauthPhase === 'starting' || oauthPhase === 'waiting'}
-            className="collo-auth-submit"
-          >
-            {auth.loading
+          <Button type="submit" disabled={transaction.busy} className="collo-auth-submit">
+            {authLoading
               ? signup
                 ? 'Creating account…'
                 : 'Signing in…'
               : signup
                 ? 'Create account'
                 : 'Sign In'}
-            {!auth.loading && <ArrowRight size={17} />}
+            {!authLoading && <ArrowRight size={17} />}
           </Button>
         </form>
         {!signup && (

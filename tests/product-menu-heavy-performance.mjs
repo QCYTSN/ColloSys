@@ -97,7 +97,79 @@ const go = async (route) => {
 };
 async function action(name, trigger, visible) {
   console.log('ACTION', name);
-  await page.evaluate(() => window.__identityMetrics.actions.push({ start: performance.now() }));
+  if (process.env.COLLOSYS_PRESENTATION_PHASES === '1')
+    await page.evaluate((name) => {
+      const a = { start: performance.now(), name, presentation: {} };
+      window.__identityMetrics.actions.push(a);
+      if (!/dropdown|conversation return|diff/.test(name)) return;
+      const begin = (event) => {
+        const start = performance.now(),
+          button = event.target.closest('button'),
+          face = button?.querySelector('.collo-trigger-face,.collo-button-face');
+        const selector = name.startsWith('dropdown')
+          ? '.collo-project-property-menu'
+          : name === 'long conversation return'
+            ? '[data-testid=captured-conversation]'
+            : '.collo-checkpoint-diff';
+        a.presentation.input = start;
+        let last = '',
+          same = 0;
+        const frame = () => {
+          if (window.__identityMetrics.actions.at(-1) !== a) {
+            a.presentation.interruptedByNextAction = true;
+            return;
+          }
+          const content = document.querySelector(selector),
+            box = content?.getBoundingClientRect();
+          const shown =
+            !!content && !!box?.height && getComputedStyle(content).visibility !== 'hidden';
+          if (
+            face?.getAnimations().some((x) => x.playState === 'running') ||
+            button?.getAttribute('aria-expanded') === 'true' ||
+            button?.classList.contains('selected') ||
+            (name === '32-file diff first' &&
+              document.querySelector('[data-testid=checkpoint-completeness]')) ||
+            shown
+          )
+            a.presentation.feedbackOpportunity ??= performance.now() - start;
+          if (shown) {
+            const ready =
+              name === '32-file diff first'
+                ? content.querySelectorAll('button[data-diff-file]').length === 32
+                : name === 'long conversation return'
+                  ? !content.querySelector('.collo-reader-pagination button:disabled,[role=status]')
+                  : !content.querySelector('[role=status]');
+            if (ready) a.presentation.operableOpportunity ??= performance.now() - start;
+            const key = content.textContent + '|' + box.width + '|' + box.height;
+            same = key === last ? same + 1 : 0;
+            last = key;
+            if (ready && same >= 3)
+              a.presentation.contentStableOpportunity ??= performance.now() - start;
+            const surface = content.closest('.collo-detail-surface') || content;
+            if (
+              ready &&
+              !surface
+                .getAnimations({ subtree: true })
+                .some(
+                  (x) =>
+                    x.playState === 'running' &&
+                    Number.isFinite(x.effect?.getComputedTiming().endTime),
+                )
+            )
+              a.presentation.animationSettled ??= performance.now() - start;
+          }
+          if (
+            performance.now() - start < 1000 &&
+            (!a.presentation.contentStableOpportunity || !a.presentation.animationSettled)
+          )
+            requestAnimationFrame(frame);
+        };
+        requestAnimationFrame(frame);
+      };
+      document.addEventListener('pointerdown', begin, { once: true, capture: true });
+    }, name);
+  else
+    await page.evaluate(() => window.__identityMetrics.actions.push({ start: performance.now() }));
   const start = Date.now();
   await trigger();
   await visible();
@@ -116,6 +188,19 @@ async function action(name, trigger, visible) {
       ),
     name,
   );
+  if (
+    process.env.COLLOSYS_PRESENTATION_PHASES === '1' &&
+    /dropdown|conversation return|diff/.test(name)
+  )
+    // Separate after-only presentation run: let the observed entrance finish
+    // before the next action closes it. Paired EventTiming runs stay unchanged.
+    await page.waitForFunction(() => {
+      const p = window.__identityMetrics.actions.at(-1)?.presentation;
+      return (
+        p &&
+        ((p.contentStableOpportunity && p.animationSettled) || performance.now() - p.input > 1100)
+      );
+    });
   checks.push({ name, wallMs: Date.now() - start });
 }
 let cdp,
@@ -318,6 +403,7 @@ try {
     JSON.stringify(
       {
         phase,
+        detailedPresentation: process.env.COLLOSYS_PRESENTATION_PHASES === '1',
         mode,
         origin,
         environment: env,

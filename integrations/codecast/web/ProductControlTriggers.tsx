@@ -37,7 +37,10 @@ export function usePressSurface(disabled?: boolean) {
   useEffect(() => () => motion.current?.cancel(), []);
   const press = () => {
     if (disabled || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const current = face.current ? getComputedStyle(face.current).transform : 'none';
+    const current =
+      face.current && motion.current?.playState === 'running'
+        ? getComputedStyle(face.current).transform
+        : 'none';
     motion.current?.cancel();
     motion.current =
       face.current?.animate(

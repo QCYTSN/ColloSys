@@ -1,0 +1,665 @@
+{
+  "reason": "Excluded/intermediate media and duplicate auth-round captures are preserved locally. All numeric records, final current media, final/baseline traces and three-round performance data remain in the repository. No evidence was deleted.",
+  "files": [
+    {
+      "original": "candidate-before-success-guard/production/round-1-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-1-active.png",
+      "bytes": 114481
+    },
+    {
+      "original": "candidate-before-success-guard/production/round-1-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-1-display.png",
+      "bytes": 130914
+    },
+    {
+      "original": "candidate-before-success-guard/production/round-2-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-2-active.png",
+      "bytes": 114481
+    },
+    {
+      "original": "candidate-before-success-guard/production/round-2-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-2-display.png",
+      "bytes": 130914
+    },
+    {
+      "original": "candidate-before-success-guard/production/round-3-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-3-active.png",
+      "bytes": 114481
+    },
+    {
+      "original": "candidate-before-success-guard/production/round-3-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/round-3-display.png",
+      "bytes": 130914
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-1/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-1/cold-login.png",
+      "bytes": 67891
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-1/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-1/flow.webm",
+      "bytes": 9158179
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-1/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-1/real-diff.png",
+      "bytes": 117928
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-1/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-1/runtime-trace.json.gz",
+      "bytes": 13193412
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-2/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-2/cold-login.png",
+      "bytes": 67887
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-2/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-2/flow.webm",
+      "bytes": 9451784
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-2/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-2/real-diff.png",
+      "bytes": 117930
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-2/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-2/runtime-trace.json.gz",
+      "bytes": 12361464
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-3/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-3/cold-login.png",
+      "bytes": 67874
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-3/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-3/flow.webm",
+      "bytes": 8356672
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-3/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-3/real-diff.png",
+      "bytes": 117930
+    },
+    {
+      "original": "candidate-before-success-guard/production/flows/round-3/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-success-guard/production/flows/round-3/runtime-trace.json.gz",
+      "bytes": 12154943
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/provider-checking.png",
+      "bytes": 66061
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/provider-waiting.png",
+      "bytes": 71078
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/states.webm",
+      "bytes": 4040696
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-1/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-1/static-light.png",
+      "bytes": 67845
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/provider-checking.png",
+      "bytes": 66062
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/provider-waiting.png",
+      "bytes": 71068
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/states.webm",
+      "bytes": 3954400
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-2/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-2/static-light.png",
+      "bytes": 67845
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/provider-checking.png",
+      "bytes": 66058
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/provider-waiting.png",
+      "bytes": 71068
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/states.webm",
+      "bytes": 3896310
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "candidate-before-deferred-reader/auth-round-3/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/auth-round-3/static-light.png",
+      "bytes": 67845
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-1/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-1/cold-login.png",
+      "bytes": 67887
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-1/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-1/flow.webm",
+      "bytes": 10196554
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-1/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-1/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-1/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-1/runtime-trace.json.gz",
+      "bytes": 11315758
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-2/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-2/cold-login.png",
+      "bytes": 67887
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-2/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-2/flow.webm",
+      "bytes": 9320269
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-2/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-2/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-2/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-2/runtime-trace.json.gz",
+      "bytes": 11782854
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-3/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-3/cold-login.png",
+      "bytes": 67864
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-3/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-3/flow.webm",
+      "bytes": 9485352
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-3/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-3/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "candidate-before-deferred-reader/presentation/after/production/flows/round-3/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/presentation/after/production/flows/round-3/runtime-trace.json.gz",
+      "bytes": 13112670
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-1-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-1-active.png",
+      "bytes": 115364
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-1-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-1-display.png",
+      "bytes": 131913
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-2-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-2-active.png",
+      "bytes": 115364
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-2-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-2-display.png",
+      "bytes": 131913
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-3-active.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-3-active.png",
+      "bytes": 115364
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/round-3-display.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/round-3-display.png",
+      "bytes": 131913
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-1/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-1/cold-login.png",
+      "bytes": 67875
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-1/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-1/flow.webm",
+      "bytes": 8555567
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-1/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-1/real-diff.png",
+      "bytes": 117811
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-1/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-1/runtime-trace.json.gz",
+      "bytes": 12228089
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-2/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-2/cold-login.png",
+      "bytes": 67890
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-2/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-2/flow.webm",
+      "bytes": 8232661
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-2/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-2/real-diff.png",
+      "bytes": 117133
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-2/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-2/runtime-trace.json.gz",
+      "bytes": 11918862
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-3/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-3/cold-login.png",
+      "bytes": 67886
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-3/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-3/flow.webm",
+      "bytes": 8022555
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-3/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-3/real-diff.png",
+      "bytes": 117152
+    },
+    {
+      "original": "candidate-before-deferred-reader/production/flows/round-3/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/candidate-before-deferred-reader/production/flows/round-3/runtime-trace.json.gz",
+      "bytes": 11276118
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-1/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-1/cold-login.png",
+      "bytes": 67875
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-1/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-1/flow.webm",
+      "bytes": 10361859
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-1/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-1/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-1/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-1/runtime-trace.json.gz",
+      "bytes": 12919818
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-2/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-2/cold-login.png",
+      "bytes": 67887
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-2/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-2/flow.webm",
+      "bytes": 10579132
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-2/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-2/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-2/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-2/runtime-trace.json.gz",
+      "bytes": 13639729
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-3/cold-login.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-3/cold-login.png",
+      "bytes": 67887
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-3/flow.webm",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-3/flow.webm",
+      "bytes": 10023276
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-3/real-diff.png",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-3/real-diff.png",
+      "bytes": 117157
+    },
+    {
+      "original": "presentation-initial-observer/after/production/flows/round-3/runtime-trace.json.gz",
+      "archive": ".local/auth-completion-evidence-archive/presentation-initial-observer/after/production/flows/round-3/runtime-trace.json.gz",
+      "bytes": 13766973
+    },
+    {
+      "original": "after/auth-round-1/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "after/auth-round-1/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "after/auth-round-1/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "after/auth-round-1/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "after/auth-round-1/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "after/auth-round-1/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "after/auth-round-1/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/provider-checking.png",
+      "bytes": 66057
+    },
+    {
+      "original": "after/auth-round-1/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/provider-waiting.png",
+      "bytes": 71078
+    },
+    {
+      "original": "after/auth-round-1/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "after/auth-round-1/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/states.webm",
+      "bytes": 3886351
+    },
+    {
+      "original": "after/auth-round-1/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "after/auth-round-1/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-1/static-light.png",
+      "bytes": 67845
+    },
+    {
+      "original": "after/auth-round-2/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "after/auth-round-2/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "after/auth-round-2/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "after/auth-round-2/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "after/auth-round-2/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "after/auth-round-2/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "after/auth-round-2/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/provider-checking.png",
+      "bytes": 66055
+    },
+    {
+      "original": "after/auth-round-2/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/provider-waiting.png",
+      "bytes": 71080
+    },
+    {
+      "original": "after/auth-round-2/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "after/auth-round-2/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/states.webm",
+      "bytes": 3743694
+    },
+    {
+      "original": "after/auth-round-2/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "after/auth-round-2/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-2/static-light.png",
+      "bytes": 67845
+    },
+    {
+      "original": "after/auth-round-3/art-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/art-dark.png",
+      "bytes": 26565
+    },
+    {
+      "original": "after/auth-round-3/art-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/art-light.png",
+      "bytes": 26062
+    },
+    {
+      "original": "after/auth-round-3/long-error-1280.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/long-error-1280.png",
+      "bytes": 88131
+    },
+    {
+      "original": "after/auth-round-3/long-error-1440.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/long-error-1440.png",
+      "bytes": 89784
+    },
+    {
+      "original": "after/auth-round-3/long-error-1920.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/long-error-1920.png",
+      "bytes": 92125
+    },
+    {
+      "original": "after/auth-round-3/long-error-960.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/long-error-960.png",
+      "bytes": 83557
+    },
+    {
+      "original": "after/auth-round-3/provider-checking.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/provider-checking.png",
+      "bytes": 66062
+    },
+    {
+      "original": "after/auth-round-3/provider-waiting.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/provider-waiting.png",
+      "bytes": 71068
+    },
+    {
+      "original": "after/auth-round-3/signup-low-height.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/signup-low-height.png",
+      "bytes": 68720
+    },
+    {
+      "original": "after/auth-round-3/states.webm",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/states.webm",
+      "bytes": 4015264
+    },
+    {
+      "original": "after/auth-round-3/static-dark.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/static-dark.png",
+      "bytes": 68426
+    },
+    {
+      "original": "after/auth-round-3/static-light.png",
+      "archive": ".local/auth-completion-evidence-archive/after/auth-round-3/static-light.png",
+      "bytes": 67845
+    }
+  ]
+}

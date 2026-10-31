@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ColloSys · 认证与产品精修验收</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;background:#f5f6f3;color:#253a35;font:15px/1.65 system-ui,sans-serif}main{max-width:1280px;margin:auto;padding:40px 28px 80px}h1{font-size:30px;line-height:1.3}h2{font-size:21px;margin:42px 0 14px}p{max-width:88ch}a{color:#365e58}nav{display:flex;gap:20px;flex-wrap:wrap}figure{margin:0}figcaption{font-size:13px;color:#55665f;margin:8px 0 20px}.pair{display:grid;grid-template-columns:1fr 1fr;gap:22px}.full img,.pair img{width:100%;height:auto;display:block;border:1px solid #d5ddd6;border-radius:10px}.quarter{display:flex;flex-wrap:wrap;gap:24px;overflow:auto}.quarter img{width:360px;height:225px;display:block}video{width:100%;max-height:720px;background:#17251f;border-radius:10px}table{width:100%;border-collapse:collapse}td,th{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #d5ddd6}small{color:#55665f}@media(max-width:760px){.pair{grid-template-columns:1fr}main{padding:24px 16px}}
+</style>
+<main>
+  <small>2026-10-31 · 正式应用 · 6f9c577 后的本地修改</small>
+  <h1>认证、登录构图与完整产品精修</h1>
+  <p>这些画面来自运行中的完整应用和隔离 TEST 账号。原生验收复制了当前用户的浅色 / Iris、侧栏与缩放配置。真实 GitHub、Google 授权按用户决定待配置；受控回调结果不代表已经通过外部授权。</p>
+  <nav><a href="EXECUTION.md">执行与验收记录</a><a href="PERFORMANCE.md">三轮性能结果</a><a href="OAUTH_HANDOFF.md">第三方配置与验证入口</a><a href="evidence/verification-index.json">证据索引</a></nav>
+  <h2>当前登录画面</h2>
+  <div class="full"><a href="evidence/after/login/static-light.png"><img src="evidence/after/login/static-light.png" alt="当前浅色登录整页"></a></div>
+  <p>风景与标题组成同一组：远山位于连续水面后方，近岸接壤并围合水面。主山、岸线与画框稳定，只有倒影与局部光带响应。</p>
+  <div class="full"><a href="evidence/after/login/static-dark.png"><img src="evidence/after/login/static-dark.png" alt="当前深色登录整页"></a></div>
+  <h2>25% 整页检查</h2>
+  <p>下列 1440×900 原始整页图按 360×225 CSS 像素显示，未裁切、替换字体或重绘。</p>
+  <div class="quarter"><figure><img src="evidence/after/login/static-light.png" alt="浅色整页25%"><figcaption>浅色</figcaption></figure><figure><img src="evidence/after/login/static-dark.png" alt="深色整页25%"><figcaption>深色</figcaption></figure></div>
+  <h2>真实改造前后</h2>
+  <div class="pair"><figure><a href="evidence/before/login/unconfigured-light.png"><img src="evidence/before/login/unconfigured-light.png" alt="改造前未配置状态"></a><figcaption>改造前：实际字体与正式应用，状态插入使表单重新居中。</figcaption></figure><figure><a href="evidence/after/login/static-light.png"><img src="evidence/after/login/static-light.png" alt="改造后未配置状态"></a><figcaption>改造后：未启用入口明确禁用，简短状态与独立帮助，表单起点稳定。</figcaption></figure></div>
+  <div class="pair"><figure><img src="evidence/after/login/provider-waiting.png" alt="提供商等待状态"><figcaption>等待、取消与重试共用认证事务。</figcaption></figure><figure><img src="evidence/after/login/long-error-1440.png" alt="长错误状态"><figcaption>长中文错误是声明的布局压力测试；主要输入锚点保持不变。</figcaption></figure></div>
+  <video controls preload="none" src="evidence/after/login/states.webm"></video>
+  <p><a href="evidence/before/login/states.webm">改造前状态录像</a> · <a href="evidence/after/login/layout-and-transaction.json">四尺寸布局与互斥结果</a> · <a href="evidence/after/login/reflection-motion.json">动作与 reduced-motion 记录</a></p>
+  <h2>真实原生窗口与当前用户配置</h2>
+  <div class="pair"><figure><a href="evidence/native/login-matching-user.png"><img src="evidence/native/login-matching-user.png" alt="匹配用户外观的隔离原生窗口"></a><figcaption>实际 Electron 原生窗口，Windows scale / DPR 2，页面 zoom 1。</figcaption></figure><figure><a href="evidence/native/login-methods.png"><img src="evidence/native/login-methods.png" alt="设置中的登录方式"></a><figcaption>设置中的登录方式、密码重新验证和未启用状态。</figcaption></figure></div>
+  <div class="pair"><figure><img src="evidence/native/forest-preview.png" alt="实际应用中的 Forest 预览"><figcaption>Forest 预览会作用于实际应用。</figcaption></figure><figure><img src="evidence/native/restored-user-appearance.png" alt="恢复用户原选择"><figcaption>取消、离开、采用、重开与恢复原选择均单独验证。</figcaption></figure></div>
+  <p><a href="evidence/native/actual-profile-metadata.json">实际用户配置只读元数据</a> · <a href="evidence/native/results.json">原生操作结果</a></p>
+  <h2>账号关联与原有业务</h2>
+  <video controls preload="none" src="evidence/linking-ui/settings-linking.webm"></video>
+  <p>真实设置页与本地后端完成密码复验、GitHub / Google 关联、明确确认、同账号同项目及解除关联。外部身份凭证在提供商验证边界受控注入，未联系真实提供商。另一个浏览器账号打开回调页时不会被切换。</p>
+  <nav><a href="evidence/linking-ui/results.json">设置页关联结果</a><a href="evidence/security/account-linking.json">后台权限与唯一性结果</a><a href="evidence/regression/suite-results.json">原有菜单、阅读、草稿、存储与撤权回归</a></nav>
+  <h2>验收边界</h2>
+  <p>可操作流程、视觉画面、性能和外部配置分别记录。测试通过不代表用户已经认可审美，也不代表全平台 60fps。当前构建指纹、各项实际结果及剩余慢路径见执行记录与性能记录。</p>
+</main>
+</html>

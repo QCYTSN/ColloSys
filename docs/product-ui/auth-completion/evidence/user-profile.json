@@ -1,0 +1,21 @@
+{
+  "measuredAt": "2026-10-31T05:04:10.117Z",
+  "scope": "Read-only allowlisted appearance/size metadata from the actual default profile; no content screenshots, credentials, navigation or settings changes.",
+  "appearance": {
+    "version": 1,
+    "mode": "light",
+    "accent": "iris"
+  },
+  "legacyTheme": "light",
+  "sidebarPreferences": {},
+  "viewport": {
+    "width": 1427,
+    "height": 817
+  },
+  "dpr": 2,
+  "native": {
+    "zoom": 1,
+    "displayScale": 2,
+    "nativeHandle": true
+  }
+}

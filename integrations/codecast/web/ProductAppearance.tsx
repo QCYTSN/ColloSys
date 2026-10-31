@@ -9,6 +9,7 @@ import {
   type CSSProperties,
 } from 'react';
 import { Sun, Moon, Desktop, Check } from '@phosphor-icons/react';
+import { Button } from '../components/ui/button';
 import { themeVarsByMode } from '../lib/theme/themeVars';
 import { productTheme } from './productTheme';
 import {
@@ -28,6 +29,11 @@ type AppearanceContext = {
   theme: Theme;
   save: (change: Partial<Pick<ProductAppearance, 'mode' | 'accent'>>) => void;
   error: string;
+  previewing: boolean;
+  previewDefault: () => void;
+  cancelPreview: () => void;
+  adoptPreview: () => void;
+  restorePrevious: () => void;
   toggleTheme: () => void;
   visualStyle: VisualStyle;
   setVisualStyle: (style: VisualStyle) => void;
@@ -45,6 +51,7 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
     [systemDark, setSystemDark] = useState(
       () => matchMedia('(prefers-color-scheme: dark)').matches,
     ),
+    [preview, setPreview] = useState<ProductAppearance | null>(null),
     [lock, setLock] = useState<Theme | null>(null),
     [error, setError] = useState('');
   const theme =
@@ -53,8 +60,10 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
     const media = matchMedia('(prefers-color-scheme: dark)'),
       changed = () => setSystemDark(media.matches);
     const storage = (event: StorageEvent) => {
-      if (event.key === 'collosys.appearance.v1' || event.key === null)
+      if (event.key === 'collosys.appearance.v1' || event.key === null) {
         setPreference(readAppearance());
+        setPreview(null);
+      }
     };
     media.addEventListener('change', changed);
     window.addEventListener('storage', storage);
@@ -64,7 +73,7 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
     };
   }, []);
   useLayoutEffect(() => {
-    applyAppearance(preference, themes, theme);
+    applyAppearance(preview ?? preference, themes, theme);
     document.documentElement.classList.remove('hosted-mode', 'minimal-style', 'codex-style');
     void window.__COLLOSYS_DESKTOP__
       ?.setAppearance({
@@ -76,13 +85,14 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
       .catch(() =>
         setError('The window frame could not update. Reopen this window to apply its appearance.'),
       );
-  }, [preference, theme]);
+  }, [preference, preview, theme]);
   const save = useCallback((change: Partial<Pick<ProductAppearance, 'mode' | 'accent'>>) => {
     // Read the latest value to avoid clobbering another window's accent/mode.
     const next = { ...readAppearance(), ...change, version: 1 as const };
     try {
       localStorage.setItem('collosys.appearance.v1', JSON.stringify(next));
       setPreference(next);
+      setPreview(null);
       setError('');
     } catch {
       setError('This device could not save appearance. Free some browser storage and try again.');
@@ -92,11 +102,34 @@ export function ProductAppearanceProvider({ children }: { children: ReactNode })
     setLock(value);
     return () => setLock(null);
   }, []);
+  const cancelPreview = useCallback(() => setPreview(null), []);
   const value: AppearanceContext = {
-    preference,
+    preference: preview ?? preference,
     theme,
     save,
     error,
+    previewing: !!preview,
+    previewDefault: () => setPreview({ ...preference, accent: 'forest' }),
+    cancelPreview,
+    adoptPreview: () => {
+      if (!preview) return;
+      try {
+        localStorage.setItem('collosys.appearance.previous.v1', JSON.stringify(readAppearance()));
+        save({ accent: preview.accent });
+      } catch {
+        setError('The previous appearance could not be saved. Your choice has not changed.');
+      }
+    },
+    restorePrevious: () => {
+      const previous = readAppearance({
+        getItem: (key: string) =>
+          key === 'collosys.appearance.v1'
+            ? localStorage.getItem('collosys.appearance.previous.v1')
+            : null,
+      } as Storage);
+      if (localStorage.getItem('collosys.appearance.previous.v1'))
+        save({ mode: previous.mode, accent: previous.accent });
+    },
     toggleTheme: () => save({ mode: theme === 'dark' ? 'light' : 'dark' }),
     visualStyle: 'classic',
     setVisualStyle: () => {},
@@ -122,6 +155,7 @@ export function ProductAppearanceSettings() {
   const appearance = useContext(ProductAppearanceContext);
   if (!appearance) throw new Error('ColloSys appearance settings are outside the product provider');
   const { preference, save, error } = appearance;
+  useEffect(() => () => appearance.cancelPreview(), [appearance.cancelPreview]);
   const accents: [AppearanceAccent, string][] = [
     ['forest', 'Forest'],
     ['iris', 'Iris'],
@@ -133,6 +167,28 @@ export function ProductAppearanceSettings() {
     <section className="collo-appearance-settings">
       <h2>Appearance</h2>
       <p>Choose how ColloSys feels on this device. All its windows stay in sync.</p>
+      <div className="collo-appearance-preview">
+        {appearance.previewing ? (
+          <>
+            <p role="status">
+              Previewing Forest across the application. Your saved choice is unchanged.
+            </p>
+            <Button onClick={appearance.adoptPreview}>Use this appearance</Button>
+            <Button variant="outline" onClick={appearance.cancelPreview}>
+              Cancel preview
+            </Button>
+          </>
+        ) : (
+          <Button variant="outline" onClick={appearance.previewDefault}>
+            Preview unified default
+          </Button>
+        )}
+        {!appearance.previewing && localStorage.getItem('collosys.appearance.previous.v1') && (
+          <Button variant="ghost" onClick={appearance.restorePrevious}>
+            Restore previous choice
+          </Button>
+        )}
+      </div>
       <div role="group" aria-label="Theme" className="collo-appearance-modes">
         {(
           [

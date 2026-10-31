@@ -1,0 +1,69 @@
+{
+  "checks": [
+    "Actual default profile metadata read only; isolated TEST window mirrors appearance/sidebar/zoom/OS scale. Native minimize pauses artwork and restore resumes it.",
+    "Native settings shows current password, unavailable providers, real failed and successful password re-verification; password field cleared.",
+    "Forest preview changes actual application variables, Cancel and leaving settings restore Iris, adoption persists across native relaunch, Restore previous choice restores original saved mode/accent."
+  ],
+  "mirroredProfile": {
+    "appearance": {
+      "version": 1,
+      "mode": "light",
+      "accent": "iris"
+    },
+    "sidebar": {
+      "size": 17.596,
+      "hidden": false
+    },
+    "viewport": {
+      "width": 1427,
+      "height": 817
+    },
+    "dpr": 2,
+    "build": {
+      "version": 1,
+      "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+      "dirty": true,
+      "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+    },
+    "window": {
+      "nativeHandle": true,
+      "zoom": 1,
+      "bounds": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 852
+      },
+      "displayScale": 2
+    }
+  },
+  "finalAppearance": {
+    "version": 1,
+    "mode": "light",
+    "accent": "iris"
+  },
+  "tokens": {
+    "--collo-accent": "#7568b6",
+    "--collo-selection-bg": "color-mix(in srgb, #7568b6 12%, #FFFFFF)",
+    "--collo-selection-ink": "#252C29",
+    "--collo-action": "#2B443A",
+    "--collo-danger": "#B63D46"
+  },
+  "window": {
+    "nativeHandle": true,
+    "zoom": 1,
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 852
+    },
+    "displayScale": 2
+  },
+  "build": {
+    "version": 1,
+    "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+    "dirty": true,
+    "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+  }
+}

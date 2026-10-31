@@ -1,0 +1,7 @@
+Intermediate presentation observer, excluded from final phase results.
+
+The initial observer incorrectly required the reader's Load next messages control to disappear. This fixture has65 messages; the existing paired navigation requests60 and preserves that cursor, so a valid enabled pagination control remains. Feedback was captured, but reader readiness/stability was not. The corrected observer distinguishes an enabled pagination control from one disabled during an authorized replay and explicitly defines DOM stability as unchanged text/geometry across three frames.
+
+It also first observed Diff content as feedback, omitting the earlier real checkpoint-status response. The paired baseline/after harness already captures selectionFeedback separately in diffTimeline; that earlier measurement remains intact. The corrected phase observer detects the same actual checkpoint status. No product source or paired EventTiming result changed for this observer correction. These three raw intermediate rounds remain available and are not included in the final phase summary.
+
+Archive update: all numeric JSON remains here. Intermediate images, recordings and compressed traces are preserved under .local/auth-completion-evidence-archive with their original relative paths. See ../local-archive-map.json. No material was deleted; the final baseline/after evidence remains in its public review locations.

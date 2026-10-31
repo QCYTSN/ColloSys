@@ -55,12 +55,13 @@ ipcMain.handle('collosys:auth:start:v1', async (event, request) => {
     !request ||
     request.version !== 1 ||
     !/^[a-f0-9-]{36}$/.test(request.attemptId) ||
-    !['github', 'google'].includes(request.provider)
+    !['github', 'google'].includes(request.provider) ||
+    (request.purpose !== undefined && request.purpose !== 'link')
   )
     throw new Error('Invalid sign-in request');
   // No renderer-supplied URL, protocol or host crosses this boundary.
   await electron.shell.openExternal(
-    `${origin}/auth/desktop?attempt=${encodeURIComponent(request.attemptId)}`,
+    `${origin}/auth/${request.purpose === 'link' ? 'link' : 'desktop'}?attempt=${encodeURIComponent(request.attemptId)}`,
   );
 });
 ipcMain.handle('collosys:appearance:v1', (event, request) => {

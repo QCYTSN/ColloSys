@@ -1,42 +1,77 @@
-/* Original flat landscape. Only the reflection and small light move; the
-   mountain, water and shore retain their authored coordinates in every state. */
+/* Painted bounds meet the SVG bottom; the caption gap is visible geometry. */
 .collo-auth-visual {
-  background: #edf0e8;
+  --art-ground: #edf0e8;
+  --art-mountain: #d6e0d7;
+  --art-water: #7b969b;
+  --art-shore: #bc9670;
+  --art-bank: #344d48;
+  --art-light: #c39448;
+  --art-reflection: #cad8d0;
+  background: var(--art-ground);
   color: #252c29;
-  min-height: calc(100dvh - 32px);
+  height: calc(100svh - 32px);
+  min-height: 560px;
   margin: 16px 0 16px 16px;
   border-radius: var(--collo-radius-dialog);
-  position: relative;
+  position: sticky;
+  top: 16px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
+.dark .collo-auth-visual {
+  --art-ground: #202d27;
+  --art-mountain: #495d50;
+  --art-water: #53777b;
+  --art-shore: #9d7958;
+  --art-bank: #2d4238;
+  --art-light: #cab178;
+  --art-reflection: #91aea3;
+  color: #f0f2ed;
+}
 .collo-auth-visual .collo-logo {
-  color: #252c29;
+  color: inherit;
 }
 .collo-auth-brand {
   display: flex;
   align-items: center;
   padding: 24px;
+  flex: none;
+}
+.collo-auth-art-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 clamp(40px, 4.5vw, 64px) 48px;
+}
+.collo-auth-art-group {
+  width: 100%;
+  max-width: 560px;
+  transform: translateY(12px);
 }
 .collo-companion-scene {
   position: relative;
-  display: grid;
-  place-items: center;
   width: 100%;
-  min-height: 320px;
-  flex: 1;
   margin: 0;
 }
-.collo-waterside {
-  width: 100%;
-}
+.collo-waterside,
 .collo-waterside svg {
   display: block;
   width: 100%;
   height: auto;
-  max-height: 61dvh;
   user-select: none;
+}
+.collo-auth-scene-caption {
+  margin-top: 32px;
+}
+.collo-auth-scene-caption h2 {
+  margin: 0;
+  font: var(--collo-type-auth-art-title);
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
+  letter-spacing: -0.015em;
 }
 .collo-water-reflection {
   animation: collo-water-reflect 8s ease-in-out infinite;
@@ -59,16 +94,6 @@
 .collo-companion-scene[data-state='success'] .collo-water-light {
   transition: none;
   animation: collo-water-settle 200ms var(--collo-motion-ease-out) both;
-}
-.collo-auth-scene-caption {
-  padding: 24px 9% 48px;
-}
-.collo-auth-scene-caption h2 {
-  margin: 0;
-  font: var(--collo-type-auth-art-title);
-  font-optical-sizing: auto;
-  font-variation-settings: normal;
-  letter-spacing: -0.015em;
 }
 .collo-companion-scene[data-paused='true'] * {
   animation-play-state: paused !important;
@@ -100,27 +125,24 @@
   }
 }
 @media (max-height: 760px) and (min-width: 821px) {
-  .collo-companion-scene {
-    min-height: 240px;
+  .collo-auth-art-stage {
+    padding-bottom: 24px;
   }
-  .collo-waterside svg {
-    max-height: 55dvh;
-  }
-  .collo-auth-scene-caption {
-    padding-top: 16px;
-    padding-bottom: 32px;
+  .collo-auth-art-group {
+    transform: none;
   }
 }
 @media (max-width: 820px) {
   .collo-auth-visual {
+    height: auto;
     min-height: 0;
+    position: static;
     margin: 16px 16px 0;
   }
   .collo-auth-brand {
     padding: 16px 24px;
   }
-  .collo-companion-scene,
-  .collo-auth-scene-caption {
+  .collo-auth-art-stage {
     display: none;
   }
 }

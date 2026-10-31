@@ -1,0 +1,18 @@
+{
+  "mode": "production",
+  "checks": [
+    "Create submits name, icon and color atomically to the real backend",
+    "Cancel keeps persisted identity; editing and reload retain one selected mark",
+    "Invalid choices, stale revisions and cross-account writes are rejected",
+    "Shared trigger exposes pressed/open state, Esc restores focus",
+    "Keyboard selection and a real concurrent save retain draft and support retry",
+    "Appearance changes bootstrap, system response and another window"
+  ],
+  "errors": [],
+  "viewport": {
+    "width": 1440,
+    "height": 900,
+    "dpr": 1
+  },
+  "projectId": "sd7k35rbvn9q4j4xnz5dwehw658hbp7e"
+}

@@ -1,0 +1,3 @@
+Intermediate build measurements retained. A focused authentication unit test overlapped the end of this run, and final review then made authentication success terminal for UI state while allowing the SDK to finish its fenced token write. These samples are excluded from the final paired comparison. Final after measurements are repeated on the final prepared build with no other test/build/browser running.
+
+Archive update: all numeric JSON remains here. Intermediate images, recordings and compressed traces are preserved under .local/auth-completion-evidence-archive with their original relative paths. See ../local-archive-map.json. No material was deleted; the final baseline/after evidence remains in its public review locations.

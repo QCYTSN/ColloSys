@@ -1,0 +1,174 @@
+{
+  "mode": "production",
+  "method": "After-only, three independent Chromium processes/contexts, normal motion, 1440x900 DPR1. Real pointerdown to first browser frame with changed password visibility; not hardware presentation. Submit records auth.loading DOM, first feedback frame and actual backend error frame separately. Error latency includes the local authentication request. No credentials or screenshots are captured. Typing comparisons remain in the existing heavy-path report.",
+  "toggle": {
+    "n": 30,
+    "p50": 4,
+    "p95": 5.100000023841858,
+    "max": 7
+  },
+  "rounds": [
+    {
+      "round": 1,
+      "toggles": [
+        {
+          "firstFrame": 4.199999988079071
+        },
+        {
+          "firstFrame": 7
+        },
+        {
+          "firstFrame": 2.299999952316284
+        },
+        {
+          "firstFrame": 2.400000035762787
+        },
+        {
+          "firstFrame": 3.699999988079071
+        },
+        {
+          "firstFrame": 2.699999988079071
+        },
+        {
+          "firstFrame": 3.099999964237213
+        },
+        {
+          "firstFrame": 4
+        },
+        {
+          "firstFrame": 2
+        },
+        {
+          "firstFrame": 1.899999976158142
+        }
+      ],
+      "submit": {
+        "start": 2931.300000011921,
+        "submittingDOM": 5.299999952316284,
+        "errorDOM": 69,
+        "firstFeedbackFrame": 7.799999952316284,
+        "errorFrame": 70.59999996423721
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "dpr": 1,
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "build": {
+        "version": 1,
+        "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+        "dirty": true,
+        "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+      }
+    },
+    {
+      "round": 2,
+      "toggles": [
+        {
+          "firstFrame": 4.099999964237213
+        },
+        {
+          "firstFrame": 5
+        },
+        {
+          "firstFrame": 4.300000011920929
+        },
+        {
+          "firstFrame": 3.400000035762787
+        },
+        {
+          "firstFrame": 5
+        },
+        {
+          "firstFrame": 5
+        },
+        {
+          "firstFrame": 4.699999988079071
+        },
+        {
+          "firstFrame": 3.899999976158142
+        },
+        {
+          "firstFrame": 2.300000011920929
+        },
+        {
+          "firstFrame": 4.199999988079071
+        }
+      ],
+      "submit": {
+        "start": 2981.899999976158,
+        "submittingDOM": 4.700000047683716,
+        "errorDOM": 53,
+        "firstFeedbackFrame": 7.800000011920929,
+        "errorFrame": 54.200000047683716
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "dpr": 1,
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "build": {
+        "version": 1,
+        "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+        "dirty": true,
+        "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+      }
+    },
+    {
+      "round": 3,
+      "toggles": [
+        {
+          "firstFrame": 3.399999976158142
+        },
+        {
+          "firstFrame": 3.899999976158142
+        },
+        {
+          "firstFrame": 5
+        },
+        {
+          "firstFrame": 4.300000011920929
+        },
+        {
+          "firstFrame": 5.099999964237213
+        },
+        {
+          "firstFrame": 4.800000011920929
+        },
+        {
+          "firstFrame": 5.100000023841858
+        },
+        {
+          "firstFrame": 3.400000035762787
+        },
+        {
+          "firstFrame": 4
+        },
+        {
+          "firstFrame": 4.300000011920929
+        }
+      ],
+      "submit": {
+        "start": 3064.300000011921,
+        "submittingDOM": 3.599999964237213,
+        "errorDOM": 52.89999997615814,
+        "firstFeedbackFrame": 6.199999988079071,
+        "errorFrame": 54.59999996423721
+      },
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "dpr": 1,
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/156.0.0.0 Safari/537.36",
+      "build": {
+        "version": 1,
+        "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+        "dirty": true,
+        "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+      }
+    }
+  ]
+}

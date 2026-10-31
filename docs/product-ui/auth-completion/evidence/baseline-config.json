@@ -1,0 +1,54 @@
+{
+  "measuredAt": "2026-10-31T04:51:04.525Z",
+  "head": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+  "sourceFingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42",
+  "runningBuild": {
+    "version": 1,
+    "commit": "f4a1e815ef2fc63612e7d22f8dcd61576eab71cd",
+    "dirty": true,
+    "fingerprint": "7d773de1755a4c27abd5cfc4655aef57391de908507d365a39958494c7a0ea42"
+  },
+  "config": {
+    "AUTH_GITHUB_ID": false,
+    "AUTH_GITHUB_SECRET": false,
+    "AUTH_GOOGLE_ID": false,
+    "AUTH_GOOGLE_SECRET": false,
+    "SITE_URL": {
+      "name": "SITE_URL",
+      "value": "http://127.0.0.1:3407"
+    },
+    "CONVEX_SITE_URL": {
+      "name": "CONVEX_SITE_URL",
+      "value": "http://127.0.0.1:3409"
+    },
+    "RESEND_API_KEY": false
+  },
+  "local": {
+    "filePresent": false
+  },
+  "health": {
+    "web": {
+      "url": "http://127.0.0.1:3407/login",
+      "status": 200
+    },
+    "backend": {
+      "url": "http://127.0.0.1:3408/instance_name",
+      "status": 200
+    },
+    "manager": {
+      "url": "http://127.0.0.1:3411/health",
+      "status": 200
+    },
+    "issuer": {
+      "url": "http://127.0.0.1:3409/.well-known/openid-configuration",
+      "status": 200
+    }
+  },
+  "providers": {
+    "emailRecovery": false,
+    "github": false,
+    "google": false,
+    "password": true,
+    "version": 1
+  }
+}

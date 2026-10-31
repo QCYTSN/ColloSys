@@ -63,7 +63,20 @@ export function applyAppearance(preference, themes, forcedMode, design = designT
   // Foundation adapter: old shared controls receive the product's accent.
   for (const key of ['--sol-violet', '--sol-cyan', '--sol-link'])
     root.style.setProperty(key, accent);
-  const tokens = { '--collo-accent': accent, '--collo-link': accent };
+  // Selected, hover and focus use the same chosen hue. Primary actions and
+  // danger/success stay semantic; a retained Iris preference is not half Forest.
+  const selection =
+    preference.accent === 'forest'
+      ? palette['selection-bg']
+      : `color-mix(in srgb, ${accent} ${mode === 'dark' ? 19 : 12}%, ${palette['surface-content']})`;
+  const tokens = {
+    '--collo-accent': accent,
+    '--collo-link': accent,
+    '--collo-selection-bg': selection,
+    '--collo-accent-soft': selection,
+    '--collo-selection-ink':
+      preference.accent === 'forest' ? palette['selection-ink'] : palette['text-primary'],
+  };
   for (const [key, value] of Object.entries(tokens)) root.style.setProperty(key, value);
   root.dataset.colloAppearance = `${mode}:${preference.accent}`;
   return mode;

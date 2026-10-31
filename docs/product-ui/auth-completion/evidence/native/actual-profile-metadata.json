@@ -1,0 +1,33 @@
+{
+  "appearance": {
+    "version": 1,
+    "mode": "light",
+    "accent": "iris"
+  },
+  "sidebar": {
+    "size": 17.596,
+    "hidden": false
+  },
+  "viewport": {
+    "width": 1427,
+    "height": 817
+  },
+  "dpr": 2,
+  "build": {
+    "version": 1,
+    "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+    "dirty": true,
+    "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+  },
+  "window": {
+    "nativeHandle": true,
+    "zoom": 1,
+    "bounds": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 852
+    },
+    "displayScale": 2
+  }
+}

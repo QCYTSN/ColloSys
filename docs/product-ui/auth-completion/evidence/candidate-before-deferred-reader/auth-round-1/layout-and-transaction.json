@@ -1,0 +1,320 @@
+{
+  "checks": [
+    "Real provider query response held past its 8s deadline: checking → unavailable → Retry → actual unconfigured, without remount or anchor movement.",
+    "Actual bundled fonts; title/email/password anchors unchanged within 1px through refresh, real errors and controlled long Chinese copy at 1440/1280/1920/960.",
+    "Real password request held in transport; same-frame double submit sends one request and blocks both provider starts.",
+    "Real desktop relay requests: provider double click creates once; waiting blocks email/other provider; cancel/retry gets a new ID; delayed old bridge failure cannot overwrite the new attempt; draft retained.",
+    "Full-page static light/dark; real 2.1s reflection samples and focus shift; reduced-motion keeps artwork static.",
+    "Registration at 960x600 naturally scrolls to every action without clipping messages."
+  ],
+  "layouts": [
+    {
+      "name": "checking initial",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "capability deadline",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "capability retry recovered",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "unconfigured",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "refresh capability check",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "real email error",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "controlled long Chinese copy",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "unconfigured",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "anchors": {
+        ".collo-auth-step h1": 120,
+        "#email": 428,
+        "#password": 514
+      }
+    },
+    {
+      "name": "refresh capability check",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "anchors": {
+        ".collo-auth-step h1": 120,
+        "#email": 428,
+        "#password": 514
+      }
+    },
+    {
+      "name": "real email error",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "anchors": {
+        ".collo-auth-step h1": 120,
+        "#email": 428,
+        "#password": 514
+      }
+    },
+    {
+      "name": "controlled long Chinese copy",
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      },
+      "anchors": {
+        ".collo-auth-step h1": 120,
+        "#email": 428,
+        "#password": 514
+      }
+    },
+    {
+      "name": "unconfigured",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "anchors": {
+        ".collo-auth-step h1": 180,
+        "#email": 488,
+        "#password": 574
+      }
+    },
+    {
+      "name": "refresh capability check",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "anchors": {
+        ".collo-auth-step h1": 180,
+        "#email": 488,
+        "#password": 574
+      }
+    },
+    {
+      "name": "real email error",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "anchors": {
+        ".collo-auth-step h1": 180,
+        "#email": 488,
+        "#password": 574
+      }
+    },
+    {
+      "name": "controlled long Chinese copy",
+      "viewport": {
+        "width": 1920,
+        "height": 1080
+      },
+      "anchors": {
+        ".collo-auth-step h1": 180,
+        "#email": 488,
+        "#password": 574
+      }
+    },
+    {
+      "name": "unconfigured",
+      "viewport": {
+        "width": 960,
+        "height": 720
+      },
+      "anchors": {
+        ".collo-auth-step h1": 80,
+        "#email": 388,
+        "#password": 474
+      }
+    },
+    {
+      "name": "refresh capability check",
+      "viewport": {
+        "width": 960,
+        "height": 720
+      },
+      "anchors": {
+        ".collo-auth-step h1": 80,
+        "#email": 388,
+        "#password": 474
+      }
+    },
+    {
+      "name": "real email error",
+      "viewport": {
+        "width": 960,
+        "height": 720
+      },
+      "anchors": {
+        ".collo-auth-step h1": 80,
+        "#email": 388,
+        "#password": 474
+      }
+    },
+    {
+      "name": "controlled long Chinese copy",
+      "viewport": {
+        "width": 960,
+        "height": 720
+      },
+      "anchors": {
+        ".collo-auth-step h1": 80,
+        "#email": 388,
+        "#password": 474
+      }
+    },
+    {
+      "name": "ready",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "password submitting",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "provider waiting",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "provider cancelled",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "provider disconnected",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    },
+    {
+      "name": "configuration removed",
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "anchors": {
+        ".collo-auth-step h1": 170,
+        "#email": 478,
+        "#password": 564
+      }
+    }
+  ],
+  "requestCounts": {
+    "password": 5,
+    "github": 0,
+    "google": 0,
+    "create": 5,
+    "cancel": 5
+  },
+  "boundary": "Real built app, bundled fonts and loopback backend. Temporary TEST provider settings; desktop browser launch and password transport delay controlled. No external provider authorization. Long Chinese copy is declared layout stress injection."
+}

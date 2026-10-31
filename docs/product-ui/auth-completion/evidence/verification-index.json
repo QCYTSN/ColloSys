@@ -1,0 +1,105 @@
+{
+  "recordedAt": "2026-10-31T07:02:52.300Z",
+  "build": {
+    "version": 1,
+    "commit": "6f9c5779b9f38c8e67ad3e68a8335e6d70703319",
+    "dirty": true,
+    "fingerprint": "5fb3d306dd4c61493bafda0cbd0b3a0c4224a4df97a29af914b38262596b92d9"
+  },
+  "normalEntry": "normal-entry.json",
+  "checks": [
+    {
+      "name": "typecheck",
+      "command": "npm run typecheck",
+      "exitCode": 0,
+      "completedAt": "2026-10-31T06:14:31.100Z",
+      "artifact": "checks/typecheck.log"
+    },
+    {
+      "name": "unit",
+      "command": "npm test",
+      "exitCode": 0,
+      "completedAt": "2026-10-31T06:15:30.797Z",
+      "artifact": "checks/unit.log"
+    },
+    {
+      "name": "build",
+      "command": "npm run build",
+      "exitCode": 0,
+      "completedAt": "2026-10-31T06:39:49.084Z",
+      "artifact": "checks/build.log"
+    },
+    {
+      "name": "integration",
+      "command": "npm run typecheck:integration",
+      "exitCode": 0,
+      "completedAt": "2026-10-31T06:42:14.280Z",
+      "artifact": "checks/integration.log"
+    },
+    {
+      "name": "upstream",
+      "command": "npm run codecast:verify",
+      "exitCode": 0,
+      "completedAt": "2026-10-31T06:58:50.332Z",
+      "artifact": "checks/upstream.log"
+    },
+    {
+      "name": "provider-config",
+      "command": "npm run auth:check",
+      "exitCode": 2,
+      "completedAt": "2026-10-31T07:00:50.338Z",
+      "artifact": "checks/provider-config.log"
+    },
+    {
+      "name": "external-github",
+      "command": "npm run auth:verify -- --provider=github --native",
+      "exitCode": 2,
+      "completedAt": "2026-10-31T07:00:51.227Z",
+      "artifact": "checks/external-github.log"
+    },
+    {
+      "name": "external-google",
+      "command": "npm run auth:verify -- --provider=google --native",
+      "exitCode": 2,
+      "completedAt": "2026-10-31T07:00:52.399Z",
+      "artifact": "checks/external-google.log"
+    }
+  ],
+  "notes": [
+    "Root typecheck and70 unit tests passed before the final reader-only scheduling change; the final prepared integration check and real reader/access/account/native regressions passed after that change.",
+    "Provider command exit2 is pending configuration, not a successful authorization.",
+    "All images under after/login are from final auth round1; quarter-page-review is a25-percent display of those original full pages.",
+    "Intermediate media/traces and duplicate auth-round media are retained in the local archive mapped by local-archive-map.json. All numeric results, final and baseline traces, and representative final media remain in this evidence tree."
+  ],
+  "acceptance": {
+    "backendLinking": "security/account-linking.json",
+    "settingsLinking": "linking-ui/results.json",
+    "login": "after/login/layout-and-transaction.json",
+    "native": "native/results.json",
+    "actualProfile": "native/actual-profile-metadata.json",
+    "controls": "computed-controls.json",
+    "regressions": "regression/suite-results.json",
+    "performance": "performance-comparison.json",
+    "phasesAndAuth": "presentation-and-auth-summary.json",
+    "evidenceAudit": "evidence-audit.json",
+    "archiveMap": "local-archive-map.json"
+  },
+  "regressionScope": "Eleven suites passed this round. Continuity, access and auth-continuity reran on the final reader implementation. Earlier other suite timestamps are retained; the authentication and menu implementation is unchanged.",
+  "unfinished": [
+    {
+      "item": "Real GitHub/Google sign-in, linking, refusal, sign-out/re-login with provider owner consent",
+      "status": "已实现待外部配置",
+      "handoff": "../OAUTH_HANDOFF.md"
+    },
+    {
+      "item": "Strictly every feedback<=100ms and overall interaction speedup",
+      "status": "未完成",
+      "record": "../PERFORMANCE.md"
+    },
+    {
+      "item": "Email delivery/recovery provider",
+      "status": "已实现待外部配置"
+    }
+  ],
+  "visualBoundary": "Actual full application artwork, theme and native behavior reviewed. User aesthetic acceptance remains separate from engineering verification."
+}

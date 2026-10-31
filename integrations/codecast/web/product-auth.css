@@ -3,6 +3,7 @@
   min-height: 100dvh;
   display: grid;
   grid-template-columns: 54% 46%;
+  align-items: start;
   color: var(--collo-ink);
   background: var(--collo-content);
   font: var(--collo-type-body);
@@ -16,9 +17,9 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 48px 32px 32px;
-  gap: 48px;
+  justify-content: flex-start;
+  padding: clamp(80px, calc((100svh - 560px) / 2), 180px) 32px 32px;
+  gap: 32px;
 }
 .collo-auth-content {
   width: min(100%, 368px);
@@ -47,39 +48,19 @@
   grid-template-columns: 1fr 1fr;
   gap: 12px;
 }
-.collo-oauth-providers > button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
+.collo-oauth-providers > .cc-btn {
   height: 44px;
-  padding: 0 16px;
-  border: 1px solid var(--collo-control-edge);
-  border-radius: var(--collo-radius-control);
-  font: var(--collo-type-button);
-  color: var(--collo-ink);
-  background: var(--collo-content);
-  box-shadow: var(--collo-shadow-secondary-button);
-  transition:
-    background-color 100ms,
-    border-color 100ms,
-    transform 130ms var(--collo-motion-ease-out);
-  font-variation-settings:
-    'opsz' 17,
-    'GRAD' 0;
-  font-optical-sizing: none;
+  min-height: 44px;
+  gap: 8px;
 }
-.collo-oauth-providers > button:hover:not(:disabled) {
-  background: var(--collo-tool);
+.collo-provider-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  line-height: 18px;
 }
-.collo-oauth-providers > button:active:not(:disabled) {
-  transform: translateY(0.7px);
-  transition-duration: 70ms;
-}
-.collo-oauth-providers > button:disabled {
-  cursor: default;
-  color: var(--collo-tertiary);
-  background: var(--collo-tool);
+.collo-oauth-providers small {
+  font: var(--collo-type-meta);
 }
 .collo-oauth-providers > button:focus-visible,
 .collo-oauth-status button:focus-visible {
@@ -87,24 +68,66 @@
   outline-offset: 3px;
 }
 .collo-oauth-status {
-  border-left: 2px solid var(--collo-accent);
-  padding: 0 0 0 12px;
-  margin: 16px 0 0;
-  font: var(--collo-type-meta);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 40px;
+  margin: 8px 0 0;
+  font: 400 13px/20px var(--collo-font-ui);
   color: var(--collo-secondary);
   font-variation-settings:
     'opsz' 17,
     'GRAD' 0;
   font-optical-sizing: none;
 }
+.collo-oauth-status p {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
 .collo-oauth-status button {
   display: flex;
   align-items: center;
   gap: 4px;
   color: var(--collo-ink);
-  margin-top: 8px;
+  flex-shrink: 0;
+  min-height: 28px;
   text-decoration: underline;
   text-underline-offset: 3px;
+}
+.collo-provider-help-anchor {
+  min-height: 24px;
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.collo-provider-help {
+  font: var(--collo-type-meta);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.collo-provider-help-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100svh - 48px);
+  overflow-y: auto;
+}
+.collo-provider-help-dialog p,
+.collo-provider-help-dialog details {
+  font: var(--collo-type-body);
+}
+.collo-provider-help-dialog code {
+  display: block;
+  font: var(--collo-type-code);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.collo-provider-help-dialog details {
+  border-top: 1px solid var(--collo-line);
+  padding-top: 16px;
+}
+.collo-provider-help-dialog summary {
+  cursor: pointer;
+  font: var(--collo-type-control-label);
 }
 .collo-auth-divider {
   display: flex;
@@ -149,7 +172,9 @@
   background: var(--collo-content);
   border-radius: var(--collo-radius-control);
   font: 400 15px/22px var(--collo-font-ui);
-  font-variation-settings: 'opsz' 17, 'GRAD' 0;
+  font-variation-settings:
+    'opsz' 17,
+    'GRAD' 0;
   font-optical-sizing: none;
   padding: 10px 14px;
   color: var(--collo-ink);

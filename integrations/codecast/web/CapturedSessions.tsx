@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback, useDeferredValue } from 'react';
 import { useMutation } from 'convex/react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { colloApi as api } from './colloApi';
@@ -139,6 +139,7 @@ function Reader({
     if (data)
       setPages((previous) => ({ ...previous, [after]: data.messages as CapturedMessage[] }));
   }, [page.data, page.denied, members.denied, after]);
+  const previousRows = useRef<CapturedMessage[]>([]);
   const rows = useMemo(() => {
     if (page.denied || members.denied) return [];
     const unique = new Map<string, CapturedMessage>();
@@ -147,7 +148,16 @@ function Reader({
       ...((page.data?.messages ?? []) as CapturedMessage[]),
     ])
       unique.set(row.eventId, row);
-    return [...unique.values()].sort((a, b) => a.seq - b.seq);
+    const next = [...unique.values()].sort((a, b) => a.seq - b.seq);
+    // Inserting the received page into accumulated pages must not rebuild the
+    // entire conversation a second time when its visible messages are identical.
+    if (
+      next.length === previousRows.current.length &&
+      next.every((row, index) => row === previousRows.current[index])
+    )
+      return previousRows.current;
+    previousRows.current = next;
+    return next;
   }, [pages, page.data, page.denied, members.denied]);
   const first = rows[0];
   const member = members.data?.members.find((m: { id: string }) => m.id === first?.userId);
@@ -172,6 +182,26 @@ function Reader({
     }),
     [rows, member?.name, workspaceId, sessionId],
   );
+  // The verified selection and its heading can paint before the full upstream
+  // transcript mounts. React schedules the content without a timed delay.
+  // Reader is keyed by principal/project/session; access denial below removes
+  // both the current and deferred view before either can paint.
+  const renderedConversation = useDeferredValue<ConversationData | null>(conversation, null);
+  const settleReadingAnchor = useCallback(() => {
+    if (restored.current || saved.current?.offset === undefined) return;
+    const sc = container.current?.querySelector<HTMLElement>('[data-sv-feed]');
+    const row = [...(sc?.querySelectorAll<HTMLElement>('[data-reading-message]') ?? [])].find(
+      (el) => el.dataset.readingMessage === saved.current?.anchor,
+    );
+    if (sc && row) {
+      restored.current = true;
+      sc.scrollTop +=
+        row.getBoundingClientRect().top - sc.getBoundingClientRect().top - saved.current.offset;
+    }
+  }, []);
+  const loadNewer = useCallback(() => {
+    if (page.data) setAfter(page.data.cursor);
+  }, [page.data]);
   if (page.denied || members.denied || ((page.error || members.error) && !rows.length))
     return (
       <div className="collo-empty" role="alert">
@@ -212,7 +242,9 @@ function Reader({
             <ArrowLeft size={17} />
           </Button>
           <AgentBadge agent={first.adapter} />
-          <span className="collo-reader-owner" title={member?.name || 'Member'}>{member?.name || 'Member'}</span>
+          <span className="collo-reader-owner" title={member?.name || 'Member'}>
+            {member?.name || 'Member'}
+          </span>
           <span className="collo-tag">Captured session</span>
         </div>
         <Button
@@ -229,41 +261,32 @@ function Reader({
         </Button>
       </div>
       <div className="min-h-0 flex-1">
-        <ConversationView
-          conversation={conversation}
-          backHref={backHref ?? `/projects/${projectId}?tab=sessions`}
-          targetMessageId={
-            rows.some((r) => r.eventId === saved.current?.anchor)
-              ? saved.current?.anchor
-              : undefined
-          }
-          onTargetSettled={() => {
-            if (restored.current || saved.current?.offset === undefined) return;
-            const sc = container.current?.querySelector<HTMLElement>('[data-sv-feed]');
-            const row = [
-              ...(sc?.querySelectorAll<HTMLElement>('[data-reading-message]') ?? []),
-            ].find((el) => el.dataset.readingMessage === saved.current?.anchor);
-            if (sc && row) {
-              restored.current = true;
-              sc.scrollTop +=
-                row.getBoundingClientRect().top -
-                sc.getBoundingClientRect().top -
-                saved.current.offset;
+        {renderedConversation?.messages?.length ? (
+          <ConversationView
+            conversation={renderedConversation}
+            backHref={backHref ?? `/projects/${projectId}?tab=sessions`}
+            targetMessageId={
+              renderedConversation.messages.some((r) => r._id === saved.current?.anchor)
+                ? saved.current?.anchor
+                : undefined
             }
-          }}
-          guest
-          isOwner={false}
-          showMessageInput={false}
-          hideHeader
-          initialDensity="full"
-          openAtTop
-          stickyPrompt={false}
-          hasMoreBelow={page.data?.hasMore ?? false}
-          isLoadingNewer={!page.data}
-          onLoadNewer={() => {
-            if (page.data) setAfter(page.data.cursor);
-          }}
-        />
+            onTargetSettled={settleReadingAnchor}
+            guest
+            isOwner={false}
+            showMessageInput={false}
+            hideHeader
+            initialDensity="full"
+            openAtTop
+            stickyPrompt={false}
+            hasMoreBelow={page.data?.hasMore ?? false}
+            isLoadingNewer={!page.data}
+            onLoadNewer={loadNewer}
+          />
+        ) : (
+          <div className="collo-reader-loading" role="status">
+            Preparing conversation…
+          </div>
+        )}
       </div>
       {(page.data?.hasMore || !page.data) && (
         <div className="collo-reader-pagination">
@@ -298,6 +321,10 @@ export function CapturedSessions({
 function SessionList({ projectId, global }: { projectId: string; global: boolean }) {
   const router = useRouter(),
     search = useSearchParams();
+  const dateLabel = useMemo(
+    () => new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' }),
+    [],
+  );
   const listKey = viewKey(projectId, global ? 'global-conversations' : 'project-conversations');
   const [cursors, setCursors] = useState<(string | null)[]>(
     () => readView<{ cursors: (string | null)[] }>(listKey)?.cursors ?? [null],
@@ -438,16 +465,13 @@ function SessionList({ projectId, global }: { projectId: string; global: boolean
                     </span>
                     <span className="collo-session-summary">
                       <strong>{s.preview || `${formatAgentType(s.adapter)} conversation`}</strong>
-                      <span title={`${name(s.userId)} · ${formatAgentType(s.adapter)} · ${s.messageCount} messages`}>
+                      <span
+                        title={`${name(s.userId)} · ${formatAgentType(s.adapter)} · ${s.messageCount} messages`}
+                      >
                         {name(s.userId)} · {formatAgentType(s.adapter)} · {s.messageCount} messages
                       </span>
                     </span>
-                    <time>
-                      {new Date(s.updatedAt).toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                      })}
-                    </time>
+                    <time>{dateLabel.format(s.updatedAt)}</time>
                     <ArrowRight size={16} />
                   </button>
                 ),

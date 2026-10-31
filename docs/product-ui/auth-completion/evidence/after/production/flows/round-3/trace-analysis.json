@@ -1,0 +1,446 @@
+{
+  "trace": "docs/product-ui/auth-completion/evidence/after/production/flows/round-3/runtime-trace.json.gz",
+  "inclusiveTimelineMs": [
+    [
+      "RunTask",
+      [
+        181384,
+        59026.82399996428,
+        502.442
+      ]
+    ],
+    [
+      "FunctionCall",
+      [
+        16430,
+        6393.481000000055,
+        500.782
+      ]
+    ],
+    [
+      "GPUTask",
+      [
+        1660,
+        3228.307999999992,
+        54.326
+      ]
+    ],
+    [
+      "EventDispatch",
+      [
+        3994,
+        2263.0030000000056,
+        134.767
+      ]
+    ],
+    [
+      "BackgroundJSStreamManager::RunScriptStreamingTask",
+      [
+        840,
+        1676.515000000002,
+        185.541
+      ]
+    ],
+    [
+      "v8.parseOnBackground",
+      [
+        840,
+        1661.600000000001,
+        185.518
+      ]
+    ],
+    [
+      "UpdateLayoutTree",
+      [
+        1720,
+        1394.9379999999996,
+        55.243
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundParsing",
+      [
+        905,
+        1174.3259999999984,
+        185.506
+      ]
+    ],
+    [
+      "Paint",
+      [
+        2513,
+        897.876,
+        4.928
+      ]
+    ],
+    [
+      "FireAnimationFrame",
+      [
+        2256,
+        808.3049999999977,
+        500.874
+      ]
+    ],
+    [
+      "Layout",
+      [
+        437,
+        597.3290000000006,
+        28.171
+      ]
+    ],
+    [
+      "v8.parseOnBackgroundWaiting",
+      [
+        65,
+        479.4309999999999,
+        74.868
+      ]
+    ],
+    [
+      "PrePaint",
+      [
+        2884,
+        396.175999999997,
+        2.949
+      ]
+    ],
+    [
+      "v8.evaluateModule",
+      [
+        60,
+        387.3250000000002,
+        90.657
+      ]
+    ],
+    [
+      "V8.GC_SCAVENGER_BACKGROUND_SCAVENGE_PARALLEL",
+      [
+        159,
+        370.8520000000002,
+        4.975
+      ]
+    ],
+    [
+      "V8.GC_MC_BACKGROUND_MARKING",
+      [
+        41,
+        314.0950000000001,
+        18.303
+      ]
+    ],
+    [
+      "Layerize",
+      [
+        1861,
+        291.7109999999983,
+        1.979
+      ]
+    ],
+    [
+      "Commit",
+      [
+        2170,
+        274.7140000000009,
+        1.089
+      ]
+    ],
+    [
+      "RasterTask",
+      [
+        2137,
+        266.52899999999966,
+        3.453
+      ]
+    ],
+    [
+      "TimerFire",
+      [
+        149,
+        246.64499999999984,
+        47.947
+      ]
+    ],
+    [
+      "v8.produceModuleCache",
+      [
+        139,
+        126.51900000000003,
+        41.063
+      ]
+    ],
+    [
+      "HitTest",
+      [
+        621,
+        92.13799999999996,
+        0.99
+      ]
+    ]
+  ],
+  "inclusiveFunctionsMs": [
+    [
+      "Au http://127.0.0.1:3407/assets/client-B-vye1zL.js:9",
+      [
+        568,
+        2705.5809999999997,
+        176.783
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      [
+        1349,
+        1674.479999999999,
+        200.384
+      ]
+    ],
+    [
+      "sample :27",
+      [
+        1861,
+        611.4849999999985,
+        500.782
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-C2pof9dT.js:1",
+      [
+        207,
+        261.58899999999994,
+        132.115
+      ]
+    ],
+    [
+      "a http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1515",
+      [
+        3,
+        147.04,
+        65.117
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1336",
+      [
+        72,
+        133.53500000000008,
+        12.721
+      ]
+    ],
+    [
+      "fd http://127.0.0.1:3407/assets/client-B-vye1zL.js:25",
+      [
+        1004,
+        102.02100000000038,
+        6.224
+      ]
+    ],
+    [
+      "jc http://127.0.0.1:3407/assets/client-B-vye1zL.js:25",
+      [
+        4660,
+        79.47100000000162,
+        1.132
+      ]
+    ],
+    [
+      "t.onmessage http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:63",
+      [
+        205,
+        71.108,
+        6.356
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/boot-BIJW_ZeD.js:6",
+      [
+        9,
+        70.75299999999999,
+        26.994
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:44",
+      [
+        943,
+        62.96700000000002,
+        6.852
+      ]
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-B-gW1Pom.js:1",
+      [
+        321,
+        50.477,
+        0.529
+      ]
+    ],
+    [
+      "C1 http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      [
+        1,
+        46.868,
+        46.868
+      ]
+    ],
+    [
+      "nd http://127.0.0.1:3407/assets/client-B-vye1zL.js:25",
+      [
+        1270,
+        42.490000000000144,
+        1.2
+      ]
+    ],
+    [
+      "listener :8178",
+      [
+        338,
+        34.271,
+        1.316
+      ]
+    ],
+    [
+      "gl http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:44",
+      [
+        227,
+        29.553000000000008,
+        0.56
+      ]
+    ],
+    [
+      "je http://127.0.0.1:3407/assets/react-resizable-panels-B-gW1Pom.js:1",
+      [
+        81,
+        23.372000000000007,
+        1.828
+      ]
+    ],
+    [
+      "U.onsuccess http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:44",
+      [
+        381,
+        22.878999999999994,
+        1.386
+      ]
+    ],
+    [
+      "BY http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:82",
+      [
+        26,
+        20.823,
+        1.451
+      ]
+    ],
+    [
+      "p http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1336",
+      [
+        48,
+        20.139,
+        1.143
+      ]
+    ]
+  ],
+  "cpuLeafSamples": [
+    [
+      "B1 http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      717
+    ],
+    [
+      "Lm http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1336",
+      319
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:62",
+      231
+    ],
+    [
+      "qn http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      209
+    ],
+    [
+      "_1 http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      175
+    ],
+    [
+      "getMaxScrollOffset http://127.0.0.1:3407/assets/index-C2pof9dT.js:1",
+      151
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:44",
+      136
+    ],
+    [
+      "o http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1515",
+      133
+    ],
+    [
+      "o http://127.0.0.1:3407/assets/ConversationView-DXA6ls_n.js:25",
+      124
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-O3U3BUpl.js:2",
+      113
+    ],
+    [
+      "pm http://127.0.0.1:3407/assets/DashboardLayout-gSTax0Si.js:30",
+      109
+    ],
+    [
+      " http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1336",
+      107
+    ],
+    [
+      "Ul http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      104
+    ],
+    [
+      "ct http://127.0.0.1:3407/assets/react-resizable-panels-B-gW1Pom.js:1",
+      101
+    ],
+    [
+      "Nn http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      100
+    ],
+    [
+      " http://127.0.0.1:3407/assets/DashboardLayout-gSTax0Si.js:30",
+      94
+    ],
+    [
+      "Kt http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      90
+    ],
+    [
+      "v http://127.0.0.1:3407/assets/DashboardLayout-gSTax0Si.js:16",
+      90
+    ],
+    [
+      " http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      89
+    ],
+    [
+      " http://127.0.0.1:3407/assets/react-resizable-panels-B-gW1Pom.js:1",
+      85
+    ],
+    [
+      "Qa http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      85
+    ],
+    [
+      "al http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      81
+    ],
+    [
+      "g0 http://127.0.0.1:3407/assets/client-B-vye1zL.js:24",
+      80
+    ],
+    [
+      "c http://127.0.0.1:3407/assets/index-BnHjVaHw.js:1501",
+      74
+    ],
+    [
+      " http://127.0.0.1:3407/assets/lineWorkspaceUrl-Dy_bFdyv.js:766",
+      72
+    ]
+  ],
+  "note": "Inclusive timeline durations overlap and cannot be summed as CPU time. CPU samples are sampled leaf frames, not exact timings."
+}

@@ -20,6 +20,23 @@ import {
   beginExplicitSignIn,
 } from './productAuthPolicy';
 import { ProductStartupProvider } from './ProductStartup';
+import {
+  authAttemptBusy,
+  getAuthAttempt,
+  isCurrentAuthAttempt,
+  transitionAuthAttempt,
+  type AuthAttempt,
+} from './authTransaction';
+
+// Account-link callback markers are never session codes. Leave the browser's
+// existing account intact before the SDK examines the URL on its first mount.
+if (location.pathname === '/auth/link') {
+  const url = new URL(location.href);
+  if (url.searchParams.has('code')) {
+    url.searchParams.delete('code');
+    history.replaceState({}, '', url.pathname + url.search);
+  }
+}
 
 if (!import.meta.hot?.data?.principalBoundaryInstalled) {
   installAuthPrincipalBoundary();
@@ -40,12 +57,17 @@ function subscribeGeneration(listener: () => void) {
 // a logout between those awaits and remounts caused by the JWT's new principal.
 const responseGenerations = new Map<
   string,
-  { generation: string; epoch: number; token?: string }
+  { generation: string; epoch: number; token?: string; attempt: AuthAttempt | null }
 >();
-function rememberResponse(result: any, generation: string, epoch: number) {
+function rememberResponse(
+  result: any,
+  generation: string,
+  epoch: number,
+  attempt: AuthAttempt | null,
+) {
   for (const value of [result?.tokens?.token, result?.tokens?.refreshToken, result?.verifier]) {
     if (typeof value === 'string')
-      responseGenerations.set(value, { generation, epoch, token: result?.tokens?.token });
+      responseGenerations.set(value, { generation, epoch, token: result?.tokens?.token, attempt });
   }
   while (responseGenerations.size > 64)
     responseGenerations.delete(responseGenerations.keys().next().value!);
@@ -58,7 +80,15 @@ function FencedProvider({ client, children }: { client: ConvexReactClient; child
       const generation = authGeneration();
       const epoch = authPrincipal.epoch();
       const exchangingCode = !args?.provider && typeof args?.params?.code === 'string';
+      const currentAttempt = getAuthAttempt();
+      const attempt = args?.provider && authAttemptBusy(currentAttempt) ? currentAttempt : null;
       const validate = () => {
+        if (
+          attempt &&
+          (!isCurrentAuthAttempt(attempt) ||
+            (args.provider !== attempt.method && args.provider !== 'collosys-desktop-v1'))
+        )
+          throw new Error('This sign-in attempt has ended.');
         authPrincipal.check();
         if (
           epoch !== authPrincipal.epoch() ||
@@ -84,7 +114,9 @@ function FencedProvider({ client, children }: { client: ConvexReactClient; child
         if (args?.provider && !callback) beginExplicitSignIn();
         const result = await fencedAuthCall(call);
         validate();
-        rememberResponse(result, generation, epoch);
+        if (attempt && result?.tokens?.token)
+          transitionAuthAttempt(attempt, 'establishing-session');
+        rememberResponse(result, generation, epoch, attempt);
         return result;
       } catch (error) {
         if (!exchangingCode) throw error;
@@ -124,6 +156,8 @@ function FencedProvider({ client, children }: { client: ConvexReactClient; child
         authPrincipal.check();
         if (sessionBlocked() || !response || response.generation !== authGeneration())
           throw new Error('Sign-in was cancelled.');
+        if (response.attempt && !isCurrentAuthAttempt(response.attempt))
+          throw new Error('This sign-in attempt has ended.');
         if (
           key === AUTH_REFRESH_TOKEN_STORAGE_KEY
             ? localStorage.getItem(AUTH_JWT_STORAGE_KEY) !== response.token

@@ -4,12 +4,71 @@ import { v } from 'convex/values';
 // Extension tables inherit access from the actual Codecast project, never
 // from a caller-supplied member or the project's routing team_id.
 export const colloTables = {
-  collo_identity_proofs: defineTable({ userId: v.id('users'), provider: v.union(v.literal('github'), v.literal('google')), verifiedAt: v.number() }).index('by_identity', ['userId', 'provider']),
+  collo_reauth_proofs: defineTable({
+    userId: v.id('users'),
+    sessionId: v.id('authSessions'),
+    accountId: v.id('authAccounts'),
+    generation: v.string(),
+    verifiedAt: v.number(),
+  })
+    .index('by_session', ['sessionId'])
+    .index('by_verified', ['verifiedAt']),
+  collo_account_labels: defineTable({ accountId: v.id('authAccounts'), label: v.string() }).index(
+    'by_account',
+    ['accountId'],
+  ),
+  collo_account_links: defineTable({
+    attemptId: v.string(),
+    userId: v.id('users'),
+    sessionId: v.id('authSessions'),
+    generation: v.string(),
+    challengeHash: v.string(),
+    provider: v.union(v.literal('github'), v.literal('google')),
+    purpose: v.union(v.literal('link'), v.literal('reauthenticate')),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    reauthenticatedAt: v.optional(v.number()),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('awaiting-provider'),
+      v.literal('verified'),
+      v.literal('failed'),
+      v.literal('cancelled'),
+      v.literal('completed'),
+    ),
+    verifierId: v.optional(v.id('authVerifiers')),
+    callbackSignature: v.optional(v.string()),
+    candidateSubject: v.optional(v.string()),
+    candidateLabel: v.optional(v.string()),
+    failure: v.optional(v.string()),
+  })
+    .index('by_attempt', ['attemptId'])
+    .index('by_verifier', ['verifierId'])
+    .index('by_signature', ['callbackSignature'])
+    .index('by_expiry', ['expiresAt']),
+  collo_identity_proofs: defineTable({
+    userId: v.id('users'),
+    provider: v.union(v.literal('github'), v.literal('google')),
+    verifiedAt: v.number(),
+  }).index('by_identity', ['userId', 'provider']),
   collo_auth_attempts: defineTable({
-    version: v.literal(1), attemptId: v.string(), claimHash: v.string(), provider: v.union(v.literal('github'), v.literal('google')),
-    createdAt: v.number(), expiresAt: v.number(), status: v.union(v.literal('pending'), v.literal('authorized'), v.literal('cancelled'), v.literal('consumed')),
-    userId: v.optional(v.id('users')), sessionId: v.optional(v.id('authSessions')),
-  }).index('by_attempt', ['attemptId']).index('by_expiry', ['expiresAt']),
+    version: v.literal(1),
+    attemptId: v.string(),
+    claimHash: v.string(),
+    provider: v.union(v.literal('github'), v.literal('google')),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    status: v.union(
+      v.literal('pending'),
+      v.literal('authorized'),
+      v.literal('cancelled'),
+      v.literal('consumed'),
+    ),
+    userId: v.optional(v.id('users')),
+    sessionId: v.optional(v.id('authSessions')),
+  })
+    .index('by_attempt', ['attemptId'])
+    .index('by_expiry', ['expiresAt']),
   collo_event_aliases: defineTable({
     projectId: v.id('projects'),
     eventId: v.string(),

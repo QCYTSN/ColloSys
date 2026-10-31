@@ -1,0 +1,103 @@
+[
+  {
+    "name": "menus",
+    "args": [
+      "tests/product-menu-acceptance.mjs",
+      "--production"
+    ],
+    "started": "2026-10-31T06:19:41.207Z",
+    "finished": "2026-10-31T06:20:21.974Z",
+    "exitCode": 0
+  },
+  {
+    "name": "native-menus",
+    "args": [
+      "tests/product-menu-native.mjs"
+    ],
+    "started": "2026-10-31T06:20:21.975Z",
+    "finished": "2026-10-31T06:20:41.757Z",
+    "exitCode": 0
+  },
+  {
+    "name": "startup",
+    "args": [
+      "tests/product-identity-startup.mjs"
+    ],
+    "started": "2026-10-31T06:20:41.759Z",
+    "finished": "2026-10-31T06:21:07.174Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-races",
+    "args": [
+      "tests/product-identity-auth-races.mjs"
+    ],
+    "started": "2026-10-31T06:21:07.175Z",
+    "finished": "2026-10-31T06:21:28.559Z",
+    "exitCode": 0
+  },
+  {
+    "name": "security",
+    "args": [
+      "tests/product-identity-security.mjs"
+    ],
+    "started": "2026-10-31T06:21:28.560Z",
+    "finished": "2026-10-31T06:21:39.535Z",
+    "exitCode": 0
+  },
+  {
+    "name": "provider-policy",
+    "args": [
+      ".local/menu-provider-policy.mjs"
+    ],
+    "started": "2026-10-31T06:21:39.720Z",
+    "finished": "2026-10-31T06:21:39.872Z",
+    "exitCode": 0
+  },
+  {
+    "name": "identity",
+    "args": [
+      "tests/product-identity-flows.mjs",
+      "--production"
+    ],
+    "started": "2026-10-31T06:21:39.873Z",
+    "finished": "2026-10-31T06:22:02.509Z",
+    "exitCode": 0
+  },
+  {
+    "name": "storage",
+    "args": [
+      "tests/product-ui-craft-storage-race.mjs"
+    ],
+    "started": "2026-10-31T06:22:52.086Z",
+    "finished": "2026-10-31T06:23:31.815Z",
+    "exitCode": 0
+  },
+  {
+    "name": "continuity",
+    "args": [
+      "tests/product-ui-craft.mjs"
+    ],
+    "started": "2026-10-31T06:44:33.005Z",
+    "finished": "2026-10-31T06:45:22.682Z",
+    "exitCode": 0
+  },
+  {
+    "name": "access",
+    "args": [
+      "tests/product-ui-refinement-access.mjs"
+    ],
+    "started": "2026-10-31T06:45:22.683Z",
+    "finished": "2026-10-31T06:45:40.709Z",
+    "exitCode": 0
+  },
+  {
+    "name": "auth-continuity",
+    "args": [
+      "tests/product-auth-continuity.mjs"
+    ],
+    "started": "2026-10-31T06:45:40.710Z",
+    "finished": "2026-10-31T06:46:05.525Z",
+    "exitCode": 0
+  }
+]

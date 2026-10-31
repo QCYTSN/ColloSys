@@ -199,22 +199,8 @@
   overflow: visible;
 }
 .collo-project-properties {
-  position: relative;
-  font-size: 12px;
   color: var(--collo-secondary);
   flex: none;
-}
-.collo-project-properties {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-  list-style: none;
-  padding: 7px 10px;
-  border-radius: 7px;
-}
-.collo-project-properties:hover {
-  background: var(--collo-tool);
 }
 .collo-project-property-menu {
   width: 280px;
@@ -1094,6 +1080,11 @@
   }
 }
 .collo-workspaces,
+.collo-detail-stage {
+  /* This full-height stage owns its geometry. Portal menus must not relayout
+     the transcript underneath while the floating surface measures itself. */
+  contain: layout;
+}
 .collo-detail-stage,
 .collo-captured-reader {
   min-width: 0;

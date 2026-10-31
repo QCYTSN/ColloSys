@@ -1,7 +1,9 @@
 import { convexAuth, type ConvexAuthConfig } from '@convex-dev/auth/server';
 import { ConvexCredentials } from '@convex-dev/auth/providers/ConvexCredentials';
 import { createAuthConfig } from '@platform/auth/convex';
-import { query } from './_generated/server';
+import { query, internalMutation } from './_generated/server';
+import { v } from 'convex/values';
+import { captureLinkedOAuth } from './colloAccountLinks';
 import { internal } from './_generated/api';
 import { advanceCurrentUserViewRevision } from './principalViewRevisions';
 import { deliver } from './emails/send';
@@ -33,7 +35,7 @@ export const updateProductIdentity: NonNullable<
         .first();
       if (collision)
         throw new Error(
-          'An account already uses this email. Sign in with its original method. Automatic account linking is unavailable.',
+          'An account already uses this email. Sign in with its original method, then link this provider in account settings.',
         );
     }
     userId = await ctx.db.insert('users', {
@@ -115,7 +117,7 @@ export function productAuthConfig(): ConvexAuthConfig {
       const url = new URL(redirectTo, site);
       if (
         url.origin !== site.origin ||
-        !['/auth/complete', '/auth/desktop'].includes(url.pathname) ||
+        !['/auth/complete', '/auth/desktop', '/auth/link'].includes(url.pathname) ||
         url.username ||
         url.password ||
         url.hash
@@ -139,7 +141,26 @@ export function productAuthConfig(): ConvexAuthConfig {
   );
   return config;
 }
-export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth(productAuthConfig());
+const sdk = convexAuth(productAuthConfig());
+export const { auth, signIn, signOut, isAuthenticated } = sdk;
+// Pinned Convex Auth 0.0.79's custom identity callback omits verifier/session
+// context. Intercept only link verifiers at its internal persistence boundary;
+// all OAuth cryptography, normal accounts and session issuance stay in the SDK.
+export const store = internalMutation({
+  args: { args: v.any() },
+  handler: async (ctx, args) => {
+    if (args.args?.type === 'userOAuth') {
+      const link = await captureLinkedOAuth(ctx, args.args);
+      if (link.handled) return link.result;
+    }
+    const registered = sdk.store as unknown as {
+      _handler: (ctx: MutationCtx, args: { args: unknown }) => Promise<unknown>;
+    };
+    if (typeof registered._handler !== 'function')
+      throw new Error('Unsupported authentication runtime');
+    return registered._handler(ctx, args);
+  },
+});
 export const signInProviders = query({
   args: {},
   handler: async () => ({
@@ -147,6 +168,16 @@ export const signInProviders = query({
     google: providerConfigured('google'),
     password: true,
     emailRecovery: !!process.env.RESEND_API_KEY,
-    version: 1,
+    version: 2,
+    diagnostics: {
+      missing: [
+        'AUTH_GITHUB_ID',
+        'AUTH_GITHUB_SECRET',
+        'AUTH_GOOGLE_ID',
+        'AUTH_GOOGLE_SECRET',
+      ].filter((name) => !process.env[name]),
+      siteOrigin: new URL(process.env.SITE_URL!).origin,
+      callbackOrigin: new URL(process.env.CONVEX_SITE_URL!).origin,
+    },
   }),
 });

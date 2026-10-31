@@ -1,0 +1,8 @@
+{
+  "checks": [
+    "GitHub: password-verified account links through actual settings, explicit verified-identity confirmation and real authAccounts persistence; callback page in another signed-in browser preserves that other account.",
+    "Google: password-verified account links through actual settings, explicit verified-identity confirmation and real authAccounts persistence; callback page in another signed-in browser preserves that other account.",
+    "Actual confirmation dialog unlinks GitHub while password and Google remain; reloaded session and original project remain on the same internal user."
+  ],
+  "boundary": "Actual UI and local persistent backend with two independent signed-in browser accounts. External provider proof is controlled at the internal SDK persistence boundary; no real provider authorization is claimed."
+}

@@ -34,6 +34,36 @@ const extraIcons = [
   ),
 );
 export const refinementPatches = [
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    '<span className="inline-flex items-center gap-1.5 h-6" data-intent-target="editing"',
+    '<span className="collo-intent-date-editor" data-intent-target="editing"',
+  ),
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    'className="text-[11.5px] bg-transparent outline-none tabular-nums border-b"',
+    'className="collo-intent-date-input"',
+  ),
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    '<button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => { close(); onClear(); }} className="text-[10.5px] transition-colors hover:text-sol-red" style={{ color: "var(--sol-text-dim)" }} data-intent-target-clear>\n          Clear\n        </button>',
+    '<ListTrigger onMouseDown={(e) => e.preventDefault()} onClick={() => { close(); onClear(); }} data-intent-target-clear>\n          Clear\n        </ListTrigger>',
+  ),
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    '"use client";',
+    '"use client";\nimport { ListTrigger } from "../../collo/ProductControlTriggers";',
+  ),
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    '<button type="button" className="inline-flex items-center gap-1.5 -mx-1 px-1 h-6 rounded-md transition-colors hover:bg-sol-bg-highlight/70" {...data}>{children}</button>',
+    '<ListTrigger className="collo-intent-property" {...data}>{children}</ListTrigger>',
+  ),
+  patch(
+    'components/initiatives/IntentHeader.tsx',
+    '      <button type="button" onClick={() => { open.current = true; setEditing(true); }} className="inline-flex items-center gap-1.5 -mx-1 px-1 h-6 rounded-md transition-colors hover:bg-sol-bg-highlight/70" title={label} data-intent-target={day ?? ""} {...data}>\n        <CalendarDays className="w-3.5 h-3.5" style={{ color: "var(--sol-text-dim)" }} />\n        {children ?? <span className="text-[11.5px]" style={{ color: "var(--sol-text-dim)" }}>{emptyLabel}</span>}\n      </button>',
+    '      <ListTrigger type="button" onClick={() => { open.current = true; setEditing(true); }} className="collo-intent-property" title={label} data-intent-target={day ?? ""} {...data}>\n        <CalendarDays className="w-3.5 h-3.5" style={{ color: "var(--sol-text-dim)" }} />\n        {children ?? <span className="collo-intent-property-label" style={{ color: "var(--sol-text-dim)" }}>{emptyLabel}</span>}\n      </ListTrigger>',
+  ),
   ...extraIcons,
   patch(
     'components/FileDiffLayout.tsx',
